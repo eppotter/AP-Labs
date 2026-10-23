@@ -1,0 +1,9 @@
+schema_version: 1
+client: { id: tier-co, name: Tier Co }
+tiers:
+  T3: ["pay/**", "secrets.json"]
+  T2: ["app/**", "Dockerfile"]
+  T1: ["lib/**"]
+inert: ["**/*.md", "docs/**", ".aplabs/**"]
+users:
+  - { id: solo, name: Solo, role: admin }
