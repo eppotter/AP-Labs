@@ -134,6 +134,6 @@ Prototype total: 8 PRs. At 2–3× overrun, plan for roughly 16–24 sessions of
 
 | Item | Owner | Blocks |
 |---|---|---|
-| IP / employment-agreement check: Hometown-era code harvested into a venture product | **Ely** | Any client contract. Ideally before PR 3, since PRs 3–9 copy code written in the old repo. |
+| IP / employment-agreement check: cleared by Ely, 2026-10-23 | **Ely** | Nothing |
 | OD-04: test ceremony profiles with one non-engineer | Ely + Steven | V2 ceremony work only |
 | Refuter measurement is n=7 (6 confirmed, 0 not reproduced, 1 unverifiable), which is not yet a defensible rate | Carry | Any claim in a pitch |
