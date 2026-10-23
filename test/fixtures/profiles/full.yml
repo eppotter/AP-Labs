@@ -1,0 +1,17 @@
+schema_version: 1
+client: { id: fixture-co, name: Fixture Co }
+tiers:
+  T3: ["pay/**"]
+  T2: ["app/**"]
+  T1: ["lib/**"]
+inert: ["**/*.md"]
+gate: { exempt: ["scratch/**"], engagement_ttl_minutes: 30 }
+resources:
+  - { key: OWNER_ONLY, label: Owner only, admin_grantable: false }
+  - { key: SHARED, label: Shared }
+users:
+  - { id: ada, name: Ada, role: admin, identities: { github: ada-gh }, grants: [OWNER_ONLY] }
+  - { id: bo, name: Bo, role: member, grants: [SHARED], deny: [OWNER_ONLY] }
+verify:
+  checks:
+    - { id: unit, run: ["true"] }
