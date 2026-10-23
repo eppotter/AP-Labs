@@ -43,7 +43,6 @@ test('profile schema is a 2020-12 JSON Schema', () => {
 
 test('lib stubs load and refuse to run', () => {
   const stubs = {
-    'kit/lib/permissions': ['resolveAccess'],
     'kit/lib/tier': ['computeTier'],
   };
   for (const [mod, fns] of Object.entries(stubs)) {

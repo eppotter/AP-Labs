@@ -69,6 +69,9 @@ resources:
     admin_grantable: false           # admin role does not confer it
   - key: VERIFY_SKIP
     label: Waive a skipped verify check
+  - key: HANDBOOK
+    label: Read the ops handbook
+    open_access: true               # everyone, incl. people not in users; deny still wins
 users:
   - id: dana                         # stable kit id; surface ids hang off it
     name: Dana Reyes

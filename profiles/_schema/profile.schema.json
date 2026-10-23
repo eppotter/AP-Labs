@@ -57,6 +57,10 @@
           "admin_grantable": {
             "description": "false = the admin role does not confer it; it needs an explicit grant.",
             "type": "boolean"
+          },
+          "open_access": {
+            "description": "true = allowed for everyone, including people not in users. A user's deny still wins.",
+            "type": "boolean"
           }
         }
       }

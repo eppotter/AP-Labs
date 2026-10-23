@@ -36,9 +36,10 @@ test('fills defaults on a minimal profile', () => {
   assert.deepEqual(p.users[0], { id: 'solo', name: 'Solo', role: 'admin', identities: {}, grants: [], deny: [] });
 });
 
-test('defaults admin_grantable to true', () => {
+test('defaults admin_grantable to true and open_access to false', () => {
   const p = validateProfile({ ...parsed('minimal'), resources: [{ key: 'X', label: 'X' }] });
   assert.equal(p.resources[0].admin_grantable, true);
+  assert.equal(p.resources[0].open_access, false);
 });
 
 test('result is deep-frozen and the input is not mutated', () => {
