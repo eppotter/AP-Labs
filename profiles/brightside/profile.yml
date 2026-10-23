@@ -39,4 +39,4 @@ users:
 verify:
   checks:
     - id: unit
-      run: npm test
+      run: [npm, test]

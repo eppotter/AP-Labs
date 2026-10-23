@@ -98,7 +98,12 @@
             "required": ["id", "run"],
             "properties": {
               "id": { "$ref": "#/$defs/slug" },
-              "run": { "$ref": "#/$defs/text" }
+              "run": {
+                "description": "argv array, spawned without a shell. argv[0] is the executable.",
+                "type": "array",
+                "minItems": 1,
+                "items": { "$ref": "#/$defs/text" }
+              }
             }
           }
         }

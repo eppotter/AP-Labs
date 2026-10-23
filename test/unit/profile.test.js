@@ -63,6 +63,8 @@ test('rejects schema violations', () => {
   rejects({ ...parsed('minimal'), client: { id: 'Bad Id', name: 'x' } }, /\/client\/id/);
   rejects({ ...parsed('minimal'), client: { id: 'ok', name: '   ' } }, /\/client\/name/);
   rejects({ ...parsed('minimal'), gate: { engagement_ttl_minutes: 0 } }, /engagement_ttl_minutes/);
+  rejects({ ...parsed('minimal'), verify: { checks: [{ id: 'unit', run: 'npm test' }] } }, /\/verify\/checks\/0\/run must be array/);
+  rejects({ ...parsed('minimal'), verify: { checks: [{ id: 'unit', run: [] }] } }, /\/verify\/checks\/0\/run/);
   rejects([], /must be a YAML mapping/);
   rejects(null, /must be a YAML mapping/);
 });
@@ -83,7 +85,7 @@ test('rejects duplicates', () => {
   const p = parsed('full');
   p.users[1].id = 'ada';
   p.resources[1].key = 'OWNER_ONLY';
-  p.verify.checks.push({ id: 'unit', run: 'x' });
+  p.verify.checks.push({ id: 'unit', run: ['x'] });
   rejects(p, /duplicate resource key "OWNER_ONLY".*duplicate user id "ada".*duplicate verify check id "unit"/);
 });
 
@@ -114,6 +116,8 @@ test('findProfilePath walks up to .aplabs/profile.yml, and APLABS_PROFILE overri
   assert.equal(findProfilePath(fs.mkdtempSync(path.join(os.tmpdir(), 'none-'))), null);
   process.env.APLABS_PROFILE = '/elsewhere/profile.yml';
   assert.equal(findProfilePath(deep), '/elsewhere/profile.yml');
+  process.env.APLABS_PROFILE = 'relative/profile.yml';
+  assert.throws(() => findProfilePath(deep), /APLABS_PROFILE must be an absolute path/);
 });
 
 test('the Brightside demo profile is valid', () => {

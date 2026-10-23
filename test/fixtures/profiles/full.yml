@@ -14,4 +14,4 @@ users:
   - { id: bo, name: Bo, role: member, grants: [SHARED], deny: [OWNER_ONLY] }
 verify:
   checks:
-    - { id: unit, run: "true" }
+    - { id: unit, run: ["true"] }

@@ -43,7 +43,12 @@ function formatSchemaError(e) {
 }
 
 function findProfilePath(startDir = process.cwd()) {
-  if (process.env.APLABS_PROFILE) return process.env.APLABS_PROFILE;
+  const override = process.env.APLABS_PROFILE;
+  if (override) {
+    // Relative would resolve against whatever cwd the hook happens to run in.
+    if (!path.isAbsolute(override)) throw new ProfileError(`APLABS_PROFILE must be an absolute path, got "${override}"`);
+    return override;
+  }
   let dir = path.resolve(startDir);
   for (;;) {
     const candidate = path.join(dir, PROFILE_REL);
