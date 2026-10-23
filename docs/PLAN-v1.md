@@ -10,6 +10,7 @@ The build plan for V1. Scope is fixed by [ADR 0001](adr/0001-prototype-scope.md)
 2. The gate blocks an unplanned write.
 3. Tier and permissions resolve from the profile.
 4. Swapping in a second profile changes behaviour with no code change.
+5. Data workflows can be exercised repeatably with synthetic records in a local DuckDB database and a mock CRM adapter, without connecting to client systems.
 
 ---
 
@@ -20,7 +21,7 @@ Rewrites usually run 2–3× their estimate. Holding to this list is how V1 fini
 | Not in V1 | Why | Comes back when |
 |---|---|---|
 | Slack runtime, hubs, consumer surfaces (TA-17–22) | ADR 0001: kit only | A client asks |
-| DuckDB, mock CRM, any warehouse | No runtime to feed | A client asks |
+| Production warehouse, production DuckDB deployment, or live CRM integration | No client runtime or vendor has been selected; prototype data stays synthetic and local | A client asks, and the integration is scoped separately |
 | FAST lane (`fast-lane.js`) | Its vocabulary is a schema design of its own. Without it, every write needs an engaged agent, which is acceptable for a prototype. | After the prototype, as its own PR |
 | Review pipeline: queue run/scout/dispatch/synopsis, author-record, codeowners, carry-forward, auto-merge | Large, and `gh`-bound. Not in the done-definition. | V2 |
 | Command index, statusline, stage tracker | Convenience, not governance | V2 |
@@ -111,6 +112,13 @@ Conventions from here:
 - **Hooks:** thin bash wrappers call a Node entry point. Hooks fail open (a parse error allows the action) and log to `.aplabs/log/`. Libraries fail closed (a malformed profile refuses to start). That split is deliberate.
 - **Tests** read client specifics from fixtures under `test/fixtures/profiles/`, never from `profiles/brightside/`. The demo profile can change without breaking unit tests.
 - **Stubs** throw `NOT_IMPLEMENTED` until their PR lands. The verify harness reports a skip as a skip.
+
+### Test data and external systems
+
+- **DuckDB is a local test dependency in V1.** Seed it with synthetic, clearly fictional records representative of the workflows under test. Use it to exercise data querying, result checking, and repeatable analytics without access to a client warehouse or production data. Keep the database and seed data in test/example scope; it is not a production warehouse, telemetry service, or authorization source.
+- **CRM behavior is tested through a mock adapter and synthetic records.** Implement only the operations needed by the acceptance scenarios (for example, look up and update a customer record). The CRM vendor and any live integration remain undecided and out of V1.
+- Treat both systems as test fixtures behind narrow interfaces so the acceptance tests can later use a selected client CRM or warehouse without changing the governance engine.
+- Add and pin the DuckDB dependency when implementing the data fixture; document why it is needed in that PR, following the dependency rule above.
 
 ---
 
