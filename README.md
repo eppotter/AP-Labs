@@ -16,7 +16,7 @@ Built from scratch, using Hometown Ticketing's Varsity platform as a design refe
 - `docs/reference/05-discovery-process.md`: how client business rules are captured.
 - `docs/reference/research_notes/`: raw research behind 02.
 
-The build plan is still to come (`docs/PLAN-v1.md`).
+The build plan is `docs/PLAN-v1.md`.
 
 ## Checks
 
