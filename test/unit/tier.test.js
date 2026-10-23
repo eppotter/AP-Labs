@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { loadProfile, validateProfile } = require('../../kit/lib/profile');
-const { tierOf, tierFloor, maxTier, resolveTier, globToRegExp } = require('../../kit/lib/tier');
+const { tierOf, tierFloor, maxTier, resolveTier, globMatcher } = require('../../kit/lib/tier');
 
 const fixture = path.join(__dirname, '../fixtures/profiles/tiers.yml');
 const profile = loadProfile(fixture);
@@ -104,12 +104,45 @@ test('the same path tiers differently under two profiles', () => {
   assert.equal(tierOf(other, 'app/server.js'), 'T3');
 });
 
-test('globToRegExp', () => {
-  assert.ok(globToRegExp('a/**/b.js').test('a/b.js'));
-  assert.ok(globToRegExp('a/**/b.js').test('a/x/y/b.js'));
-  assert.ok(!globToRegExp('a/*.js').test('a/x/b.js'));
-  assert.ok(!globToRegExp('a.js').test('aXjs'), 'dots are literal');
-  assert.ok(globToRegExp('A/**', 'i').test('a/x'));
+test('globMatcher', () => {
+  const m = (g, p, o) => globMatcher(g, o)(p);
+  assert.ok(m('a/**/b.js', 'a/b.js'));
+  assert.ok(m('a/**/b.js', 'a/x/y/b.js'));
+  assert.ok(!m('a/**/b.js', 'a/xb.js'), '**/ only matches whole directories');
+  assert.ok(m('docs/**', 'docs/a/b.md'));
+  assert.ok(m('docs/**', 'docs/'));
+  assert.ok(!m('docs/**', 'docsx/a'));
+  assert.ok(m('**/*.md', 'README.md'));
+  assert.ok(m('**/*.md', 'a/b/c.md'));
+  assert.ok(!m('a/*.js', 'a/x/b.js'), '* stays within one segment');
+  assert.ok(m('a/*.js', 'a/.js'));
+  assert.ok(!m('a.js', 'aXjs'), 'dots are literal');
+  assert.ok(m('f[1].js', 'f[1].js'), 'brackets are literal');
+  assert.ok(m('A/**', 'a/x', { nocase: true }));
+  assert.ok(!m('A/**', 'a/x'));
+  assert.ok(!m('ab', 'a'));
+  assert.ok(!m('a', 'ab'));
+});
+
+test('globMatcher: hostile globs cannot stall the tier check (linear time)', () => {
+  const glob = '*a'.repeat(60) + '*b';
+  const input = 'a'.repeat(200) + 'c';
+  const start = process.hrtime.bigint();
+  assert.equal(globMatcher(glob)(input), false);
+  assert.equal(globMatcher('**/'.repeat(60) + 'x')('a/'.repeat(100) + 'y'), false);
+  assert.ok(Number(process.hrtime.bigint() - start) / 1e6 < 250, 'took too long');
+});
+
+test('schema caps glob length', () => {
+  const base = { schema_version: 1, client: { id: 'g', name: 'G' }, users: [{ id: 'a', name: 'A', role: 'admin' }] };
+  assert.throws(() => validateProfile({ ...base, inert: ['a'.repeat(257)] }), /\/inert\/0/);
+});
+
+test('paths are never trimmed: whitespace is part of a filename', () => {
+  const p = validateProfile({ schema_version: 1, client: { id: 'w', name: 'W' }, users: [{ id: 'a', name: 'A', role: 'admin' }], inert: ['README.md'] });
+  assert.equal(tierOf(p, 'README.md'), 'T0');
+  assert.equal(tierOf(p, 'README.md '), 'T1');
+  assert.equal(tierOf(p, ' README.md'), 'T1');
 });
 
 test('CLI: prints the result; exit 1 below floor, 2 on no paths or bad profile', () => {
@@ -127,6 +160,9 @@ test('CLI: prints the result; exit 1 below floor, 2 on no paths or bad profile',
 
   r = run([], 'lib/a.js\nREADME.md\n');
   assert.equal(JSON.parse(r.stdout).floor, 'T1');
+
+  r = run([], 'README.md \n');
+  assert.equal(JSON.parse(r.stdout).floor, 'T1', 'stdin lines are not trimmed');
 
   r = run([], '');
   assert.equal(r.status, 2);

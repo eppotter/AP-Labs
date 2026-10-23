@@ -19,12 +19,13 @@
 //   - Rules that RAISE a tier match case-insensitively (Billing/x.js on a
 //     case-insensitive filesystem is billing/x.js). The inert rule, the only
 //     one that LOWERS a tier, matches exact case.
-//   - Paths are normalised first, so docs/../billing/x.js is billing/x.js.
+//   - Paths are normalised first, so docs/../billing/x.js is billing/x.js,
+//     but never trimmed: whitespace is part of a filename.
 //     A path that leaves the repo root, or is absolute, floors at T3.
 //   - No paths at all is an error, never T0 (an upstream diff that failed
 //     must not read as "nothing changed").
 //
-// Harvested from the archived repo's tier-floor.js: globToRegExp, the
+// Harvested from the archived repo's tier-floor.js: the glob dialect, the
 // tierOf / tierFloor / maxTier semantics, exit 2 on no paths. The four literal
 // path arrays now come from the profile.
 
@@ -34,25 +35,63 @@ const TIERS = ['T0', 'T1', 'T2', 'T3'];
 const ORDER = { T0: 0, T1: 1, T2: 2, T3: 3 };
 const ENGINE_T3 = ['.aplabs/**'];
 
-function globToRegExp(glob, flags = '') {
-  // Minimal glob: `**` = any depth (incl. none), `*` = within one segment. Anchored.
-  let re = '';
+// Minimal glob: `**` = any depth (incl. none), `*` = within one segment, every
+// other character literal. Anchored. Profile globs are untrusted (PR-07), so
+// matching is a position-set walk, O(glob length x path length), never a
+// backtracking regex: a glob like `*a*a*a…b` cannot stall the tier check.
+function tokenize(glob) {
+  const tokens = [];
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
-    if (c === '*') {
-      if (glob[i + 1] === '*') {
-        if (glob[i + 2] === '/') { re += '(?:.*/)?'; i += 2; }
-        else { re += '.*'; i += 1; }
-      } else {
-        re += '[^/]*';
-      }
-    } else if ('.+?^${}()|[]\\'.includes(c)) {
-      re += '\\' + c;
+    if (c === '*' && glob[i + 1] === '*') {
+      if (glob[i + 2] === '/') { tokens.push({ t: 'dirs' }); i += 2; }
+      else { tokens.push({ t: 'any' }); i += 1; }
+    } else if (c === '*') {
+      tokens.push({ t: 'seg' });
     } else {
-      re += c;
+      tokens.push({ t: 'lit', c });
     }
   }
-  return new RegExp('^' + re + '$', flags);
+  return tokens;
+}
+
+function globMatcher(glob, { nocase = false } = {}) {
+  const fold = (x) => (nocase ? x.toLowerCase() : x);
+  const tokens = tokenize(fold(glob));
+  return (input) => {
+    const s = fold(input);
+    const n = s.length;
+    let cur = new Uint8Array(n + 1);
+    cur[0] = 1;
+    for (const tok of tokens) {
+      const next = new Uint8Array(n + 1);
+      let live = false;
+      if (tok.t === 'lit') {
+        for (let j = 0; j < n; j++) if (cur[j] && s[j] === tok.c) { next[j + 1] = 1; live = true; }
+      } else if (tok.t === 'seg') {
+        // From each reachable j, extend while not crossing a '/'.
+        let run = false;
+        for (let j = 0; j <= n; j++) {
+          if (cur[j]) run = true;
+          if (run) { next[j] = 1; live = true; }
+          if (j < n && s[j] === '/') run = false;
+        }
+      } else if (tok.t === 'any') {
+        let run = false;
+        for (let j = 0; j <= n; j++) { if (cur[j]) run = true; if (run) { next[j] = 1; live = true; } }
+      } else {
+        // `**/`: zero dirs, or any run that ends just after a '/'.
+        let run = false;
+        for (let j = 0; j <= n; j++) {
+          if (cur[j]) { next[j] = 1; live = true; run = true; }
+          if (run && j > 0 && s[j - 1] === '/' && !cur[j]) { next[j] = 1; live = true; }
+        }
+      }
+      if (!live) return false;
+      cur = next;
+    }
+    return cur[n] === 1;
+  };
 }
 
 function isInstructionFile(p) {
@@ -66,13 +105,13 @@ const compiled = new WeakMap();
 function rulesOf(profile) {
   let rules = compiled.get(profile);
   if (!rules) {
-    const raise = (globs) => (globs || []).map((g) => globToRegExp(g, 'i'));
+    const raise = (globs) => (globs || []).map((g) => globMatcher(g, { nocase: true }));
     rules = {
       engineT3: raise(ENGINE_T3),
       T3: raise(profile.tiers.T3),
       T2: raise(profile.tiers.T2),
       T1: raise(profile.tiers.T1),
-      inert: profile.inert.map((g) => globToRegExp(g)),
+      inert: profile.inert.map((g) => globMatcher(g)),
     };
     compiled.set(profile, rules);
   }
@@ -80,15 +119,16 @@ function rulesOf(profile) {
 }
 
 // Repo-relative POSIX path, or null when it is absolute or leaves the repo.
+// Never trimmed: `README.md ` is a different file from `README.md`.
 function normalise(p) {
-  const s = String(p).trim().replace(/\\/g, '/');
+  const s = String(p).replace(/\\/g, '/');
   if (!s || s.startsWith('/') || /^[A-Za-z]:\//.test(s)) return null;
   const n = path.posix.normalize(s);
   if (n === '..' || n.startsWith('../')) return null;
   return n === '.' ? null : n;
 }
 
-const any = (p, rxs) => rxs.some((r) => r.test(p));
+const any = (p, matchers) => matchers.some((m) => m(p));
 
 /** Tier of ONE path. */
 function tierOf(profile, filePath) {
@@ -136,9 +176,10 @@ function resolveTier(profile, paths, declared) {
   };
 }
 
-module.exports = { tierOf, tierFloor, maxTier, resolveTier, globToRegExp, ENGINE_T3, TIERS };
+module.exports = { tierOf, tierFloor, maxTier, resolveTier, globMatcher, ENGINE_T3, TIERS };
 
-// CLI: node kit/lib/tier [--declared T1] path…   (or paths on stdin, one per line)
+// CLI: node kit/lib/tier [--declared T1] path…   (or paths on stdin, one per line;
+//      lines are taken verbatim, only empty lines are dropped)
 // Prints the JSON result. Exit 0 ok, 1 declared below floor, 2 usage / no paths / bad profile.
 if (require.main === module) {
   const { loadProfile } = require('../profile');
@@ -152,7 +193,7 @@ if (require.main === module) {
     args.splice(di, 2);
   }
   const run = (raw) => {
-    const paths = raw.map((s) => s.trim()).filter(Boolean);
+    const paths = raw.filter((s) => s !== '');
     if (!paths.length) fail('no paths received, cannot compute a floor (did the upstream diff fail?)');
     let profile;
     try { profile = loadProfile(); } catch (e) { fail(e.message); }
