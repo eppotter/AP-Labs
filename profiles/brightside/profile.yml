@@ -1,0 +1,6 @@
+# Brightside Home Cleaning: fictional multi-branch residential cleaner.
+# Demo client and profile #1. Fields beyond these wait for the schema design.
+schema_version: 0
+client:
+  id: brightside
+  name: Brightside Home Cleaning

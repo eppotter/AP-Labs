@@ -1,0 +1,12 @@
+{
+  "name": "ap-labs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Governance kit for building AI agent solutions inside client organisations.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "check": "bash scripts/check-syntax.sh",
+    "test": "node --test",
+    "verify": "bash kit/verify/run-all.sh"
+  }
+}
