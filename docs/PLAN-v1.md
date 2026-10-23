@@ -81,8 +81,10 @@ users:
 verify:
   checks:
     - id: unit
-      run: "npm test"
+      run: [npm, test]               # argv array, never a shell string
 ```
+
+**Checks are argv arrays, not shell strings.** This removes shell interpretation of profile content (PR-07). It does not make a check safe, since `[sh, -c, …]` is still expressible. The controls are the T3 floor on the profile below and the execution policy in PR 8.
 
 **Hard-coded in the engine, not the profile:** `.aplabs/**` is always T3. A profile edit is a permission and tier change. Letting a profile lower its own floor would break PR-01, and per PR-07 configuration is untrusted input.
 
@@ -120,7 +122,7 @@ One PR per row, in order. **Copy** = near-verbatim, tests included, with fixture
 | 5 | Tier | `plugins/varsity-dev/scripts/tier-floor.js` (323 ln) | Rewrite | Keep `globToRegExp`, the `tierOf`/`tierFloor`/`maxTier` semantics, and exit 2 on no paths (never read as T0). The four literal arrays come from the profile. Drop `autoMergeEligibility` and the ledger path. | M |
 | 6 | Hook lib + governed predicate | `hooks/varsity-lib.sh` (641 ln) | Copy (subset) | Only `hook_note`/`hook_fail`/`hook_degraded`, the governed-iff-profile check and `file_mtime`. Leave dedupe, the stage tracker and the cache check. | S |
 | 7 | Write gate + engagement marker | `hooks/varsity-orchestrator-gate.sh` (246 ln), `varsity-agent-banner.sh`, `hooks.json` | Copy (rules) · Rewrite (paths) | Rules 1, 2, 3 and deny carry over. Rule 1b (`apps/**`) becomes `gate.exempt`. Rule 3b (FAST) is left behind. The marker's only writer stays the SubagentStart hook, never the model. Same threat model: it deters accidents and is not a hard control. | M |
-| 8 | Verify harness | `agents/varsity/verify/run-all.js`, `common.js`, `__tests__/run-all.test.js` | Copy (contract) · Rewrite (checks) | Keep ordered checks, last-line JSON, skip ≠ pass, and exit codes 0/1/2. Checks come from profile `verify.checks` through a generic-command adapter. Leave boot-smoke, flag-default-off, handler-fixtures and sql-assertions, which are Varsity-runtime checks. Replaces the stub `run-all.sh`. | M |
+| 8 | Verify harness | `agents/varsity/verify/run-all.js`, `common.js`, `__tests__/run-all.test.js` | Copy (contract) · Rewrite (checks) | Keep ordered checks, last-line JSON, skip ≠ pass, and exit codes 0/1/2. Checks come from profile `verify.checks` through a generic-command adapter. Execution policy: spawn the argv without a shell, cwd = repo root, an env allowlist (no secrets, PR-08) and a timeout. A check that can't spawn is reported as skipped, not failed or passed. Leave boot-smoke, flag-default-off, handler-fixtures and sql-assertions, which are Varsity-runtime checks. Replaces the stub `run-all.sh`. | M |
 | 9 | Stop-verify hook | `hooks/varsity-stop-verify.sh` (388 ln) | Rewrite | On Stop, run the harness when the session wrote code. Its tests pin Hometown paths heavily (72 hits), so rewrite them against fixtures. Leave `stop-verify-select-tests`. | M |
 | 10 | Brightside install + acceptance | — | New | Populate `examples/brightside-install/` (fake app tree, `.aplabs/profile.yml`, plugin wired in). Add a second fictional profile (Harbor Dental Group) as a fixture. The acceptance test checks that the same kit with two profiles gives different gate, tier and permission outcomes, and that the only diff is `.aplabs/profile.yml`. | M |
 
