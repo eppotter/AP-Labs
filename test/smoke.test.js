@@ -41,17 +41,9 @@ test('profile schema is a 2020-12 JSON Schema', () => {
   assert.equal(schema.$schema, 'https://json-schema.org/draft/2020-12/schema');
 });
 
-test('lib stubs load and refuse to run', () => {
-  const stubs = {
-    'kit/lib/tier': ['computeTier'],
-  };
-  for (const [mod, fns] of Object.entries(stubs)) {
-    const lib = require(at(mod));
-    for (const fn of fns) {
-      assert.equal(typeof lib[fn], 'function', `${mod}.${fn}`);
-      assert.throws(() => lib[fn](), { code: 'NOT_IMPLEMENTED' });
-    }
-  }
+test('not-implemented helper throws a coded error', () => {
+  const { notImplemented } = require(at('kit/lib/not-implemented'));
+  assert.throws(() => notImplemented('x')(), { code: 'NOT_IMPLEMENTED' });
 });
 
 test('verify harness reports zero checks as skipped, not passed', () => {
