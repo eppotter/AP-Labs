@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/eppotter/AP-Labs/profiles/_schema/profile.schema.json",
+  "title": "AP Labs client profile",
+  "description": "Placeholder. The real schema is designed in docs/PLAN-v1.md.",
+  "type": "object",
+  "required": ["schema_version", "client"],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 0 },
+    "client": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
