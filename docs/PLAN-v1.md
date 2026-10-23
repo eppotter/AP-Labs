@@ -10,7 +10,8 @@ The build plan for V1. Scope is fixed by [ADR 0001](adr/0001-prototype-scope.md)
 2. The gate blocks an unplanned write.
 3. Tier and permissions resolve from the profile.
 4. Swapping in a second profile changes behaviour with no code change.
-5. Data workflows can be exercised repeatably with synthetic records in a local DuckDB database and a mock CRM adapter, without connecting to client systems.
+5. Ely and a teammate can access the same online DuckDB test dataset, populated only with synthetic records, and exercise it through a mock CRM adapter without connecting to client systems.
+6. Local development and CI can create an isolated DuckDB database from the same versioned seed data, so automated checks do not depend on the shared online service.
 
 ---
 
@@ -21,7 +22,7 @@ Rewrites usually run 2–3× their estimate. Holding to this list is how V1 fini
 | Not in V1 | Why | Comes back when |
 |---|---|---|
 | Slack runtime, hubs, consumer surfaces (TA-17–22) | ADR 0001: kit only | A client asks |
-| Production warehouse, production DuckDB deployment, or live CRM integration | No client runtime or vendor has been selected; prototype data stays synthetic and local | A client asks, and the integration is scoped separately |
+| Production warehouse, production data, or live CRM integration | V1 uses a shared online test database with synthetic data only; no client runtime or CRM vendor has been selected | A client asks, and the integration is scoped separately |
 | FAST lane (`fast-lane.js`) | Its vocabulary is a schema design of its own. Without it, every write needs an engaged agent, which is acceptable for a prototype. | After the prototype, as its own PR |
 | Review pipeline: queue run/scout/dispatch/synopsis, author-record, codeowners, carry-forward, auto-merge | Large, and `gh`-bound. Not in the done-definition. | V2 |
 | Command index, statusline, stage tracker | Convenience, not governance | V2 |
@@ -115,9 +116,12 @@ Conventions from here:
 
 ### Test data and external systems
 
-- **DuckDB is a local test dependency in V1.** Seed it with synthetic, clearly fictional records representative of the workflows under test. Use it to exercise data querying, result checking, and repeatable analytics without access to a client warehouse or production data. Keep the database and seed data in test/example scope; it is not a production warehouse, telemetry service, or authorization source.
-- **CRM behavior is tested through a mock adapter and synthetic records.** Implement only the operations needed by the acceptance scenarios (for example, look up and update a customer record). The CRM vendor and any live integration remain undecided and out of V1.
-- Treat both systems as test fixtures behind narrow interfaces so the acceptance tests can later use a selected client CRM or warehouse without changing the governance engine.
+- **The shared test dataset is online.** Ely and at least one teammate need to access and work with the same DuckDB dataset remotely. MotherDuck Lite is the leading hosting candidate, pending validation that its current plan, access controls, and collaboration workflow fit the prototype. Record the hosting choice and setup in the implementation PR.
+- **Use synthetic data only.** Seed the shared database with clearly fictional records representative of the workflows under test. Keep it separate from client and production data. It is a collaborative test fixture, not a production warehouse, authorization source, or production telemetry service.
+- **Keep automated tests deterministic.** Store the schema and seed data in the repository. Unit tests and CI create an isolated local DuckDB database from those same files; they must not require network access or shared-service credentials. The online database is for collaborative development and integration testing.
+- **Keep credentials out of the repository and agent-visible data.** Each collaborator should authenticate through an approved user-scoped method. Do not commit service tokens, put them in profiles, or print them in test logs. Any automated access to the shared service requires a separately approved secret-injection path.
+- **CRM behavior is tested through a mock adapter and synthetic records.** Implement only operations needed by acceptance scenarios (for example, look up and update a customer). The CRM vendor and any live integration remain undecided and out of V1. The mock should use the same synthetic domain and data contract as the DuckDB scenarios; whether it reads from DuckDB or separate fixtures is an implementation decision.
+- Treat the database and CRM adapter as test interfaces so later client CRM or warehouse integrations do not require changes to the governance engine.
 - Add and pin the DuckDB dependency when implementing the data fixture; document why it is needed in that PR, following the dependency rule above.
 
 ---
