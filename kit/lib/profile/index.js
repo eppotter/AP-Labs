@@ -87,7 +87,7 @@ function validateProfile(profile, file) {
   p.tiers = p.tiers || {};
   p.inert = p.inert || [];
   p.gate = { exempt: [], engagement_ttl_minutes: 60, ...p.gate };
-  p.resources = (p.resources || []).map((r) => ({ admin_grantable: true, ...r }));
+  p.resources = (p.resources || []).map((r) => ({ admin_grantable: true, open_access: false, ...r }));
   p.verify = { checks: [], ...p.verify };
   p.users = p.users.map((u) => ({ identities: {}, grants: [], deny: [], ...u }));
 

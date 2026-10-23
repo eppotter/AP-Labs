@@ -57,6 +57,10 @@
           "admin_grantable": {
             "description": "false = the admin role does not confer it; it needs an explicit grant.",
             "type": "boolean"
+          },
+          "open_access": {
+            "description": "true = allowed for everyone, including people not in users. A user's deny still wins.",
+            "type": "boolean"
           }
         }
       }
@@ -114,7 +118,8 @@
   "$defs": {
     "slug": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
     "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
-    "globs": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+    "globs": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/glob" } },
+    "glob": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "\\S" },
     "resourceKey": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
     "resourceKeys": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/resourceKey" } }
   }
