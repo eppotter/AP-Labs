@@ -20,7 +20,7 @@ The build plan is `docs/PLAN-v1.md`.
 
 ## Checks
 
-Node 20 or later. No dependencies to install.
+Node 20 or later. Run `npm ci` once.
 
 ```
 npm run check    # syntax: JS, shell, JSON

@@ -2,18 +2,115 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/eppotter/AP-Labs/profiles/_schema/profile.schema.json",
   "title": "AP Labs client profile",
-  "description": "Placeholder. The real schema is designed in docs/PLAN-v1.md.",
+  "description": "Declares one client's inputs to the kit. Lives at .aplabs/profile.yml in the client repo; its presence marks the repo as governed. Unknown keys are errors.",
   "type": "object",
-  "required": ["schema_version", "client"],
+  "additionalProperties": false,
+  "required": ["schema_version", "client", "users"],
   "properties": {
-    "schema_version": { "type": "integer", "minimum": 0 },
+    "schema_version": { "const": 1 },
+
     "client": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["id", "name"],
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
-        "name": { "type": "string", "minLength": 1 }
+        "id": { "$ref": "#/$defs/slug" },
+        "name": { "$ref": "#/$defs/text" }
+      }
+    },
+
+    "tiers": {
+      "description": "Blast radius (PR-01). Highest matching tier wins; unmatched code floors at T1.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "T3": { "$ref": "#/$defs/globs" },
+        "T2": { "$ref": "#/$defs/globs" },
+        "T1": { "$ref": "#/$defs/globs" }
+      }
+    },
+
+    "inert": {
+      "description": "Paths that floor at T0. A change is T0 only when every path is inert.",
+      "$ref": "#/$defs/globs"
+    },
+
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exempt": { "description": "Paths the write gate never applies to.", "$ref": "#/$defs/globs" },
+        "engagement_ttl_minutes": { "type": "integer", "minimum": 1, "maximum": 1440 }
+      }
+    },
+
+    "resources": {
+      "description": "What can be granted. Keys are referenced by users[].grants and users[].deny.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "label"],
+        "properties": {
+          "key": { "$ref": "#/$defs/resourceKey" },
+          "label": { "$ref": "#/$defs/text" },
+          "admin_grantable": {
+            "description": "false = the admin role does not confer it; it needs an explicit grant.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+
+    "users": {
+      "description": "Who can do what (PR-03: deny beats allow). The only access source.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "role"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9._-]*$" },
+          "name": { "$ref": "#/$defs/text" },
+          "role": { "enum": ["admin", "member"] },
+          "identities": {
+            "description": "Per-surface ids, e.g. github, slack.",
+            "type": "object",
+            "propertyNames": { "$ref": "#/$defs/slug" },
+            "additionalProperties": { "$ref": "#/$defs/text" }
+          },
+          "grants": { "$ref": "#/$defs/resourceKeys" },
+          "deny": { "$ref": "#/$defs/resourceKeys" }
+        }
+      }
+    },
+
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "run"],
+            "properties": {
+              "id": { "$ref": "#/$defs/slug" },
+              "run": { "$ref": "#/$defs/text" }
+            }
+          }
+        }
       }
     }
+  },
+
+  "$defs": {
+    "slug": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "globs": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+    "resourceKey": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+    "resourceKeys": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/resourceKey" } }
   }
 }

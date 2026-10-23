@@ -36,15 +36,13 @@ test('plugin manifest names the kit', () => {
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
 });
 
-test('profile schema is a 2020-12 JSON Schema requiring client', () => {
+test('profile schema is a 2020-12 JSON Schema', () => {
   const schema = readJson('profiles/_schema/profile.schema.json');
   assert.equal(schema.$schema, 'https://json-schema.org/draft/2020-12/schema');
-  assert.ok(schema.required.includes('client'));
 });
 
 test('lib stubs load and refuse to run', () => {
   const stubs = {
-    'kit/lib/profile': ['loadProfile', 'validateProfile'],
     'kit/lib/permissions': ['resolveAccess'],
     'kit/lib/tier': ['computeTier'],
   };

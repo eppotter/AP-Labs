@@ -1,6 +1,42 @@
 # Brightside Home Cleaning: fictional multi-branch residential cleaner.
-# Demo client and profile #1. Fields beyond these wait for the schema design.
-schema_version: 0
+# Demo client and profile #1. Schema: profiles/_schema/profile.schema.json.
+schema_version: 1
+
 client:
   id: brightside
   name: Brightside Home Cleaning
+
+# Blast radius. Highest match wins; unmatched code floors at T1.
+tiers:
+  T3: ["billing/**", "customers/export/**"]
+  T2: ["scheduling/**", "Dockerfile", ".github/workflows/**"]
+  T1: ["lib/**"]
+inert: ["**/*.md", "docs/**"]
+
+gate:
+  exempt: ["sandbox/**"]
+  engagement_ttl_minutes: 60
+
+resources:
+  - key: TIER3_APPROVE
+    label: Approve T3 changes
+    admin_grantable: false
+  - key: VERIFY_SKIP
+    label: Waive a skipped verify check
+
+users:
+  - id: dana
+    name: Dana Reyes
+    role: admin
+    identities: { github: dana-r }
+    grants: [TIER3_APPROVE]
+  - id: marcus
+    name: Marcus Lee
+    role: member
+    identities: { github: mlee-bright }
+    grants: [VERIFY_SKIP]
+
+verify:
+  checks:
+    - id: unit
+      run: npm test

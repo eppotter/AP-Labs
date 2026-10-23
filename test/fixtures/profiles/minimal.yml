@@ -1,0 +1,4 @@
+schema_version: 1
+client: { id: tiny, name: Tiny }
+users:
+  - { id: solo, name: Solo, role: admin }
