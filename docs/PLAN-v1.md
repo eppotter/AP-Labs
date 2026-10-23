@@ -126,7 +126,7 @@ One PR per row, in order. **Copy** = near-verbatim, tests included, with fixture
 
 Prototype total: 8 PRs. At 2–3× overrun, plan for roughly 16–24 sessions of work, not 8.
 
-**Coupling check on every port PR:** `grep -riE 'hometown|varsity|snowflake|bi-platform'` over the diff must return nothing outside `docs/`. The per-file hit counts are in the harvest inventory above; the hooks and their tests are the worst.
+**Coupling check on every port PR:** `grep -riE 'hometown|varsity|snowflake|bi-platform'` over the diff must return nothing outside `docs/`. In the source files, the hooks and their tests pin client specifics the most (the stop-verify test has 72 hits, the FAST-banner test 46).
 
 ---
 
