@@ -10,7 +10,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { STAGES, sessionStart } = require('../../kit/lib/session');
+const { sessionStart } = require('../../kit/lib/session');
+const { CORE: STAGES } = require('../../kit/lib/stages');
 
 const ROOT = path.resolve(__dirname, '../..');
 const WRAPPER = path.join(ROOT, 'kit/hooks/session-start.sh');

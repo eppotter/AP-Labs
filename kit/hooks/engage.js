@@ -11,8 +11,10 @@
 //   --kind onboarding       an onboarding build: approval needed at any tier
 //                           (default kind: build)
 //   --plan-reviewed <path>  copy the bmad-review output (a file in this repo)
-//                           to <git-common-dir>/aplabs/plan-reviews/<slug>.md;
-//                           needs --plan. T3 edits need this record.
+//                           to <git-common-dir>/aplabs/plan-reviews/<slug>.md
+//                           plus the <slug>.json record the gate reads (slug,
+//                           time, source); needs --plan. T3 edits need a
+//                           record from the current plan engagement.
 //
 // It exists because AP Labs builders run as separate delegated sessions where
 // SubagentStart never fires. It is model-runnable by design: the gate is a

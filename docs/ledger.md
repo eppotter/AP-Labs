@@ -6,7 +6,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 
 **DEP rows.** Give each deferral or blocker the next free id (`DEP-001`, `DEP-002`, ...); ids are never reused or renumbered. Owner is who has to act. Status is `open` or `closed`: flip it to `closed` when the item is done or dropped, and keep the row. Blocks names what waits on it (`—` if nothing). Source links where it came from (a PR, an issue, a doc).
 
-**The check.** CI runs `node scripts/ledger-check.js --base origin/<base>` on every pull request. It fails unless the PR touches this file or is docs-only (by the same rule `npm run review` uses), and it fails when this file is malformed: a missing table, a bad or repeated DEP id, a status other than `open` or `closed`, a PR with two rows, or a DEP named in Builds with no DEP row. Reverts are not exempt in CI: verifying a revert needs a diff per commit, so a revert PR adds a row too.
+**The check.** CI runs `node scripts/ledger-check.js --base origin/<base>` on every pull request. It fails unless the PR touches this file or is docs-only (by the same rule `npm run review` uses), and it fails when this file is malformed: a missing or repeated table, a bad or repeated DEP id, a status other than `open` or `closed`, a PR with two rows, or a DEP named in Builds with no DEP row. Reverts are not exempt in CI: verifying a revert needs a diff per commit, so a revert PR adds a row too.
 
 ## Builds
 
@@ -44,17 +44,18 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #42 | 2026-10-24 | 4.1 | infra | — | Adds the four client file templates, `npm run onboard` to create and check them, and a banner line until each is signed off by its client owner. | — |
 | #44 | 2026-10-24 | 4.2 | infra | — | Each known truth in `data.md` carries a check that `npm run verify` and the end-of-turn hook run against the client's number; the banner flags truths not checked or signed off. | DEP-010 |
 | #46 | 2026-10-24 | — | fix | — | Hardens review and land: later Claude rounds also get the diff since the last reviewed head, the rubric is built from parts, Claude's flags are pinned by a test, a CLEAN verdict hiding a prose blocker fails, and repeated exempt lines refuse a merge. | — |
+| #48 | 2026-10-24 | — | fix | — | Hardening: T3 plan reviews must come from the current plan, duplicate ledger tables fail, add-on stage lists can't drift, odd comma numbers are rejected, the banner flags truths that failed at last verify, and fork CI runs verify strictly. | DEP-001, DEP-002, DEP-003, DEP-006 |
 
 ## Deferrals (DEP)
 
 | DEP | Opened | Owner | Status | Blocks | What | Source |
 |---|---|---|---|---|---|---|
-| DEP-001 | 2026-10-24 | Orchestrator | open | — | Non-blocking review follow-ups from PR #12 (Story 1.2). | [#13](https://github.com/eppotter/AP-Labs/issues/13) |
-| DEP-002 | 2026-10-24 | Orchestrator | open | — | Non-blocking review follow-ups from PR #14 (Story 1.3). | [#15](https://github.com/eppotter/AP-Labs/issues/15) |
-| DEP-003 | 2026-10-24 | Orchestrator | open | — | Non-blocking review follow-ups from PR #23 (Story 3.1). | [#24](https://github.com/eppotter/AP-Labs/issues/24) |
+| DEP-001 | 2026-10-24 | Orchestrator | closed | — | Non-blocking review follow-ups from PR #12 (Story 1.2). | [#13](https://github.com/eppotter/AP-Labs/issues/13) |
+| DEP-002 | 2026-10-24 | Orchestrator | closed | — | Non-blocking review follow-ups from PR #14 (Story 1.3). | [#15](https://github.com/eppotter/AP-Labs/issues/15) |
+| DEP-003 | 2026-10-24 | Orchestrator | closed | — | Non-blocking review follow-ups from PR #23 (Story 3.1). | [#24](https://github.com/eppotter/AP-Labs/issues/24) |
 | DEP-004 | 2026-10-24 | Orchestrator | open | Story 4.3 | Story 4.3 (prove onboarding on Brightside) is deferred to the fixture phase: it needs the Brightside dataset. | `docs/planning/planning-artifacts/epics.md` (Story 4.3) |
 | DEP-005 | 2026-10-24 | Orchestrator | open | — | The Codex SessionStart and gate output formats are unproven against a live, trusted Codex session. | [#27](https://github.com/eppotter/AP-Labs/pull/27) |
-| DEP-006 | 2026-10-24 | Orchestrator | open | — | Small hardening follow-ups from Story 2.6's review (add-on lists in sync, error type, unused export). | https://github.com/eppotter/AP-Labs/issues/31 |
+| DEP-006 | 2026-10-24 | Orchestrator | closed | — | Small hardening follow-ups from Story 2.6's review (add-on lists in sync, error type, unused export). | https://github.com/eppotter/AP-Labs/issues/31 |
 | DEP-007 | 2026-10-24 | Orchestrator | open | — | Plan approvals are recorded only in Claude Code sessions; Codex's UserPromptSubmit hook is unproven, so Codex sessions can't record an approval. | Story 2.5 |
 | DEP-008 | 2026-10-24 | Orchestrator | open | — | Watch whether blocking the turn end on any failing check (e.g. mid-TDD red tests) slows builders; Varsity only reported test failures before review. | Story 3.2 |
 | DEP-009 | 2026-10-24 | Orchestrator | open | — | `npm run retro` reads only PR bodies, so it can't flag a PR merged while CI was red (as #19 was); add a CI-state-at-merge check. | docs/planning/implementation-artifacts/retro-epics-2-3-5.md |

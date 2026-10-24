@@ -10,7 +10,9 @@
 // without a shell, from the repo root (cwd), stdin ignored. A check sees only
 // the fixed env allowlist plus verify.env_allow, and its whole process group
 // is SIGKILLed after its timeout_seconds (kit/lib/verify/runner). One line per check, then a JSON summary as the last stdout
-// line. Output tails of failed and timed-out checks go to stderr.
+// line. Output tails of failed and timed-out checks go to stderr. Each run's
+// outcomes are recorded in <git-dir>/aplabs/verify/last.json for the session
+// banner (kit/lib/verify/last).
 //
 // No profile is a SKIP (exit 0, 1 under --strict) so an ungoverned repo's CI
 // stays green. Exit codes: 0 no check failed, 1 a check failed, 2 usage or
@@ -20,6 +22,7 @@ const { findProfilePath, loadProfile, PROFILE_REL } = require('../lib/profile');
 const { USAGE, parseArgs, childEnv, tail, checkLine, summarize, exitCode } = require('../lib/verify');
 const { runChecks, installSignalCleanup } = require('../lib/verify/runner');
 const { truthChecksFor } = require('../lib/truths');
+const { writeLastResult } = require('../lib/verify/last');
 
 const emit = (summary) => console.log(JSON.stringify(summary));
 
@@ -71,6 +74,8 @@ async function main(argv, env = process.env, cwd = process.cwd()) {
     },
   });
 
+  // For the session banner (issue #45): best effort, never fails the run.
+  if (checks.length) writeLastResult(cwd, results, 'verify');
   const summary = summarize(results);
   emit(summary);
   return exitCode(summary, args);

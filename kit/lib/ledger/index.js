@@ -29,8 +29,13 @@ function cells(line) {
 
 const sameHeader = (row, header) => row.length === header.length && row.every((c, i) => c === header[i]);
 
-// Finds the table whose header row is exactly `header` and returns its body
-// rows with their 1-based line numbers, or null when there is no such table.
+// 1-based line numbers of every table header row that is exactly `header`.
+const headerLines = (lines, header) => lines
+  .map((l, i) => (l.trim().startsWith('|') && sameHeader(cells(l), header) ? i + 1 : 0))
+  .filter(Boolean);
+
+// Finds the first table whose header row is exactly `header` and returns its
+// body rows with their 1-based line numbers, or null when there is no such table.
 function readTable(lines, header) {
   const start = lines.findIndex((l) => l.trim().startsWith('|') && sameHeader(cells(l), header));
   if (start === -1) return null;
@@ -53,6 +58,12 @@ function parseLedger(text) {
   const depRows = readTable(lines, DEPS_HEADER);
   if (!buildRows) errors.push(`missing the Builds table (header: | ${BUILDS_HEADER.join(' | ')} |)`);
   if (!depRows) errors.push(`missing the Deferrals table (header: | ${DEPS_HEADER.join(' | ')} |)`);
+  // A second table with the same header would be skipped by readTable, so its
+  // rows would escape every check below.
+  for (const [name, header] of [['Builds', BUILDS_HEADER], ['Deferrals', DEPS_HEADER]]) {
+    const at = headerLines(lines, header);
+    if (at.length > 1) errors.push(`line ${at.slice(1).join(', ')}: a second ${name} table; keep one ${name} table (the first is at line ${at[0]})`);
+  }
 
   for (const { line, cells: c } of depRows || []) {
     if (c.length !== DEPS_HEADER.length) {

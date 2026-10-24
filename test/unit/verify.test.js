@@ -225,3 +225,20 @@ test('cli: a check that exits leaves nothing running and does not stall', async 
   assert.ok((Date.now() - started) / 1000 < 5, 'did not wait for the grandchild');
   assert.ok(await gone(Number(fs.readFileSync(pidFile, 'utf8'))), 'grandchild was killed');
 });
+
+test('CI: the Verify step runs --strict in a governed fork, plain in the template (#24)', () => {
+  const ci = YAML.parse(fs.readFileSync(path.join(__dirname, '../../.github/workflows/ci.yml'), 'utf8'));
+  const step = ci.jobs.test.steps.find((s) => s.name === 'Verify harness');
+  assert.ok(step, 'ci.yml has a "Verify harness" step');
+  // Run the step's script with a stub npm that prints its arguments.
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-ci-bin-'));
+  tmps.push(bin);
+  fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\necho "npm $*"\n', { mode: 0o755 });
+  const runStep = (dir) => {
+    const r = spawnSync('/bin/bash', ['-e', '-c', step.run], { cwd: dir, encoding: 'utf8', env: { PATH: `${bin}:${process.env.PATH}` } });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  assert.equal(runStep(repo({ checks: [PASS] })), 'npm run verify -- --strict');
+  assert.equal(runStep(repo()), 'npm run verify');
+});
