@@ -11,6 +11,7 @@ const {
   isValidState,
   isClean,
   readVerdict,
+  verdictLine,
   repeatedBlockingFiles,
   withRoundsLine,
   withReviewedHeadLine,
@@ -436,4 +437,21 @@ test('isValidState checks Refuter fields on findings', () => {
   for (const bad of [{ ...p1('a.js'), verdict: 'maybe' }, { ...p1('a.js'), id: 3 }, { ...p1('a.js'), note: 1 }, null]) {
     assert.equal(isValidState(state(bad)), false, JSON.stringify(bad));
   }
+});
+
+test('the VERDICT line decides when present; the phrase heuristic is only a fallback', () => {
+  assert.equal(verdictLine('All good.\nVERDICT: CLEAN\n'), 'CLEAN');
+  assert.equal(verdictLine('verdict: blocking'), 'BLOCKING');
+  assert.equal(verdictLine('No VERDICT here'), null);
+  const prose = 'No blocking or non-blocking defects were identified.\nVERDICT: CLEAN\n';
+  assert.deepEqual(readVerdict(prose), { findings: [] }, 'paraphrase plus CLEAN line reads as clean');
+  assert.match(readVerdict('Something is wrong in the gate.\nVERDICT: BLOCKING\n').error, /BLOCKING but no \[P1\]/);
+  const mixed = '- [P1] Data loss — kit/a.js:1\nVERDICT: CLEAN\n';
+  assert.equal(readVerdict(mixed).findings[0].priority, 'P1', 'a listed P1 counts even under a CLEAN line');
+  assert.ok(readVerdict('- [P2] Nit — kit/a.js:2\nVERDICT: CLEAN\n').findings.length === 1);
+});
+
+test('the rubric asks for the VERDICT line', () => {
+  assert.match(RUBRIC, /VERDICT: CLEAN/);
+  assert.match(RUBRIC, /VERDICT: BLOCKING/);
 });
