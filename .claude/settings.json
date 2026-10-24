@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/kit/hooks/session-start.sh\"; [ -f \"$f\" ] || exit 0; exec bash \"$f\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
