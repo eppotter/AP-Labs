@@ -517,3 +517,7 @@ test('the prose-finding guard ignores negations, settled P1s, formatted lines an
   const noLine = readVerdict('No blocking findings.\n- Blocking: kit/a.js drops rows\n');
   assert.deepEqual(noLine, { findings: [] }, 'the guard applies only under a VERDICT: CLEAN line');
 });
+
+test('isClean accepts "defects", "problems" and "bugs" paraphrases (Codex on #57)', () => {
+  for (const v of ['No blocking or non-blocking defects were found in the diff.', 'No problems found.', 'I found no bugs.']) assert.ok(isClean(v), v);
+});
