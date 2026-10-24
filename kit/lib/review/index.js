@@ -110,7 +110,9 @@ function proseBlockerLines(verdict) {
     PROSE_BLOCKER.test(l) && REPO_PATH.test(l) && !SETTLED.test(l));
 }
 
-const isClean = (verdict) => /\bno\s+(?:[\w-]+\s+){0,2}(?:issues|findings)\b/i.test(verdict);
+// "blocking or non-blocking" counts as one word so the two-word limit still
+// rejects prose like "no idea whether these issues matter".
+const isClean = (verdict) => /\bno\s+(?:(?:blocking\s+or\s+non-blocking|[\w-]+)\s+){0,2}(?:issues|findings|defects|problems|bugs)\b/i.test(verdict);
 
 // A reviewer's output is usable when every finding-like line parses and it has
 // findings or says it is clean. Anything else is a failed attempt.
