@@ -39,4 +39,36 @@ class DataUnavailable extends RuntimeRefusal {
   }
 }
 
-module.exports = { RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable };
+// A connector write was refused because a kill switch is on: the connector's
+// own (killSwitchEnv) or the global APLABS_WRITES_OFF. Raised before any I/O,
+// so nothing was written (Story 8.1). details: { connector, system, env }
+class KillSwitchOn extends RuntimeRefusal {
+  constructor(details) {
+    super(`writes to ${details.system} are switched off (${details.env})`, details);
+    this.code = 'KILL_SWITCH_ON';
+  }
+}
+
+// A connector call failed (Story 8.1). reason is already redacted and is for
+// the log, never shown to the person. details: { connector, system, operation }
+class ConnectorFailed extends RuntimeRefusal {
+  constructor(reason, details) {
+    super(`${details.system} ${details.operation} failed: ${reason}`, details);
+    this.code = 'CONNECTOR_FAILED';
+    this.reason = reason;
+  }
+}
+
+// The system refused the connector's credentials, or a declared credential is
+// not set. Reads and writes fail closed: no data comes back. Same details.
+class ConnectorAuthFailed extends ConnectorFailed {
+  constructor(reason, details) {
+    super(reason, details);
+    this.code = 'CONNECTOR_AUTH_FAILED';
+  }
+}
+
+module.exports = {
+  RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
+  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed,
+};
