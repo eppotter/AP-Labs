@@ -150,6 +150,8 @@ Adapted from CanonCRM (`docs/agent-coordination.md` §5 and its p3 adapter).
 - **Risk tier is computed from the files touched** (`kit/lib/tier`) and decides how much ceremony runs.
 - **Secrets:** agents never read or print them. Commands that need production credentials are run by a human.
 
+**Merge authority depends on who runs the session.** When the human driving it is an approver for the repo, the Orchestrator merges a PR itself once review shows nothing blocking and CI passes. When anyone else drives, the Orchestrator stops at PR-ready, posts a decision notice that @-mentions the approver, and waits for them. Varsity used the same idea: an approver fast path, with everyone else going through the approver gate.
+
 ## 7. Learning loop (decided)
 
 - **A ledger row per build,** plus `DEP` rows for anything deferred or blocked. Missing shared infrastructure is routed to its owner, never built inside a feature.
