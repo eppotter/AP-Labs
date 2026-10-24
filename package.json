@@ -10,6 +10,8 @@
     "check": "bash scripts/check-syntax.sh",
     "test": "node --test",
     "review": "node kit/review/cli.js",
+    "retro": "node kit/retro/cli.js",
+    "notify": "node kit/notify/cli.js",
     "verify": "node kit/verify/run-all.js"
   },
   "dependencies": {

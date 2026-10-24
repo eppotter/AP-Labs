@@ -32,5 +32,16 @@ while IFS= read -r f; do
   node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$f" || { echo "bad JSON: $f"; fail=1; }
 done <<< "$json"
 
+# Shellcheck too, so a lint failure shows up before CI. Missing locally is a
+# reported skip, never a pass; CI always runs it.
+if command -v shellcheck >/dev/null 2>&1; then
+  if [ -n "$sh" ]; then
+    # shellcheck disable=SC2086
+    shellcheck $sh || fail=1
+  fi
+else
+  echo "check-syntax: shellcheck not installed, SKIPPED locally (CI runs it)"
+fi
+
 echo "check-syntax: $(wc -l <<< "$js" | tr -d ' ') js, $(wc -l <<< "$sh" | tr -d ' ') sh, $(wc -l <<< "$json" | tr -d ' ') json checked"
 exit "$fail"

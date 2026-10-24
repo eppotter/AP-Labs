@@ -44,3 +44,9 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 - **Secrets:** never read, print, log or commit tokens. Commands that need a credential (for example publishing the fixture) are run by Ely, not by an agent.
 - **Reference repos are read-only:** `~/Projects/bi-platform` (live Varsity) and `~/Projects/AI-Governance-Layer` (archived). Read them with `git -C <repo> show main:<path>`. Never check out branches, install or run anything in them.
 - **No Hometown specifics** (names, paths, Slack ids, data) in this repo outside `docs/reference/`.
+
+### Progress updates
+
+- The Orchestrator posts to the team's Slack channel with `npm run notify -- --kind <kind> "<message>"` when a story merges (`--kind merged`), an epic finishes (`--kind epic`), a human decision is needed (`--kind decision`), or work is blocked (`--kind blocked`). Never per review round.
+- Messages are 1 to 3 plain-language lines that name the story or PR and say what changed or what is needed.
+- Never include secrets or client data. The webhook comes from `APLABS_SLACK_WEBHOOK` or the macOS Keychain and is never printed.
