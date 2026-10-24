@@ -118,7 +118,7 @@ function writeCsv(file, { cols, rows }) {
 // The breaks: one per check, each touching rows no other break touches. A
 // break's pick(t_, take) chooses its rows from the unedited seeds and returns
 // the edit, so it picks the same rows alone or with the others.
-const TABLES = ['crews', 'clients', 'invoices', 'payments', 'visits', 'plans', 'crew_memberships', 'fixture_meta'];
+const TABLES = ['crews', 'clients', 'invoices', 'payments', 'visits', 'plans', 'plan_price_changes', 'crew_memberships', 'fixture_meta'];
 const BREAKS = [
   {
     // A crew in a zone that does not exist. DuckDB enforces the schema's
@@ -286,4 +286,30 @@ test('with no as_of row in fixture_meta, the as_of check fails on its guard row'
   const results = await validateBroken(t, [], (t_) => { t_.fixture_meta.rows = t_.fixture_meta.rows.filter((r) => r.key !== 'as_of'); });
   const byId = Object.fromEntries(results.map((r) => [r.id, r]));
   assert.deepEqual([byId['integrity-no-end-after-as-of'].outcome, byId['integrity-no-end-after-as-of'].rows], ['fail', 1]);
+});
+
+// Issue #77 item 6: integrity-plan-price also checks the changes themselves.
+// Each break moves one change of a plan with two or more, so the plan's
+// latest change (and so its price) stays the same: only the new rule fails.
+function changesOfAPlanWithTwo(t_) {
+  const byPlan = new Map();
+  for (const c of t_.plan_price_changes.rows) byPlan.set(c.plan_id, [...(byPlan.get(c.plan_id) || []), c]);
+  const changes = [...byPlan.values()].find((cs) => cs.length >= 2).sort((a, b) => a.effective_date.localeCompare(b.effective_date));
+  return { plan: t_.plans.rows.find((p) => p.plan_id === changes[0].plan_id), changes };
+}
+
+test('a price change before its plan starts fails integrity-plan-price only', async (t) => {
+  const results = await validateBroken(t, [], (t_) => {
+    const { plan, changes } = changesOfAPlanWithTwo(t_);
+    changes[0].effective_date = new Date(Date.parse(`${plan.start_date}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+  });
+  assert.deepEqual(failures(results), [['integrity-plan-price', 1]]);
+});
+
+test('a price change whose old price is not the previous new price fails integrity-plan-price only', async (t) => {
+  const results = await validateBroken(t, [], (t_) => {
+    const { changes } = changesOfAPlanWithTwo(t_);
+    changes[1].old_price_cents = String(Number(changes[1].old_price_cents) + 1);
+  });
+  assert.deepEqual(failures(results), [['integrity-plan-price', 1]]);
 });
