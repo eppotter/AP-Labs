@@ -24,8 +24,9 @@
 //   - Every write, dry run included, refuses with KillSwitchOn when the
 //     connector's killSwitchEnv or APLABS_WRITES_OFF is set to any non-empty
 //     value, before credentials are read or anything is called. Reads keep
-//     working. The env is read on every call, so flipping a switch takes effect
-//     at once.
+//     working. The env is read on every call and again before every request
+//     a write makes, so flipping a switch takes effect at once, even partway
+//     through a push: the requests still to come are refused.
 //   - Every write needs an idempotencyKey. A repeated key (per operation)
 //     returns the first result and calls nothing; two concurrent calls with
 //     one key share one apply. Keys are kept in deps.idempotency ({ get, set })
@@ -164,6 +165,11 @@ function defineConnector(spec) {
       return null;
     }
 
+    function refuseIfSwitchedOff() {
+      const switched = killSwitch();
+      if (switched) throw new KillSwitchOn({ connector: declaration.id, system: declaration.system, env: switched });
+    }
+
     // Reads every declared credential (once), then connects (once).
     function open(operation) {
       if (session) return session;
@@ -197,6 +203,9 @@ function defineConnector(spec) {
             throw new Error(`batch of ${size} is over the batch size of ${declaration.rateLimit.batchSize}`);
           }
           await limit();
+          // Re-checked before every request of a write, after the wait, so a
+          // switch flipped partway through a push stops the requests still to come.
+          if (kind === 'write') refuseIfSwitchedOff();
           if (deps.onRequest) await deps.onRequest({ connector: declaration.id, operation, kind, size, at: now() });
           return fn();
         },
@@ -230,8 +239,7 @@ function defineConnector(spec) {
     const write = {};
     for (const [name, op] of Object.entries(spec.write || {})) {
       write[name] = async (input = {}) => {
-        const switched = killSwitch();
-        if (switched) throw new KillSwitchOn({ connector: declaration.id, system: declaration.system, env: switched });
+        refuseIfSwitchedOff();
         const { dryRun, ...rest } = input;
         const key = rest.idempotencyKey;
         try {

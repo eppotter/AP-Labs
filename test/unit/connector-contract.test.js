@@ -297,3 +297,29 @@ test('the template\'s own test passes once copied into a fork', (t) => {
   assert.match(r.stdout, /pass 12\n/);
   assert.match(r.stdout, /fail 0\n/);
 });
+
+test('a kill switch flipped partway through a write stops the requests still to come (#82)', async () => {
+  for (const name of ['DEMO_OFF', GLOBAL_KILL_SWITCH]) {
+    const env = { DEMO_TOKEN: TOKEN };
+    let sent = 0;
+    const c = defineConnector(spec({
+      write: {
+        put: {
+          plan: (i) => i,
+          async apply(i, ctx) {
+            for (let b = 0; b < 5; b += 1) {
+              await ctx.request(() => { sent += 1; if (sent === 2) env[name] = '1'; });
+            }
+            return { sent };
+          },
+        },
+      },
+    })).create({ env });
+    await assert.rejects(c.write.put({ idempotencyKey: 'k', dryRun: false }), (e) => e instanceof KillSwitchOn && e.details.env === name);
+    assert.equal(sent, 2, `${name}: no request went out after the switch was flipped`);
+    assert.equal(await c.read.get().then((r) => r.ok), true, `${name}: reads keep working`);
+    delete env[name];
+    sent = 2;
+    assert.deepEqual(await c.write.put({ idempotencyKey: 'k', dryRun: false }), { sent: 7 }, `${name}: the stopped write did not use up its key`);
+  }
+});
