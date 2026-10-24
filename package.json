@@ -12,6 +12,7 @@
     "review": "node kit/review/cli.js",
     "retro": "node kit/retro/cli.js",
     "notify": "node kit/notify/cli.js",
+    "land": "node kit/land/cli.js",
     "verify": "node kit/verify/run-all.js"
   },
   "dependencies": {
