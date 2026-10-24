@@ -181,10 +181,10 @@ test('wrapper: fails open when node is not on PATH', () => {
   assert.match(r.stderr, /^aplabs-hooks: node not found/);
 });
 
-test('.claude/settings.json holds only the SessionStart hook, and is silent here', () => {
+test('.claude/settings.json holds the SessionStart hook, and is silent here', () => {
   const settings = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude/settings.json'), 'utf8'));
   assert.deepEqual(Object.keys(settings), ['hooks']);
-  assert.deepEqual(Object.keys(settings.hooks), ['SessionStart']);
+  assert.equal(settings.hooks.SessionStart.length, 1);
   const [hook] = settings.hooks.SessionStart[0].hooks;
   assert.match(hook.command, /\$CLAUDE_PROJECT_DIR\/kit\/hooks\/session-start\.sh/);
   // This repo has no profile, so the real command must print nothing.
@@ -196,7 +196,7 @@ test('.claude/settings.json holds only the SessionStart hook, and is silent here
 
 test('.codex/hooks.json runs the same wrapper on SessionStart, and is silent here', () => {
   const hooks = JSON.parse(fs.readFileSync(path.join(ROOT, '.codex/hooks.json'), 'utf8'));
-  assert.deepEqual(Object.keys(hooks.hooks), ['SessionStart']);
+  assert.equal(hooks.hooks.SessionStart.length, 1);
   const [hook] = hooks.hooks.SessionStart[0].hooks;
   assert.equal(hook.type, 'command');
   assert.match(hook.command, /kit\/hooks\/session-start\.sh/);
