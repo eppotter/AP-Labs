@@ -35,8 +35,8 @@ project_key: NOKEY
 tracking_system: file-system
 story_location: docs/planning/implementation-artifacts
 development_status:
-  epic-1: backlog
-  1-1-codex-reviews-a-claude-written-pr-within-budget: backlog
+  epic-1: in-progress
+  1-1-codex-reviews-a-claude-written-pr-within-budget: done
   1-2-claude-reviews-codex-written-work-with-a-no-codex-fallback: backlog
   1-3-triage-follow-ups-exemptions-and-the-same-cause-stop: backlog
   1-4-the-refuter-must-reproduce-a-p1-before-it-blocks: backlog

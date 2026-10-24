@@ -13,6 +13,8 @@ const {
   repeatedBlockingFiles,
   withRoundsLine,
   withReviewedHeadLine,
+  pickReviewer,
+  withFallbackLine,
   parseArgs,
   sanitizeBranch,
 } = require('../../kit/lib/review');
@@ -35,6 +37,34 @@ test('rubric scopes the diff and carries the adapted P1 wording', () => {
 
 test('round 1 prompt is the rubric alone', () => {
   assert.equal(promptFor({ branch: 'x', rounds: [] }), RUBRIC);
+});
+
+test('Claude prompt says the diff arrives on stdin', () => {
+  const prompt = promptFor({ rounds: [] }, { diffOnStdin: true });
+  assert.match(prompt, /diff supplied on stdin/);
+  assert.doesNotMatch(prompt, /asks the reviewer to run git/i);
+});
+
+test('reviewer selection uses majority harness, treats ties and no trailers as Claude-authored, and falls back', () => {
+  const available = { codexAvailable: true, claudeAvailable: true };
+  assert.deepEqual(pickReviewer({ trailers: ['codex gpt-6-luna', 'codex gpt-6-luna', 'claude-code opus'], ...available }),
+    { reviewer: 'claude', fallback: false });
+  assert.deepEqual(pickReviewer({ trailers: ['claude-code opus', 'claude-code opus', 'codex gpt-6-luna'], ...available }),
+    { reviewer: 'codex', fallback: false });
+  for (const trailers of [[], ['codex gpt-6-luna', 'claude-code opus']]) {
+    assert.deepEqual(pickReviewer({ trailers, ...available }), { reviewer: 'codex', fallback: false });
+  }
+  assert.deepEqual(pickReviewer({ trailers: ['codex gpt-6-luna'], codexAvailable: true, claudeAvailable: false }),
+    { reviewer: 'codex', fallback: true });
+  assert.deepEqual(pickReviewer({ trailers: [], codexAvailable: false, claudeAvailable: true }),
+    { reviewer: 'claude', fallback: true });
+});
+
+test('fallback body line is added once and removed cleanly', () => {
+  const fallback = withFallbackLine('Intro\n', true);
+  assert.equal(fallback, 'Intro\n\nReview: same-model fallback\n');
+  assert.equal(withFallbackLine(fallback, true), fallback);
+  assert.equal(withFallbackLine(`${fallback}Outro\n`, false), 'Intro\n\nOutro\n');
 });
 
 test('later rounds ask for P1 only, list earlier findings and point past the last head', () => {

@@ -24,18 +24,22 @@ function setup() {
   const repo = path.join(tmp, 'repo');
   const gh = path.join(tmp, 'gh');
   const codex = path.join(tmp, 'codex');
+  const claude = path.join(tmp, 'claude');
   fs.mkdirSync(repo);
   fs.mkdirSync(gh);
   fs.mkdirSync(codex);
+  fs.mkdirSync(claude);
   const env = {
     PATH: process.env.PATH,
     HOME: tmp,
     GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_CONFIG_NOSYSTEM: '1',
     APLABS_REVIEW_CODEX_BIN: path.join(fixtures, 'fake-codex.sh'),
+    APLABS_REVIEW_CLAUDE_BIN: path.join(fixtures, 'fake-claude.sh'),
     APLABS_GH_BIN: path.join(fixtures, 'fake-gh.sh'),
     FAKE_GH_DIR: gh,
     FAKE_CODEX_RECORD: codex,
+    FAKE_CLAUDE_RECORD: claude,
   };
   const git = (...a) => execFileSync('git', a, { cwd: repo, env, encoding: 'utf8' }).trim();
   git('init', '-q', '-b', 'main');
@@ -43,6 +47,7 @@ function setup() {
   git('config', 'user.email', 'test@example.com');
   git('config', 'commit.gpgsign', 'false');
   git('commit', '-q', '--allow-empty', '-m', 'base');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
   git('checkout', '-q', '-b', BRANCH);
   const commit = (msg = 'change') => {
     git('commit', '-q', '--allow-empty', '-m', msg);
@@ -66,7 +71,10 @@ function setup() {
   const codexArgs = () => fs.readFileSync(path.join(codex, 'args.txt'), 'utf8');
   const codexRan = () => fs.existsSync(path.join(codex, 'args.txt'));
   const resetCodex = () => fs.rmSync(path.join(codex, 'args.txt'), { force: true });
-  return { tmp, repo, gh, git, commit, verdict, openPr, review, stateDir, statePath, state, ghCalls, body, codexArgs, codexRan, resetCodex };
+  const claudeArgs = () => fs.readFileSync(path.join(claude, 'args.txt'), 'utf8').split('\0').filter(Boolean);
+  const claudeRan = () => fs.existsSync(path.join(claude, 'args.txt'));
+  return { tmp, repo, gh, codex, claude, git, commit, verdict, openPr, review, stateDir, statePath, state, ghCalls, body,
+    codexArgs, codexRan, resetCodex, claudeArgs, claudeRan };
 }
 
 test('round 1: read-only codex with stdin closed, verdict and summary printed, PR body and state written', () => {
@@ -84,7 +92,7 @@ test('round 1: read-only codex with stdin closed, verdict and summary printed, P
   assert.equal(fs.readFileSync(path.join(t.gh, '../codex/stdin.txt'), 'utf8').trim(), 'closed');
 
   assert.match(r.out, /- \[P1\] Loses rows on retry — kit\/a\.js:3/);
-  assert.match(r.out, new RegExp(`Round 1/3 on ${head.slice(0, 12)}: 1 blocking, 1 non-blocking\\.`));
+  assert.match(r.out, new RegExp(`Round 1/3 on ${head.slice(0, 12)} \\(reviewer: codex\\): 1 blocking, 1 non-blocking\\.`));
   assert.match(r.out, /gh issue create --label review-followup/);
   assert.doesNotMatch(r.out, /fake codex chatter/, 'codex output goes to the log, not the terminal');
   assert.doesNotMatch(r.out, /No blocking findings: the review is done/);
@@ -97,6 +105,91 @@ test('round 1: read-only codex with stdin closed, verdict and summary printed, P
   assert.equal(s.rounds[0].head, head);
   assert.deepEqual(s.rounds[0].findings.map((f) => f.file), ['kit/a.js', 'kit/b.js']);
   assert.match(t.git('status', '--porcelain'), /^$/, 'state never lands in tracked files');
+});
+
+test('Codex-authored commits use Claude with exact read-only flags and the three-dot diff on stdin', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: codex gpt-6-luna');
+  fs.mkdirSync(path.join(t.repo, 'kit'));
+  fs.writeFileSync(path.join(t.repo, 'kit/a.js'), 'const value = 1;\n');
+  t.git('add', 'kit/a.js');
+  t.git('commit', '-q', '--amend', '-m', 'change\n\nAgent: codex gpt-6-luna');
+  const head = t.git('rev-parse', 'HEAD');
+  const r = t.review([], { FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 0, r.err);
+  const args = t.claudeArgs();
+  assert.deepEqual(args.slice(0, 13), [
+    '--print', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk',
+    '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-session-persistence', '--no-chrome', '--disable-slash-commands',
+  ]);
+  assert.match(args.at(-1), /diff supplied on stdin/);
+  assert.doesNotMatch(args.at(-1), /git diff origin\/main\.\.\.HEAD/);
+  assert.match(fs.readFileSync(path.join(t.claude, 'stdin.txt'), 'utf8'), /const value = 1/);
+  assert.equal(t.state().rounds[0].reviewer, 'claude');
+  assert.equal(t.state().rounds[0].fallback, false);
+  assert.match(r.out, new RegExp(`Round 1/3 on ${head.slice(0, 12)} \\(reviewer: claude\\):`));
+});
+
+test('Claude-authored commits use labelled Claude fallback when Codex is missing', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const r = t.review([], {
+    APLABS_REVIEW_CODEX_BIN: path.join(t.tmp, 'missing-codex'),
+    FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT),
+  });
+  assert.equal(r.code, 0, r.err);
+  assert.match(t.body(), /Review: same-model fallback/);
+  assert.match(r.out, /reviewer: claude, same-model fallback/);
+  assert.deepEqual([t.state().rounds[0].reviewer, t.state().rounds[0].fallback], ['claude', true]);
+});
+
+test('Codex-authored commits use labelled Codex fallback when Claude is missing', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: codex gpt-6-luna');
+  const r = t.review([], {
+    APLABS_REVIEW_CLAUDE_BIN: path.join(t.tmp, 'missing-claude'),
+    FAKE_CODEX_VERDICT: t.verdict(CLEAN_VERDICT),
+  });
+  assert.equal(r.code, 0, r.err);
+  assert.match(t.body(), /Review: same-model fallback/);
+  assert.match(r.out, /reviewer: codex, same-model fallback/);
+  assert.deepEqual([t.state().rounds[0].reviewer, t.state().rounds[0].fallback], ['codex', true]);
+});
+
+test('neither reviewer available exits without changing review state or PR body', () => {
+  const t = setup();
+  t.openPr('Existing body');
+  t.commit('change\n\nAgent: codex gpt-6-luna');
+  const r = t.review([], {
+    APLABS_REVIEW_CLAUDE_BIN: path.join(t.tmp, 'missing-claude'),
+    APLABS_REVIEW_CODEX_BIN: path.join(t.tmp, 'missing-codex'),
+  });
+  assert.equal(r.code, 1);
+  assert.equal(t.state(), null);
+  assert.doesNotMatch(t.ghCalls(), /pr edit/);
+  assert.ok(!fs.existsSync(path.join(t.gh, 'body-7.md')));
+});
+
+test('failing Claude reviewer does not count a round', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: codex gpt-6-luna');
+  const r = t.review([], { FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT), FAKE_CLAUDE_EXIT: '1' });
+  assert.equal(r.code, 1);
+  assert.equal(t.state(), null);
+  assert.doesNotMatch(t.ghCalls(), /pr edit/);
+});
+
+test('a successful non-fallback round removes a prior fallback body line', () => {
+  const t = setup();
+  t.openPr('Intro\n\nReview: same-model fallback\n');
+  t.commit('change\n\nAgent: codex gpt-6-luna');
+  const r = t.review([], { FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(t.body(), /Review: same-model fallback/);
 });
 
 test('no open PR: refused with exit 2 before any reviewer run', () => {
