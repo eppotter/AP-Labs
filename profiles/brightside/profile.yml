@@ -8,8 +8,21 @@ client:
 
 # Blast radius. Highest match wins; unmatched code floors at T1.
 tiers:
-  T3: ["billing/**", "customers/export/**"]
-  T2: ["scheduling/**", "Dockerfile", ".github/workflows/**"]
+  T3:
+    - "billing/**"
+    - "customers/export/**"
+    # Runtime: writes to client systems, connections and secrets.
+    - "kit/runtime/archetypes/approval-write/**"
+    - "kit/runtime/connectors/**"
+    - "kit/lib/secrets/**"
+  T2:
+    - "scheduling/**"
+    - "Dockerfile"
+    - ".github/workflows/**"
+    # Runtime: SQL guardrails, the query runner and the LLM service.
+    - "kit/runtime/sql/**"
+    - "kit/runtime/data/**"
+    - "kit/runtime/llm/**"
   T1: ["lib/**"]
 inert: ["**/*.md", "docs/**"]
 
