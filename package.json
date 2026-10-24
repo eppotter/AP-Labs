@@ -14,7 +14,8 @@
     "notify": "node kit/notify/cli.js",
     "verify": "node kit/verify/run-all.js",
     "engage": "node kit/hooks/engage.js",
-    "land": "node kit/land/cli.js"
+    "land": "node kit/land/cli.js",
+    "onboard": "node kit/onboard/cli.js"
   },
   "dependencies": {
     "ajv": "8.20.0",

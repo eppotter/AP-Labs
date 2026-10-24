@@ -8,7 +8,8 @@
 //   - APLABS_STOP_VERIFY is not "0" (per-person opt-out)
 //   - the hook input does not say stop_hook_active (never loop)
 //   - the repo is governed and its profile is valid
-//   - the profile has at least one verify check
+//   - there is at least one check: the profile's verify checks plus the known
+//     truths in .aplabs/context/data.md (Story 4.2)
 //   - the session changed files: the tree is dirty, or HEAD moved since the
 //     session started (recorded by SessionStart), or, when nothing was
 //     recorded, HEAD has commits not on origin/main
@@ -20,6 +21,7 @@
 const { findProfilePath, loadProfile, ProfileError } = require('../profile');
 const { childEnv, tail } = require('../verify');
 const { runChecks } = require('../verify/runner');
+const { truthChecksFor } = require('../truths');
 const { git, readSessionHead } = require('../session/head');
 
 // The whole Stop run is capped here, below the 660s registered in
@@ -115,8 +117,9 @@ async function stopVerify(input, { startDir, env = process.env } = {}) {
   if (input && input.stop_hook_active === true) return null;
 
   let profile;
+  let file;
   try {
-    const file = findProfilePath(startDir);
+    file = findProfilePath(startDir);
     if (!file) return null;
     profile = loadProfile(file);
   } catch (err) {
@@ -124,7 +127,9 @@ async function stopVerify(input, { startDir, env = process.env } = {}) {
     if (err instanceof ProfileError) return null;
     throw err;
   }
-  const { checks, env_allow: envAllow } = profile.verify;
+  // The same checks as `npm run verify`: the profile's, then the known truths.
+  const checks = [...profile.verify.checks, ...truthChecksFor(file)];
+  const envAllow = profile.verify.env_allow;
   if (!checks.length) return null;
 
   const root = git(startDir, ['rev-parse', '--show-toplevel']);

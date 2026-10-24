@@ -4,7 +4,7 @@ Harness hooks for repos built on this template. Each hook is one thin bash wrapp
 
 | Hook | Event | What it does |
 |---|---|---|
-| `session-start.sh` → `session-start.js` | SessionStart (Claude Code and Codex) | In a governed repo (one with `.aplabs/profile.yml`), announces the AP Labs Orchestrator, the client name and the 8 core stages. If the profile is invalid it lists every validation error and says the profile must be fixed before building. In any other repo it prints nothing. Logic: `kit/lib/session`. |
+| `session-start.sh` → `session-start.js` | SessionStart (Claude Code and Codex) | In a governed repo (one with `.aplabs/profile.yml`), announces the AP Labs Orchestrator, the client name and the 8 core stages, plus one onboarding line while any client file in `.aplabs/context/` is missing or awaiting sign-off (Story 4.1). If the profile is invalid it lists every validation error and says the profile must be fixed before building. In any other repo it prints nothing. Logic: `kit/lib/session`. |
 | `write-gate.sh` → `write-gate.js` | PreToolUse on edit tools (Claude Code and Codex), SubagentStart and UserPromptSubmit (Claude Code) | The write gate: in a governed repo, blocks edits until the work is routed, and T2/T3 edits until the plan is approved (below). SubagentStart writes the engagement marker; UserPromptSubmit records `approve plan <slug>`. Logic: `kit/lib/gate`. |
 | `stop-verify.sh` → `stop-verify.js` | Stop (Claude Code only) | Runs the profile's verify checks when a turn ends, and blocks the turn end only on a failed check (below). Logic: `kit/lib/stop-verify`. |
 
