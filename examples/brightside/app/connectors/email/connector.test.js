@@ -72,6 +72,7 @@ test('email: a mock with no credential, its own kill switch, and two writes', ()
   assert.deepEqual([...connector.write].sort(), ['addContacts', 'createList']);
   assert.deepEqual([...connector.read], []);
   assert.deepEqual({ ...connector.rateLimit }, { perSecond: 5, batchSize: 100 });
+  assert.deepEqual([...connector.perItemIdempotency], ['addContacts'], 'each contact is keyed, so a retry re-sends only the failed ones');
 });
 
 test('email: the outbox defaults to var/outbox/email.jsonl, under APLABS_VAR_DIR when set', () => {
@@ -181,12 +182,16 @@ test('email: a simulated row failure records the others, reports both counts, an
     // A typed partial failure (#90): the counts and the failed ref, never contact data.
     assert.ok(err instanceof PartialFailure && err instanceof ConnectorFailed, `got ${err && err.name}`);
     assert.deepEqual([err.details.succeeded, err.details.failed, [...err.details.failedRefs]], [2, 1, ['2']]);
-    assert.match(err.reason, /2 of 3 contacts added, 1 failed \(external_ref 2: the email tool refused the address\)/);
+    // addContacts keys each contact, so the person may be told a retry is safe.
+    assert.equal(err.details.retrySafe, true);
+    // Counts only in the text (round 2): no ref, no address, no tool reason.
+    assert.equal(err.reason, '2 of 3 items succeeded, 1 failed');
     assert.ok(!JSON.stringify(err.details).includes('@'), 'no email address in the details');
     return true;
   });
   const warned = log.lines.map((l) => JSON.parse(l)).find((l) => l.msg === 'connector write partly failed');
-  assert.deepEqual(warned && [warned.succeeded, warned.failed, warned.failed_refs], [2, 1, ['2']]);
+  assert.deepEqual(warned && [warned.succeeded, warned.failed, warned.failed_refs, warned.retry_safe], [2, 1, ['2'], true]);
+  assert.ok(!log.lines.join('\n').includes('@home.invalid'), 'no contact address in the log');
   const recorded = () => lines().filter((l) => l.type === 'contact').map((l) => l.key);
   assert.deepEqual(recorded(), [`L:${listId}:1`, `L:${listId}:3`], 'the failed contact recorded no key');
   assert.equal(lines().filter((l) => l.type === 'done' && l.operation === 'addContacts').length, 0, 'the failed call did not use up its key');

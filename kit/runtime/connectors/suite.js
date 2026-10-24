@@ -65,7 +65,9 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
       sleep: clock.sleep,
       onRequest(info) {
         requests.push(info);
-        if (state.failWith) throw state.failWith();
+        // failWith(info) returns the error to throw, or nothing to let it through.
+        const failure = state.failWith && state.failWith(info);
+        if (failure) throw failure;
       },
     });
     // Instances of one connector share its idempotency state for the process
@@ -249,17 +251,53 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
 
   // The declared credentials, echoed raw and in every shape. A connector that
   // declares none (a mock) has nothing to leak here (#90).
-  test(`${label}: errors never include credentials`, { skip: !authEnv.length && 'declares no credentials' }, () => checkErrorsHide(
-    authEnv.map(fakeSecret),
-    (s) => `token=${s} Bearer ${s} https://user:${s}@api.example.invalid/x?api_key=${s} raw ${s}`,
-  ));
+  // The skip is said in the output too, so a reader sees why it didn't run.
+  test(`${label}: errors never include credentials`, (t) => {
+    if (!authEnv.length) {
+      t.diagnostic(`${label} declares no credentials (auth.env is empty), so the declared-credential leak check is skipped; the credential-shape check still runs`);
+      t.skip('declares no credentials');
+      return undefined;
+    }
+    return checkErrorsHide(
+      authEnv.map(fakeSecret),
+      (s) => `token=${s} Bearer ${s} https://user:${s}@api.example.invalid/x?api_key=${s} raw ${s}`,
+    );
+  });
 
   // A value the connector never saw, in credential shapes only (a token the
   // system minted, say): masked by shape, for every connector.
   test(`${label}: errors mask credential-shaped strings`, () => checkErrorsHide(
     ['contract-sentinel-Kp27vN'],
-    (s) => `token=${s} Bearer ${s} https://user:${s}@api.example.invalid/x?api_key=${s} {"access_token":"${s}"}`,
+    (s) => [
+      `token=${s}`, `Bearer ${s}`, `https://user:${s}@api.example.invalid/x?api_key=${s}`,
+      `{"access_token":"${s}"}`, `{"api_key":"${s}"}`, `{"token":"${s}"}`, `{"client_secret":"${s}"}`, `{"password":"${s}"}`,
+      `X-Api-Key: ${s}`, `Authorization: Token ${s}`, `Authorization: Basic ${s}`,
+    ].join(' '),
   ));
+
+  // A write that declares perItemIdempotency claims a retry with the same key
+  // and input re-sends only what failed (so a partial failure tells the
+  // person retrying is safe). From outside, the suite checks the part it can:
+  // after a batch fails partway through, the same key and input retry to a
+  // result rather than an error or an idempotency conflict. That the system
+  // then holds each item once is the connector's own test to show.
+  const perItem = (decl && decl.perItemIdempotency) || [];
+  test(`${label}: a write that declares per-item idempotency retries cleanly after a failed batch`, { skip: !perItem.length && 'no write declares perItemIdempotency' }, async () => {
+    for (const n of perItem) {
+      const bulk = bulks.find((b) => b.operation === n);
+      assert.ok(bulk, `samples.bulk covers ${n}: it declares perItemIdempotency, so its retry after a failed batch must be checked`);
+      const { instance, state } = harness();
+      const size = decl.rateLimit.batchSize;
+      const input = { ...bulk.input(size * 2 + 1, `per-item-${n}`), dryRun: false };
+      let calls = 0;
+      state.failWith = () => (calls += 1) === 2 ? new Error('HTTP 503 on the second batch') : null;
+      const first = await settle(instance.write[n](input));
+      assert.ok(first.error instanceof ConnectorFailed, `${n}: the failed batch fails the write, got ${first.error ? first.error.name : 'a result'}`);
+      state.failWith = null;
+      const retry = await settle(instance.write[n](input));
+      assert.ok(!retry.error, `${n}: the retry with the same key and input succeeds, got ${retry.error && retry.error.name}`);
+    }
+  });
 }
 
 module.exports = { connectorContract, fakeClock };

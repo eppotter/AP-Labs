@@ -27,7 +27,8 @@
 // recorded with their keys, the failed ones record nothing, and the call fails
 // with a PartialFailure (a ConnectorFailed) carrying { succeeded, failed,
 // failedRefs }: the failed contacts' external_refs, never their email (#90).
-// The reason, for the log, says the same in words.
+// Its text is counts only. addContacts declares perItemIdempotency, so the
+// person is told a retry with the same key is safe.
 // A failed call does not use up its key, so a retry with the same input sends
 // the same contacts again and the tool adds only the ones it has no key for:
 // the failed ones. A contact's key carries its list (the write's key, listId
@@ -134,6 +135,10 @@ function declare(outbox) {
       },
       // input: { listId, contacts: [{ external_ref, email, first_name }], idempotencyKey }.
       addContacts: {
+        // Each contact is keyed (write key, list, ref) and the tool adds only
+        // keys it hasn't seen, so a retry with the same key and input sends
+        // only the failed ones: a partial failure may say retrying is safe.
+        perItemIdempotency: true,
         plan: ({ listId, contacts }) => ({ listId, add: checkContacts(contacts).length }),
         async apply({ listId, contacts }, ctx) {
           const checked = checkContacts(contacts);
@@ -148,10 +153,10 @@ function declare(outbox) {
             total.failed.push(...res.failed);
           }
           if (total.failed.length) {
+            // Counts only in the text: the refs ride in failedRefs (the
+            // engine masks any that aren't id-shaped), never in a message.
             const succeeded = total.added + total.alreadyAdded;
-            const which = total.failed.map((f) => `external_ref ${f.external_ref}: ${f.reason}`).join('; ');
-            throw new PartialFailure(`${succeeded} of ${checked.length} contacts added, ${total.failed.length} failed (${which}); `
-              + 'retry with the same key to send only the failed ones', {
+            throw new PartialFailure(`${succeeded} of ${checked.length} contacts added, ${total.failed.length} failed`, {
               succeeded, failed: total.failed.length, failedRefs: total.failed.map((f) => f.external_ref),
             });
           }

@@ -29,9 +29,13 @@ const MESSAGES = [
     ? `${escapeText(system)} isn't set up correctly, so I can't reach it. I've logged the problem; please tell ${admin}.`
     : `${escapeText(system)} turned down my sign-in, so I couldn't reach it. Please tell ${admin}; trying again won't help until it's fixed.`)],
   [IdempotencyConflict, ({ system }, { admin }) => `That was already sent to ${escapeText(system)} with different contents, so I didn't send it again. Please tell ${admin}.`],
-  // Counts only: the failed refs go to the log, never to the person.
-  [PartialFailure, ({ system, succeeded, failed }, { admin }) => `Sent ${succeeded} of ${succeeded + failed} to ${escapeText(system)}; ${failed} failed. `
-    + `Nothing was sent twice, so trying again is safe: it sends only the ${failed} that failed. If they keep failing, please tell ${admin}.`],
+  // Counts only: the failed refs go to the log, never to the person. A retry
+  // is called safe only when the write declares per-item idempotency
+  // (details.retrySafe); otherwise the engine can't promise it, so it doesn't.
+  [PartialFailure, ({ system, succeeded, failed, retrySafe }, { admin }) => `Sent ${succeeded} of ${succeeded + failed} to ${escapeText(system)}; ${failed} failed. `
+    + (retrySafe === true
+      ? `Nothing was sent twice, so trying again is safe: it sends only the ${failed} that failed. If they keep failing, please tell ${admin}.`
+      : `Please tell ${admin} before trying again.`)],
   [ConnectorFailed, ({ system }, { admin }) => `I couldn't reach ${escapeText(system)} just now. Please try again later, or tell ${admin} if it keeps happening.`],
 ];
 

@@ -10,7 +10,7 @@
 //     rateLimit: { perSecond: 5, batchSize: 100 },
 //     connect: ({ secret }) => makeClient(secret('ACME_CRM_TOKEN')),  // also gets { registerSecret, data, simulate }
 //     read: { lookupClient: async (input, ctx) => ctx.request(() => ctx.client.get(...)) },
-//     write: { addContacts: { plan: (input) => preview, apply: async (input, ctx) => result } },
+//     write: { addContacts: { plan: (input) => preview, apply: async (input, ctx) => result, perItemIdempotency: true } },
 //   });
 //
 //   const crm = connector.create({ env, log });  // log is required; instances share idempotency state
@@ -64,17 +64,24 @@
 //     URL passwords, JSON access_token / refresh_token / id_token) and the log
 //     redactor's patterns are masked, and the original error is not kept.
 //     A credential-shaped name=value pair is masked after ?, & or ; and bare
-//     (token=... in prose), so a connector with no credential passes too (#90).
+//     (token=... in prose), so a connector with no credential passes too
+//     (#90), as are JSON fields named like a secret ("api_key", "token",
+//     "client_secret", ...), header-style "X-Api-Key: ..." and any
+//     Authorization value, whatever its scheme.
 //   - A write whose batch partly applied throws PartialFailure from apply with
 //     { succeeded, failed, failedRefs } (failedRefs: the failed items'
 //     external ids, one per failed item). It leaves as a PartialFailure with
-//     the connector's details, after a warn log line with the counts and refs;
-//     a ref that is not id-shaped (an email, a sentence) or holds a credential
+//     the connector's details and a text rebuilt from the counts alone (the
+//     adapter's text is dropped), after a warn log line with the counts and
+//     refs. A ref that is not id-shaped (an email, a phone number or date of
+//     7+ digits, a word with no digit such as a name) or holds a credential
 //     is masked. Counts that don't add up, or a PartialFailure from a read (a
-//     read fails whole), leave as a plain ConnectorFailed. Like any failed
-//     write it does not use up its key, so a retry with the same input runs
-//     apply again: the adapter's per-item keys make that send only the failed
-//     items (#90).
+//     read fails whole), leave as a plain ConnectorFailed, also without the
+//     adapter's text. Like any failed write it does not use up its key.
+//     details.retrySafe is true only when the write declares
+//     perItemIdempotency: true (each item keyed, so a retry with the same key
+//     and input re-sends only the failed items); only then does the person's
+//     message call a retry safe (#90).
 
 const crypto = require('node:crypto');
 const { readSecret, redact } = require('../../lib/secrets');
@@ -99,13 +106,28 @@ const PATTERNS = [
   // name must start a word, so "retokenize=" is left alone.
   /((?:[?&;]|\b)(?:access_token|refresh_token|token|api[_-]?key|apikey|key|secret|client_secret|password|signature|sig)=)[^&\s'"<>]+/gi,
   /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/:@'"<>]+:[^\s/@'"<>]+@/gi,
-  /"(?:access_token|refresh_token|id_token)"\s*:\s*"(?:[^"\\]|\\.)*"/gi,
+  // A JSON field whose name ends in a secret-ish word ("api_key", "token",
+  // "client_secret", "x-api-key", ...), whatever its value holds. Runs before
+  // the header shape so a value with spaces is masked whole.
+  /"[A-Za-z0-9_.-]*(?:token|secret|password|passwd|api[_-]?key|apikey)"\s*:\s*"(?:[^"\\]|\\.)*"/gi,
+  // Any Authorization header or field, any scheme (Token, Basic, Bearer, none).
+  /\bauthorization['"]?\s*[:=]\s*['"]?(?:[A-Za-z]+\s+)?[^\s'",;<>]+/gi,
+  // Header style "X-Api-Key: value", "X-Auth-Token: value".
+  /\b[A-Za-z0-9-]*(?:token|secret|password|api[_-]?key|apikey)['"]?\s*:\s*['"]?[^\s'",;<>]+/gi,
 ];
 
 const isFn = (f) => typeof f === 'function';
-// A failed item's ref must look like an external id; anything else (an email,
-// a sentence) is masked, so a PartialFailure never carries contact data (#90).
+// A failed item's ref must look like an external id (c_123, CRM-00042, a
+// UUID, a short number); anything else is masked, so a PartialFailure never
+// carries contact data (#90). Masked: anything with other characters (an
+// email, a sentence), a word with no digit (a name), and digits-only refs of
+// 7 or more digits once separators are dropped (a phone number, a date).
 const REF = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+function isIdShaped(ref) {
+  if (!REF.test(ref) || !/[0-9]/.test(ref)) return false;
+  if (/^[0-9._:-]+$/.test(ref) && ref.replace(/[^0-9]/g, '').length >= 7) return false;
+  return true;
+}
 const isCount = (n) => Number.isSafeInteger(n) && n >= 0;
 
 // Throws naming the field when a declaration breaks the contract.
@@ -139,8 +161,14 @@ function checkDeclaration(spec) {
     for (const [name, op] of Object.entries(ops)) {
       if (!OP_NAME.test(name)) fail(`${kind}.${name}`, 'must be a camelCase name');
       if (kind === 'read' && !isFn(op)) fail(`read.${name}`, 'must be a function (input, ctx)');
-      if (kind === 'write' && !(op && isFn(op.plan) && isFn(op.apply) && Object.keys(op).length === 2)) {
-        fail(`write.${name}`, 'must be { plan(input), apply(input, ctx) }');
+      if (kind === 'write') {
+        const extra = op && Object.keys(op).filter((k) => !['plan', 'apply', 'perItemIdempotency'].includes(k));
+        if (!(op && isFn(op.plan) && isFn(op.apply) && !extra.length)) {
+          fail(`write.${name}`, 'must be { plan(input), apply(input, ctx) }, optionally with perItemIdempotency');
+        }
+        if (op.perItemIdempotency !== undefined && typeof op.perItemIdempotency !== 'boolean') {
+          fail(`write.${name}.perItemIdempotency`, 'must be true or false');
+        }
       }
     }
   }
@@ -223,6 +251,10 @@ function defineConnector(spec) {
     rateLimit: Object.freeze({ perSecond: spec.rateLimit.perSecond, batchSize: spec.rateLimit.batchSize }),
     read: Object.freeze(Object.keys(spec.read || {})),
     write: Object.freeze(Object.keys(spec.write || {})),
+    // The writes that key each item, so a retry with the same key and input
+    // re-sends only the items that failed. Only these get the safe-retry
+    // wording on a PartialFailure.
+    perItemIdempotency: Object.freeze(Object.entries(spec.write || {}).filter(([, op]) => op.perItemIdempotency === true).map(([n]) => n)),
   });
 
   // deps: env (default process.env), log (required: the app's
@@ -339,35 +371,40 @@ function defineConnector(spec) {
       });
     }
 
-    // A write's PartialFailure, rebuilt with checked counts and safe refs, or
-    // null when its counts don't add up (then it is a plain ConnectorFailed).
-    function partial(err, operation, reason) {
+    // A write's PartialFailure, rebuilt from its counts alone (the adapter's
+    // text is dropped: it may name refs or contact data) with id-shaped refs,
+    // or null when its counts don't add up (then it is a plain ConnectorFailed).
+    function partial(err, operation) {
       const { succeeded, failed, failedRefs } = err.details || {};
       if (!isCount(succeeded) || !isCount(failed) || failed < 1 || !Array.isArray(failedRefs) || failedRefs.length !== failed) return null;
       const refs = failedRefs.map((r) => {
-        const ref = typeof r === 'number' && Number.isFinite(r) ? String(r) : r;
-        if (typeof ref !== 'string' || !REF.test(ref)) return MASK;
+        const ref = typeof r === 'number' && Number.isSafeInteger(r) ? String(r) : r;
+        if (typeof ref !== 'string' || !isIdShaped(ref)) return MASK;
         return clean(ref) === ref ? ref : MASK;
       });
+      const retrySafe = declaration.perItemIdempotency.includes(operation);
       log.warn('connector write partly failed', {
-        connector: declaration.id, operation, succeeded, failed, failed_refs: refs,
+        connector: declaration.id, operation, succeeded, failed, failed_refs: refs, retry_safe: retrySafe,
       });
-      return new PartialFailure(reason, { ...details(operation), succeeded, failed, failedRefs: Object.freeze(refs) });
+      return new PartialFailure(`${succeeded} of ${succeeded + failed} items succeeded, ${failed} failed`, {
+        ...details(operation), succeeded, failed, failedRefs: Object.freeze(refs), retrySafe,
+      });
     }
 
     // Every error leaving an operation is rebuilt from a redacted message.
     function rethrow(err, operation, kind) {
       if (err instanceof KillSwitchOn) throw err;
       if (err instanceof IdempotencyConflict) throw new IdempotencyConflict(clean(err.reason), details(operation));
-      const raw = err instanceof ConnectorFailed ? err.reason : (err && err.message) || String(err);
-      const reason = clean(raw);
-      // Only a write can partly apply: a read fails whole (fail closed).
+      // Only a write can partly apply: a read fails whole (fail closed). The
+      // adapter's text never leaves with a PartialFailure, valid or not.
       if (err instanceof PartialFailure) {
-        const rebuilt = kind === 'write' ? partial(err, operation, reason) : null;
+        const rebuilt = kind === 'write' ? partial(err, operation) : null;
         if (rebuilt) throw rebuilt;
         const why = kind === 'write' ? 'counts must be whole numbers, failed at least 1, one ref per failed item' : 'a read cannot partly fail';
-        throw new ConnectorFailed(`invalid partial failure (${why}): ${reason}`, details(operation));
+        throw new ConnectorFailed(`invalid partial failure (${why})`, details(operation));
       }
+      const raw = err instanceof ConnectorFailed ? err.reason : (err && err.message) || String(err);
+      const reason = clean(raw);
       if (isAuthError(err)) {
         session = null;
         // setup: a credential is not set (a setup fault), not a rejected one.
