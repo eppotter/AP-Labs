@@ -39,7 +39,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #32 | 2026-10-24 | — | fix | — | Reviewers end with a `VERDICT:` line the parser trusts first, so Codex paraphrases no longer force fallbacks. | — |
 | #33 | 2026-10-24 | 5.1 | infra | — | Adds this ledger and a CI check that every PR adds a ledger row unless it is docs-only. | DEP-004 |
 | #35 | 2026-10-24 | 2.5 | infra | — | Risky (T2/T3) and onboarding work waits for the human to type `approve plan <slug>`; a hook records it for every worktree. | DEP-007 |
-| pending | 2026-10-24 | 3.2 | infra | — | The end-of-turn hook runs the profile's checks and blocks only on a failed one; a check's whole process group is killed on timeout (#24). | DEP-003, DEP-008 |
+| #37 | 2026-10-24 | 3.2 | infra | — | The end-of-turn hook runs the profile's checks and blocks only on a failed one; a check's whole process group is killed on timeout (#24). | DEP-003, DEP-008 |
 
 ## Deferrals (DEP)
 
