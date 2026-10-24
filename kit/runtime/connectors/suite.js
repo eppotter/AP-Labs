@@ -12,11 +12,14 @@
 //   });
 //
 // samples.read and samples.write must cover every declared operation (a
-// write sample is a function of the idempotency key). samples.bulk is
-// optional: one write that takes a list, so batching can be checked.
+// write sample is a function of the idempotency key). samples.bulk (one
+// { operation, input(count, key) }, or a list of them) must cover every write
+// whose sample has a list in it, so each one's request sizing is checked: a
+// write that sends a whole list in one call fails the suite.
 //
 // options.deps is merged into every create(deps) call, for what the connector
-// needs beyond the suite's own (for example data: a stand-in query runner).
+// needs beyond the suite's own (for example data: a stand-in query runner, or
+// log: by default the suite passes a silent logger).
 // The suite's env, now, sleep and onRequest always win.
 //
 // The suite drives the connector with a fake env (fake credential values for
@@ -26,6 +29,7 @@
 const assert = require('node:assert/strict');
 const util = require('node:util');
 const { KillSwitchOn, ConnectorFailed, ConnectorAuthFailed } = require('../errors');
+const { createLog } = require('../log');
 
 const GLOBAL_KILL_SWITCH = 'APLABS_WRITES_OFF';
 const ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
@@ -51,6 +55,7 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
     const state = { failWith: null };
     const liveEnv = { ...(credentials ? Object.fromEntries(authEnv.map((n) => [n, fakeSecret(n)])) : {}), ...env };
     const instance = connector.create({
+      log: createLog({ write: () => {} }),
       ...deps,
       env: liveEnv,
       now: clock.now,
@@ -64,6 +69,7 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
   }
 
   const writeInput = (name, key, extra = {}) => ({ ...samples.write[name](key), ...extra });
+  const bulks = samples.bulk ? [].concat(samples.bulk) : [];
   const settle = (p) => p.then((value) => ({ value }), (error) => ({ error }));
 
   test(`${label}: declares the contract (auth env names, operations, kill switch, rate limit)`, () => {
@@ -81,7 +87,11 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
     assert.deepEqual(Object.keys(samples.read || {}).sort(), [...reads].sort(), 'samples.read covers every read operation');
     assert.deepEqual(Object.keys(samples.write || {}).sort(), [...writes].sort(), 'samples.write covers every write operation');
     for (const n of writes) assert.equal(typeof samples.write[n], 'function', `samples.write.${n} is a function of the idempotency key`);
-    if (samples.bulk) assert.ok(writes.includes(samples.bulk.operation), 'samples.bulk.operation is a write operation');
+    for (const b of bulks) assert.ok(b && writes.includes(b.operation) && typeof b.input === 'function', 'each samples.bulk is { operation: a write operation, input(count, key) }');
+    for (const n of writes) {
+      if (!Object.values(samples.write[n]('probe') || {}).some(Array.isArray)) continue;
+      assert.ok(bulks.some((b) => b.operation === n), `samples.bulk covers ${n}: its sample takes a list, so its request sizing must be checked`);
+    }
     const instance = harness().instance;
     assert.deepEqual(Object.keys(instance.read).sort(), [...reads].sort());
     assert.deepEqual(Object.keys(instance.write).sort(), [...writes].sort());
@@ -175,14 +185,16 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
     }
   });
 
-  test(`${label}: a bulk write goes in batches no larger than batchSize`, { skip: !samples.bulk && 'no bulk sample (no write takes a list)' }, async () => {
-    const { instance, requests } = harness();
-    const size = decl.rateLimit.batchSize;
-    const count = size * 2 + 1;
-    await instance.write[samples.bulk.operation]({ ...samples.bulk.input(count, 'bulk'), dryRun: false });
-    const batches = requests.filter((r) => r.operation === samples.bulk.operation && r.size > 0);
-    assert.ok(batches.every((r) => r.size <= size), `batch sizes ${batches.map((r) => r.size)} are within ${size}`);
-    assert.equal(batches.reduce((sum, r) => sum + r.size, 0), count, 'every item is sent, none dropped');
+  test(`${label}: a bulk write goes in batches no larger than batchSize`, { skip: !bulks.length && 'no bulk sample (no write takes a list)' }, async () => {
+    for (const bulk of bulks) {
+      const { instance, requests } = harness();
+      const size = decl.rateLimit.batchSize;
+      const count = size * 2 + 1;
+      await instance.write[bulk.operation]({ ...bulk.input(count, 'bulk'), dryRun: false });
+      const batches = requests.filter((r) => r.operation === bulk.operation && r.size > 0);
+      assert.ok(batches.every((r) => r.size <= size), `${bulk.operation}: batch sizes ${batches.map((r) => r.size)} are within ${size}`);
+      assert.equal(batches.reduce((sum, r) => sum + r.size, 0), count, `${bulk.operation}: every item is sent, in requests that say their size`);
+    }
   });
 
   test(`${label}: reads fail closed when a credential is missing`, { skip: !authEnv.length && 'declares no credentials' }, async () => {

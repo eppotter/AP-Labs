@@ -19,16 +19,19 @@ const { defineConnector } = require('#sdk');
 // address are never among them: they are forbidden columns in the profile too.
 const FIELDS = Object.freeze(['client_id', 'first_name', 'last_name', 'email', 'zone_id']);
 
-// Attempts per lookup when the CRM says it is rate limited (status 429). Each
-// retry goes through ctx.request, so it waits out the rate limit first.
-const ATTEMPTS = 3;
-
 // One query per key. The select list is FIELDS, or the subset the call names,
 // always in FIELDS order, so the text only ever holds allow-listed names.
 const BY = Object.freeze({
   client_id: (cols) => `SELECT ${cols} FROM clients WHERE client_id = $client_id`,
   email: (cols) => `SELECT ${cols} FROM clients WHERE lower(email) = $email`,
 });
+
+// A deliberately simple email shape, checked after trimming and lower-casing:
+// a local part (no spaces, no @, no leading, trailing or doubled dot, at most
+// 64 characters), one @, and a domain of dot-separated labels. At most 254
+// characters in all. It refuses what can't be an address; it doesn't try to
+// accept every address the standard allows.
+const EMAIL = /^(?!\.)(?!.*\.\.)[^\s@]{1,64}(?<!\.)@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
 
 // The lookup's input as { key, value, fields }; throws on anything else.
 function parse({ clientId, email, fields = FIELDS } = {}) {
@@ -44,6 +47,7 @@ function parse({ clientId, email, fields = FIELDS } = {}) {
   }
   const normal = typeof email === 'string' ? email.trim().toLowerCase() : '';
   if (!normal) throw new Error('email must be a non-empty string');
+  if (normal.length > 254 || !EMAIL.test(normal)) throw new Error('email must look like name@example.com');
   return { key: 'email', value: normal, fields: picked };
 }
 
@@ -84,15 +88,9 @@ const crm = defineConnector({
     async lookupClient(input, ctx) {
       const { key, value, fields } = parse(input);
       const sql = BY[key](fields.join(', '));
-      for (let attempt = 1; ; attempt += 1) {
-        try {
-          const rows = await ctx.request(() => ctx.client.query(sql, { [key]: value }));
-          return rows.length ? Object.fromEntries(fields.map((f) => [f, rows[0][f]])) : null;
-        } catch (err) {
-          if (err.status !== 429) throw err;
-          if (attempt >= ATTEMPTS) throw new Error(`still rate limited after ${ATTEMPTS} attempts`);
-        }
-      }
+      // A 429 is retried by ctx.request (through the rate limit), then fails.
+      const rows = await ctx.request(() => ctx.client.query(sql, { [key]: value }));
+      return rows.length ? Object.fromEntries(fields.map((f) => [f, rows[0][f]])) : null;
     },
   },
 });

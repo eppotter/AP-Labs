@@ -155,7 +155,7 @@ Dependency rule: arrows point inward only. Engine code never `require`s or names
 
 - **Binds:** CAP-1, CAP-5, NFR5 [planned shared library, approved with this plan]
 - **Prevents:** each block reading env and the Keychain its own way; tokens in logs.
-- **Rule:** Story 6.1 extracts the env-then-Keychain read and `redact()` from `kit/lib/notify` into `kit/lib/secrets` (notify keeps its behaviour and tests). `readSecret(envName, keychainService)` reads env first; the Keychain only on macOS and never when `APLABS_NO_KEYCHAIN=1` (the container sets it: env only). Every secret read is registered with `kit/runtime/log`, which redacts all registered values from every line. Startup errors name the missing variable, never a value. Secret env var names live in code or the manifest, never the profile.
+- **Rule:** Story 6.1 extracts the env-then-Keychain read and `redact()` from `kit/lib/notify` into `kit/lib/secrets` (notify keeps its behaviour and tests). `readSecret(envName, keychainService)` reads env first; the Keychain only on macOS and never when `APLABS_NO_KEYCHAIN=1` (the container sets it: env only). Every secret read is registered with `kit/runtime/log`, which redacts all registered values from every line. Startup errors name the missing variable, never a value. Secret env var names live in code or the manifest, never the profile. **Connectors read env only:** a connector's credentials (`auth.env`) are read with no Keychain fallback (`readSecret(name, null, { env })`), so a connector behaves the same on a laptop and in the container, and a missing credential fails closed naming the variable. A connector must be created with the app's logger (`create({ log })`), so every credential it reads, and every token `connect` obtains and passes to `registerSecret`, registers with it.
 - **Library logs:** the app passes a custom logger to Bolt and the Slack SDK so their output goes through `kit/runtime/log` at INFO and above; DEBUG is dropped (at debug level the SDK prints the Socket Mode connection URL, which carries a ticket). A test sets the library to debug and asserts no line reaches the output unredacted.
 
 ### AD-13: Health is a tiny listener, on only when asked
@@ -202,7 +202,7 @@ Dependency rule: arrows point inward only. Engine code never `require`s or names
 
 - **Binds:** CAP-4, CAP-9, CAP-10, UX-DR2
 - **Prevents:** each module inventing its refusal wording; a config fault shown as a denial.
-- **Rule:** Engine code throws typed errors (`NotSetUp`, `AccessDenied`, `ConfigFault`, `GuardrailBlocked`, `DataUnavailable`, `LlmUnavailable`, `SessionExpired`, `PreviewInvalid`, `KillSwitchOn`). `kit/runtime/messages.js` maps each to one plain message with a next step. Handlers never build refusal text themselves.
+- **Rule:** Engine code throws typed errors (`NotSetUp`, `AccessDenied`, `ConfigFault`, `GuardrailBlocked`, `DataUnavailable`, `LlmUnavailable`, `SessionExpired`, `PreviewInvalid`, `KillSwitchOn`, `ConnectorFailed`, `ConnectorAuthFailed`, `IdempotencyConflict`). `kit/runtime/messages.js` maps each to one plain message with a next step. A connector auth failure has two messages: a credential that is not set is a setup fault (`details.setup`, worded like `ConfigFault`), and a credential the system rejected says so; neither reads as a passing outage. Handlers never build refusal text themselves.
 
 ### AD-18: Fixture tooling is offline and separate from the runtime
 

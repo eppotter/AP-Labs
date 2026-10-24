@@ -60,7 +60,8 @@ class ConnectorFailed extends RuntimeRefusal {
 }
 
 // The system refused the connector's credentials, or a declared credential is
-// not set. Reads and writes fail closed: no data comes back. Same details.
+// not set (then details.setup is true: a setup fault, worded apart from a
+// rejected key). Reads and writes fail closed: no data comes back. Same details.
 class ConnectorAuthFailed extends ConnectorFailed {
   constructor(reason, details) {
     super(reason, details);
@@ -68,7 +69,17 @@ class ConnectorAuthFailed extends ConnectorFailed {
   }
 }
 
+// A write reused an idempotency key with a different input. Nothing was sent:
+// answering with the first result would hide rows the caller meant to send.
+// Same details; reason is for the log.
+class IdempotencyConflict extends ConnectorFailed {
+  constructor(reason, details) {
+    super(reason, details);
+    this.code = 'IDEMPOTENCY_CONFLICT';
+  }
+}
+
 module.exports = {
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
-  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed,
+  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 };

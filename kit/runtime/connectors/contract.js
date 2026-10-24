@@ -8,12 +8,12 @@
 //     auth: { env: ['ACME_CRM_TOKEN'] },          // env var NAMES, never values
 //     killSwitchEnv: 'ACME_CRM_OFF',
 //     rateLimit: { perSecond: 5, batchSize: 100 },
-//     connect: ({ secret }) => makeClient(secret('ACME_CRM_TOKEN')),  // also gets { data, simulate }
+//     connect: ({ secret }) => makeClient(secret('ACME_CRM_TOKEN')),  // also gets { registerSecret, data, simulate }
 //     read: { lookupClient: async (input, ctx) => ctx.request(() => ctx.client.get(...)) },
 //     write: { addContacts: { plan: (input) => preview, apply: async (input, ctx) => result } },
 //   });
 //
-//   const crm = connector.create({ env, log });  // one instance per process
+//   const crm = connector.create({ env, log });  // log is required; one instance per process
 //   await crm.read.lookupClient({ clientId, fields: ['email'] });
 //   await crm.write.addContacts({ ...input, idempotencyKey, dryRun: false });
 //
@@ -24,14 +24,20 @@
 //   - Every write, dry run included, refuses with KillSwitchOn when the
 //     connector's killSwitchEnv or APLABS_WRITES_OFF is set to any non-empty
 //     value, before credentials are read or anything is called. Reads keep
-//     working. The env is read on every call, so flipping a switch takes effect
-//     at once.
+//     working. The env is read on every call and again before every request
+//     a write makes, so flipping a switch takes effect at once, even partway
+//     through a push: the requests still to come are refused.
 //   - Every write needs an idempotencyKey. A repeated key (per operation)
-//     returns the first result and calls nothing; two concurrent calls with
-//     one key share one apply. Keys are kept in deps.idempotency ({ get, set })
-//     or, by default, in memory for the instance's life.
-//   - Credentials are read once through kit/lib/secrets (env only) and cached
-//     with the client connect() returns; a missing one fails closed with
+//     with the same input returns the first result and calls nothing; two
+//     concurrent calls with one key share one apply. The input is fingerprinted
+//     under its key, so a reused key with a different input is refused with
+//     IdempotencyConflict and calls nothing. Keys are kept in
+//     deps.idempotency ({ get, set }, holding { input, result }) or, by
+//     default, in memory for the instance's life.
+//   - Credentials are read once through kit/lib/secrets, from env only (no
+//     Keychain fallback, unlike other AD-12 reads: see AD-12), and cached
+//     with the client connect() returns (or resolves to: connect may be async,
+//     and a rejected connect is dropped, not cached); a missing one fails closed with
 //     ConnectorAuthFailed naming the env var, before any I/O. An auth error
 //     from the system (an error with status 401 or 403, or a thrown
 //     ConnectorAuthFailed) fails closed too and drops the cached client so the
@@ -39,27 +45,39 @@
 //   - Every call to the system goes through ctx.request(fn, { size }), which
 //     spaces calls at least 1000 / perSecond ms apart (it waits, never drops)
 //     and refuses a batch larger than batchSize. ctx.batches(items) splits a
-//     list into batches of batchSize.
+//     list into batches of batchSize. A call that fails with status 429 is
+//     retried through the limiter, which holds every call for its Retry-After
+//     (up to 60 s; longer fails at once), at most 3 attempts in all; then the
+//     operation fails with ConnectorFailed.
 //   - Every error that leaves an operation is a ConnectorFailed (or
 //     ConnectorAuthFailed / KillSwitchOn) built fresh from a redacted message:
-//     the connector's own credentials, credential-shaped strings and the log
+//     the connector's own credentials, any token connect() obtained and passed
+//     to registerSecret, credential-shaped strings (headers, query values,
+//     URL passwords, JSON access_token / refresh_token / id_token) and the log
 //     redactor's patterns are masked, and the original error is not kept.
 
+const crypto = require('node:crypto');
 const { readSecret, redact } = require('../../lib/secrets');
-const { createLog } = require('../log');
-const { KillSwitchOn, ConnectorFailed, ConnectorAuthFailed } = require('../errors');
+const {
+  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
+} = require('../errors');
 
 const GLOBAL_KILL_SWITCH = 'APLABS_WRITES_OFF';
 const SLUG = /^[a-z][a-z0-9-]{0,62}$/;
 const ENV_NAME = /^[A-Z][A-Z0-9_]{0,127}$/;
 const OP_NAME = /^[a-zA-Z][a-zA-Z0-9]{0,62}$/;
 const MAX_KEY = 256;
+// A 429 is retried this many times in all, waiting what Retry-After asks,
+// but never longer than MAX_RETRY_AFTER_MS: past that the call fails.
+const RATE_LIMIT_ATTEMPTS = 3;
+const MAX_RETRY_AFTER_MS = 60_000;
 const MASK = '[redacted]';
 // Credential shapes masked whether or not the connector declared them.
 const PATTERNS = [
   /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi,
   /([?&;](?:access_token|refresh_token|token|api[_-]?key|apikey|key|secret|client_secret|password|signature|sig)=)[^&\s'"<>]+/gi,
   /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/:@'"<>]+:[^\s/@'"<>]+@/gi,
+  /"(?:access_token|refresh_token|id_token)"\s*:\s*"(?:[^"\\]|\\.)*"/gi,
 ];
 
 const isFn = (f) => typeof f === 'function';
@@ -107,22 +125,51 @@ function checkDeclaration(spec) {
   if (both) fail(`write.${both}`, 'has the same name as a read');
 }
 
+// JSON with object keys sorted, so key order is not a different input.
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map((v) => (v === undefined ? 'null' : canonical(v))).join(',')}]`;
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const keys = Object.keys(value).filter((k) => value[k] !== undefined).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+// The write's input, minus its key, as a short hash.
+const fingerprint = ({ idempotencyKey, ...input }) => crypto.createHash('sha256').update(canonical(input)).digest('hex');
+
 const isAuthError = (err) => err instanceof ConnectorAuthFailed || (err && (err.status === 401 || err.status === 403));
 
 // Calls spaced at least interval ms apart, in arrival order. Waits, never drops.
+// hold(ms) holds every call back for ms (a system's Retry-After).
 function createLimiter(perSecond, now, sleep) {
   const interval = 1000 / perSecond;
   let last = -Infinity;
+  let heldUntil = -Infinity;
   let gate = Promise.resolve();
-  return () => {
+  const limit = () => {
     const turn = gate.then(async () => {
-      const wait = last + interval - now();
+      const wait = Math.max(last + interval, heldUntil) - now();
       if (wait > 0) await sleep(wait);
       last = now();
     });
     gate = turn.catch(() => {});
     return turn;
   };
+  limit.hold = (ms) => { heldUntil = Math.max(heldUntil, now() + ms); };
+  return limit;
+}
+
+// Retry-After from a 429, in ms: err.retryAfter (seconds) or the header,
+// as seconds or an HTTP date. 0 when absent or unreadable.
+function retryAfterMs(err) {
+  const h = err.headers;
+  const raw = err.retryAfter ?? (h && (typeof h.get === 'function' ? h.get('retry-after') : h['retry-after'] ?? h['Retry-After']));
+  if (raw === undefined || raw === null || raw === '') return 0;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(String(raw));
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
 }
 
 function defineConnector(spec) {
@@ -137,17 +184,24 @@ function defineConnector(spec) {
     write: Object.freeze(Object.keys(spec.write || {})),
   });
 
-  // deps: env (default process.env), log (a kit/runtime/log logger: secrets
-  // are registered with it), now and sleep (tests inject a clock),
-  // idempotency ({ get(key), set(key, result) }), onRequest(info) (tests: runs
+  // deps: env (default process.env), log (required: the app's
+  // kit/runtime/log logger, so every credential registers with it, AD-12; a
+  // test passes its own, such as the SDK's testLog()), now and sleep (tests
+  // inject a clock), idempotency ({ get(key), set(key, { input, result }) }:
+  // input is the write input's fingerprint), onRequest(info) (tests: runs
   // before each call to the system; it may throw to simulate the system
   // failing), simulate (passed to connect() as is, for an adapter's own
-  // failure simulation in tests), data (the query runner, passed to connect()
-  // as is, for a connector that reads the client's data: its reads then pass
-  // the SQL guardrail and the profile's forbidden columns).
+  // failure simulation in tests), data (a query runner, passed to connect()
+  // as is, for a connector that reads the client's data). The contract does
+  // not check what data is: only when it is kit/runtime/data's runner (what
+  // the app passes) do the connector's reads pass the SQL guardrail and the
+  // profile's forbidden columns. A test's stand-in runner checks neither.
   function create(deps = {}) {
+    const { log } = deps;
+    if (!log || typeof log.registerSecret !== 'function' || typeof log.redact !== 'function') {
+      throw new Error(`connector "${declaration.id}": create() needs deps.log, the app's logger (kit/runtime/log), so its credentials are masked in every log line`);
+    }
     const env = deps.env || process.env;
-    const log = deps.log || createLog({ write: () => {} });
     const now = deps.now || Date.now;
     const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     const ledger = deps.idempotency || (() => { const m = new Map(); return { get: (k) => m.get(k), set: (k, v) => { m.set(k, v); } }; })();
@@ -164,22 +218,42 @@ function defineConnector(spec) {
       return null;
     }
 
-    // Reads every declared credential (once), then connects (once).
+    function refuseIfSwitchedOff() {
+      const switched = killSwitch();
+      if (switched) throw new KillSwitchOn({ connector: declaration.id, system: declaration.system, env: switched });
+    }
+
+    // Reads every declared credential (once), then connects (once). connect
+    // may be async: concurrent first calls share one connect, and a rejected
+    // one is dropped so the next call reads the credentials and connects again
+    // (rethrow maps an auth-style rejection to ConnectorAuthFailed).
     function open(operation) {
       if (session) return session;
+      const opening = connectOnce(operation);
+      session = opening;
+      opening.catch(() => { if (session === opening) session = null; });
+      return opening;
+    }
+
+    async function connectOnce(operation) {
+      // Masks a value in this connector's errors and in every app log line.
+      const registerSecret = (value) => {
+        if (typeof value !== 'string' || !value) throw new Error(`${declaration.id}: registerSecret takes a non-empty string`);
+        log.registerSecret(value);
+        if (!seen.includes(value)) seen.push(value);
+        return value;
+      };
       const values = {};
       for (const name of declaration.auth.env) {
         const value = readSecret(name, null, { env });
-        if (!value) throw new ConnectorAuthFailed(`${name} is not set`, details(operation));
-        values[name] = log.registerSecret(value);
-        if (!seen.includes(value)) seen.push(value);
+        if (!value) throw new ConnectorAuthFailed(`${name} is not set`, { ...details(operation), setup: true });
+        values[name] = registerSecret(value);
       }
       const secret = (name) => {
         if (!Object.hasOwn(values, name)) throw new Error(`${declaration.id}: ${name} is not a declared credential`);
         return values[name];
       };
-      session = { client: spec.connect ? spec.connect({ secret, simulate: deps.simulate, data: deps.data }) : null };
-      return session;
+      return { client: spec.connect ? await spec.connect({ secret, registerSecret, simulate: deps.simulate, data: deps.data }) : null };
     }
 
     function context(operation, kind, client, extra = {}) {
@@ -196,9 +270,25 @@ function defineConnector(spec) {
           if (!Number.isInteger(size) || size < 0 || size > declaration.rateLimit.batchSize) {
             throw new Error(`batch of ${size} is over the batch size of ${declaration.rateLimit.batchSize}`);
           }
-          await limit();
-          if (deps.onRequest) await deps.onRequest({ connector: declaration.id, operation, kind, size, at: now() });
-          return fn();
+          for (let attempt = 1; ; attempt += 1) {
+            await limit();
+            // Re-checked before every request of a write, after the wait, so a
+            // switch flipped partway through a push stops the requests still to come.
+            if (kind === 'write') refuseIfSwitchedOff();
+            try {
+              if (deps.onRequest) await deps.onRequest({ connector: declaration.id, operation, kind, size, at: now() });
+              return await fn();
+            } catch (err) {
+              // A 429 was not processed, so retrying it is safe, writes included.
+              if (!err || err.status !== 429) throw err;
+              if (attempt >= RATE_LIMIT_ATTEMPTS) throw new Error(`still rate limited after ${RATE_LIMIT_ATTEMPTS} attempts`);
+              const wait = retryAfterMs(err);
+              if (wait > MAX_RETRY_AFTER_MS) {
+                throw new Error(`rate limited: asked to wait ${Math.ceil(wait / 1000)} s, over the ${MAX_RETRY_AFTER_MS / 1000} s limit`);
+              }
+              limit.hold(wait);
+            }
+          }
         },
       });
     }
@@ -206,11 +296,14 @@ function defineConnector(spec) {
     // Every error leaving an operation is rebuilt from a redacted message.
     function rethrow(err, operation) {
       if (err instanceof KillSwitchOn) throw err;
+      if (err instanceof IdempotencyConflict) throw new IdempotencyConflict(clean(err.reason), details(operation));
       const raw = err instanceof ConnectorFailed ? err.reason : (err && err.message) || String(err);
       const reason = clean(raw);
       if (isAuthError(err)) {
         session = null;
-        throw new ConnectorAuthFailed(reason, details(operation));
+        // setup: a credential is not set (a setup fault), not a rejected one.
+        const setup = err instanceof ConnectorAuthFailed && err.details && err.details.setup === true;
+        throw new ConnectorAuthFailed(reason, setup ? { ...details(operation), setup: true } : details(operation));
       }
       throw new ConnectorFailed(reason, details(operation));
     }
@@ -219,7 +312,7 @@ function defineConnector(spec) {
     for (const [name, op] of Object.entries(spec.read || {})) {
       read[name] = async (input = {}) => {
         try {
-          const { client } = open(name);
+          const { client } = await open(name);
           return await op(input, context(name, 'read', client));
         } catch (err) {
           return rethrow(err, name);
@@ -230,8 +323,7 @@ function defineConnector(spec) {
     const write = {};
     for (const [name, op] of Object.entries(spec.write || {})) {
       write[name] = async (input = {}) => {
-        const switched = killSwitch();
-        if (switched) throw new KillSwitchOn({ connector: declaration.id, system: declaration.system, env: switched });
+        refuseIfSwitchedOff();
         const { dryRun, ...rest } = input;
         const key = rest.idempotencyKey;
         try {
@@ -240,16 +332,29 @@ function defineConnector(spec) {
           }
           if (dryRun !== false) return { dryRun: true, operation: name, wouldWrite: await op.plan(rest) };
           const slot = `${name}\u0000${key}`;
-          const done = await ledger.get(slot);
-          if (done !== undefined) return done;
-          if (inFlight.has(slot)) return await inFlight.get(slot);
+          // The in-flight slot is checked and claimed with no await between,
+          // before the store is read: a slow store can't let a second call
+          // with the key miss the first and apply again.
+          const input = fingerprint(rest);
+          const conflict = () => new IdempotencyConflict(`idempotencyKey "${key}" was already used with a different input`, details(name));
+          if (inFlight.has(slot)) {
+            const other = inFlight.get(slot);
+            if (other.input !== input) throw conflict();
+            return await other.run;
+          }
           const run = (async () => {
-            const { client } = open(name);
+            const done = await ledger.get(slot);
+            if (done !== undefined) {
+              if (!done || done.input !== input) throw conflict();
+              return done.result;
+            }
+            const { client } = await open(name);
             const result = await op.apply(rest, context(name, 'write', client, { idempotencyKey: key }));
-            await ledger.set(slot, result === undefined ? null : result);
-            return result === undefined ? null : result;
+            const settled = result === undefined ? null : result;
+            await ledger.set(slot, { input, result: settled });
+            return settled;
           })();
-          inFlight.set(slot, run);
+          inFlight.set(slot, { input, run });
           try { return await run; } finally { inFlight.delete(slot); }
         } catch (err) {
           return rethrow(err, name);
@@ -274,5 +379,5 @@ function defineConnector(spec) {
 
 module.exports = {
   defineConnector, checkDeclaration, GLOBAL_KILL_SWITCH,
-  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed,
+  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 };

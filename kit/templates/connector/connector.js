@@ -28,9 +28,9 @@ module.exports = defineConnector({
   // Builds the client once per process, with the credential. Replace with the
   // real client, for example one that sends `Authorization: Bearer <token>`.
   // On a 401 or 403 the client must throw an error with that status.
-  connect({ secret }) {
+  connect({ secret, simulate }) {
     const token = secret('MY_SYSTEM_TOKEN');
-    return inMemorySystem(token);
+    return inMemorySystem(token, simulate);
   },
 
   read: {
@@ -54,17 +54,18 @@ module.exports = defineConnector({
         return { listId: list.id };
       },
     },
-    // input: { listId, items: [{ email, name }], idempotencyKey }.
+    // input: { listId, items: [{ id, email, name }], idempotencyKey }.
     addItems: {
       plan: ({ listId, items = [] }) => ({ listId, add: items.length }),
       async apply({ listId, items = [] }, ctx) {
+        if (items.some((item) => !item || item.id === undefined)) throw new Error('addItems: every item needs an id');
         let added = 0;
-        const batches = ctx.batches(items);
-        for (const [i, batch] of batches.entries()) {
-          // A key per batch, so a retry after a partial failure resends only
-          // what the system has not seen.
-          await ctx.request(() => ctx.client.addItems(listId, batch, `${ctx.idempotencyKey}:${i}`), { size: batch.length });
-          added += batch.length;
+        for (const batch of ctx.batches(items)) {
+          // A key per item (the write's key plus the item's id), never per
+          // batch: a retry after a partial failure resends only the items the
+          // system has not seen, however the rows are ordered or batched.
+          const keyed = batch.map((item) => ({ ...item, key: `${ctx.idempotencyKey}:${item.id}` }));
+          added += await ctx.request(() => ctx.client.addItems(listId, keyed), { size: batch.length });
         }
         return { listId, added };
       },
@@ -73,10 +74,13 @@ module.exports = defineConnector({
 });
 
 // The stand-in system. Delete it once connect returns the real client.
-function inMemorySystem(token) {
+// simulate is test-only (deps.simulate): simulate.state shares the stand-in's
+// lists across instances, so a test can see what reached the "system".
+function inMemorySystem(token, { state = {} } = {}) {
   const records = new Map([['r1', { id: 'r1', name: 'Example', email: 'example@example.invalid', phone: 'never returned' }]]);
-  const lists = new Map();
-  const seen = new Map();
+  state.lists ??= new Map();
+  state.seen ??= new Map();
+  const { lists, seen } = state;
   const once = (key, fn) => {
     if (!seen.has(key)) seen.set(key, fn());
     return seen.get(key);
@@ -89,10 +93,14 @@ function inMemorySystem(token) {
       lists.set(list.id, list);
       return list;
     }),
-    addItems: async (listId, items, key) => once(key, () => {
+    // Adds the items whose key it has not seen; returns how many it added.
+    addItems: async (listId, items) => {
       const list = lists.get(listId) || { items: [] };
-      list.items.push(...items);
-      return items.length;
-    }),
+      let added = 0;
+      for (const { key, ...item } of items) {
+        once(key, () => { list.items.push(item); added += 1; });
+      }
+      return added;
+    },
   };
 }

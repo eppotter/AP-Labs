@@ -6,7 +6,8 @@
 // caller then uses the generic plain error).
 
 const {
-  NotSetUp, AccessDenied, ConfigFault, DataUnavailable, KillSwitchOn, ConnectorFailed,
+  NotSetUp, AccessDenied, ConfigFault, DataUnavailable, KillSwitchOn,
+  ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 } = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
@@ -20,6 +21,11 @@ const MESSAGES = [
   [ConfigFault, ({ admin }) => `That option isn't set up correctly, so I can't open it right now. I've logged the problem; please tell ${admin}.`],
   [DataUnavailable, () => "The data isn't available right now, so I can't answer that. The app is still running; please tell your admin."],
   [KillSwitchOn, ({ system }) => `Sending to ${escapeText(system)} is switched off right now, so nothing was sent. Please tell your admin.`],
+  // Subclasses of ConnectorFailed come first: the first match wins.
+  [ConnectorAuthFailed, ({ system, setup }) => (setup
+    ? `${escapeText(system)} isn't set up correctly, so I can't reach it. I've logged the problem; please tell your admin.`
+    : `${escapeText(system)} turned down my sign-in, so I couldn't reach it. Please tell your admin; trying again won't help until it's fixed.`)],
+  [IdempotencyConflict, ({ system }) => `That was already sent to ${escapeText(system)} with different contents, so I didn't send it again. Please tell your admin.`],
   [ConnectorFailed, ({ system }) => `I couldn't reach ${escapeText(system)} just now. Please try again later, or tell your admin if it keeps happening.`],
 ];
 

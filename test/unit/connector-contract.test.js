@@ -11,18 +11,31 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const Module = require('node:module');
 const { spawnSync } = require('node:child_process');
 const { defineConnector, GLOBAL_KILL_SWITCH } = require('../../kit/runtime/connectors/contract');
 const { connectorContract, fakeClock } = require('../../kit/runtime/connectors/suite');
-const { KillSwitchOn, ConnectorFailed, ConnectorAuthFailed } = require('../../kit/runtime/errors');
+const { KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict } = require('../../kit/runtime/errors');
 const { messageFor } = require('../../kit/runtime/messages');
 const { createLog } = require('../../kit/runtime/log');
 const sdk = require('../../kit/runtime/sdk');
 const { makeFork, REPO } = require('../fixtures/temp-fork');
 
+const quietLog = () => createLog({ write: () => {} });
 const TEMPLATE_DIR = path.join(REPO, 'kit/templates/connector');
 const template = require('../../kit/templates/connector/connector');
-const items = (count) => Array.from({ length: count }, (_, i) => ({ email: `p${i}@example.invalid` }));
+// The template's adapter with another batch size (a redeploy that changed it).
+function templateWithBatchSize(size) {
+  const file = path.join(TEMPLATE_DIR, 'connector.js');
+  const src = fs.readFileSync(file, 'utf8');
+  assert.match(src, /batchSize: 100\b/);
+  const m = new Module(file, module);
+  m.filename = file;
+  m.paths = Module._nodeModulePaths(TEMPLATE_DIR);
+  m._compile(src.replace(/batchSize: 100\b/, `batchSize: ${size}`), file);
+  return m.exports;
+}
+const items = (count) => Array.from({ length: count }, (_, i) => ({ id: `p${i}`, email: `p${i}@example.invalid` }));
 const SAMPLES = {
   read: { getRecord: { id: 'r1', fields: ['id'] } },
   write: {
@@ -148,7 +161,7 @@ test('a credential value given as an env name is never echoed back', () => {
 });
 
 test('the SDK exposes the contract to app code', () => {
-  for (const name of ['defineConnector', 'connectorContract', 'KillSwitchOn', 'ConnectorFailed', 'ConnectorAuthFailed']) {
+  for (const name of ['defineConnector', 'connectorContract', 'KillSwitchOn', 'ConnectorFailed', 'ConnectorAuthFailed', 'IdempotencyConflict']) {
     assert.ok(sdk[name], name);
   }
   assert.equal(sdk.defineConnector, defineConnector);
@@ -156,7 +169,7 @@ test('the SDK exposes the contract to app code', () => {
 
 test('any non-empty kill-switch value counts as on, even "0"; killSwitch() names it', async () => {
   const env = { DEMO_TOKEN: TOKEN };
-  const c = defineConnector(spec()).create({ env });
+  const c = defineConnector(spec()).create({ log: quietLog(), env });
   assert.equal(c.killSwitch(), null);
   for (const value of ['1', '0', 'false']) {
     env.DEMO_OFF = value;
@@ -170,7 +183,7 @@ test('any non-empty kill-switch value counts as on, even "0"; killSwitch() names
 
 test('a write without an idempotency key is refused before any I/O', async () => {
   let calls = 0;
-  const c = defineConnector(spec()).create({ env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } });
+  const c = defineConnector(spec()).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } });
   for (const key of [undefined, '', 42, 'x'.repeat(257)]) {
     await assert.rejects(c.write.put({ idempotencyKey: key, dryRun: false }), (e) => e instanceof ConnectorFailed && /idempotencyKey/.test(e.message));
   }
@@ -181,7 +194,7 @@ test('an injected idempotency store carries keys across instances (a restart)', 
   const m = new Map();
   const idempotency = { get: (k) => m.get(k), set: (k, v) => { m.set(k, v); } };
   let calls = 0;
-  const make = () => defineConnector(spec()).create({ env: { DEMO_TOKEN: TOKEN }, idempotency, onRequest: () => { calls += 1; } });
+  const make = () => defineConnector(spec()).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, onRequest: () => { calls += 1; } });
   assert.deepEqual(await make().write.put({ idempotencyKey: 'k1', dryRun: false }), { put: true });
   assert.deepEqual(await make().write.put({ idempotencyKey: 'k1', dryRun: false }), { put: true });
   assert.equal(calls, 1);
@@ -190,7 +203,7 @@ test('an injected idempotency store carries keys across instances (a restart)', 
 test('a failed write does not record its key, so a retry writes', async () => {
   let fail = true;
   let calls = 0;
-  const c = defineConnector(spec()).create({ env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; if (fail) throw new Error('503'); } });
+  const c = defineConnector(spec()).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; if (fail) throw new Error('503'); } });
   await assert.rejects(c.write.put({ idempotencyKey: 'k', dryRun: false }), ConnectorFailed);
   fail = false;
   assert.deepEqual(await c.write.put({ idempotencyKey: 'k', dryRun: false }), { put: true });
@@ -204,7 +217,7 @@ test('credentials are read once and connect runs once; an auth error drops them 
   const c = defineConnector(spec({
     connect: ({ secret }) => { connects += 1; return { token: secret('DEMO_TOKEN') }; },
     read: { get: async (i, ctx) => ctx.request(() => ctx.client.token) },
-  })).create({ env, onRequest: () => { if (reject) throw Object.assign(new Error('nope'), { status: 401 }); } });
+  })).create({ log: quietLog(), env, onRequest: () => { if (reject) throw Object.assign(new Error('nope'), { status: 401 }); } });
   assert.equal(await c.read.get(), TOKEN);
   assert.equal(await c.read.get(), TOKEN);
   assert.equal(connects, 1);
@@ -219,10 +232,10 @@ test('credentials are read once and connect runs once; an auth error drops them 
 test('connect gets the query runner from deps.data, for a connector that reads the client\'s data (Story 8.2)', async () => {
   const data = { run: async () => [] };
   let got;
-  const c = defineConnector(spec({ connect: (args) => { got = args; return {}; } })).create({ env: { DEMO_TOKEN: TOKEN }, data });
+  const c = defineConnector(spec({ connect: (args) => { got = args; return {}; } })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, data });
   await c.read.get();
   assert.equal(got.data, data);
-  const none = defineConnector(spec({ connect: (args) => { got = args; return {}; } })).create({ env: { DEMO_TOKEN: TOKEN } });
+  const none = defineConnector(spec({ connect: (args) => { got = args; return {}; } })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
   await none.read.get();
   assert.equal(got.data, undefined, 'no runner unless one is given');
 });
@@ -246,14 +259,14 @@ test('the suite passes its deps option to every instance it creates, but keeps i
 });
 
 test('an operation may read only the credentials it declared', async () => {
-  const c = defineConnector(spec({ connect: ({ secret }) => secret('OTHER_TOKEN') })).create({ env: { DEMO_TOKEN: TOKEN, OTHER_TOKEN: 'x' } });
+  const c = defineConnector(spec({ connect: ({ secret }) => secret('OTHER_TOKEN') })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN, OTHER_TOKEN: 'x' } });
   await assert.rejects(c.read.get(), (e) => e instanceof ConnectorFailed && /OTHER_TOKEN is not a declared credential/.test(e.message));
 });
 
 test('credentials are registered with the log, so log lines mask them too', async () => {
   const lines = [];
   const log = createLog({ write: (l) => lines.push(l) });
-  const c = defineConnector(spec()).create({ env: { DEMO_TOKEN: TOKEN }, log });
+  const c = defineConnector(spec()).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, log });
   await c.read.get();
   log.info(`token is ${TOKEN}`);
   assert.ok(!lines.join('\n').includes(TOKEN));
@@ -262,7 +275,7 @@ test('credentials are registered with the log, so log lines mask them too', asyn
 test('a request over the batch size is refused; batches() splits by it', async () => {
   const c = defineConnector(spec({
     write: { put: { plan: (i) => i, apply: async (i, ctx) => ({ batches: ctx.batches([1, 2, 3, 4, 5]).map((b) => b.length), r: await ctx.request(() => 1, { size: 3 }) }) } },
-  })).create({ env: { DEMO_TOKEN: TOKEN } });
+  })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
   await assert.rejects(c.write.put({ idempotencyKey: 'k', dryRun: false }), /batch of 3 is over the batch size of 2/);
 });
 
@@ -270,7 +283,7 @@ test('the limiter waits between calls on the injected clock', async () => {
   const clock = fakeClock();
   const at = [];
   const c = defineConnector(spec({ rateLimit: { perSecond: 4, batchSize: 1 } })).create({
-    env: { DEMO_TOKEN: TOKEN }, ...clock, onRequest: (info) => { at.push(info.at); },
+    log: quietLog(), env: { DEMO_TOKEN: TOKEN }, ...clock, onRequest: (info) => { at.push(info.at); },
   });
   await Promise.all([1, 2, 3].map(() => c.read.get()));
   assert.deepEqual(at, [0, 250, 500]);
@@ -281,8 +294,23 @@ test('kill-switch and connector errors have plain messages that name the system,
   assert.equal(messageFor(new KillSwitchOn({ ...d, env: 'DEMO_OFF' })), 'Sending to Demo &lt;CRM&gt; is switched off right now, so nothing was sent. Please tell your admin.');
   const failed = new ConnectorFailed('HTTP 500 from host', d);
   assert.equal(messageFor(failed), "I couldn't reach Demo &lt;CRM&gt; just now. Please try again later, or tell your admin if it keeps happening.");
-  assert.equal(messageFor(new ConnectorAuthFailed('HTTP 401', d)), messageFor(failed));
   assert.ok(!messageFor(failed).includes('500'));
+});
+
+test('a missing key, a rejected key, an outage and a reused key each get their own plain message (AD-17, #82)', async () => {
+  const d = { connector: 'demo', system: 'Demo', operation: 'get' };
+  const missing = await defineConnector(spec()).create({ log: quietLog(), env: {} }).read.get().catch((e) => e);
+  assert.ok(missing instanceof ConnectorAuthFailed && missing.details.setup === true, 'a missing key is flagged as a setup fault');
+  const rejected = await defineConnector(spec({ read: { get: async (i, ctx) => ctx.request(() => { throw Object.assign(new Error('no'), { status: 401 }); }) } }))
+    .create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } }).read.get().catch((e) => e);
+  assert.ok(rejected instanceof ConnectorAuthFailed && !rejected.details.setup);
+  const words = [missing, rejected, new ConnectorFailed('HTTP 500', d), new IdempotencyConflict('reused', d)].map(messageFor);
+  assert.equal(words[0], "Demo isn't set up correctly, so I can't reach it. I've logged the problem; please tell your admin.");
+  assert.equal(words[1], "Demo turned down my sign-in, so I couldn't reach it. Please tell your admin; trying again won't help until it's fixed.");
+  assert.equal(words[2], "I couldn't reach Demo just now. Please try again later, or tell your admin if it keeps happening.");
+  assert.equal(words[3], "That was already sent to Demo with different contents, so I didn't send it again. Please tell your admin.");
+  assert.equal(new Set(words).size, 4);
+  for (const w of words) assert.doesNotMatch(w, /DEMO_TOKEN|401|500|reused/);
 });
 
 test('the template\'s own test passes once copied into a fork', (t) => {
@@ -296,4 +324,188 @@ test('the template\'s own test passes once copied into a fork', (t) => {
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /pass 12\n/);
   assert.match(r.stdout, /fail 0\n/);
+});
+
+test('a kill switch flipped partway through a write stops the requests still to come (#82)', async () => {
+  for (const name of ['DEMO_OFF', GLOBAL_KILL_SWITCH]) {
+    const env = { DEMO_TOKEN: TOKEN };
+    let sent = 0;
+    const c = defineConnector(spec({
+      write: {
+        put: {
+          plan: (i) => i,
+          async apply(i, ctx) {
+            for (let b = 0; b < 5; b += 1) {
+              await ctx.request(() => { sent += 1; if (sent === 2) env[name] = '1'; });
+            }
+            return { sent };
+          },
+        },
+      },
+    })).create({ log: quietLog(), env });
+    await assert.rejects(c.write.put({ idempotencyKey: 'k', dryRun: false }), (e) => e instanceof KillSwitchOn && e.details.env === name);
+    assert.equal(sent, 2, `${name}: no request went out after the switch was flipped`);
+    assert.equal(await c.read.get().then((r) => r.ok), true, `${name}: reads keep working`);
+    delete env[name];
+    sent = 2;
+    assert.deepEqual(await c.write.put({ idempotencyKey: 'k', dryRun: false }), { sent: 7 }, `${name}: the stopped write did not use up its key`);
+  }
+});
+
+test('with a slow idempotency store, two concurrent calls with one key still apply once (#82)', async () => {
+  const m = new Map();
+  // The second read of the store is slow: it answers after the first write has
+  // applied, recorded its key and finished, with what the store held when asked.
+  let gets = 0;
+  const idempotency = {
+    get: async (k) => { const held = m.get(k); gets += 1; if (gets > 1) await new Promise((r) => setTimeout(r, 30)); return held; },
+    set: async (k, v) => { m.set(k, v); },
+  };
+  let calls = 0;
+  const c = defineConnector(spec()).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, onRequest: () => { calls += 1; } });
+  const both = await Promise.all([1, 2].map(() => c.write.put({ idempotencyKey: 'k', dryRun: false })));
+  assert.deepEqual(both, [{ put: true }, { put: true }]);
+  assert.equal(calls, 1, 'the second call joined the first instead of applying again');
+});
+
+test('a reused idempotency key with a different input is refused, never answered with the first result (#82)', async () => {
+  let calls = 0;
+  const c = defineConnector(spec({
+    write: { put: { plan: (i) => i, apply: async (i, ctx) => ctx.request(() => ({ put: i.value })) } },
+  })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } });
+  assert.deepEqual(await c.write.put({ idempotencyKey: 'k', value: { a: 1, b: 2 }, dryRun: false }), { put: { a: 1, b: 2 } });
+  assert.deepEqual(await c.write.put({ value: { b: 2, a: 1 }, idempotencyKey: 'k', dryRun: false }), { put: { a: 1, b: 2 } }, 'key order is not a different input');
+  const conflict = (e) => e instanceof IdempotencyConflict && e instanceof ConnectorFailed && e.code === 'IDEMPOTENCY_CONFLICT';
+  await assert.rejects(c.write.put({ idempotencyKey: 'k', value: { a: 2, b: 2 }, dryRun: false }), conflict);
+  assert.equal(calls, 1, 'nothing was sent for the refused input');
+  // Two concurrent calls with one key and different inputs: one applies, one is refused.
+  const [x, y] = await Promise.allSettled([1, 2].map((v) => c.write.put({ idempotencyKey: 'k2', value: v, dryRun: false })));
+  assert.deepEqual(x, { status: 'fulfilled', value: { put: 1 } });
+  assert.ok(y.status === 'rejected' && conflict(y.reason));
+  assert.equal(calls, 2);
+});
+
+test('the template keys each item, so a retry with reordered rows or a new batch size loses no row and repeats none (#82)', async () => {
+  const env = { MY_SYSTEM_TOKEN: TOKEN };
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const rows = (order) => order.map((id) => ({ id, email: `${id}@example.invalid` }));
+  for (const [what, retryWith, order] of [
+    ['reordered rows', () => templateWithBatchSize(2), [...ids].reverse()],
+    ['a new batch size', () => template, ids],
+  ]) {
+    const state = {};
+    let pushes = 0;
+    // The first push fails on its second batch: a and b reached the system.
+    const first = templateWithBatchSize(2).create({
+      log: quietLog(), env, simulate: { state },
+      onRequest: (info) => { if (info.operation === 'addItems' && ++pushes === 2) throw new Error('503 from the system'); },
+    });
+    const { listId } = await first.write.createList({ name: 'l', idempotencyKey: 'list', dryRun: false });
+    await assert.rejects(first.write.addItems({ listId, items: rows(ids), idempotencyKey: 'push-1', dryRun: false }), ConnectorFailed);
+    assert.deepEqual(state.lists.get(listId).items.map((i) => i.id), ['a', 'b']);
+    const retry = retryWith().create({ log: quietLog(), env, simulate: { state } });
+    await retry.write.addItems({ listId, items: rows(order), idempotencyKey: 'push-1', dryRun: false });
+    assert.deepEqual(state.lists.get(listId).items.map((i) => i.id).sort(), ids, `${what}: every row is in the list exactly once`);
+  }
+});
+
+test('an async connect is awaited once; a rejected one is dropped, and an auth-style rejection is ConnectorAuthFailed (#82)', async () => {
+  let connects = 0;
+  let fail = 'auth';
+  const c = defineConnector(spec({
+    async connect({ secret }) {
+      connects += 1;
+      await new Promise((r) => setImmediate(r));
+      if (fail === 'auth') throw Object.assign(new Error('invalid_grant'), { status: 401 });
+      if (fail === 'down') throw new Error('connect ECONNRESET');
+      return { token: secret('DEMO_TOKEN') };
+    },
+    read: { get: async (i, ctx) => ctx.request(() => ctx.client.token) },
+  })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+  await assert.rejects(c.read.get(), ConnectorAuthFailed);
+  fail = 'down';
+  await assert.rejects(c.read.get(), (e) => e instanceof ConnectorFailed && !(e instanceof ConnectorAuthFailed));
+  fail = null;
+  assert.deepEqual(await Promise.all([c.read.get(), c.read.get()]), [TOKEN, TOKEN]);
+  assert.equal(connects, 3, 'each rejection was dropped; the two concurrent calls shared one connect');
+  await c.read.get();
+  assert.equal(connects, 3);
+});
+
+test('connect can register a token it obtains, and JSON token fields are masked in errors (#82)', async () => {
+  // Fake values shaped like tokens, not credentials.
+  const obtained = 'fake-oauth-access-Qm4t';
+  const lines = [];
+  const log = createLog({ write: (l) => lines.push(l) });
+  let body = '';
+  const c = defineConnector(spec({
+    async connect({ registerSecret }) { return { token: registerSecret(obtained) }; },
+    read: { get: async (i, ctx) => ctx.request(() => { throw new Error(body); }) },
+  })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, log });
+  body = `upstream echoed ${obtained}`;
+  await assert.rejects(c.read.get(), (e) => e instanceof ConnectorFailed && !e.message.includes(obtained));
+  log.info(`token ${obtained}`);
+  assert.ok(!lines.join('\n').includes(obtained), 'the app logger masks it too');
+  body = '{"access_token": "fake-at-1x", "refresh_token":"fake-rt-2y","id_token" :"fake-it-3z","scope":"read"}';
+  await assert.rejects(c.read.get(), (e) => {
+    for (const v of ['fake-at-1x', 'fake-rt-2y', 'fake-it-3z']) assert.ok(!e.message.includes(v), `${v} leaked: ${e.message}`);
+    assert.match(e.message, /"scope":"read"/);
+    return true;
+  });
+});
+
+test('a 429 is retried through the rate limiter, honouring Retry-After, then fails as ConnectorFailed (#82)', async () => {
+  const limited = (retryAfter) => Object.assign(new Error('HTTP 429 Too Many Requests'), { status: 429, headers: retryAfter === undefined ? {} : { 'retry-after': retryAfter } });
+  function make(answers) {
+    const clock = fakeClock();
+    const at = [];
+    const c = defineConnector(spec({ rateLimit: { perSecond: 10, batchSize: 2 } })).create({
+      log: quietLog(), env: { DEMO_TOKEN: TOKEN }, ...clock,
+      onRequest: (info) => { at.push(info.at); const a = answers.shift(); if (a) throw a; },
+    });
+    return { c, at };
+  }
+  // Two 429s (the first asks for 2 s), then an answer: the caller sees the answer.
+  const ok = make([limited('2'), limited(), null]);
+  assert.deepEqual(await ok.c.read.get(), { ok: true });
+  assert.equal(ok.at.length, 3);
+  assert.ok(ok.at[1] - ok.at[0] >= 2000, `waited ${ok.at[1] - ok.at[0]} ms of the 2 s asked`);
+  assert.ok(ok.at[2] - ok.at[1] >= 100, 'a retry still keeps to the rate limit');
+  // Still limited after the bounded attempts: a ConnectorFailed, never a result.
+  const out = make([limited(), limited(), limited(), limited()]);
+  await assert.rejects(out.c.read.get(), (e) => e instanceof ConnectorFailed && /rate limit/i.test(e.reason));
+  assert.equal(out.at.length, 3);
+  // A Retry-After past the limit fails at once instead of hanging.
+  const long = make([limited('3600'), null]);
+  await assert.rejects(long.c.read.get(), (e) => e instanceof ConnectorFailed && /3600/.test(e.reason));
+  assert.equal(long.at.length, 1);
+  // Writes retry too, and the retry re-checks the kill switch.
+  const w = make([limited('1'), null]);
+  assert.deepEqual(await w.c.write.put({ idempotencyKey: 'k', dryRun: false }), { put: true });
+  assert.equal(w.at.length, 2);
+});
+
+test('create() needs the app logger, so every credential registers with it (AD-12, #82)', () => {
+  const c = defineConnector(spec());
+  for (const log of [undefined, null, {}, { registerSecret() {} }]) {
+    assert.throws(() => c.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, log }), /deps\.log/);
+  }
+  assert.doesNotThrow(() => c.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, log: createLog({ write: () => {} }) }));
+});
+
+test('the suite needs a bulk sample for every write that takes a list, so 500 items in one unsized call fails it (#82)', async () => {
+  const DECLARES = 'declares the contract (auth env names, operations, kill switch, rate limit)';
+  const BULK = 'a bulk write goes in batches no larger than batchSize';
+  // Sends every item in one call and never says how many.
+  const unsized = defineConnector(spec({
+    write: { addAll: { plan: (i) => i, apply: async (i, ctx) => ctx.request(() => ({ sent: i.items.length })) } },
+  }));
+  const write = { addAll: (idempotencyKey) => ({ items: items(500), idempotencyKey }) };
+  const read = { get: {} };
+  assert.ok((await failingCases(unsized, { read, write })).includes(DECLARES), 'no bulk sample for a list write fails the declaration');
+  const bulk = { operation: 'addAll', input: (count, idempotencyKey) => ({ items: items(count), idempotencyKey }) };
+  assert.ok((await failingCases(unsized, { read, write, bulk })).includes(BULK));
+  assert.ok((await failingCases(unsized, { read, write, bulk: [bulk] })).includes(BULK), 'bulk may list several writes');
+  // A connector whose writes take no list needs no bulk sample.
+  assert.deepEqual(await failingCases(defineConnector(spec()), { read, write: { put: (idempotencyKey) => ({ v: 1, idempotencyKey }) } }), []);
 });

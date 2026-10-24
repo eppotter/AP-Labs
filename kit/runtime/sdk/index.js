@@ -14,8 +14,9 @@
 // connector adapter and its test need (kit/templates/connector.md).
 
 const { DataUnavailableError, QueryRefusedError } = require('../data');
+const { createLog } = require('../log');
 const {
-  defineConnector, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed,
+  defineConnector, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 } = require('../connectors/contract');
 
 // The shared connector contract suite, for a connector's own test file. It
@@ -52,7 +53,15 @@ function testContext({
   };
 }
 
+// A logger for a test that creates a connector (create() needs one): it
+// redacts like the app's, and keeps its JSON lines in .lines instead of
+// printing them.
+function testLog() {
+  const lines = [];
+  return { ...createLog({ write: (line) => lines.push(line) }), lines };
+}
+
 module.exports = {
-  testContext, DataUnavailableError, QueryRefusedError,
-  defineConnector, connectorContract, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed,
+  testContext, testLog, DataUnavailableError, QueryRefusedError,
+  defineConnector, connectorContract, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 };

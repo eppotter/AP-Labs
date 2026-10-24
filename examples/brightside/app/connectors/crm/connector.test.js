@@ -7,7 +7,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { connectorContract, ConnectorAuthFailed, ConnectorFailed } = require('#sdk');
+const {
+  connectorContract, testLog, ConnectorAuthFailed, ConnectorFailed,
+} = require('#sdk');
 const connector = require('./connector');
 
 // Not a credential: any non-empty value stands in for the API key.
@@ -37,7 +39,7 @@ function fakeData() {
 
 function crm({ simulate, data = fakeData(), now, sleep } = {}) {
   const requests = [];
-  const instance = connector.create({ env: { ...ENV }, data, simulate, now, sleep, onRequest: (r) => requests.push(r) });
+  const instance = connector.create({ log: testLog(), env: { ...ENV }, data, simulate, now, sleep, onRequest: (r) => requests.push(r) });
   return { instance, data, requests };
 }
 
@@ -109,13 +111,13 @@ test('crm: a lookup needs exactly one of a whole-number clientId or an email', a
 });
 
 test('crm: without a query runner it fails with a plain reason, never a result', async () => {
-  const c = connector.create({ env: { ...ENV } });
+  const c = connector.create({ log: testLog(), env: { ...ENV } });
   await assert.rejects(c.read.lookupClient({ clientId: 1 }), (e) => e instanceof ConnectorFailed && /query runner/.test(e.reason));
 });
 
 test('crm: a missing API key fails closed before the runner is called', async () => {
   const data = fakeData();
-  const c = connector.create({ env: {}, data });
+  const c = connector.create({ log: testLog(), env: {}, data });
   await assert.rejects(c.read.lookupClient({ clientId: 1 }), (e) => e instanceof ConnectorAuthFailed && /BRIGHTSIDE_CRM_KEY/.test(e.reason));
   assert.equal(data.queries.length, 0);
 });
@@ -143,4 +145,14 @@ test('crm: a rate limit that outlasts the retries fails, it never returns empty'
   const { instance, data } = crm({ simulate: { rateLimited: 100 }, now: () => 0, sleep: async () => {} });
   await assert.rejects(instance.read.lookupClient({ clientId: 1 }), (e) => e instanceof ConnectorFailed && /rate limit/i.test(e.reason));
   assert.equal(data.queries.length, 0);
+});
+
+test('crm: a malformed email is a clean refusal, never a query (#84)', async () => {
+  const { instance, data } = crm();
+  for (const email of ['not-an-email', 'a@b', '@home.invalid', 'a@', 'a b@home.invalid', 'a@@home.invalid', 'a@home .invalid',
+    'a@home..invalid', '.a@home.invalid', `${'a'.repeat(250)}@home.invalid`]) {
+    await assert.rejects(instance.read.lookupClient({ email }), (e) => e instanceof ConnectorFailed && /email/.test(e.reason), email);
+  }
+  assert.equal(data.queries.length, 0, 'no malformed email reached the runner');
+  assert.equal((await instance.read.lookupClient({ email: 'Briar.Redley.1+x@home.invalid' })), null, 'a plus address is well formed');
 });
