@@ -28,6 +28,8 @@ jobs:
         run: npm run fixture:check
       - name: Fixture builds into DuckDB (offline)
         run: npm run fixture:build
+      - name: Fixture checks pass (integrity, synthetic-only)
+        run: npm run fixture:validate
       - name: Verify harness
         # A client fork (governed: .aplabs/profile.yml exists) runs strict, so a
         # skipped check (missing executable), a timeout or zero checks fails CI

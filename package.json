@@ -20,6 +20,7 @@
     "fixture:generate": "node examples/brightside/fixture/generate.js",
     "fixture:check": "node examples/brightside/fixture/generate.js --check",
     "fixture:build": "node kit/fixture/build.js examples/brightside/fixture",
+    "fixture:validate": "node kit/fixture/validate.js examples/brightside/fixture",
     "slack:manifest": "node kit/runtime/slack/manifest.js"
   },
   "dependencies": {

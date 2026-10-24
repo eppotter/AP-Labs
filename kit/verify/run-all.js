@@ -4,8 +4,9 @@
 //
 //   npm run verify [-- --strict]
 //
-// Reads verify.checks from .aplabs/profile.yml, then the known truths in
-// .aplabs/context/data.md (Story 4.2, run as checks `truth:<id>` and judged on
+// Reads verify.checks from .aplabs/profile.yml (or APLABS_PROFILE), then the
+// known truths in context/data.md beside it, .aplabs/context/data.md in a fork
+// (Story 4.2, run as checks `truth:<id>` and judged on
 // the number they print), and spawns each argv in order,
 // without a shell, from the repo root (cwd), stdin ignored. A check sees only
 // the fixed env allowlist plus verify.env_allow, and its whole process group
@@ -57,7 +58,7 @@ async function main(argv, env = process.env, cwd = process.cwd()) {
     return 2;
   }
 
-  // The profile's checks, then the known truths in .aplabs/context/data.md.
+  // The profile's checks, then the known truths in context/data.md beside it.
   const checks = [...profile.verify.checks, ...truthChecksFor(profileFile)];
   const envAllow = profile.verify.env_allow;
   if (!checks.length) console.log('verify: SKIPPED (0 checks)');

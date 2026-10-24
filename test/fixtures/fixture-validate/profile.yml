@@ -1,0 +1,6 @@
+schema_version: 1
+client: { id: mini, name: Mini }
+users:
+  - { id: solo, name: Solo, role: admin }
+sql:
+  forbidden_columns: [shops.postal_code]

@@ -56,6 +56,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #67 | 2026-10-24 | 6.3 | user-visible | T1 | Hub menus and clicks follow the profile: a person's Slack id maps to their profile user, they see and can open only what they're allowed (deny wins), people not set up see only open-to-everyone entries and are told who to ask, and duplicate Slack ids fail profile validation. | — |
 | #69 | 2026-10-24 | — | infra | T1 | Runtime retro (PRs #42–#67): `npm run check` fails on committed conflict markers, the DuckDB tests say "run npm ci" when deps are missing, and AGENTS.md gives `npm test` a longer timeout. | — |
 | #70 | 2026-10-24 | 7.5 | user-visible | T3 | Every query now runs through one locked, read-only reader behind the SQL guardrail, and a Dataset entry on /brightside shows the data's source, version, as-of date and table sizes; missing data is reported plainly and the app keeps running (MotherDuck stays DEP-011). | — |
+| pending | 2026-10-24 | 7.6 | groundwork | T3 | `npm run fixture:validate` runs 12 integrity and synthetic-only SQL checks on the built Brightside fixture through the query runner (also a verify check and a CI step), and Brightside's `context/data.md` carries the 7 known truths, each run through the runner by `npm run verify` against its planted target (owner Dana Reyes, sign-off pending). | — |
 
 ## Deferrals (DEP)
 
