@@ -7,7 +7,18 @@ cd "$(dirname "$0")/.."
 
 list() {
   local out
-  out=$(git ls-files "$1" ':(exclude).agents' ':(exclude)_bmad') || { echo "check-syntax: cannot list $1 files" >&2; exit 2; }
+  out=$(git ls-files "$1" ':(exclude).agents' ':(exclude)_bmad') || { # Shellcheck too, so a lint failure shows up before CI. Missing locally is a
+# reported skip, never a pass; CI always runs it.
+if command -v shellcheck >/dev/null 2>&1; then
+  if [ -n "$sh" ]; then
+    # shellcheck disable=SC2086
+    shellcheck $sh || fail=1
+  fi
+else
+  echo "check-syntax: shellcheck not installed, SKIPPED locally (CI runs it)"
+fi
+
+echo "check-syntax: cannot list $1 files" >&2; exit 2; }
   printf '%s' "$out"
 }
 

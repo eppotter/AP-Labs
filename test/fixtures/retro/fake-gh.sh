@@ -18,6 +18,8 @@ case "${1:-} ${2:-}" in
     cat "$prs"
     ;;
   "pr view")
+    # The single quotes are deliberate: ${...} is a JS template literal, not shell.
+    # shellcheck disable=SC2016
     node -e 'const prs = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
 const pr = prs.find((p) => String(p.number) === process.argv[2]);
 if (!pr) { console.error(`GraphQL: Could not resolve to a PullRequest with the number of ${process.argv[2]}.`); process.exit(1); }
