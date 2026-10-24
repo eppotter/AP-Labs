@@ -27,6 +27,7 @@ const {
   ROUND_BUDGET,
   USAGE,
   promptFor,
+  claudeStdin,
   isValidState,
   readVerdict,
   repeatedBlockingFiles,
@@ -201,18 +202,32 @@ function main(argv, env = process.env, cwd = process.cwd()) {
       return spawnSync(codexBin, ['exec', '--sandbox', 'read-only', '-o', verdictPath, 'review', promptFor(state)],
         { cwd, env, stdio: ['ignore', log, log] });
     }
-    let diff;
+    const gitDiff = (range) => execFileSync('git', ['diff', '--no-ext-diff', '--no-textconv', range],
+      { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 10 * 1024 * 1024 });
+    let input;
     try {
-      diff = execFileSync('git', ['diff', '--no-ext-diff', '--no-textconv', 'origin/main...HEAD'],
-        { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const full = gitDiff('origin/main...HEAD');
+      let since = null;
+      if (previous) {
+        try {
+          since = gitDiff(`${previous.head}..HEAD`);
+        } catch {
+          // The last reviewed head is gone (a rebase, say): stdin says so.
+        }
+      }
+      input = claudeStdin(full, previous?.head, since);
     } catch (error) {
       return { status: 1, error };
     }
+    // Read-only tools, no prompts, no MCP servers, no saved session, no browser
+    // and no slash commands; test/unit/review-cli.test.js pins this argv.
+    // --restricted confines Read, Glob and Grep to the working directory (the
+    // repo); proved live: the repo's AGENTS.md was readable, /etc/hosts was not.
     const result = spawnSync(claudeBin, [
-      '--print', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk',
+      '--print', '--restricted', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk',
       '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-session-persistence', '--no-chrome',
       '--disable-slash-commands', promptFor(state, { diffOnStdin: true }),
-    ], { cwd, env, input: diff, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    ], { cwd, env, input, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
     if (result.stderr) fs.writeSync(log, result.stderr);
     if (result.stdout) fs.writeFileSync(verdictPath, result.stdout);
     return result;

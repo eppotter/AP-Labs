@@ -47,14 +47,16 @@ function parseArgs(argv) {
   return { pr, notify, timeoutMin };
 }
 
-const EXEMPT_LINE = /^Review: exempt — \S.*$/gm;
+const EXEMPT_LINE = /^Review: exempt\b.*$/gm;
+const EXEMPT_VALUE = /^Review: exempt — \S/;
 const HEAD_LINE = /^Reviewed head:.*$/gm;
 const HEAD_VALUE = /^Reviewed head: ([0-9a-f]{40})\s*$/;
 const REFUTER_LINE = /^Refuter:.*$/gm;
 const REFUTER_VALUE = /^Refuter: (\d+) confirmed, (\d+) not reproduced, (\d+) escalated, (\d+) pending\s*$/;
 
 // The review lines in a PR body. reviewedHead and refuter are null when the
-// line is absent and 'invalid' when it is malformed or repeated.
+// line is absent and 'invalid' when it is malformed or repeated. exempt is
+// false when absent or malformed and 'invalid' when repeated.
 function parseBody(body) {
   const text = String(body ?? '').replace(/\r\n/g, '\n');
   const one = (pattern, value, read) => {
@@ -65,12 +67,17 @@ function parseBody(body) {
   };
   return {
     kind: hasKindLine(text),
-    exempt: (text.match(EXEMPT_LINE) || []).length > 0,
+    exempt: exemptFrom(text.match(EXEMPT_LINE) || []),
     reviewedHead: one(HEAD_LINE, HEAD_VALUE, (m) => m[1]),
     refuter: one(REFUTER_LINE, REFUTER_VALUE, (m) => ({
       confirmed: Number(m[1]), notReproduced: Number(m[2]), escalated: Number(m[3]), pending: Number(m[4]),
     })),
   };
+}
+
+function exemptFrom(lines) {
+  if (lines.length > 1) return 'invalid';
+  return lines.length === 1 && EXEMPT_VALUE.test(lines[0]);
 }
 
 // Conditions a-d of Story 1.5 on a `gh pr view` result: a list of plain
@@ -81,7 +88,9 @@ function prRefusals(pr) {
   if (pr.baseRefName !== 'main') reasons.push(`PR #${pr.number} targets ${pr.baseRefName || 'no branch'}, not main.`);
   const body = parseBody(pr.body);
   if (!body.kind) reasons.push('The PR body has no valid Kind line (Kind: user-visible|groundwork|fix|infra|docs).');
-  if (!body.exempt) {
+  if (body.exempt === 'invalid') {
+    reasons.push('The PR body has more than one Review: exempt line.');
+  } else if (!body.exempt) {
     if (body.reviewedHead === null) {
       reasons.push('The PR body has no Reviewed head line and no Review: exempt line. Run npm run review.');
     } else if (body.reviewedHead === 'invalid') {

@@ -43,6 +43,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #39 | 2026-10-24 | 1.5 | infra | — | `npm run land` merges a PR only when CI passed, the reviewed head is the head being merged, and no blocker is open. | — |
 | #42 | 2026-10-24 | 4.1 | infra | — | Adds the four client file templates, `npm run onboard` to create and check them, and a banner line until each is signed off by its client owner. | — |
 | #44 | 2026-10-24 | 4.2 | infra | — | Each known truth in `data.md` carries a check that `npm run verify` and the end-of-turn hook run against the client's number; the banner flags truths not checked or signed off. | DEP-010 |
+| #46 | 2026-10-24 | — | fix | — | Hardens review and land: later Claude rounds also get the diff since the last reviewed head, the rubric is built from parts, Claude's flags are pinned by a test, a CLEAN verdict hiding a prose blocker fails, and repeated exempt lines refuse a merge. | — |
 
 ## Deferrals (DEP)
 
