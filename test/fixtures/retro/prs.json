@@ -1,0 +1,152 @@
+[
+  {
+    "number": 3,
+    "title": "Pre-tooling scaffold",
+    "body": "**What this does:** sets up the repo.\n\nNo review lines yet.",
+    "createdAt": "2026-10-01T09:00:00Z",
+    "mergedAt": "2026-10-01T15:00:00Z",
+    "commits": [
+      {
+        "oid": "0000000000000000000000000000000000000001"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000002"
+      }
+    ]
+  },
+  {
+    "number": 11,
+    "title": "Clean groundwork",
+    "body": "**What this does:** a clean PR.\n\nKind: groundwork\n\nReview rounds: 1/3\nReviewed head: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+    "createdAt": "2026-10-02T09:00:00Z",
+    "mergedAt": "2026-10-02T12:30:00Z",
+    "commits": [
+      {
+        "oid": "0000000000000000000000000000000000000001"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000002"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000003"
+      }
+    ]
+  },
+  {
+    "number": 12,
+    "title": "Over budget | stopped",
+    "body": "**What this does:** ran long.\n\nKind: groundwork\n\nReview rounds: 4/3\nReviewed head: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n\nReview follow-up: #42\n\nReview stop: same class twice — kit/a.js\n",
+    "createdAt": "2026-10-03T09:00:00Z",
+    "mergedAt": "2026-10-05T09:00:00Z",
+    "commits": [
+      {
+        "oid": "0000000000000000000000000000000000000001"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000002"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000003"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000004"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000005"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000006"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000007"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000008"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000009"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000010"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000011"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000012"
+      }
+    ]
+  },
+  {
+    "number": 13,
+    "title": "fix: repair the parser",
+    "body": "**What this does:** fixes a bug.\r\n\r\nKind: fix\r\n\r\nReview rounds: 1/3\r\nReviewed head: cccccccccccccccccccccccccccccccccccccccc\r\n",
+    "createdAt": "2026-10-06T09:00:00Z",
+    "mergedAt": "2026-10-06T10:00:00Z",
+    "commits": [
+      {
+        "oid": "0000000000000000000000000000000000000001"
+      }
+    ]
+  },
+  {
+    "number": 14,
+    "title": "Docs refresh",
+    "body": "**What this does:** docs only.\n\nKind: docs\n\nReview: exempt — docs only\n",
+    "createdAt": "2026-10-07T09:00:00Z",
+    "mergedAt": "2026-10-07T09:30:00Z",
+    "commits": [
+      {
+        "oid": "0000000000000000000000000000000000000001"
+      }
+    ]
+  },
+  {
+    "number": 15,
+    "title": "User-visible change",
+    "body": "**What this does:** reviewed by the same model.\n\nKind: user-visible\n\nReview rounds: 2/3\nReviewed head: dddddddddddddddddddddddddddddddddddddddd\n\nReview: same-model fallback\n",
+    "createdAt": "2026-10-08T09:00:00Z",
+    "mergedAt": "2026-10-08T21:00:00Z",
+    "commits": [
+      {
+        "oid": "0000000000000000000000000000000000000001"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000002"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000003"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000004"
+      }
+    ]
+  },
+  {
+    "number": 16,
+    "title": "Reviewed without a Kind",
+    "body": "**What this does:** forgot its Kind.\n\nReview rounds: 1/3\nReviewed head: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n",
+    "createdAt": "2026-10-09T09:00:00Z",
+    "mergedAt": "2026-10-09T11:00:00Z",
+    "commits": [
+      {
+        "oid": "0000000000000000000000000000000000000001"
+      },
+      {
+        "oid": "0000000000000000000000000000000000000002"
+      }
+    ]
+  },
+  {
+    "number": 17,
+    "title": "Still open",
+    "body": "Kind: infra\n",
+    "createdAt": "2026-10-10T09:00:00Z",
+    "mergedAt": null,
+    "commits": [
+      {
+        "oid": "0000000000000000000000000000000000000001"
+      }
+    ]
+  }
+]
