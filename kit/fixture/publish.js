@@ -17,14 +17,19 @@
 //      checks/*.sql passes (kit/fixture/validate).
 //   2. Read the token (kit/lib/secrets); a missing one exits 1 saying how to
 //      set it. It is registered with the redactor before connecting.
-//   3. Upload the build to <database>__publishing, add the fixture_publish
+//   3. Refuse unless <database> does not exist yet (first publish) or has a
+//      fixture_publish table (this tool published it): --database can name
+//      any MotherDuck database, and publish never replaces one it did not
+//      write. The refusal sends no write, a staging cleanup included.
+//      Then upload the build to <database>__publishing, add the fixture_publish
 //      table (fixture version, seeds hash, as_of, published_at, rows_<table>),
 //      and check its row counts and version against the local build.
 //   4. Swap: CREATE OR REPLACE DATABASE <database> FROM <staging> (a
 //      MotherDuck copy), check the result, then drop staging.
 //
-// Every refusal in step 1 or 2 comes before any connection, so it changes
-// nothing remotely. Any failure before step 4 leaves the shared database as it was. The swap
+// Every refusal in step 1 or 2 comes before any connection, and step 3's
+// target refusal comes before any write, so no refusal changes anything
+// remotely. Any failure before step 4 leaves the shared database as it was. The swap
 // itself is one statement but not a transaction with the drop: if the drop
 // fails, the next publish removes the leftover staging copy first.
 // Exit codes: 0 published, 1 refused or failed (closing the connection
@@ -70,6 +75,17 @@ function parseArgs(argv, { valued = VALUED, flags = [] } = {}) {
 }
 
 class PublishError extends Error {}
+// A refusal sent before any write: nothing remote is cleaned up after it.
+class TargetRefused extends PublishError {}
+
+// Step 3's refusal: an existing database this tool did not publish is never
+// replaced. Only reads are sent.
+async function checkTarget(conn, database) {
+  const snap = await remote.remoteSnapshot(conn, database);
+  if (snap && !snap.published) {
+    throw new TargetRefused(`${database} already exists and was not published by fixture:publish (it has no ${remote.PUBLISH_TABLE} table), so it is never replaced. Pass --database with a new name or one fixture:publish wrote`);
+  }
+}
 
 // Step 3 and 4's check: the copy at `database` is the local build.
 async function checkCopy(conn, database, local, what) {
@@ -190,6 +206,7 @@ async function main(argv, deps = {}) {
   let code;
   try {
     conn = await connect({ token });
+    await checkTarget(conn, database);
     const staging = await upload(conn, { db, database, local, now });
     await checkCopy(conn, staging, local, 'the uploaded copy');
     stage = 'swap';
@@ -202,7 +219,7 @@ async function main(argv, deps = {}) {
     code = 0;
   } catch (e) {
     const why = e instanceof PublishError ? e.message : `MotherDuck failed: ${remote.firstLine(e.message)}`;
-    if (stage === 'before' && conn) {
+    if (stage === 'before' && conn && !(e instanceof TargetRefused)) {
       try { await conn.run(`DROP DATABASE IF EXISTS ${remote.ident(remote.stagingNameFor(database))}`); } catch { /* reported below */ }
     }
     const state = {

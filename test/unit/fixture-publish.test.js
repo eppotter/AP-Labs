@@ -343,19 +343,56 @@ test('publish: uploads to a staging database, records the version, checks it, th
   assert.match(r.stdout, new RegExp(`published acme_fixture: version ${snap.version.replace('+', '\\+')}, 3 tables, 9 rows`));
 });
 
-test('publish: replaces an existing shared database whole', async (t) => {
+// A database this tool published: its tables plus fixture_publish.
+const published = (tables) => ({
+  tables: new Map([...tables, ['fixture_publish', 1]]), publish: new Map([['fixture_version', 'old']]),
+});
+
+test('publish: replaces a database it published before, whole', async (t) => {
   const f = await fixture(t);
   const md = fakeMotherDuck();
-  md.dbs.set('acme_fixture', { tables: new Map([['old_table', 99]]), publish: null });
+  md.dbs.set('acme_fixture', published([['old_table', 99]]));
+  // A staging copy left by an earlier failed drop is cleared first.
+  md.dbs.set('acme_fixture__publishing', { tables: new Map([['stale', 1]]), publish: null });
   const r = await pub(f, [], { env: withToken, connect: md.connect });
   assert.equal(r.code, 0, r.all);
+  assert.deepEqual([...md.dbs.keys()], ['acme_fixture']);
   assert.deepEqual([...md.dbs.get('acme_fixture').tables.keys()].sort(), ['fixture_meta', 'fixture_publish', 'regions', 'shops']);
+});
+
+test('publish: a target that does not exist yet is created (first publish)', async (t) => {
+  const f = await fixture(t);
+  const md = fakeMotherDuck();
+  const r = await pub(f, ['--database', 'brand_new'], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 0, r.all);
+  assert.deepEqual([...md.dbs.keys()], ['brand_new']);
+  assert.ok(md.dbs.get('brand_new').publish.has('fixture_version'));
+});
+
+// --database can name any MotherDuck database. Publish replaces only one it
+// published (it has a fixture_publish table); anything else is refused with
+// no write sent at all, a leftover staging copy included.
+test('publish: refuses to replace an existing database it did not publish, and sends no write', async (t) => {
+  const f = await fixture(t);
+  const md = fakeMotherDuck();
+  const prod = { tables: new Map([['customers', 5000]]), publish: null };
+  const leftover = published([['shops', 3]]);
+  md.dbs.set('prod_crm', prod);
+  md.dbs.set('prod_crm__publishing', leftover);
+  const r = await pub(f, ['--database', 'prod_crm'], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 1, r.all);
+  assert.match(r.stderr, /prod_crm already exists and was not published by fixture:publish \(it has no fixture_publish table\)/);
+  assert.match(r.stderr, /the shared database prod_crm was not changed/);
+  assert.equal(md.dbs.get('prod_crm'), prod);
+  assert.equal(md.dbs.get('prod_crm__publishing'), leftover);
+  assert.deepEqual(md.statements.filter((s) => !/^SELECT /.test(s)), [], 'only reads were sent');
+  assert.equal(md.closed.length, 1);
 });
 
 test('publish: a failure before the swap leaves the shared database untouched and removes staging', async (t) => {
   const f = await fixture(t);
   const md = fakeMotherDuck({ fail: { '^INSERT INTO': 'quota exceeded' } });
-  const before = { tables: new Map([['old_table', 99]]), publish: new Map([['fixture_version', 'old']]) };
+  const before = published([['old_table', 99]]);
   md.dbs.set('acme_fixture', before);
   const r = await pub(f, [], { env: withToken, connect: md.connect });
   assert.equal(r.code, 1);
