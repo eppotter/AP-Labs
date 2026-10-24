@@ -1,17 +1,32 @@
-# PLAN v1: the kit prototype
+# PLAN v1: the engagement starter template
 
 Status: proposed · 2026-10-23 · Owner: Ely Potter
 
-The build plan for V1. Scope is fixed by [ADR 0001](adr/0001-prototype-scope.md): a kit-only prototype on Node 20 and bash. The spec is [`reference/03-target-build.md`](reference/03-target-build.md); IDs such as PR-01 and TA-13 refer to it.
+Scope is set by [ADR 0002](adr/0002-engagement-starter-template.md), which replaces the kit-only scope of ADR 0001. The design reference is [`reference/03-target-build.md`](reference/03-target-build.md); IDs such as PR-01 and TA-13 refer to it.
 
-**Done when**, all inside `examples/brightside-install/`:
+## 0. What this is
 
-1. The kit installs.
-2. The gate blocks an unplanned write.
-3. Tier and permissions resolve from the profile.
-4. Swapping in a second profile changes behaviour with no code change.
-5. Ely and a teammate can access the same online DuckDB test dataset, populated only with synthetic records, and exercise it through a mock CRM adapter without connecting to client systems.
-6. Local development and CI can create an isolated DuckDB database from the same versioned seed data, so automated checks do not depend on the shared online service.
+AP Labs is a consulting practice. Companies want AI in their day-to-day work but don't know how to start. Handing out Claude licences and letting people figure it out rarely works. An engagement:
+
+1. Deep dive on the org.
+2. Pick one or more starter problems.
+3. Stand up the client's AI platform from this template and build the tools that solve those problems.
+4. Train a set of the client's builders to keep building on it, then leave.
+
+Every org is different, so there is no one-size product. **This repo is our starter template:** the scaffolding and basic building blocks we fork on day one of an engagement so we never rebuild Varsity from scratch. Client modules are built in the fork, not here.
+
+**The test for any component:** would we want it on day one of a new engagement?
+
+The reference implementation is Hometown's Varsity. For example, sales reps open a Slack module and in plain English pull Salesforce contacts, score them as leads, build a Gong-format list and push it to Gong (or to Instantly or Apollo). The template should make that kind of module quick to build for the next client.
+
+**Done when**, in a fresh fork configured for the Brightside demo client:
+
+1. The Slack app boots in dev, with hub menus driven by the registry and access driven by the profile.
+2. A new module is added by filling in the module template: a manifest and a handler.
+3. The demo flow works against the Brightside fixture through a mock connector: a plain-English request → scoped pull → scoring → approval → push to a mock external tool.
+4. The build governance works in the fork: the gate blocks an unplanned write; tier and permissions resolve from the profile; verify runs the profile's checks.
+5. Two forks differ only in their profile and their own modules (ENGINE / PROFILE / INSTANCE).
+6. Local development and CI build the Brightside fixture offline from versioned seed data, and Ely and a teammate can reach the same published copy online.
 
 ---
 
@@ -21,12 +36,15 @@ Rewrites usually run 2–3× their estimate. Holding to this list is how V1 fini
 
 | Not in V1 | Why | Comes back when |
 |---|---|---|
-| Slack runtime, hubs, consumer surfaces (TA-17–22) | ADR 0001: kit only | A client asks |
+| Client-specific modules | They live in the client's fork, not the template | Never; harvest a module back only once it has proven generic |
+| Surfaces other than Slack (Teams, CRM-embedded, web) | Slack is the one surface Varsity proves; the module contract keeps others possible (TA-17) | An engagement requires one |
+| All six module archetypes | V1 ships the two the demo flow needs: scoped pull and approval-gated write | An engagement needs another one |
+| A full cleaning-company data model | The fixture exists to exercise the blocks; Tier 1 is enough | A demo scenario needs a specific table |
 | Production warehouse, production data, or live CRM integration | V1 uses a shared online test database with synthetic data only; no client runtime or CRM vendor has been selected | A client asks, and the integration is scoped separately |
 | FAST lane (`fast-lane.js`) | Its vocabulary is a schema design of its own. Without it, every write needs an engaged agent, which is acceptable for a prototype. | After the prototype, as its own PR |
 | Review pipeline: queue run/scout/dispatch/synopsis, author-record, codeowners, carry-forward, auto-merge | Large, and `gh`-bound. Not in the done-definition. | V2 |
 | Command index, statusline, stage tracker | Convenience, not governance | V2 |
-| Specialist agents and the rule-body split (TA-07, TA-08) | Real design work (invariant layer vs org layer). Not needed to prove ENGINE/PROFILE/INSTANCE. | V2, first item |
+| The full Orchestrator (specialist roster, rule-body split, ceremony profiles) | Real design work. V1 carries the gate and verify; see §4 for where the rest sits | After the runtime blocks; see §5 |
 | Distribution: marketplace, hard version check, plugin-cache check (TA-14) | One install, one machine | First external install |
 | Windows support | Hooks are bash wrappers. Logic lives in Node so a later port is the wrapper only. | First Windows client |
 | VCS adapter, telemetry, review metrics, headless sandbox | Not in the done-definition | V2+ |
@@ -103,9 +121,9 @@ verify:
 
 ---
 
-## 3. Engine skeleton
+## 3. Conventions
 
-PR 1 (#1) delivered it: the layout per ADR 0001, `node:test`, and CI on Node 20 running syntax checks, shellcheck, tests and the verify harness.
+PR #1 delivered the skeleton: the layout, `node:test`, and CI on Node 20 running syntax checks, shellcheck, tests and the verify harness.
 
 Conventions from here:
 
@@ -117,6 +135,7 @@ Conventions from here:
 ### Test data and external systems
 
 - **The shared test dataset is online.** Ely and at least one teammate need to access and work with the same DuckDB dataset remotely. MotherDuck Lite is the leading hosting candidate, pending validation that its current plan, access controls, and collaboration workflow fit the prototype. Record the hosting choice and setup in the implementation PR.
+- **Size it to the blocks.** Tier 1 (about 15 tables: clients, properties, packages, plans, crews, visits, invoices, payments and their supporting tables) is enough to drive the demo flow. Grow it only when a demo scenario needs a table.
 - **Use synthetic data only.** Seed the shared database with clearly fictional records representative of the workflows under test. Keep it separate from client and production data. It is a collaborative test fixture, not a production warehouse, authorization source, or production telemetry service.
 - **Keep automated tests deterministic.** Store the schema and seed data in the repository. Unit tests and CI create an isolated local DuckDB database from those same files; they must not require network access or shared-service credentials. The online database is for collaborative development and integration testing.
 - **Keep credentials out of the repository and agent-visible data.** Each collaborator should authenticate through an approved user-scoped method. Do not commit service tokens, put them in profiles, or print them in test logs. Any automated access to the shared service requires a separately approved secret-injection path.
@@ -126,24 +145,53 @@ Conventions from here:
 
 ---
 
-## 4. Port list
+## 4. Building blocks
 
-One PR per row, in order. **Copy** = near-verbatim, tests included, with fixtures swapped. **Rewrite** = keep the semantics, re-implement against the profile. **Leave** = see §1. The source is the archived repo, read with `git -C ~/Projects/AI-Governance-Layer show main:<path>`.
+Each block gets a call: **Copy** (near-verbatim, tests included, fixtures swapped), **Rewrite** (keep the pattern, re-implement against the profile) or **New**. Varsity runtime sources are read-only via `git -C ~/Projects/bi-platform show main:agents/varsity/<path>`. Governance sources are in the archived repo via `git -C ~/Projects/AI-Governance-Layer show main:<path>`.
 
-| PR | Component | Source | Call | Notes | Size |
-|---|---|---|---|---|---|
-| 3 | Profile loader + schema v1 | `agents/varsity/permissions/profile.js` (147 ln) | Rewrite | Keep the refuse-to-start posture, the walk-up search and the env override. Validation moves to ajv and the schema. Fill in the Brightside profile. | M |
-| 4 | Permissions | `permissions/index.js`, `profile.js` roster, `catalog.js`, `__tests__/{resolver,profile}.test.js` | Copy (index, tests) · Rewrite (catalog) | `decide` / tri-state / deny-wins copied as-is. The catalog moves to profile `resources`. Drop `key-consistency` and `shim` tests, which are Hometown-bound. | S |
-| 5 | Tier | `plugins/varsity-dev/scripts/tier-floor.js` (323 ln) | Rewrite | Keep `globToRegExp`, the `tierOf`/`tierFloor`/`maxTier` semantics, and exit 2 on no paths (never read as T0). The four literal arrays come from the profile. Drop `autoMergeEligibility` and the ledger path. | M |
-| 6 | Hook lib + governed predicate | `hooks/varsity-lib.sh` (641 ln) | Copy (subset) | Only `hook_note`/`hook_fail`/`hook_degraded`, the governed-iff-profile check and `file_mtime`. Leave dedupe, the stage tracker and the cache check. | S |
-| 7 | Write gate + engagement marker | `hooks/varsity-orchestrator-gate.sh` (246 ln), `varsity-agent-banner.sh`, `hooks.json` | Copy (rules) · Rewrite (paths) | Rules 1, 2, 3 and deny carry over. Rule 1b (`apps/**`) becomes `gate.exempt`. Rule 3b (FAST) is left behind. The marker's only writer stays the SubagentStart hook, never the model. Same threat model: it deters accidents and is not a hard control. | M |
-| 8 | Verify harness | `agents/varsity/verify/run-all.js`, `common.js`, `__tests__/run-all.test.js` | Copy (contract) · Rewrite (checks) | Keep ordered checks, last-line JSON, skip ≠ pass, and exit codes 0/1/2. Checks come from profile `verify.checks` through a generic-command adapter. Execution policy: spawn the argv without a shell, cwd = repo root, an env allowlist (no secrets, PR-08) and a timeout. A check that can't spawn is reported as skipped, not failed or passed. Leave boot-smoke, flag-default-off, handler-fixtures and sql-assertions, which are Varsity-runtime checks. Replaces the stub `run-all.sh`. | M |
-| 9 | Stop-verify hook | `hooks/varsity-stop-verify.sh` (388 ln) | Rewrite | On Stop, run the harness when the session wrote code. Its tests pin Hometown paths heavily (72 hits), so rewrite them against fixtures. Leave `stop-verify-select-tests`. | M |
-| 10 | Brightside install + acceptance | — | New | Populate `examples/brightside-install/` (fake app tree, `.aplabs/profile.yml`, plugin wired in). Add a second fictional profile (Harbor Dental Group) as a fixture. The acceptance test checks that the same kit with two profiles gives different gate, tier and permission outcomes, and that the only diff is `.aplabs/profile.yml`. | M |
+### Runtime: what the client's people use
 
-Prototype total: 8 PRs. At 2–3× overrun, plan for roughly 16–24 sessions of work, not 8.
+| # | Block | What it gives us on day one | Varsity source | Call |
+|---|---|---|---|---|
+| R1 | App shell | Slack Bolt app, config and env loading, startup, deploy files | `index.js`, `config/`, `railway.toml` | Rewrite: Varsity's `index.js` hard-wires nine Hometown hubs |
+| R2 | Hubs + registry | Slash command per hub, Block Kit menu, entries declared as data | `hubs/registry.js`, `hubs/handler.js`, `hubs/user-hubs.js` | Copy the pattern; entries and hubs come from the fork |
+| R3 | Module contract | One manifest + handler per module: hub, label, resource key, archetype | none; 04 §2.8 | New |
+| R4 | Access wiring | Menus and actions check `kit/lib/permissions` | `myaccess/` | Rewrite on #4 |
+| R5 | LLM service | Claude client, prompt assembly, tool definitions and dispatch | `services/claude.js`, `prompts/`, `tools/definitions.js`, `tools/handlers.js` | Rewrite: org context comes from the profile |
+| R6 | Connector pattern | One adapter shape for any client system, with auth from env | `services/sfdc*.js`, `gong.js`, `cw-api.js`; `.claude/skills/*-connection` | New template; Varsity's connectors are reference examples |
+| R7 | Mock connector | Brightside "CRM" and "email tool" over the fixture | none | New |
+| R8 | SQL guardrails | Tokenizer that blocks writes and forbidden columns in generated SQL | `tools/sql-guardrails.js` | Copy; forbidden columns move to the profile |
+| R9 | Archetype: scoped pull | Plain-English request → parameters → query → results; one engine | `datapull/`, `finance/`, `marketingpull/` | Rewrite as one parameterised engine |
+| R10 | Archetype: approval-gated write | Preview → approve → push, with escalation | `gongcontacts/` (`push-session.js`, `escalation.js`) | Rewrite generic |
+| R11 | Slack UX basics | Thread context, markdown → Slack, provenance buttons, onboarding, cache | `lib/thread-context.js`, `markdown-to-slack.js`, `provenance*.js`, `team-joined.js`, `cache.js` | Copy, mostly generic already |
+| R12 | Scheduled jobs | Declarative cron registry | `crons/registry.js` | Copy the registry, no jobs |
 
-**Coupling check on every port PR:** `grep -riE 'hometown|varsity|snowflake|bi-platform'` over the diff must return nothing outside `docs/`. In the source files, the hooks and their tests pin client specifics the most (the stop-verify test has 72 hits, the FAST-banner test 46).
+### Build governance: what our builders and the client's builders use
+
+| # | Block | Status |
+|---|---|---|
+| G1 | Profile loader + schema | 🟢 #3 |
+| G2 | Permissions | 🟢 #4 |
+| G3 | Tier | 🟢 #5 |
+| G4 | Hook lib + governed-repo check | Copy subset of `varsity-lib.sh` |
+| G5 | Write gate + engagement marker | Copy rules; `apps/**` → `gate.exempt`; FAST lane left out |
+| G6 | Verify harness | Copy the contract; checks from profile `verify.checks` (argv, no shell, env allowlist, timeout; can't spawn = skipped) |
+| G7 | Stop-verify hook | Rewrite against fixtures |
+| G8 | Orchestrator protocol + specialists | Rewrite the invariant layer only; per-client canon comes later |
+
+### Order
+
+1. **This docs PR:** ADR 0002, this plan, `AGENTS.md`.
+2. **R1–R4:** a forkable app that boots, with one hello-world module behind the profile. The biggest day-one saving.
+3. **Fixture Tier 1:** generator, local DuckDB build, validation. Publishing to MotherDuck is a separate step that Ely runs.
+4. **R6–R8:** connector template, mock connector, SQL guardrails.
+5. **R9, R5:** scoped-pull engine on the LLM service.
+6. **R10:** approval-gated write. Completes the demo flow (done-definition 3).
+7. **R11, R12:** UX basics and the cron registry, folded into earlier PRs where they're needed.
+8. **G4–G7:** hook lib, gate, verify, stop-verify.
+9. **G8**, then the acceptance test: two forks differ only by profile and modules.
+
+One PR per step, or per block where a step is large. Steps 2–6 are the runtime gap. The governance blocks are partly done, and plain Claude Code is enough to build with in the meantime.
 
 ---
 
@@ -152,5 +200,9 @@ Prototype total: 8 PRs. At 2–3× overrun, plan for roughly 16–24 sessions of
 | Item | Owner | Blocks |
 |---|---|---|
 | IP / employment-agreement check: cleared by Ely, 2026-10-23 | **Ely** | Nothing |
+| Runtime before Orchestrator (§4 order): confirm | **Ely** | Step 2 |
+| Fixture toolchain: Python 3.12 + `uv` for `fixtures/` only, or Node throughout | **Ely** | Step 3 |
+| Demo flow: the exact Brightside pull → score → push scenario | **Ely** | Steps 5–6 |
+| MotherDuck: account email (venture, not Hometown), collaborator invited | **Ely** | Publishing the fixture |
 | OD-04: test ceremony profiles with one non-engineer | Ely + Steven | V2 ceremony work only |
 | Refuter measurement is n=7 (6 confirmed, 0 not reproduced, 1 unverifiable), which is not yet a defensible rate | Carry | Any claim in a pitch |

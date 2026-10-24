@@ -1,6 +1,6 @@
 # ADR 0001: V1 is a kit and shared synthetic-data prototype on Node 20 and bash
 
-- Status: accepted
+- Status: superseded in part by [ADR 0002](0002-engagement-starter-template.md) (scope). The organising rule and test conventions below still apply.
 - Date: 2026-10-23
 - Decided by: Ely Potter
 
