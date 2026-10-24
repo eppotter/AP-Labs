@@ -10,6 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -53,7 +54,7 @@ const META_V3 = 'key,value\nas_of,2026-09-30\ngenerator_version,3\nrows_regions,
 // An in-memory MotherDuck: databases by name, each a map of table -> row
 // count plus the fixture_publish rows. It answers exactly the statements
 // kit/fixture/remote issues and fails the test on anything else.
-function fakeMotherDuck({ fail = {}, connectError } = {}) {
+function fakeMotherDuck({ fail = {}, connectError, closeError } = {}) {
   const dbs = new Map();
   const statements = [];
   const tokens = [];
@@ -113,7 +114,7 @@ function fakeMotherDuck({ fail = {}, connectError } = {}) {
   async function connect({ token }) {
     tokens.push(token);
     if (connectError) throw new Error(connectError);
-    return { run, close: () => closed.push(true) };
+    return { run, close: () => { closed.push(true); if (closeError) throw new Error(closeError); } };
   }
   return { connect, dbs, statements, tokens, closed };
 }
@@ -374,6 +375,87 @@ test('publish: the token is never written to the fixture dir or the build', asyn
   assert.equal((await pub(f, [], { env: withToken, connect: md.connect })).code, 0);
   const files = fs.readdirSync(f.root, { recursive: true }).map((p) => path.join(f.root, p)).filter((p) => fs.statSync(p).isFile());
   for (const file of files) assert.ok(!fs.readFileSync(file).includes(TOKEN), `${file} does not hold the token`);
+});
+
+// --- Closing the connection and the top-level handler ------------------------
+
+test('publish: a close error after a publish is redacted and exits 1; the publish stands', async (t) => {
+  const f = await fixture(t);
+  const md = fakeMotherDuck({ closeError: `socket closed for ${TOKEN}` });
+  const r = await pub(f, [], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 1, 'a close failure is non-zero even after success');
+  assert.ok(!r.all.includes(TOKEN));
+  assert.match(r.stdout, /published acme_fixture/);
+  assert.match(r.stderr, /closing the MotherDuck connection failed: socket closed for \[redacted\]/);
+  assert.ok(md.dbs.has('acme_fixture'));
+  assert.equal(md.closed.length, 1);
+});
+
+test('publish: a close error after a failure keeps exit 1 and both messages, redacted', async (t) => {
+  const f = await fixture(t);
+  const md = fakeMotherDuck({ fail: { '^CREATE OR REPLACE': 'swap refused' }, closeError: `close ${TOKEN}` });
+  const r = await pub(f, [], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 1);
+  assert.ok(!r.all.includes(TOKEN));
+  assert.match(r.stderr, /MotherDuck failed: swap refused/);
+  assert.match(r.stderr, /closing the MotherDuck connection failed: close \[redacted\]/);
+});
+
+test('status --remote: a close error is redacted and exits 1, even when the copies match', async (t) => {
+  const f = await fixture(t);
+  const md = fakeMotherDuck();
+  assert.equal((await pub(f, [], { env: withToken, connect: md.connect })).code, 0);
+  const broken = { connect: async (o) => ({ ...(await md.connect(o)), close: () => { throw new Error(`close ${TOKEN}`); } }) };
+  const r = await stat(f, ['--remote'], { env: withToken, connect: broken.connect });
+  assert.equal(r.code, 1);
+  assert.ok(!r.all.includes(TOKEN));
+  assert.match(r.stdout, /match: the shared copy is the local build/);
+  assert.match(r.stderr, /closing the MotherDuck connection failed: close \[redacted\]/);
+});
+
+test('reportUncaught: masks every token read in this process, prints no raw stack, returns 1', async (t) => {
+  const f = await fixture(t);
+  await stat(f, ['--remote'], { env: withToken, connect: fakeMotherDuck().connect });
+  const lines = [];
+  const e = new Error(`late failure ${TOKEN}`);
+  assert.equal(remote.reportUncaught(e, { err: (s) => lines.push(s) }), 1);
+  assert.equal(lines.length, 1);
+  assert.ok(!lines[0].includes(TOKEN));
+  assert.match(lines[0], /late failure \[redacted\]/);
+});
+
+// The real entry points: a preload makes main throw past its own catch with an
+// error carrying the token (connect fails, then firstLine throws inside the
+// catch). Nothing reaches the network: connect is replaced before main runs.
+function crashRun(t, script, args) {
+  const dir = tmpDir(t);
+  const preload = path.join(dir, 'crash.js');
+  fs.writeFileSync(preload, [
+    `const remote = require(${JSON.stringify(require.resolve('../../kit/fixture/remote'))});`,
+    "remote.defaultConnect = async () => { throw new Error('connect refused'); };",
+    'remote.firstLine = () => { throw new Error(`crash with ${process.env.MOTHERDUCK_TOKEN}`); };',
+    '',
+  ].join('\n'));
+  return spawnSync(process.execPath, ['--require', preload, path.join(__dirname, '..', '..', 'kit', 'fixture', script), ...args], {
+    env: { PATH: process.env.PATH, APLABS_NO_KEYCHAIN: '1', MOTHERDUCK_TOKEN: TOKEN },
+    encoding: 'utf8',
+  });
+}
+
+test('publish (CLI): an uncaught error after the token is read is redacted and exits 1, not a crash', async (t) => {
+  const f = await fixture(t);
+  const r = crashRun(t, 'publish.js', [f.dir, '--db', f.db, '--profile', PROFILE]);
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(!(r.stdout + r.stderr).includes(TOKEN), 'the token is not in the output');
+  assert.match(r.stderr, /crash with \[redacted\]/);
+});
+
+test('status --remote (CLI): an uncaught error after the token is read is redacted and exits 1', async (t) => {
+  const f = await fixture(t);
+  const r = crashRun(t, 'status.js', [f.dir, '--db', f.db, '--remote']);
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(!(r.stdout + r.stderr).includes(TOKEN));
+  assert.match(r.stderr, /crash with \[redacted\]/);
 });
 
 // --- fixture:status --remote ------------------------------------------------

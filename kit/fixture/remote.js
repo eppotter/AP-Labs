@@ -163,14 +163,41 @@ function compare(local, remote) {
 // The token and a redacting printer. Returns { token, say, warn } with
 // token null when none is configured; say/warn mask the token in every line.
 // deps: env, platform, readKeychain (tests stub the Keychain), out, err.
+// Every token read in this process is also registered with `known`, so the
+// CLIs' top-level handlers (reportUncaught) can mask it too.
+const known = createLog({ write: () => {} });
+
 function openSecrets({ env, platform, readKeychain, out, err }) {
   const log = createLog({ write: () => {} });
   const token = readSecret(TOKEN_ENV, TOKEN_KEYCHAIN, { env, platform, readKeychain });
   log.registerSecret(token);
+  known.registerSecret(token);
   return { token, say: (s) => out(log.redact(s)), warn: (s) => err(log.redact(s)) };
 }
 
 const firstLine = (s) => String(s).split('\n')[0];
+
+// Closes a connection without letting a close error escape: it goes through
+// the redacting warn instead. Returns false when close failed; callers then
+// exit non-zero, keeping an earlier non-zero code (see publish and status).
+function closeConnection(conn, warn, label) {
+  if (!conn) return true;
+  try {
+    conn.close();
+    return true;
+  } catch (e) {
+    warn(`${label}: closing the MotherDuck connection failed: ${firstLine(e?.message ?? e)}`);
+    return false;
+  }
+}
+
+// The CLIs' top-level handler: prints an error main did not catch, with every
+// token read in this process (and the log's token patterns) masked, never a
+// raw stack. Returns the exit code, 1.
+function reportUncaught(e, { err = (s) => console.error(s) } = {}) {
+  err(known.redact(e?.stack || String(e)));
+  return 1;
+}
 
 // The default connection (./motherduck, the only DuckDB importer here), loaded
 // only when a command really connects.
@@ -191,6 +218,8 @@ module.exports = {
   compare,
   openSecrets,
   firstLine,
+  closeConnection,
+  reportUncaught,
   ident,
   sqlString,
   defaultConnect,

@@ -21,7 +21,8 @@
 // Any failure before step 4 leaves the shared database as it was. The swap
 // itself is one statement but not a transaction with the drop: if the drop
 // fails, the next publish removes the leftover staging copy first.
-// Exit codes: 0 published, 1 refused or failed, 2 usage or profile error.
+// Exit codes: 0 published, 1 refused or failed (closing the connection
+// failing included, even after a publish), 2 usage or profile error.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -151,9 +152,11 @@ async function main(argv, deps = {}) {
     return 1;
   }
 
-  // 3 and 4.
+  // 3 and 4. A close failure is reported (redacted) and makes the exit
+  // non-zero even after a successful publish; an earlier failure's code stays.
   let conn;
   let stage = 'before';
+  let code;
   try {
     conn = await connect({ token });
     const staging = await upload(conn, { db, database, local, now });
@@ -163,6 +166,9 @@ async function main(argv, deps = {}) {
     stage = 'after';
     await checkCopy(conn, database, local, `the shared database ${database}`);
     await conn.run(`DROP DATABASE ${remote.ident(staging)}`);
+    const total = Object.values(local.counts).reduce((n, c) => n + c, 0);
+    say(`fixture:publish: published ${database}: version ${local.version}, ${Object.keys(local.counts).length} tables, ${total} rows`);
+    code = 0;
   } catch (e) {
     const why = e instanceof PublishError ? e.message : `MotherDuck failed: ${remote.firstLine(e.message)}`;
     if (stage === 'before' && conn) {
@@ -174,20 +180,17 @@ async function main(argv, deps = {}) {
       after: `the shared database ${database} was replaced; check it with npm run fixture:status -- --remote`,
     }[stage];
     warn(`fixture:publish: ${why}\n${state}.`);
-    return 1;
-  } finally {
-    if (conn) conn.close();
+    code = 1;
   }
-  const total = Object.values(local.counts).reduce((n, c) => n + c, 0);
-  say(`fixture:publish: published ${database}: version ${local.version}, ${Object.keys(local.counts).length} tables, ${total} rows`);
-  return 0;
+  if (!remote.closeConnection(conn, warn, 'fixture:publish')) code = code || 1;
+  return code;
 }
 
 if (require.main === module) {
+  // Anything main did not catch is printed through the redactor, never as a
+  // raw stack, so a token read before the failure is still masked.
   main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => {
-    // Every error after the token is read is caught in main; this is local only.
-    console.error(e.stack || String(e));
-    process.exitCode = 1;
+    process.exitCode = remote.reportUncaught(e);
   });
 }
 

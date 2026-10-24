@@ -14,7 +14,8 @@
 // shared database's recorded version and row counts with the local build and
 // says whether they match. Agents never run it; tests inject a fake connection.
 // Exit codes: 0 shown (and, with --remote, they match), 1 no build, a
-// difference, not published or a failure, 2 usage.
+// difference, not published or a failure (closing the connection failing
+// included), 2 usage.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -64,34 +65,41 @@ async function main(argv, deps = {}) {
     warn(`fixture:status: ${remote.TOKEN_HELP}`);
     return 1;
   }
+  // A close failure is reported (redacted) and makes the exit non-zero; an
+  // earlier non-zero code stays.
   let conn;
+  let code;
   try {
     conn = await connect({ token });
-    const snap = await remote.remoteSnapshot(conn, database);
-    if (!snap) {
-      say(`fixture:status: ${database} is not on MotherDuck yet. Run npm run fixture:publish.`);
-      return 1;
-    }
-    say(`fixture:status: remote ${database}: version ${snap.version || '(none recorded)'}, published ${snap.publishedAt || 'unknown'}`);
-    const diff = remote.compare(local, snap);
-    if (diff.match) {
-      say('fixture:status: match: the shared copy is the local build');
-      return 0;
-    }
-    say(`fixture:status: differs: the shared copy is not the local build:\n  ${diff.differences.join('\n  ')}`);
-    return 1;
+    code = await compareRemote(conn, { database, local, say });
   } catch (e) {
     warn(`fixture:status: MotherDuck failed: ${remote.firstLine(e.message)}`);
-    return 1;
-  } finally {
-    if (conn) conn.close();
+    code = 1;
   }
+  if (!remote.closeConnection(conn, warn, 'fixture:status')) code = code || 1;
+  return code;
+}
+
+async function compareRemote(conn, { database, local, say }) {
+  const snap = await remote.remoteSnapshot(conn, database);
+  if (!snap) {
+    say(`fixture:status: ${database} is not on MotherDuck yet. Run npm run fixture:publish.`);
+    return 1;
+  }
+  say(`fixture:status: remote ${database}: version ${snap.version || '(none recorded)'}, published ${snap.publishedAt || 'unknown'}`);
+  const diff = remote.compare(local, snap);
+  if (diff.match) {
+    say('fixture:status: match: the shared copy is the local build');
+    return 0;
+  }
+  say(`fixture:status: differs: the shared copy is not the local build:\n  ${diff.differences.join('\n  ')}`);
+  return 1;
 }
 
 if (require.main === module) {
+  // Anything main did not catch goes through the redactor, never a raw stack.
   main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => {
-    console.error(e.stack || String(e));
-    process.exitCode = 1;
+    process.exitCode = remote.reportUncaught(e);
   });
 }
 
