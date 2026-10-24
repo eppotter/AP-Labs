@@ -10,11 +10,14 @@
 //
 // A governed repo whose client files (.aplabs/context/, Story 4.1) are missing
 // or awaiting sign-off gets one extra onboarding line; none once all are signed.
+// Likewise one line when a known truth (Story 4.2) is malformed, has no owner
+// or awaits sign-off. Static checks only: truth commands never run here.
 
 const path = require('path');
 const { loadProfile, findProfilePath, ProfileError } = require('../profile');
 const { CORE: STAGES, resolveStages } = require('../stages');
 const { contextDirFor, contextStatus, bannerLine: onboardingLine } = require('../onboard');
+const { loadTruths, bannerLine: truthsLine } = require('../truths');
 
 const NAME = 'AP Labs Orchestrator';
 
@@ -33,7 +36,7 @@ function hookOutput(message, context) {
   };
 }
 
-function bannerForProfile(profile, file, onboarding = null) {
+function bannerForProfile(profile, file, onboarding = null, truths = null) {
   const client = oneLine(profile.client.name);
   const resolved = resolveStages(profile);
   const stages = stageLine(resolved);
@@ -47,6 +50,10 @@ function bannerForProfile(profile, file, onboarding = null) {
   if (onboarding) {
     message.push(onboarding);
     context.push(`${onboarding} (npm run onboard -- --status lists each file; see "Onboarding builds" in AGENTS.md).`);
+  }
+  if (truths) {
+    message.push(truths);
+    context.push(`${truths} (the truth blocks in .aplabs/context/data.md; npm run verify runs their checks). SQLsmith must not rely on a truth that is not checked and signed off.`);
   }
   return hookOutput(message.join('\n'), context.join('\n'));
 }
@@ -82,8 +89,9 @@ function sessionStart(startDir) {
     if (err instanceof ProfileError) return bannerForError(err);
     throw err;
   }
-  const onboarding = onboardingLine(contextStatus(contextDirFor(path.resolve(file))));
-  return bannerForProfile(profile, path.relative(startDir, file) || file, onboarding);
+  const contextDir = contextDirFor(path.resolve(file));
+  const onboarding = onboardingLine(contextStatus(contextDir));
+  return bannerForProfile(profile, path.relative(startDir, file) || file, onboarding, truthsLine(loadTruths(contextDir)));
 }
 
 module.exports = { NAME, STAGES, hookOutput, bannerForProfile, bannerForError, sessionStart };
