@@ -34,7 +34,8 @@
 //     IdempotencyConflict and calls nothing. Keys are kept in
 //     deps.idempotency ({ get, set }, holding { input, result }) or, by
 //     default, in memory for the instance's life.
-//   - Credentials are read once through kit/lib/secrets (env only) and cached
+//   - Credentials are read once through kit/lib/secrets, from env only (no
+//     Keychain fallback, unlike other AD-12 reads: see AD-12), and cached
 //     with the client connect() returns (or resolves to: connect may be async,
 //     and a rejected connect is dropped, not cached); a missing one fails closed with
 //     ConnectorAuthFailed naming the env var, before any I/O. An auth error
@@ -189,9 +190,11 @@ function defineConnector(spec) {
   // idempotency ({ get(key), set(key, result) }), onRequest(info) (tests: runs
   // before each call to the system; it may throw to simulate the system
   // failing), simulate (passed to connect() as is, for an adapter's own
-  // failure simulation in tests), data (the query runner, passed to connect()
-  // as is, for a connector that reads the client's data: its reads then pass
-  // the SQL guardrail and the profile's forbidden columns).
+  // failure simulation in tests), data (a query runner, passed to connect()
+  // as is, for a connector that reads the client's data). The contract does
+  // not check what data is: only when it is kit/runtime/data's runner (what
+  // the app passes) do the connector's reads pass the SQL guardrail and the
+  // profile's forbidden columns. A test's stand-in runner checks neither.
   function create(deps = {}) {
     const { log } = deps;
     if (!log || typeof log.registerSecret !== 'function' || typeof log.redact !== 'function') {
