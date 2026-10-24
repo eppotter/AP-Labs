@@ -80,7 +80,7 @@ File locations are open (§8). They will sit under `.aplabs/`, which always floo
 - a dark launch with a separate flag-flip release
 - a batch review queue
 
-Each add-on slots between two core stages and never removes one.
+Each add-on slots between two core stages and never removes one. The batch review queue and then the dev-environment test run between Review and Ship; the dark launch runs after Ship (ship dark, then a separate human-attested flag flip) and before Retro.
 
 **Ceremony by computed tier:**
 

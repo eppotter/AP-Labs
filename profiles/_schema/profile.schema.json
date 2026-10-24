@@ -90,6 +90,19 @@
       }
     },
 
+    "stages": {
+      "description": "Add-on stages the client switches on. Each slots between two core stages and never removes one.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "addons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["dev_test", "dark_launch", "review_queue"] }
+        }
+      }
+    },
+
     "verify": {
       "type": "object",
       "additionalProperties": false,
