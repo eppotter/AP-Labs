@@ -29,7 +29,11 @@ jobs:
       - name: Fixture builds into DuckDB (offline)
         run: npm run fixture:build
       - name: Fixture checks pass (integrity, synthetic-only)
-        run: npm run fixture:validate
+        # The validator fails closed with no profile (#77). A fork has
+        # .aplabs/profile.yml; the template names Brightside's.
+        run: |
+          if [ ! -f .aplabs/profile.yml ]; then export APLABS_PROFILE="$PWD/profiles/brightside/profile.yml"; fi
+          npm run fixture:validate
       - name: Verify harness
         # A client fork (governed: .aplabs/profile.yml exists) runs strict, so a
         # skipped check (missing executable), a timeout or zero checks fails CI

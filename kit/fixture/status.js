@@ -15,11 +15,11 @@
 // says whether they match. Agents never run it; tests inject a fake connection.
 // Exit codes: 0 shown (and, with --remote, they match), 1 no build, a
 // difference, not published or a failure (closing the connection failing
-// included), 2 usage.
+// included), 2 usage or profile error.
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { defaultOut } = require('./build');
+const { defaultOut, governingClientId } = require('./build');
 const { notBuilt, shownPath } = require('./validate');
 const { parseArgs: parsePublishArgs } = require('./publish');
 const remote = require('./remote');
@@ -49,7 +49,17 @@ async function main(argv, deps = {}) {
     err(`fixture:status: --database: ${badName}`);
     return 2;
   }
-  const db = args.db ? path.resolve(cwd, args.db) : defaultOut(fixtureDir, args.name, env);
+  let clientId = null;
+  if (!args.db && !args.name) {
+    try {
+      clientId = governingClientId(cwd, env);
+    } catch (e) {
+      if (e.code !== 'PROFILE_INVALID') throw e;
+      err(`fixture:status: ${e.message}`);
+      return 2;
+    }
+  }
+  const db = args.db ? path.resolve(cwd, args.db) : defaultOut(fixtureDir, args.name, env, clientId);
   if (!fs.existsSync(db)) {
     err(`fixture:status: ${notBuilt(shownPath(cwd, db))}`);
     return 1;

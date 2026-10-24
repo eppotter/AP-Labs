@@ -8,8 +8,9 @@
 // Loads <fixture-dir>/schema.sql and every <fixture-dir>/seeds/<table>.csv
 // into a local DuckDB file, offline. The default file is
 // var/fixture/<name>.duckdb (var/ is APLABS_VAR_DIR, else the repo's
-// gitignored var/), and <name> defaults to the folder holding the fixture
-// dir (for example <client>/fixture -> <client>).
+// gitignored var/). <name> defaults to the governing profile's client id, the
+// file the runtime reads (kit/runtime/data dataPathFor), else the folder
+// holding the fixture dir (for example <client>/fixture -> <client>).
 //
 // This is the only code that opens DuckDB for writing, and the app never
 // loads it: the runtime reads the built file read-only (kit/runtime/data).
@@ -17,14 +18,21 @@
 // rebuild replaces the old file whole and a failed build leaves it untouched.
 // After loading, every table's row count must equal fixture_meta's
 // rows_<table>, and every seed file's header must match its table's columns.
-// Exit codes: 0 built, 1 build failed, 2 usage.
+// The build stamps fixture_meta with a table comment (BUILD_STAMP), so the
+// validator can tell its output from any other file (issue #77): a check may
+// read a protected column only there.
+// Exit codes: 0 built, 1 build failed, 2 usage or profile error.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { DuckDBInstance } = require('@duckdb/node-api');
+const { governingProfilePath, loadProfile } = require('../lib/profile');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const META_TABLE = 'fixture_meta';
+// A comment, not a row or a table: the data, row counts and published tables
+// stay exactly the seeds.
+const BUILD_STAMP = 'aplabs fixture:build (synthetic seeds)';
 
 const USAGE = 'usage: node kit/fixture/build.js <fixture-dir> [--out <file>] [--name <client>]';
 
@@ -57,10 +65,19 @@ function parseArgs(argv) {
   return args;
 }
 
-function defaultOut(fixtureDir, name, env = process.env) {
-  const client = name || path.basename(path.dirname(path.resolve(fixtureDir)));
+// clientId: the governing profile's client.id, so the default file is the
+// one dataPathFor names (issue #77). --name still wins.
+function defaultOut(fixtureDir, name, env = process.env, clientId = null) {
+  const client = name || clientId || path.basename(path.dirname(path.resolve(fixtureDir)));
   const varDir = env.APLABS_VAR_DIR ? path.resolve(env.APLABS_VAR_DIR) : path.join(REPO_ROOT, 'var');
   return path.join(varDir, 'fixture', `${client}.duckdb`);
+}
+
+// The governing profile's client id, or null when no profile governs. A
+// profile that can't be loaded throws its ProfileError.
+function governingClientId(cwd, env) {
+  const file = governingProfilePath(null, cwd, env);
+  return file ? loadProfile(file).client.id : null;
 }
 
 // Table names in the order schema.sql creates them, so foreign keys load
@@ -183,7 +200,21 @@ async function readRows(file, sql) {
   }
 }
 
-async function build({ fixtureDir, out }) {
+// True when `file` is a DuckDB file this build wrote (its fixture_meta carries
+// BUILD_STAMP); false for anything else, a missing or non-DuckDB file included.
+async function isFixtureBuild(file) {
+  if (!fs.existsSync(file)) return false;
+  try {
+    const rows = await readRows(file, `SELECT comment FROM duckdb_tables() WHERE schema_name = 'main' AND table_name = ${sqlString(META_TABLE)}`);
+    return rows.length === 1 && rows[0].comment === BUILD_STAMP;
+  } catch {
+    return false;
+  }
+}
+
+// stamp: false leaves BUILD_STAMP off, so a test can stand in for a file the
+// build did not write.
+async function build({ fixtureDir, out, stamp = true }) {
   const started = Date.now();
   const p = plan(fixtureDir);
   const target = path.resolve(out);
@@ -200,6 +231,7 @@ async function build({ fixtureDir, out }) {
     await load(conn, p);
     counts = await countRows(conn, p);
     await checkCounts(conn, p, counts);
+    if (stamp) await conn.run(`COMMENT ON TABLE ${ident(META_TABLE)} IS ${sqlString(BUILD_STAMP)}`);
     await conn.run('CHECKPOINT');
   } catch (err) {
     if (conn) conn.closeSync();
@@ -228,7 +260,17 @@ async function main(argv, { env = process.env, cwd = process.cwd() } = {}) {
     return 2;
   }
   const fixtureDir = path.resolve(cwd, args.fixtureDir);
-  const out = args.out ? path.resolve(cwd, args.out) : defaultOut(fixtureDir, args.name, env);
+  let clientId = null;
+  if (!args.out && !args.name) {
+    try {
+      clientId = governingClientId(cwd, env);
+    } catch (err) {
+      if (err.code !== 'PROFILE_INVALID') throw err;
+      console.error(`fixture:build: ${err.message}`);
+      return 2;
+    }
+  }
+  const out = args.out ? path.resolve(cwd, args.out) : defaultOut(fixtureDir, args.name, env, clientId);
   try {
     const result = await build({ fixtureDir, out });
     const total = result.tables.reduce((n, t) => n + t.rows, 0);
@@ -248,4 +290,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { build, readRows, main, parseArgs, defaultOut, schemaTables, FixtureBuildError, USAGE };
+module.exports = { build, readRows, isFixtureBuild, BUILD_STAMP, main, parseArgs, defaultOut, governingClientId, schemaTables, FixtureBuildError, USAGE };

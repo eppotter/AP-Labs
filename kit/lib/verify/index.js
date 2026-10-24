@@ -8,6 +8,8 @@
 // the last stdout line is a JSON summary, and a skip or timeout is never a
 // pass. An empty run is not a pass either.
 
+const path = require('node:path');
+
 // Always passed through when set. Everything else needs verify.env_allow.
 const BASE_ENV = Object.freeze(['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'TERM', 'CI']);
 const TAIL_LINES = 40;
@@ -38,6 +40,20 @@ function childEnv(parentEnv, envAllow = []) {
   for (const name of [...BASE_ENV, ...envAllow]) {
     if (Object.prototype.hasOwnProperty.call(parentEnv, name) && parentEnv[name] !== undefined) out[name] = parentEnv[name];
   }
+  return out;
+}
+
+// Never copied from the parent, even when env_allow names them: a check
+// learns its profile from APLABS_GOVERNING_PROFILE alone, and APLABS_PROFILE
+// must not leak into a check such as the unit tests (Story 7.6).
+const PROFILE_ENV = Object.freeze(['APLABS_PROFILE', 'APLABS_GOVERNING_PROFILE']);
+
+// A check's environment: childEnv plus APLABS_GOVERNING_PROFILE, the absolute
+// path of the profile that defined the check, so the fixture commands enforce
+// that profile without a hard-coded --profile (issue #77).
+function checkEnv(parentEnv, envAllow = [], profileFile) {
+  const out = childEnv(parentEnv, envAllow.filter((n) => !PROFILE_ENV.includes(n)));
+  out.APLABS_GOVERNING_PROFILE = path.resolve(profileFile);
   return out;
 }
 
@@ -85,4 +101,4 @@ function exitCode(summary, { strict = false } = {}) {
   return 0;
 }
 
-module.exports = { BASE_ENV, TAIL_LINES, USAGE, parseArgs, childEnv, classify, tail, checkLine, summarize, exitCode };
+module.exports = { BASE_ENV, TAIL_LINES, USAGE, parseArgs, childEnv, checkEnv, classify, tail, checkLine, summarize, exitCode };

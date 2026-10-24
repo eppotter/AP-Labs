@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const YAML = require('yaml');
-const { childEnv, classify, tail, summarize, exitCode, parseArgs } = require('../../kit/lib/verify');
+const { childEnv, checkEnv, classify, tail, summarize, exitCode, parseArgs } = require('../../kit/lib/verify');
 
 const cli = path.join(__dirname, '../../kit/verify/run-all.js');
 const node = process.execPath;
@@ -39,6 +39,13 @@ function run(dir, args = [], extraEnv = {}) {
   const lines = r.stdout.trim().split('\n');
   return { code: r.status, stdout: r.stdout, stderr: r.stderr, lines, summary: JSON.parse(lines[lines.length - 1]) };
 }
+
+test('checkEnv is childEnv plus the governing profile, absolute; never APLABS_PROFILE (issue #77)', () => {
+  const parent = { PATH: '/bin', APLABS_PROFILE: '/elsewhere.yml', APLABS_GOVERNING_PROFILE: '/stale.yml' };
+  assert.deepEqual(checkEnv(parent, [], 'profiles/acme/profile.yml'), {
+    PATH: '/bin', APLABS_GOVERNING_PROFILE: path.resolve('profiles/acme/profile.yml'),
+  });
+});
 
 test('childEnv passes the allowlist and env_allow, nothing else', () => {
   const parent = { PATH: '/bin', HOME: '/h', CI: 'true', APLABS_TEST_SECRET: 's', DB_URL: 'x', OTHER: 'y' };

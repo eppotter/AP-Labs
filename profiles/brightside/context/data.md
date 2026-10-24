@@ -83,7 +83,7 @@ The figures below are Brightside fixture truths (Story 7.6). Each `expect` is th
 ```truth
 id: clients-total
 statement: "Brightside has 2,000 clients at as_of (2026-09-30)."
-run: [node, kit/fixture/query.js, --profile, profiles/brightside/profile.yml, examples/brightside/fixture/truths/clients-total.sql]
+run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/clients-total.sql]
 expect: 2000
 tolerance: 0
 owner: Dana Reyes
@@ -93,7 +93,7 @@ signed_off: pending
 ```truth
 id: active-plans-at-as-of
 statement: "815 plans are active at as_of: start_date <= as_of and (end_date IS NULL or end_date >= as_of). Not status = active, which gives 814 because one plan ends on as_of."
-run: [node, kit/fixture/query.js, --profile, profiles/brightside/profile.yml, examples/brightside/fixture/truths/active-plans-at-as-of.sql]
+run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/active-plans-at-as-of.sql]
 expect: 815
 tolerance: 0
 owner: Dana Reyes
@@ -103,7 +103,7 @@ signed_off: pending
 ```truth
 id: winback-north-90d
 statement: "38 North-zone clients are win-back candidates: a plan lapsed in the last 90 days and no plan active at as_of."
-run: [node, kit/fixture/query.js, --profile, profiles/brightside/profile.yml, examples/brightside/fixture/truths/winback-north-90d.sql]
+run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/winback-north-90d.sql]
 expect: 38
 tolerance: 0
 owner: Dana Reyes
@@ -113,7 +113,7 @@ signed_off: pending
 ```truth
 id: winback-north-90d-price-rise
 statement: "17 of the North win-back candidates had a price rise in the 60 days before a lapse."
-run: [node, kit/fixture/query.js, --profile, profiles/brightside/profile.yml, examples/brightside/fixture/truths/winback-north-90d-price-rise.sql]
+run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/winback-north-90d-price-rise.sql]
 expect: 17
 tolerance: 0
 owner: Dana Reyes
@@ -123,7 +123,7 @@ signed_off: pending
 ```truth
 id: paid-revenue-2026-09
 statement: "Paid revenue (payments by paid_on) for September 2026 is $350,186.40 (35,018,640 cents)."
-run: [node, kit/fixture/query.js, --profile, profiles/brightside/profile.yml, examples/brightside/fixture/truths/paid-revenue-2026-09.sql]
+run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/paid-revenue-2026-09.sql]
 expect: 35018640
 tolerance: 0
 owner: Dana Reyes
@@ -133,7 +133,7 @@ signed_off: pending
 ```truth
 id: billed-revenue-2026-09
 statement: "Billed revenue (invoice totals by issued_on) for September 2026 is $364,023.50 (36,402,350 cents)."
-run: [node, kit/fixture/query.js, --profile, profiles/brightside/profile.yml, examples/brightside/fixture/truths/billed-revenue-2026-09.sql]
+run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/billed-revenue-2026-09.sql]
 expect: 36402350
 tolerance: 0
 owner: Dana Reyes
@@ -143,7 +143,7 @@ signed_off: pending
 ```truth
 id: outstanding-at-as-of
 statement: "Outstanding at as_of (per invoice, total minus payments up to as_of, where positive) is $198,753.25 (19,875,325 cents)."
-run: [node, kit/fixture/query.js, --profile, profiles/brightside/profile.yml, examples/brightside/fixture/truths/outstanding-at-as-of.sql]
+run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/outstanding-at-as-of.sql]
 expect: 19875325
 tolerance: 0
 owner: Dana Reyes
