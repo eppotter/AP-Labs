@@ -309,7 +309,7 @@ test('verify: with APLABS_PROFILE, the fixture check and each truth run through 
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const summary = JSON.parse(r.stdout.trim().split('\n').pop());
   assert.deepEqual(summary.results.map((x) => [x.id, x.outcome]), [
-    ['fixture-validate', 'pass'], ['truth:open-shops', 'pass'], ['truth:vale-revenue', 'pass'],
+    ['fixture-validate', 'pass'], ['truth:open-shops', 'pass'], ['truth:vale-revenue', 'pass'], ['engine:write-path', 'pass'],
   ]);
 });
 
@@ -319,6 +319,6 @@ test('verify: a missing fixture fails the check and every truth; it never passes
   const r = cli(VERIFY, [], { APLABS_PROFILE: profileFile, APLABS_DATA_PATH: missing }, dir);
   assert.equal(r.status, 1);
   const summary = JSON.parse(r.stdout.trim().split('\n').pop());
-  assert.deepEqual(summary.results.map((x) => x.outcome), ['fail', 'fail', 'fail']);
+  assert.deepEqual(summary.results.map((x) => x.outcome), ['fail', 'fail', 'fail', 'pass'], 'the built-in engine:write-path passes');
   assert.match(r.stderr, /Run npm run fixture:build first\./);
 });

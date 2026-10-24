@@ -39,8 +39,9 @@
 //     repeat on another instance joins the first apply (DEP-012). Instances
 //     given the same deps.idempotency object share their in-flight writes too.
 //   - Only kit/runtime/archetypes/approval-write passes dryRun: false (AD-15);
-//     the write-path check (kit/verify/write-path.js, run by npm run check
-//     and npm test) fails app code that writes live outside it.
+//     the write-path check (kit/verify/write-path.js, run by npm run check,
+//     npm test, and npm run verify as engine:write-path) fails app code that
+//     writes live outside it.
 //   - Credentials are read once through kit/lib/secrets, from env only (no
 //     Keychain fallback, unlike other AD-12 reads: see AD-12), and cached
 //     with the client connect() returns (or resolves to: connect may be async,

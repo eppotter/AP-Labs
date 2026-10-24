@@ -29,8 +29,12 @@
 //   - in app code or a template: calls defineConnector.
 //
 // Scanned: kit/runtime/** and kit/templates/** always, plus the app dirs:
-// APLABS_APP_DIR when set (it must exist), <repo>/app, and any extra dirs the
-// caller passes (the template repo's example clients). In a governed repo
+// APLABS_APP_DIR when set (it must exist), <repo>/app, and the extra app dirs
+// the repo's package.json lists under "aplabs": { "appDirs": [...] }
+// (repo-relative; a `*` segment matches any one folder). The template repo
+// lists its example clients' app dirs there; a fork relies on <repo>/app or
+// APLABS_APP_DIR. The engine never names those dirs itself. A malformed list
+// is a failure. In a governed repo
 // (.aplabs/profile.yml at the root) finding no app dir at all is a failure, not
 // a pass: checking nothing must never pass. JS files only, node_modules
 // skipped. This is a tripwire for honest mistakes, not a sandbox: app code is
@@ -47,6 +51,8 @@ const ALLOWED = Object.freeze([
   '<app dir>/connectors/<id>/**',
 ]);
 const ARCHETYPE = 'kit/runtime/archetypes/approval-write';
+// Its id in npm run verify, where it always runs, whatever the profile says.
+const CHECK_ID = 'engine:write-path';
 const WHY = `only ${ARCHETYPE} writes live (AD-15, DEP-012)`;
 const JS = /\.(c|m)?js$/;
 const IMPORT = /\brequire\s*\(\s*(['"`])([^'"`]+)\1\s*\)|\bimport\s*\(\s*(['"`])([^'"`]+)\3\s*\)|\bfrom\s*(['"])([^'"]+)\5|^\s*import\s+(['"])([^'"]+)\7/gm;
@@ -103,8 +109,44 @@ function jsFiles(dir, skip) {
 
 // What to scan and what the caller got wrong. Returns { set, problems }: set
 // is [{ dir, skip, app }] (existing dirs only).
-function plan(root, { env = process.env, appDirs = [] } = {}) {
+// The extra app dirs package.json lists, expanded: { dirs, problems }.
+function configuredAppDirs(root) {
+  const file = path.join(root, 'package.json');
+  if (!fs.existsSync(file)) return { dirs: [], problems: [] };
+  let pkg;
+  try { pkg = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (err) {
+    return { dirs: [], problems: [`package.json can't be read (${err.message}): its aplabs.appDirs can't be checked`] };
+  }
+  const list = pkg && pkg.aplabs && pkg.aplabs.appDirs;
+  if (list === undefined) return { dirs: [], problems: [] };
+  const bad = (why) => ({ dirs: [], problems: [`package.json aplabs.appDirs ${why}`] });
+  if (!Array.isArray(list)) return bad('must be a list of repo-relative paths');
+  const dirs = [];
+  for (const entry of list) {
+    const parts = typeof entry === 'string' ? entry.split('/').filter(Boolean) : [];
+    if (!parts.length || path.isAbsolute(entry) || parts.some((p) => p === '..' || p === '.')) {
+      return bad(`has ${JSON.stringify(entry)}: each entry is a repo-relative path inside the repo`);
+    }
+    let found = [root];
+    for (const part of parts) {
+      found = found.flatMap((d) => {
+        if (part !== '*') return [path.join(d, part)];
+        if (!isDir(d)) return [];
+        return fs.readdirSync(d, { withFileTypes: true }).filter((x) => x.isDirectory() && !x.name.startsWith('.')).map((x) => path.join(d, x.name)).sort();
+      });
+    }
+    dirs.push(...found.filter(isDir));
+  }
+  return { dirs, problems: [] };
+}
+
+function plan(root, { env = process.env, appDirs } = {}) {
   const problems = [];
+  if (appDirs === undefined) {
+    const configured = configuredAppDirs(root);
+    problems.push(...configured.problems);
+    appDirs = configured.dirs;
+  }
   const under = (...dirs) => (abs) => dirs.some((d) => inside(abs, d));
   const set = [
     { dir: path.join(root, 'kit/runtime'), skip: under(path.join(root, 'kit/runtime/connectors'), path.join(root, ARCHETYPE)), app: false },
@@ -186,4 +228,24 @@ function writePathProblems(root, opts = {}) {
 
 const scannedDirs = (root, opts) => plan(root, opts).set.map((s) => s.dir);
 
-module.exports = { ALLOWED, RULES, writePathProblems, scannedDirs, codeLines };
+// The engine's built-in verify check (kit/verify/run-all.js): a verify result.
+function writePathCheck(root, env = process.env) {
+  const started = Date.now();
+  let problems;
+  try {
+    problems = writePathProblems(root, { env });
+  } catch (err) {
+    problems = [`the check could not run (${err.code || err.message}): failing closed`];
+  }
+  const ok = !problems.length;
+  return {
+    id: CHECK_ID,
+    seconds: (Date.now() - started) / 1000,
+    outcome: ok ? 'pass' : 'fail',
+    ...(ok ? {} : { reason: `${problems.length} problem(s); live writes are allowed only in ${ALLOWED.join(', ')}` }),
+    stdout: '',
+    stderr: problems.join('\n'),
+  };
+}
+
+module.exports = { ALLOWED, CHECK_ID, RULES, writePathProblems, scannedDirs, configuredAppDirs, codeLines, writePathCheck };

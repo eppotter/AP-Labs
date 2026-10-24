@@ -93,6 +93,10 @@ test('the check catches each way app code could write live, naming the file and 
   put(root, 'examples/acme/app/connectors/crm/connector.test.js', "await crm.write.put({ dryRun: false });\n");
   const other = path.join(root, 'elsewhere');
   put(other, 'modules/m/handler.js', 'const { write } = crm;\n');
+  // Example clients are scanned only because package.json lists them.
+  const listed = (dirs) => writePathProblems(root, { APLABS_APP_DIR: other }).filter((p) => p.startsWith(dirs));
+  assert.deepEqual(listed('examples/'), [], 'not listed in package.json: not scanned');
+  put(root, 'package.json', JSON.stringify({ name: 'x', aplabs: { appDirs: ['examples/*/app'] } }));
 
   const problems = writePathProblems(root, { APLABS_APP_DIR: other });
   const where = problems.map((p) => p.split(': ')[0]);
@@ -131,9 +135,34 @@ test('the check catches each way app code could write live, naming the file and 
   for (const p of problems) assert.match(p, /only kit\/runtime\/archetypes\/approval-write writes live \(AD-15, DEP-012\)/, p);
 });
 
-test('the engine module names no example client; the script adds the example app dirs', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'kit/verify/write-path.js'), 'utf8');
-  assert.doesNotMatch(src, /\bexamples\//);
+test('the engine names no example client; this repo lists its example app dirs in package.json', () => {
+  for (const f of ['kit/verify/write-path.js', 'kit/verify/builtins.js', 'kit/verify/run-all.js']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(ROOT, f), 'utf8'), /\bexamples\//, f);
+  }
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  assert.deepEqual(pkg.aplabs.appDirs, ['examples/*/app']);
+  assert.deepEqual(engine.configuredAppDirs(ROOT).problems, []);
+});
+
+test('package.json aplabs.appDirs must be repo-relative paths inside the repo', (t) => {
+  const root = tmpRoot(t);
+  for (const bad of ['nope', ['/abs'], ['../up'], ['a/../b'], [3]]) {
+    put(root, 'package.json', JSON.stringify({ aplabs: { appDirs: bad } }));
+    assert.match(writePathProblems(root, {}).join('\n'), /package\.json aplabs\.appDirs/, JSON.stringify(bad));
+  }
+  put(root, 'package.json', '{ not json');
+  assert.match(writePathProblems(root, {}).join('\n'), /package\.json can't be read/);
+});
+
+test('the built-in verify check reports pass or fail like any check', (t) => {
+  const root = tmpRoot(t);
+  const pass = engine.writePathCheck(root, {});
+  assert.deepEqual([pass.id, pass.outcome, pass.stderr], ['engine:write-path', 'pass', '']);
+  put(root, 'app/modules/m/handler.js', "go({ dryRun: false });\n");
+  const fail = engine.writePathCheck(root, {});
+  assert.equal(fail.outcome, 'fail');
+  assert.match(fail.reason, /^1 problem\(s\)/);
+  assert.match(fail.stderr, /app\/modules\/m\/handler\.js:1/);
 });
 
 test('a governed repo with no app dir fails, and so does an APLABS_APP_DIR that is missing', (t) => {

@@ -9,6 +9,11 @@
   "imports": {
     "#sdk": "./kit/runtime/sdk/index.js"
   },
+  "aplabs": {
+    "appDirs": [
+      "examples/*/app"
+    ]
+  },
   "scripts": {
     "start": "node kit/runtime/app",
     "check": "bash scripts/check-syntax.sh && node scripts/check-conflict-markers.js && node scripts/check-write-path.js",

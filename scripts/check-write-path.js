@@ -6,25 +6,18 @@
 //
 //   node scripts/check-write-path.js [--root <repo>]
 //
-// The engine check scans kit/runtime, kit/templates, <repo>/app and
-// APLABS_APP_DIR; this shim adds the template repo's example clients'
-// app dirs (examples/*/app), which the engine never names.
-// Exit codes: 0 pass, 1 problems found.
+// The engine also runs it in every `npm run verify` as the built-in check
+// engine:write-path, so editing this shim or package.json's check line does
+// not switch it off. The template repo's example app dirs come from
+// package.json ("aplabs": { "appDirs": [...] }); a fork relies on <repo>/app
+// or APLABS_APP_DIR. Exit codes: 0 pass, 1 problems found.
 
-const fs = require('node:fs');
 const path = require('node:path');
 const engine = require('../kit/verify/write-path');
 
 const { ALLOWED } = engine;
-
-function exampleAppDirs(root) {
-  const examples = path.join(root, 'examples');
-  if (!fs.existsSync(examples)) return [];
-  return fs.readdirSync(examples).sort().map((d) => path.join(examples, d, 'app'));
-}
-
-const writePathProblems = (root, env = process.env) => engine.writePathProblems(root, { env, appDirs: exampleAppDirs(root) });
-const scannedDirs = (root, env = process.env) => engine.scannedDirs(root, { env, appDirs: exampleAppDirs(root) });
+const writePathProblems = (root, env = process.env) => engine.writePathProblems(root, { env });
+const scannedDirs = (root, env = process.env) => engine.scannedDirs(root, { env });
 
 function main(argv) {
   const at = argv.indexOf('--root');
@@ -41,4 +34,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { ALLOWED, writePathProblems, scannedDirs, exampleAppDirs };
+module.exports = { ALLOWED, writePathProblems, scannedDirs };
