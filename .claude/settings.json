@@ -1,0 +1,60 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/kit/hooks/session-start.sh\"; [ -f \"$f\" ] || exit 0; exec bash \"$f\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/kit/hooks/write-gate.sh\"; [ -f \"$f\" ] || exit 0; exec bash \"$f\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/kit/hooks/write-gate.sh\"; [ -f \"$f\" ] || exit 0; exec bash \"$f\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/kit/hooks/write-gate.sh\"; [ -f \"$f\" ] || exit 0; exec bash \"$f\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/kit/hooks/stop-verify.sh\"; [ -f \"$f\" ] || exit 0; exec bash \"$f\"",
+            "timeout": 660
+          }
+        ]
+      }
+    ]
+  }
+}

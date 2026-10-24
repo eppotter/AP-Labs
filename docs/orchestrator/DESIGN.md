@@ -38,6 +38,8 @@ Scope and order of work: [ADR 0002](../adr/0002-engagement-starter-template.md),
 
 **Removed:** Varsity's Leadership Panel (seven business-unit personas). It was rarely used.
 
+**Roster:** each agent above except the Orchestrator is a file in [`.claude/agents/`](../../.claude/agents/). `test/unit/agents.test.js` pins the roster and every agent's tool list, so changing either is a design change.
+
 ## 3. Two kinds of build (decided)
 
 **Regular build:** a feature, fix or change. The Onboarder is not involved. The specialists load the client's files.
@@ -78,7 +80,7 @@ File locations are open (§8). They will sit under `.aplabs/`, which always floo
 - a dark launch with a separate flag-flip release
 - a batch review queue
 
-Each add-on slots between two core stages and never removes one.
+Each add-on slots between two core stages and never removes one. The batch review queue and then the dev-environment test run between Review and Ship; the dark launch runs after Ship (ship dark, then a separate human-attested flag flip) and before Retro.
 
 **Ceremony by computed tier:**
 
@@ -110,11 +112,11 @@ Both are installed off the shelf at pinned versions and are not modified. Our ru
 | 8. Review | Other model, Refuter | | `interrogate` (contested designs only); cross-model review, §5 |
 | 9. Ship | Orchestrator | | `opening-a-pr`, `shipping`, `babysit` |
 | **Production gate** | **Human** (server-side) | | |
-| 10. Retro | Orchestrator | | `retro`, measured against the budgets |
+| 10. Retro | Orchestrator | | `npm run retro` (our port of CanonCRM's retro script; upstream p3 has no retro playbook), measured against the budgets |
 | Scope change mid-program | Orchestrator | `bmad-correct-course` | |
 
 **Not routed to:**
-- BMAD's build, review and retro skills (`bmad-build`, `bmad-build-auto`, `bmad-code-review`, `bmad-retrospective`). p3's versions and our cross-model review are used instead.
+- BMAD's build, review and retro skills (`bmad-build`, `bmad-build-auto`, `bmad-code-review`, `bmad-retrospective`). p3's build playbooks, our cross-model review and `npm run retro` are used instead.
 - BMAD's persona agents and creative skills (`bmad-agent-*`, `bmad-party-mode`, `bmad-brainstorming`, `bmad-forge-idea`, `bmad-prfaq`).
 - p3's experimental extras (`arena`, `swarm`, `bro`).
 
@@ -148,9 +150,11 @@ Adapted from CanonCRM (`docs/agent-coordination.md` §5 and its p3 adapter).
 - **Risk tier is computed from the files touched** (`kit/lib/tier`) and decides how much ceremony runs.
 - **Secrets:** agents never read or print them. Commands that need production credentials are run by a human.
 
+**Merge authority depends on who runs the session.** When the human driving it is an approver for the repo, the Orchestrator merges a PR itself once review shows nothing blocking and CI passes. When anyone else drives, the Orchestrator stops at PR-ready, posts a decision notice that @-mentions the approver, and waits for them. Varsity used the same idea: an approver fast path, with everyone else going through the approver gate.
+
 ## 7. Learning loop (decided)
 
-- **A ledger row per build,** plus `DEP` rows for anything deferred or blocked. Missing shared infrastructure is routed to its owner, never built inside a feature.
+- **A ledger row per build,** plus `DEP` rows for anything deferred or blocked. Missing shared infrastructure is routed to its owner, never built inside a feature. The ledger is `docs/ledger.md`, and CI's `scripts/ledger-check.js` fails a pull request that adds no row unless it is docs-only.
 - **A measured retro** at each phase boundary, after every 5 merged PRs, and when a PR exhausts its review budget. Each breach becomes a rule edit or a structural check.
 
 The measurement is `npm run retro -- --since YYYY-MM-DD` (or `--prs 11,12,14` for a named set; `--json` for the raw result). Run it at each epic boundary, after every 5 merged PRs, and when a PR exhausts its review budget. It reads merged PRs through `gh` and prints one row per PR from the lines the review script writes (Kind, review rounds, fallback or exemption), plus commits and hours from open to merge. Under the table it flags each breach: more than 3 review rounds, a `Review stop:` line, fix PRs above 25% of PRs with a known Kind, and a reviewed PR with no Kind line. PRs with none of the review lines predate the tooling: they are listed but never counted as breaches.
