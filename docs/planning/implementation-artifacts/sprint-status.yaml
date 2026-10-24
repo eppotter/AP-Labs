@@ -95,7 +95,7 @@ development_status:
 
   epic-9: backlog
   9-1-an-llm-service-with-a-spend-breaker-and-kill-switch: backlog
-  9-2-slack-formatting-chunking-and-thread-context: backlog
+  9-2-slack-formatting-and-chunking: backlog
   9-3-declared-parameters-and-a-typed-form-no-llm: backlog
   9-4-plain-english-fills-the-declared-parameters: backlog
   9-5-the-bound-query-runs-and-the-results-arrive-privately: backlog
