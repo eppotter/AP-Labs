@@ -48,6 +48,11 @@ resources:
   - key: DATASET
     label: Dataset
     open_access: true
+  # Runtime: the Outbox module (Story 8.3): what the mock email tool received, with a
+  # sample of contacts (client data). Gated, not open_access: the admin role confers it
+  # (admin_grantable defaults to true); grant it to anyone else who needs it.
+  - key: OUTBOX
+    label: Email outbox
 
 users:
   - id: dana
