@@ -167,3 +167,61 @@ test('cli: a parent env secret reaches a check only via env_allow', () => {
   assert.equal(run(repo({ checks: [SEES_SECRET] }), [], secret).summary.ok, true);
   assert.equal(run(repo({ checks: [SEES_SECRET], env_allow: ['APLABS_TEST_SECRET'] }), [], secret).summary.ok, false);
 });
+
+// Issue #24: a check that starts children must not outlive its timeout. The
+// check writes its grandchild's pid to a file, then hangs; the grandchild
+// shares the check's pipes, which used to stall the run.
+function spawnsGrandchild(pidFile, { hang }) {
+  const grandchild = 'setInterval(() => {}, 1000)';
+  const body = [
+    `const c = require("child_process").spawn(process.execPath, ["-e", ${JSON.stringify(grandchild)}], { stdio: "inherit" });`,
+    `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(c.pid));`,
+    hang ? 'setInterval(() => {}, 1000);' : 'process.exit(0);',
+  ].join(' ');
+  return [node, '-e', body];
+}
+
+async function gone(pid) {
+  for (let i = 0; i < 50; i += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch (err) {
+      if (err.code === 'ESRCH') return true;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
+}
+
+test('cli: a timed-out check is killed with its whole process group (#24)', async () => {
+  const dir = repo({ checks: [] });
+  const pidFile = path.join(dir, 'grandchild.pid');
+  fs.writeFileSync(path.join(dir, '.aplabs', 'profile.yml'), YAML.stringify({
+    schema_version: 1,
+    client: { id: 'tiny', name: 'Tiny' },
+    users: [{ id: 'solo', name: 'Solo', role: 'admin' }],
+    verify: { checks: [{ id: 'tree', run: spawnsGrandchild(pidFile, { hang: true }), timeout_seconds: 1 }] },
+  }));
+  const started = Date.now();
+  const r = run(dir);
+  const took = (Date.now() - started) / 1000;
+  assert.equal(r.summary.results[0].outcome, 'timeout');
+  assert.ok(took < 1 + 3, `returned within timeout + slack, took ${took}s`);
+  assert.ok(await gone(Number(fs.readFileSync(pidFile, 'utf8'))), 'grandchild was killed');
+});
+
+test('cli: a check that exits leaves nothing running and does not stall', async () => {
+  const dir = repo({ checks: [] });
+  const pidFile = path.join(dir, 'grandchild.pid');
+  fs.writeFileSync(path.join(dir, '.aplabs', 'profile.yml'), YAML.stringify({
+    schema_version: 1,
+    client: { id: 'tiny', name: 'Tiny' },
+    users: [{ id: 'solo', name: 'Solo', role: 'admin' }],
+    verify: { checks: [{ id: 'leaves', run: spawnsGrandchild(pidFile, { hang: false }), timeout_seconds: 30 }] },
+  }));
+  const started = Date.now();
+  const r = run(dir);
+  assert.equal(r.summary.results[0].outcome, 'pass');
+  assert.ok((Date.now() - started) / 1000 < 5, 'did not wait for the grandchild');
+  assert.ok(await gone(Number(fs.readFileSync(pidFile, 'utf8'))), 'grandchild was killed');
+});

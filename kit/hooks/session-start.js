@@ -6,9 +6,13 @@
 //
 // Start directory: CLAUDE_PROJECT_DIR (Claude Code), else the `cwd` field of
 // the hook input on stdin (Codex), else the process cwd.
+//
+// In a governed repo it also records the session's starting HEAD for the Stop
+// hook (kit/lib/session/head.js). That never prints and never throws.
 
 const fs = require('fs');
 const { sessionStart } = require('../lib/session');
+const { recordSessionHead } = require('../lib/session/head');
 
 function hookInput() {
   if (process.stdin.isTTY) return {};
@@ -23,4 +27,7 @@ function hookInput() {
 const input = hookInput();
 const startDir = process.env.CLAUDE_PROJECT_DIR || (typeof input.cwd === 'string' && input.cwd) || process.cwd();
 const out = sessionStart(startDir);
-if (out) process.stdout.write(`${JSON.stringify(out)}\n`);
+if (out) {
+  recordSessionHead(startDir, input.session_id);
+  process.stdout.write(`${JSON.stringify(out)}\n`);
+}

@@ -6,8 +6,9 @@ Harness hooks for repos built on this template. Each hook is one thin bash wrapp
 |---|---|---|
 | `session-start.sh` → `session-start.js` | SessionStart (Claude Code and Codex) | In a governed repo (one with `.aplabs/profile.yml`), announces the AP Labs Orchestrator, the client name and the 8 core stages. If the profile is invalid it lists every validation error and says the profile must be fixed before building. In any other repo it prints nothing. Logic: `kit/lib/session`. |
 | `write-gate.sh` → `write-gate.js` | PreToolUse on edit tools (Claude Code and Codex), SubagentStart and UserPromptSubmit (Claude Code) | The write gate: in a governed repo, blocks edits until the work is routed, and T2/T3 edits until the plan is approved (below). SubagentStart writes the engagement marker; UserPromptSubmit records `approve plan <slug>`. Logic: `kit/lib/gate`. |
+| `stop-verify.sh` → `stop-verify.js` | Stop (Claude Code only) | Runs the profile's verify checks when a turn ends, and blocks the turn end only on a failed check (below). Logic: `kit/lib/stop-verify`. |
 
-Registered in `.claude/settings.json` (via `$CLAUDE_PROJECT_DIR`) and `.codex/hooks.json` (via `git rev-parse --show-toplevel`). For SessionStart both harnesses get the same JSON on stdout: `systemMessage` for the user, `hookSpecificOutput.additionalContext` for the model.
+Registered in `.claude/settings.json` (via `$CLAUDE_PROJECT_DIR`) and `.codex/hooks.json` (via `git rev-parse --show-toplevel`). For SessionStart both harnesses get the same JSON on stdout: `systemMessage` for the user, `hookSpecificOutput.additionalContext` for the model. In a governed git repo SessionStart also records the session's starting HEAD in `<git-dir>/aplabs/session/<session_id>.head` for the Stop hook.
 
 ## Hooks fail open
 
@@ -79,6 +80,36 @@ Ceremony scales with the computed tier (DESIGN §3a): T0/T1 flow, T2/T3 and ever
 **What is matched.** Claude Code: `Edit|Write|MultiEdit|NotebookEdit`. Codex: matcher `*`, the only form proven in CanonCRM against a live codex-cli (0.160); the gate itself acts only on `apply_patch` (and the Claude tool names) and reads target paths from the patch's `*** Add/Update/Delete File:` and `*** Move to:` lines. Not yet proven here against a live Codex session. A Codex `apply_patch` whose paths cannot be read is still gated (no marker means deny). Shell writes (`Bash`, `exec_command`) are not gated in either harness.
 
 `APLABS_WRITE_GATE_JS` replaces the Node entry. It exists for tests only (to prove fail-open); do not set it otherwise.
+
+## The Stop hook: verify at the end of a turn
+
+When a turn ends, the hook runs the checks in the profile's `verify.checks` through the same harness as `npm run verify` (`kit/lib/verify/runner`), so broken code is caught before anyone reviews it.
+
+**When it runs.** All of these must hold, checked cheapest first; otherwise it prints nothing:
+
+1. `APLABS_STOP_VERIFY` is not `0`. This is the per-person opt-out: set it in your own shell or `.claude/settings.local.json`, never in the shared settings.
+2. The hook input does not carry `stop_hook_active: true` (below).
+3. The repo is governed and its profile is valid. An invalid profile is silent here: SessionStart and the write gate already report it.
+4. The profile has at least one verify check.
+5. The session changed files: the working tree is dirty (tracked or untracked), or HEAD differs from the HEAD SessionStart recorded for this session. With no record (SessionStart did not run, or no `session_id`), HEAD having commits not on `origin/main` counts instead.
+
+**Outcomes.**
+
+| Run | Output |
+|---|---|
+| Any check FAILED | `{"decision":"block","reason":…}`: the failing ids and the last 15 lines (at most 2000 characters) of each one's stderr and stdout. Claude must fix it before the turn can end. Skips and timeouts in the same run are listed too. |
+| No failure, but a SKIP, TIMEOUT or spent budget | `systemMessage` naming each one. Never blocks, and never counted as a pass. |
+| Every check passed | `systemMessage`: one line with the count and total time. |
+
+**Never loops.** When Claude Code re-runs the Stop hook after a block, its input carries `stop_hook_active: true`, and the hook then does nothing. So one block per turn at most: the model gets one chance to fix the failure, and the next turn end is checked fresh.
+
+**Time budget.** The whole run is capped at 600 seconds (`APLABS_STOP_VERIFY_BUDGET_SECONDS` overrides it). Each check gets the smaller of its own `timeout_seconds` and what is left of the budget; once the budget is spent the remaining checks are reported as not run. A budget timeout is reported, never blocked. The hook is registered with a 660-second harness timeout so the hook always reports before Claude Code would kill it.
+
+**Process groups.** Every check runs in its own process group, killed as a group on timeout and when the check exits, so a check that starts children (`npm test` → node) cannot stall past its timeout or leave processes behind (issue #24). This applies to `npm run verify` too. On SIGINT, SIGTERM or SIGHUP the harness kills every running check group before exiting.
+
+**Codex: not registered.** No Stop event is proven for Codex here (CanonCRM's `.codex/hooks.json` registers PreToolUse only), so the Stop hook is Claude Code only. A Codex builder runs `npm run verify` itself.
+
+**Fails open.** Like the other hooks: a missing `node` or a crash exits 0 with one `aplabs-hooks:` note on stderr and no stdout; an internal error caught in Node prints a one-line `systemMessage` saying the hook did not block. `APLABS_STOP_VERIFY_JS` replaces the Node entry. It exists for tests only (to prove fail-open); do not set it otherwise.
 
 ## Codex: one-time trust step
 

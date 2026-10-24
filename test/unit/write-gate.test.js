@@ -277,7 +277,7 @@ test('fail-open: node missing allows the edit', () => {
 
 test('.claude/settings.json gates the four edit tools, SubagentStart and UserPromptSubmit, and is silent here', () => {
   const { hooks } = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude/settings.json'), 'utf8'));
-  for (const event of ['PreToolUse', 'SessionStart', 'SubagentStart', 'UserPromptSubmit']) assert.ok(hooks[event], event);
+  for (const event of ['PreToolUse', 'SessionStart', 'Stop', 'SubagentStart', 'UserPromptSubmit']) assert.ok(hooks[event], event);
   assert.equal(hooks.PreToolUse.length, 1);
   assert.equal(hooks.PreToolUse[0].matcher, 'Edit|Write|MultiEdit|NotebookEdit');
   for (const event of ['PreToolUse', 'SubagentStart', 'UserPromptSubmit']) {
