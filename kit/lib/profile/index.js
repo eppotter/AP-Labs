@@ -42,11 +42,13 @@ function formatSchemaError(e) {
   return `${where} ${e.message}`;
 }
 
-function findProfilePath(startDir = process.cwd()) {
-  const override = process.env.APLABS_PROFILE;
+// env defaults to process.env; the runtime passes its own (tests inject one).
+function findProfilePath(startDir = process.cwd(), env = process.env) {
+  const override = env.APLABS_PROFILE;
   if (override) {
     // Relative would resolve against whatever cwd the hook happens to run in.
-    if (!path.isAbsolute(override)) throw new ProfileError(`APLABS_PROFILE must be an absolute path, got "${override}"`);
+    // The value is not echoed: name the variable only.
+    if (!path.isAbsolute(override)) throw new ProfileError('APLABS_PROFILE must be an absolute path');
     return override;
   }
   let dir = path.resolve(startDir);
