@@ -41,6 +41,7 @@ This document breaks the Orchestrator spec (`SPEC.md`, standing in for a PRD) an
 - NFR8: No Hometown specifics in harvested code.
 - NFR9: Hooks ship as repo-local config in each fork (`.claude/settings.json`, `.codex/hooks.json`), not as a plugin.
 - NFR10: Review budget of 3 rounds per PR; Codex is the default reviewer.
+- NFR11: One session runs every stage of a build; heavy stages are delegated to subagents that return summaries, never to fresh sessions.
 
 ### Additional Requirements
 
@@ -238,6 +239,7 @@ So that every build follows the same path in any harness.
 **When** the session follows the `AGENTS.md` Orchestrator section
 **Then** it asks the three intake questions, computes the tier, runs the reuse check, and routes each stage to its BMAD skill, p3 skill or agent per DESIGN §4
 **And** a structural test fails when the rules name a skill or agent that is not installed
+**And** the rules run every stage in the one session, delegating heavy stages (BMAD planning, reviews, research) to subagents that return summaries, and never tell the builder to start a fresh session
 
 ### Story 2.4: The write gate
 

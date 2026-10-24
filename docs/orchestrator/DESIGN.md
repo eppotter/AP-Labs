@@ -15,6 +15,7 @@ Scope and order of work: [ADR 0002](../adr/0002-engagement-starter-template.md),
 
 - **The main session is the Orchestrator.** It scopes, routes to specialists, brings one plan to the gate, and drives the rest. It does not write production code itself.
 - **Hub and spoke.** Specialists report only to the Orchestrator. They never talk to each other or the human.
+- **One session per build.** The Orchestrator runs every stage, intake through retro, in a single session. It never hands a stage to a fresh session (this overrides BMAD's fresh-context advice). Heavy stages such as BMAD planning, reviews and research run in delegated subagents that return summaries, so the main session's context stays lean.
 - **Each agent's tools match its job.** For example, SQLsmith reads but cannot run anything, the Refuter can run code to disprove a finding, and Scribe proposes doc changes rather than writing them on its own.
 - **Deterministic checks are required. LLM self-review loops are forbidden.**
 - **Soft front, hard back.** Planning is the model following instructions. The teeth are hooks, scripts, CI and server-side protection. Say which is which.

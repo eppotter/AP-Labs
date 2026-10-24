@@ -58,6 +58,7 @@ A vision to realise, with a pain behind it. AP Labs forks this template for ever
 - Deterministic checks are required. No LLM self-review loops.
 - BMAD 6.12.4 and p3-stack `09909eb` stay unmodified (p3 path fixes excepted). Overrides live in our docs and rules layer.
 - One rules file: `AGENTS.md`, imported by `CLAUDE.md`.
+- One session runs every stage of a build, intake through retro. Stages are never handed to fresh sessions; heavy stages (BMAD planning, reviews, research) run in delegated subagents that return summaries, keeping the main session's context lean.
 - Client specifics come only from `.aplabs/` (profile and client files), which always floors at T3. Tests read fixtures, never a client path.
 - Agents never read or print secrets. The production gate is server-side, never only an in-session hook.
 - Harvested code carries no Hometown specifics: names, paths, Slack ids, data.
