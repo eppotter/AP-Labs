@@ -15,11 +15,11 @@ function isPersonDm(message) {
   return Boolean(message && message.channel_type === 'im' && !message.subtype && !message.bot_id && message.user);
 }
 
-function registerGreeting(app, { profile, log }) {
+function registerGreeting(app, { profile, log, store }) {
   app.message(handle('greeting', async ({ message, say }) => {
     if (!isPersonDm(message)) return;
     await say({ text: greetingText(profile, message.user) });
-  }, { log }));
+  }, { log, store }));
 }
 
 module.exports = { registerGreeting, greetingText, isPersonDm };

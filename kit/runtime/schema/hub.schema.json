@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/eppotter/AP-Labs/kit/runtime/schema/hub.schema.json",
+  "title": "AP Labs hub",
+  "description": "One hub: a slash command whose menu lists the modules that name it. Lives at <app>/hubs/<id>.json. Unknown keys are errors.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "command", "name", "description"],
+  "properties": {
+    "id": { "description": "Must equal the file name without .json.", "$ref": "#/$defs/slug" },
+    "command": {
+      "description": "The slash command, lower case, at most 32 characters.",
+      "type": "string",
+      "pattern": "^/[a-z0-9][a-z0-9_-]{0,30}$"
+    },
+    "name": { "description": "Shown as the menu heading.", "type": "string", "$ref": "#/$defs/text", "maxLength": 80 },
+    "description": { "description": "The slash command's description in Slack.", "type": "string", "$ref": "#/$defs/text", "maxLength": 100 },
+    "usage_hint": { "description": "Optional hint shown after the command in Slack.", "type": "string", "$ref": "#/$defs/text", "maxLength": 100 }
+  },
+  "$defs": {
+    "slug": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 },
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" }
+  }
+}

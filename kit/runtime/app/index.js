@@ -9,16 +9,31 @@
 // app-level token, no signing secret) and log one startup line naming the
 // client, the profile path and "single instance" (AD-8).
 //
+// Story 6.2: boot also scans the app dir for hubs and modules (AD-3) and
+// refuses on any invalid one, naming the file and field; then registers each
+// hub's slash command and the dispatcher. One store (AD-7) holds all
+// short-lived state, starting with event de-duplication (AD-6).
+//
+// App dir: APLABS_APP_DIR (absolute), else <repo>/app (AD-2). Environment:
+// APLABS_ENV (default "dev"); module entries show only where they say.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
 // main() takes env, cwd and deps so tests inject a fake Slack App class and
 // capture output; no test touches the network or the real Keychain.
 
+const path = require('node:path');
 const { readSecret } = require('../../lib/secrets');
 const { loadProfile, findProfilePath, ProfileError, PROFILE_REL } = require('../../lib/profile');
 const { createLog, slackLogger } = require('../log');
 const { registerGreeting } = require('../slack/greeting');
+const { registerHubs } = require('../slack/hubs');
+const { loadRegistry, ENV_PATTERN } = require('../registry');
+const { createStore } = require('../store');
+
+const REPO = path.resolve(__dirname, '../../..');
+const DEFAULT_ENV = 'dev';
 
 // Secret env var names live here, never in the profile (AD-12).
 const SECRETS = Object.freeze([
@@ -26,7 +41,8 @@ const SECRETS = Object.freeze([
   { env: 'SLACK_APP_TOKEN', keychain: 'aplabs-slack-app-token', prefix: 'xapp-', what: 'the app-level token' },
 ]);
 
-// Collects every boot problem. Returns { problems, tokens, profile, profilePath }.
+// Collects every boot problem. Returns { problems, tokens, profile,
+// profilePath, registry, env }.
 // Problems name variables and profile errors, never a secret's value.
 function checkConfig({ env, cwd, deps = {} }) {
   const problems = [];
@@ -59,12 +75,27 @@ function checkConfig({ env, cwd, deps = {} }) {
       problems.push(e.message);
     }
   }
-  return { problems, tokens, profile, profilePath };
+
+  const runEnv = env.APLABS_ENV || DEFAULT_ENV;
+  if (!ENV_PATTERN.test(runEnv)) problems.push('APLABS_ENV must be a lower-case name such as dev or prod');
+
+  // The app dir is checked only with a valid profile: modules are checked
+  // against its resources. Paths are not echoed (they may come from env).
+  let registry = null;
+  const appDir = env.APLABS_APP_DIR || path.join(REPO, 'app');
+  if (!path.isAbsolute(appDir)) {
+    problems.push('APLABS_APP_DIR must be an absolute path');
+  } else if (profile) {
+    const loaded = loadRegistry({ appDir, profile });
+    problems.push(...loaded.problems.map((p) => `app: ${p}`));
+    registry = loaded.registry;
+  }
+  return { problems, tokens, profile, profilePath, registry, env: runEnv };
 }
 
 // Builds the Bolt app in Socket Mode with the redacting logger. App is
 // injectable so tests use a fake Slack client.
-function createApp({ tokens, profile, log, App }) {
+function createApp({ tokens, profile, registry, env, store, log, App }) {
   const AppClass = App || require('@slack/bolt').App;
   const app = new AppClass({
     token: tokens.SLACK_BOT_TOKEN,
@@ -76,7 +107,8 @@ function createApp({ tokens, profile, log, App }) {
   app.error(async (err) => {
     log.error('slack app error', { err });
   });
-  registerGreeting(app, { profile, log });
+  registerGreeting(app, { profile, log, store });
+  registerHubs(app, { registry, profile, env, log, store });
   return app;
 }
 
@@ -94,7 +126,8 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   // token) still goes through the redacting logger.
   let app;
   try {
-    app = createApp({ tokens: cfg.tokens, profile: cfg.profile, log, App: deps.App });
+    const store = deps.store || createStore({ now: deps.now });
+    app = createApp({ ...cfg, store, log, App: deps.App });
     await app.start();
   } catch (err) {
     log.error('could not connect to Slack', { err });
@@ -104,6 +137,9 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   log.info(`${client} bot started (single instance: run exactly one process)`, {
     client,
     profile: cfg.profilePath,
+    env: cfg.env,
+    hubs: cfg.registry.hubs.map((h) => h.command),
+    modules: cfg.registry.modules.length,
     instance: 'single instance',
   });
   return { code: 0, app, log };

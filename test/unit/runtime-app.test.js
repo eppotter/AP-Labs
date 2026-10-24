@@ -1,6 +1,7 @@
 'use strict';
 
-// kit/runtime/app: boot checks, the startup line, the DM greeting. Uses the
+// kit/runtime/app: boot checks, the startup line, the DM greeting, the app
+// dir scan and event de-duplication. Uses the
 // fake Slack App (no network) and a fixture profile; the Keychain is off
 // (APLABS_NO_KEYCHAIN=1) and never read.
 
@@ -16,13 +17,14 @@ const { createLog } = require('../../kit/runtime/log');
 const { FakeSlackApp } = require('../fixtures/fake-slack');
 
 const ROOT = path.join(__dirname, '../..');
-const PROFILE = path.join(__dirname, '../fixtures/profiles/minimal.yml');
+const PROFILE = path.join(__dirname, '../fixtures/runtime/profile.yml');
+const APP_DIR = path.join(__dirname, '../fixtures/runtime/app');
 // Fake values, shaped like the real ones; nothing here is a credential.
 const BOT = 'xoxb-000-111-faketokenvalue';
 const APP = 'xapp-1-A000-222-fakeappvalue';
 
 function env(extra = {}) {
-  return { APLABS_NO_KEYCHAIN: '1', SLACK_BOT_TOKEN: BOT, SLACK_APP_TOKEN: APP, APLABS_PROFILE: PROFILE, ...extra };
+  return { APLABS_NO_KEYCHAIN: '1', SLACK_BOT_TOKEN: BOT, SLACK_APP_TOKEN: APP, APLABS_PROFILE: PROFILE, APLABS_APP_DIR: APP_DIR, ...extra };
 }
 
 async function boot(e, deps = {}) {
@@ -185,4 +187,65 @@ test('the real entry point exits non-zero naming the missing variables, with no 
   assert.match(r.stderr, /APLABS_PROFILE is not set/);
   assert.ok(!r.stderr.includes(APP) && !r.stdout.includes(APP));
   assert.equal(r.stdout, '');
+});
+
+test('the startup line names the environment and the hub commands it registered', async () => {
+  const { entries, app } = await boot(env());
+  assert.equal(entries[0].env, 'dev');
+  assert.deepEqual(entries[0].hubs, ['/alpha', '/beta']);
+  assert.equal(entries[0].modules, 4);
+  assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
+});
+
+test('a retried event with an event_id already seen is processed once', async () => {
+  const { app, lines } = await boot(env());
+  const message = { channel_type: 'im', channel: 'D1', user: 'U1', text: 'hi' };
+  await app.dispatchMessage(message, { body: { event_id: 'Ev1' } });
+  await app.dispatchMessage(message, { body: { event_id: 'Ev1', retry_attempt: 1 }, context: { retryNum: 1 } });
+  await app.dispatchMessage(message, { body: { event_id: 'Ev2' } });
+  assert.equal(app.said.length, 2);
+  const skipped = lines.map((l) => JSON.parse(l)).filter((e) => e.msg === 'duplicate event skipped');
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].event_id, 'Ev1');
+  assert.equal(skipped[0].retry, 1);
+});
+
+test('an event_id is forgotten after 10 minutes (store expiry, injected clock)', async () => {
+  let t = 0;
+  const { app } = await boot(env(), { now: () => t });
+  const message = { channel_type: 'im', channel: 'D1', user: 'U1', text: 'hi' };
+  await app.dispatchMessage(message, { body: { event_id: 'Ev1' } });
+  t = 10 * 60 * 1000 - 1;
+  await app.dispatchMessage(message, { body: { event_id: 'Ev1' } });
+  assert.equal(app.said.length, 1);
+  t = 10 * 60 * 1000;
+  await app.dispatchMessage(message, { body: { event_id: 'Ev1' } });
+  assert.equal(app.said.length, 2);
+});
+
+test('an invalid module manifest refuses to start, naming the file and the field', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-appdir-'));
+  try {
+    fs.cpSync(APP_DIR, dir, { recursive: true });
+    const file = path.join(dir, 'modules/echo/manifest.json');
+    const m = JSON.parse(fs.readFileSync(file, 'utf8'));
+    delete m.label;
+    fs.writeFileSync(file, JSON.stringify(m));
+    const { code, text } = await boot(env({ APLABS_APP_DIR: dir }));
+    assert.equal(code, 1);
+    assert.match(text, /refusing to start/);
+    assert.match(text, /modules\/echo\/manifest.json: field \\"label\\" is required/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a missing app dir, a relative one and a bad APLABS_ENV are refused by name', async () => {
+  const missing = await boot(env({ APLABS_APP_DIR: path.join(os.tmpdir(), 'aplabs-no-such-app-dir') }));
+  assert.equal(missing.code, 1);
+  assert.match(missing.text, /app dir does not exist/);
+  const relative = await boot(env({ APLABS_APP_DIR: 'app', APLABS_ENV: 'Prod!' }));
+  assert.equal(relative.code, 1);
+  assert.match(relative.text, /APLABS_APP_DIR must be an absolute path/);
+  assert.match(relative.text, /APLABS_ENV must be a lower-case name/);
 });

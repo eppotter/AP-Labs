@@ -36,6 +36,10 @@ resources:
     admin_grantable: false
   - key: VERIFY_SKIP
     label: Waive a skipped verify check
+  # Runtime: the hello-world module on the /brightside hub (open to everyone).
+  - key: HELLO_WORLD
+    label: Say hello
+    open_access: true
 
 users:
   - id: dana
