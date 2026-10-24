@@ -15,7 +15,7 @@
 
 const { DataUnavailableError, QueryRefusedError } = require('../data');
 const {
-  defineConnector, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed,
+  defineConnector, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 } = require('../connectors/contract');
 
 // The shared connector contract suite, for a connector's own test file. It
@@ -54,5 +54,5 @@ function testContext({
 
 module.exports = {
   testContext, DataUnavailableError, QueryRefusedError,
-  defineConnector, connectorContract, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed,
+  defineConnector, connectorContract, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 };

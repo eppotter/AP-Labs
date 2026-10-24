@@ -28,9 +28,12 @@
 //     a write makes, so flipping a switch takes effect at once, even partway
 //     through a push: the requests still to come are refused.
 //   - Every write needs an idempotencyKey. A repeated key (per operation)
-//     returns the first result and calls nothing; two concurrent calls with
-//     one key share one apply. Keys are kept in deps.idempotency ({ get, set })
-//     or, by default, in memory for the instance's life.
+//     with the same input returns the first result and calls nothing; two
+//     concurrent calls with one key share one apply. The input is fingerprinted
+//     under its key, so a reused key with a different input is refused with
+//     IdempotencyConflict and calls nothing. Keys are kept in
+//     deps.idempotency ({ get, set }, holding { input, result }) or, by
+//     default, in memory for the instance's life.
 //   - Credentials are read once through kit/lib/secrets (env only) and cached
 //     with the client connect() returns; a missing one fails closed with
 //     ConnectorAuthFailed naming the env var, before any I/O. An auth error
@@ -46,9 +49,12 @@
 //     the connector's own credentials, credential-shaped strings and the log
 //     redactor's patterns are masked, and the original error is not kept.
 
+const crypto = require('node:crypto');
 const { readSecret, redact } = require('../../lib/secrets');
 const { createLog } = require('../log');
-const { KillSwitchOn, ConnectorFailed, ConnectorAuthFailed } = require('../errors');
+const {
+  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
+} = require('../errors');
 
 const GLOBAL_KILL_SWITCH = 'APLABS_WRITES_OFF';
 const SLUG = /^[a-z][a-z0-9-]{0,62}$/;
@@ -107,6 +113,19 @@ function checkDeclaration(spec) {
   const both = reads.find((n) => writes.includes(n));
   if (both) fail(`write.${both}`, 'has the same name as a read');
 }
+
+// JSON with object keys sorted, so key order is not a different input.
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map((v) => (v === undefined ? 'null' : canonical(v))).join(',')}]`;
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const keys = Object.keys(value).filter((k) => value[k] !== undefined).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+// The write's input, minus its key, as a short hash.
+const fingerprint = ({ idempotencyKey, ...input }) => crypto.createHash('sha256').update(canonical(input)).digest('hex');
 
 const isAuthError = (err) => err instanceof ConnectorAuthFailed || (err && (err.status === 401 || err.status === 403));
 
@@ -215,6 +234,7 @@ function defineConnector(spec) {
     // Every error leaving an operation is rebuilt from a redacted message.
     function rethrow(err, operation) {
       if (err instanceof KillSwitchOn) throw err;
+      if (err instanceof IdempotencyConflict) throw new IdempotencyConflict(clean(err.reason), details(operation));
       const raw = err instanceof ConnectorFailed ? err.reason : (err && err.message) || String(err);
       const reason = clean(raw);
       if (isAuthError(err)) {
@@ -251,16 +271,26 @@ function defineConnector(spec) {
           // The in-flight slot is checked and claimed with no await between,
           // before the store is read: a slow store can't let a second call
           // with the key miss the first and apply again.
-          if (inFlight.has(slot)) return await inFlight.get(slot);
+          const input = fingerprint(rest);
+          const conflict = () => new IdempotencyConflict(`idempotencyKey "${key}" was already used with a different input`, details(name));
+          if (inFlight.has(slot)) {
+            const other = inFlight.get(slot);
+            if (other.input !== input) throw conflict();
+            return await other.run;
+          }
           const run = (async () => {
             const done = await ledger.get(slot);
-            if (done !== undefined) return done;
+            if (done !== undefined) {
+              if (!done || done.input !== input) throw conflict();
+              return done.result;
+            }
             const { client } = open(name);
             const result = await op.apply(rest, context(name, 'write', client, { idempotencyKey: key }));
-            await ledger.set(slot, result === undefined ? null : result);
-            return result === undefined ? null : result;
+            const settled = result === undefined ? null : result;
+            await ledger.set(slot, { input, result: settled });
+            return settled;
           })();
-          inFlight.set(slot, run);
+          inFlight.set(slot, { input, run });
           try { return await run; } finally { inFlight.delete(slot); }
         } catch (err) {
           return rethrow(err, name);
@@ -285,5 +315,5 @@ function defineConnector(spec) {
 
 module.exports = {
   defineConnector, checkDeclaration, GLOBAL_KILL_SWITCH,
-  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed,
+  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 };

@@ -11,10 +11,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const Module = require('node:module');
 const { spawnSync } = require('node:child_process');
 const { defineConnector, GLOBAL_KILL_SWITCH } = require('../../kit/runtime/connectors/contract');
 const { connectorContract, fakeClock } = require('../../kit/runtime/connectors/suite');
-const { KillSwitchOn, ConnectorFailed, ConnectorAuthFailed } = require('../../kit/runtime/errors');
+const { KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict } = require('../../kit/runtime/errors');
 const { messageFor } = require('../../kit/runtime/messages');
 const { createLog } = require('../../kit/runtime/log');
 const sdk = require('../../kit/runtime/sdk');
@@ -22,7 +23,18 @@ const { makeFork, REPO } = require('../fixtures/temp-fork');
 
 const TEMPLATE_DIR = path.join(REPO, 'kit/templates/connector');
 const template = require('../../kit/templates/connector/connector');
-const items = (count) => Array.from({ length: count }, (_, i) => ({ email: `p${i}@example.invalid` }));
+// The template's adapter with another batch size (a redeploy that changed it).
+function templateWithBatchSize(size) {
+  const file = path.join(TEMPLATE_DIR, 'connector.js');
+  const src = fs.readFileSync(file, 'utf8');
+  assert.match(src, /batchSize: 100\b/);
+  const m = new Module(file, module);
+  m.filename = file;
+  m.paths = Module._nodeModulePaths(TEMPLATE_DIR);
+  m._compile(src.replace(/batchSize: 100\b/, `batchSize: ${size}`), file);
+  return m.exports;
+}
+const items = (count) => Array.from({ length: count }, (_, i) => ({ id: `p${i}`, email: `p${i}@example.invalid` }));
 const SAMPLES = {
   read: { getRecord: { id: 'r1', fields: ['id'] } },
   write: {
@@ -148,7 +160,7 @@ test('a credential value given as an env name is never echoed back', () => {
 });
 
 test('the SDK exposes the contract to app code', () => {
-  for (const name of ['defineConnector', 'connectorContract', 'KillSwitchOn', 'ConnectorFailed', 'ConnectorAuthFailed']) {
+  for (const name of ['defineConnector', 'connectorContract', 'KillSwitchOn', 'ConnectorFailed', 'ConnectorAuthFailed', 'IdempotencyConflict']) {
     assert.ok(sdk[name], name);
   }
   assert.equal(sdk.defineConnector, defineConnector);
@@ -338,4 +350,45 @@ test('with a slow idempotency store, two concurrent calls with one key still app
   const both = await Promise.all([1, 2].map(() => c.write.put({ idempotencyKey: 'k', dryRun: false })));
   assert.deepEqual(both, [{ put: true }, { put: true }]);
   assert.equal(calls, 1, 'the second call joined the first instead of applying again');
+});
+
+test('a reused idempotency key with a different input is refused, never answered with the first result (#82)', async () => {
+  let calls = 0;
+  const c = defineConnector(spec({
+    write: { put: { plan: (i) => i, apply: async (i, ctx) => ctx.request(() => ({ put: i.value })) } },
+  })).create({ env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } });
+  assert.deepEqual(await c.write.put({ idempotencyKey: 'k', value: { a: 1, b: 2 }, dryRun: false }), { put: { a: 1, b: 2 } });
+  assert.deepEqual(await c.write.put({ value: { b: 2, a: 1 }, idempotencyKey: 'k', dryRun: false }), { put: { a: 1, b: 2 } }, 'key order is not a different input');
+  const conflict = (e) => e instanceof IdempotencyConflict && e instanceof ConnectorFailed && e.code === 'IDEMPOTENCY_CONFLICT';
+  await assert.rejects(c.write.put({ idempotencyKey: 'k', value: { a: 2, b: 2 }, dryRun: false }), conflict);
+  assert.equal(calls, 1, 'nothing was sent for the refused input');
+  // Two concurrent calls with one key and different inputs: one applies, one is refused.
+  const [x, y] = await Promise.allSettled([1, 2].map((v) => c.write.put({ idempotencyKey: 'k2', value: v, dryRun: false })));
+  assert.deepEqual(x, { status: 'fulfilled', value: { put: 1 } });
+  assert.ok(y.status === 'rejected' && conflict(y.reason));
+  assert.equal(calls, 2);
+});
+
+test('the template keys each item, so a retry with reordered rows or a new batch size loses no row and repeats none (#82)', async () => {
+  const env = { MY_SYSTEM_TOKEN: TOKEN };
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const rows = (order) => order.map((id) => ({ id, email: `${id}@example.invalid` }));
+  for (const [what, retryWith, order] of [
+    ['reordered rows', () => templateWithBatchSize(2), [...ids].reverse()],
+    ['a new batch size', () => template, ids],
+  ]) {
+    const state = {};
+    let pushes = 0;
+    // The first push fails on its second batch: a and b reached the system.
+    const first = templateWithBatchSize(2).create({
+      env, simulate: { state },
+      onRequest: (info) => { if (info.operation === 'addItems' && ++pushes === 2) throw new Error('503 from the system'); },
+    });
+    const { listId } = await first.write.createList({ name: 'l', idempotencyKey: 'list', dryRun: false });
+    await assert.rejects(first.write.addItems({ listId, items: rows(ids), idempotencyKey: 'push-1', dryRun: false }), ConnectorFailed);
+    assert.deepEqual(state.lists.get(listId).items.map((i) => i.id), ['a', 'b']);
+    const retry = retryWith().create({ env, simulate: { state } });
+    await retry.write.addItems({ listId, items: rows(order), idempotencyKey: 'push-1', dryRun: false });
+    assert.deepEqual(state.lists.get(listId).items.map((i) => i.id).sort(), ids, `${what}: every row is in the list exactly once`);
+  }
 });

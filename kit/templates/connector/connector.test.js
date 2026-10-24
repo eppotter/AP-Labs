@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const { connectorContract } = require('#sdk');
 const connector = require('./connector');
 
-const items = (count) => Array.from({ length: count }, (_, i) => ({ email: `p${i}@example.invalid`, name: `P${i}` }));
+const items = (count) => Array.from({ length: count }, (_, i) => ({ id: `p${i}`, email: `p${i}@example.invalid`, name: `P${i}` }));
 
 connectorContract(connector, {
   read: { getRecord: { id: 'r1', fields: ['id', 'email'] } },

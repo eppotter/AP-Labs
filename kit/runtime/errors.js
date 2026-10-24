@@ -68,7 +68,17 @@ class ConnectorAuthFailed extends ConnectorFailed {
   }
 }
 
+// A write reused an idempotency key with a different input. Nothing was sent:
+// answering with the first result would hide rows the caller meant to send.
+// Same details; reason is for the log.
+class IdempotencyConflict extends ConnectorFailed {
+  constructor(reason, details) {
+    super(reason, details);
+    this.code = 'IDEMPOTENCY_CONFLICT';
+  }
+}
+
 module.exports = {
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
-  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed,
+  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 };
