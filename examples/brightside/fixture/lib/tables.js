@@ -3,7 +3,8 @@
 // The one description of every fixture table: column order, types and keys.
 // The generator writes schema.sql (DuckDB DDL) and each seed CSV's header from
 // it, so the two cannot drift. Tables are listed in load order: a table comes
-// after every table it references. Story 7.2 appends its tables here.
+// after every table it references. Story 7.1 wrote the reference tables
+// (zones to properties); Story 7.2 the activity tables and fixture_meta.
 
 const TABLES = [
   {
@@ -73,6 +74,92 @@ const TABLES = [
       { name: 'postal_code', type: 'VARCHAR', notNull: true },
     ],
   },
+  {
+    name: 'plans',
+    columns: [
+      { name: 'plan_id', type: 'INTEGER', pk: true },
+      { name: 'property_id', type: 'INTEGER', notNull: true, references: 'properties' },
+      { name: 'package_id', type: 'VARCHAR', notNull: true, references: 'packages' },
+      // weekly, biweekly or monthly.
+      { name: 'frequency', type: 'VARCHAR', notNull: true },
+      { name: 'start_date', type: 'DATE', notNull: true },
+      // Last active day, inclusive; NULL while active.
+      { name: 'end_date', type: 'DATE' },
+      // active iff end_date IS NULL, else cancelled.
+      { name: 'status', type: 'VARCHAR', notNull: true },
+      { name: 'start_price_cents', type: 'BIGINT', notNull: true },
+      // Price on end_date, or at as_of while active.
+      { name: 'price_cents', type: 'BIGINT', notNull: true },
+    ],
+  },
+  {
+    name: 'plan_price_changes',
+    columns: [
+      { name: 'change_id', type: 'INTEGER', pk: true },
+      { name: 'plan_id', type: 'INTEGER', notNull: true, references: 'plans' },
+      { name: 'effective_date', type: 'DATE', notNull: true },
+      { name: 'old_price_cents', type: 'BIGINT', notNull: true },
+      { name: 'new_price_cents', type: 'BIGINT', notNull: true },
+    ],
+    unique: [['plan_id', 'effective_date']],
+  },
+  {
+    name: 'visits',
+    columns: [
+      { name: 'visit_id', type: 'INTEGER', pk: true },
+      { name: 'property_id', type: 'INTEGER', notNull: true, references: 'properties' },
+      // NULL for a one-off visit.
+      { name: 'plan_id', type: 'INTEGER', references: 'plans' },
+      { name: 'crew_id', type: 'INTEGER', notNull: true, references: 'crews' },
+      { name: 'package_id', type: 'VARCHAR', notNull: true, references: 'packages' },
+      { name: 'visit_date', type: 'DATE', notNull: true },
+      // completed or cancelled.
+      { name: 'status', type: 'VARCHAR', notNull: true },
+    ],
+  },
+  {
+    name: 'invoices',
+    columns: [
+      { name: 'invoice_id', type: 'INTEGER', pk: true },
+      { name: 'client_id', type: 'INTEGER', notNull: true, references: 'clients' },
+      // One invoice per completed visit.
+      { name: 'visit_id', type: 'INTEGER', notNull: true, unique: true, references: 'visits' },
+      { name: 'issued_on', type: 'DATE', notNull: true },
+      { name: 'due_on', type: 'DATE', notNull: true },
+      // Equals the sum of the invoice's lines.
+      { name: 'total_cents', type: 'BIGINT', notNull: true },
+    ],
+  },
+  {
+    name: 'invoice_lines',
+    columns: [
+      { name: 'line_id', type: 'INTEGER', pk: true },
+      { name: 'invoice_id', type: 'INTEGER', notNull: true, references: 'invoices' },
+      // Exactly one of package_id and add_on_id is set.
+      { name: 'package_id', type: 'VARCHAR', references: 'packages' },
+      { name: 'add_on_id', type: 'VARCHAR', references: 'add_ons' },
+      { name: 'quantity', type: 'INTEGER', notNull: true },
+      { name: 'amount_cents', type: 'BIGINT', notNull: true },
+    ],
+  },
+  {
+    name: 'payments',
+    columns: [
+      { name: 'payment_id', type: 'INTEGER', pk: true },
+      { name: 'invoice_id', type: 'INTEGER', notNull: true, references: 'invoices' },
+      { name: 'paid_on', type: 'DATE', notNull: true },
+      { name: 'amount_cents', type: 'BIGINT', notNull: true },
+      // card or ach.
+      { name: 'method', type: 'VARCHAR', notNull: true },
+    ],
+  },
+  {
+    name: 'fixture_meta',
+    columns: [
+      { name: 'key', type: 'VARCHAR', pk: true },
+      { name: 'value', type: 'VARCHAR', notNull: true },
+    ],
+  },
 ];
 
 function pkOf(table) {
@@ -98,7 +185,9 @@ function schemaSql(tables = TABLES) {
     '-- Money is integer cents; dates are ISO DATE in the local business calendar.',
   ];
   for (const table of tables) {
-    parts.push('', `CREATE TABLE ${table.name} (`, table.columns.map((c) => columnDdl(table, c)).join(',\n'), ');');
+    const lines = table.columns.map((c) => columnDdl(table, c));
+    for (const cols of table.unique || []) lines.push(`  UNIQUE (${cols.join(', ')})`);
+    parts.push('', `CREATE TABLE ${table.name} (`, lines.join(',\n'), ');');
   }
   return `${parts.join('\n')}\n`;
 }
