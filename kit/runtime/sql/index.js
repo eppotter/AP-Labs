@@ -21,7 +21,9 @@
 //   escapes) and $$...$$ / $tag$...$tag$ strings are refused: no template
 //   needs them, and each is a place for this pass and DuckDB to disagree.
 // - "..." is an identifier, case-insensitive like an unquoted one.
-// - Block comments nest in DuckDB's lexer; a nested /* is refused.
+// - Block comments nest: each /* opens a level and each */ closes one, read
+//   left to right two characters at a time, so `/* /* */ x */` is one comment
+//   and `/*/` opens without closing. A parity test checks this against DuckDB.
 // - Any non-ASCII character outside a string, comment or quoted identifier is
 //   refused (DuckDB reads it as part of an identifier; unicode whitespace in
 //   particular is not whitespace to DuckDB).
@@ -107,6 +109,24 @@ class Refusal {
   constructor(rule, detail) { this.rule = rule; this.detail = detail; }
 }
 
+// The index just past the block comment that opens at s[start] ('/*'), with
+// nesting as DuckDB reads it; -1 if it never closes.
+function blockCommentEnd(s, start) {
+  let depth = 0;
+  let i = start;
+  while (i < s.length) {
+    if (s[i] === '/' && s[i + 1] === '*') { depth += 1; i += 2; continue; }
+    if (s[i] === '*' && s[i + 1] === '/') {
+      depth -= 1;
+      i += 2;
+      if (depth === 0) return i;
+      continue;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
 // Token kinds: IDENT (v = upper-cased word, name = lower-cased; quoted = true
 // for "..."), STRING (text = contents), NUMBER, PARAM ($name, $1, ?), PUNCT (v).
 function tokenize(sql) {
@@ -126,13 +146,8 @@ function tokenize(sql) {
     }
 
     if (c === '/' && s[i + 1] === '*') {
-      i += 2;
-      for (;;) {
-        if (i >= s.length) throw new Refusal(RULES.UNTERMINATED, 'block comment never closes');
-        if (s[i] === '/' && s[i + 1] === '*') throw new Refusal(RULES.UNSUPPORTED_SYNTAX, 'nested block comment');
-        if (s[i] === '*' && s[i + 1] === '/') { i += 2; break; }
-        i += 1;
-      }
+      i = blockCommentEnd(s, i);
+      if (i === -1) throw new Refusal(RULES.UNTERMINATED, 'block comment never closes');
       continue;
     }
 
@@ -452,4 +467,4 @@ function forbiddenColumnsOf(profile) {
   return (profile && profile.sql && profile.sql.forbidden_columns) || [];
 }
 
-module.exports = { checkSql, forbiddenColumnsOf, RULES, TABLE_FUNCTION_ALLOWLIST };
+module.exports = { checkSql, forbiddenColumnsOf, blockCommentEnd, RULES, TABLE_FUNCTION_ALLOWLIST };

@@ -42,7 +42,9 @@ resources:
   - key: HELLO_WORLD
     label: Say hello
     open_access: true
-  # Runtime: the Dataset module (Story 7.5). Open until access by profile (Story 6.3).
+  # Runtime: the Dataset module (Story 7.5). Open to everyone for the demo only: row
+  # counts are business data (customer count, job volume), so a real fork should gate it
+  # (grant it to roles) instead of open_access.
   - key: DATASET
     label: Dataset
     open_access: true

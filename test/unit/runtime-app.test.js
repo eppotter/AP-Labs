@@ -79,6 +79,11 @@ test('a direct message gets a short greeting in the same DM', async () => {
   assert.match(app.said[0].text, /<@U123>/);
 });
 
+test('the greeting escapes the client name from the profile', () => {
+  const { greetingText } = require('../../kit/runtime/slack/greeting');
+  assert.equal(greetingText({ client: { name: 'A & <!channel>' } }, 'U1'), "Hi <@U1>, I'm the A &amp; &lt;!channel&gt; bot. I'm up and running.");
+});
+
 test('channel messages, edits and bot messages get no greeting', async () => {
   const { app } = await boot(env());
   await app.dispatchMessage({ channel_type: 'channel', channel: 'C1', user: 'U1', text: 'hi' });

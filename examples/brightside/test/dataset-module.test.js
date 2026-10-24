@@ -14,11 +14,16 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { build } = require('../../../kit/fixture/build');
-const { createData, DATA_UNAVAILABLE } = require('../../../kit/runtime/data');
+const { createData } = require('../../../kit/runtime/data');
+const { DataUnavailable } = require('../../../kit/runtime/errors');
+const { messageFor } = require('../../../kit/runtime/messages');
 const { createRegistry } = require('../../../kit/runtime/registry');
 const { registerHubs } = require('../../../kit/runtime/slack/hubs');
 const { createStore } = require('../../../kit/runtime/store');
 const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
+
+// The reply a person sees when the data is unavailable.
+const DATA_UNAVAILABLE = messageFor(new DataUnavailable('test'));
 
 const REPO = path.join(__dirname, '..', '..', '..');
 const MINI = path.join(REPO, 'test', 'fixtures', 'fixture-build', 'mini');
