@@ -10,11 +10,25 @@ const {
   unparsedFindingLines,
   isValidState,
   isClean,
+  readVerdict,
   repeatedBlockingFiles,
   withRoundsLine,
   withReviewedHeadLine,
   pickReviewer,
   withFallbackLine,
+  withFollowupLine,
+  followupFromBody,
+  withStopLine,
+  withExemptLine,
+  hasKindLine,
+  KIND_HELP,
+  followupItems,
+  followupIssue,
+  parseNumstat,
+  isProtectedPath,
+  exemptionFor,
+  revertedCommit,
+  withoutExemptLine,
   parseArgs,
   sanitizeBranch,
 } = require('../../kit/lib/review');
@@ -183,4 +197,136 @@ test('isValidState accepts only the expected shape', () => {
   for (const bad of [null, {}, { branch: 'b' }, { branch: 'b', rounds: {} }, { branch: 1, rounds: [] }, { branch: 'b', rounds: [{ head: 'x' }] }]) {
     assert.equal(isValidState(bad), false, JSON.stringify(bad));
   }
+});
+
+test('withFallbackLine removal tidies only the blank lines next to the removed line', () => {
+  const fence = '```\na\n\n\nb\n```\n';
+  assert.equal(withFallbackLine(`Intro\n\nReview: same-model fallback\n\n${fence}`, false), `Intro\n\n${fence}`);
+  assert.equal(withFallbackLine(`${fence}\nReview: same-model fallback\n`, false), `${fence}\n`);
+  assert.equal(withFallbackLine('Review: same-model fallback\n\nBody\n', false), 'Body\n');
+  assert.equal(withFallbackLine('A\nReview: same-model fallback\nB', false), 'A\nB');
+  assert.equal(withFallbackLine('A\n\n\n\nB', false), 'A\n\n\n\nB', 'nothing to remove leaves the body alone');
+});
+
+test('readVerdict accepts findings or a clean verdict and names every other outcome', () => {
+  assert.deepEqual(readVerdict('- [P2] x — a.js:1\n'), { findings: [{ priority: 'P2', title: 'x', file: 'a.js' }] });
+  assert.deepEqual(readVerdict('No blocking findings.\n'), { findings: [] });
+  assert.match(readVerdict('').error, /No verdict written/);
+  assert.match(readVerdict('  \n').error, /No verdict written/);
+  assert.match(readVerdict('Some thoughts.\n').error, /Could not read findings or a clean verdict/);
+  assert.match(readVerdict('No blocking findings.\n- [P1] no path\n').error, /Could not parse 1 finding line\(s\):\n- \[P1\] no path/);
+});
+
+test('follow-up, stop and exempt body lines replace in place or append', () => {
+  assert.equal(withFollowupLine('Body', 42), 'Body\n\nReview follow-up: #42\n');
+  assert.equal(withFollowupLine('A\nReview follow-up: #42\nB', 43), 'A\nReview follow-up: #43\nB');
+  assert.throws(() => withFollowupLine('Body', 0));
+  assert.equal(followupFromBody('A\nReview follow-up: #42\nB'), 42);
+  assert.equal(followupFromBody('A\r\nReview follow-up: #42\r\nB'), 42);
+  assert.equal(followupFromBody('Review follow-up: soon'), undefined);
+
+  assert.equal(withStopLine('Body', []), 'Body', 'no stop, no line');
+  assert.equal(withStopLine('Body', ['a.js', 'b.js']), 'Body\n\nReview stop: same class twice — a.js, b.js\n');
+  assert.equal(withStopLine('A\nReview stop: same class twice — a.js\nB', ['c.js']), 'A\nReview stop: same class twice — c.js\nB');
+
+  assert.equal(withExemptLine('Body', 'docs only'), 'Body\n\nReview: exempt — docs only\n');
+  assert.equal(withExemptLine('A\nReview: exempt — revert\nB', 'docs only'), 'A\nReview: exempt — docs only\nB');
+  assert.equal(withExemptLine('Review: same-model fallback', 'revert'), 'Review: same-model fallback\n\nReview: exempt — revert\n');
+});
+
+test('hasKindLine wants one of the five kinds on a line of its own', () => {
+  for (const kind of ['user-visible', 'groundwork', 'fix', 'infra', 'docs']) {
+    assert.ok(hasKindLine(`What this does: x.\nKind: ${kind}\n`), kind);
+  }
+  assert.ok(hasKindLine('Intro\r\nKind: fix\r\nMore'), 'CRLF bodies from the GitHub editor count');
+  for (const body of ['', 'Kind: feature', 'kind: fix', ' Kind: fix', 'Kind: fix ', 'Kind:fix', 'The Kind: fix line']) {
+    assert.ok(!hasKindLine(body), JSON.stringify(body));
+  }
+  assert.match(KIND_HELP, /Kind: user-visible\n {2}Kind: groundwork\n {2}Kind: fix\n {2}Kind: infra\n {2}Kind: docs/);
+  assert.match(KIND_HELP, /gh pr edit <number> --body-file <file>/);
+});
+
+test('follow-up issue lists each P2 as a checkbox with the round and head', () => {
+  const findings = [p2('kit/b.js', 'Rename var'), p2('docs/a.md', 'Typo')];
+  const issue = followupIssue({ pr: 7, branch: 'feat/x', round: 1, head: SHA_A, findings });
+  assert.equal(issue.title, 'Review follow-ups for PR #7 (feat/x)');
+  assert.match(issue.body, /parked from PR #7/);
+  assert.ok(issue.body.endsWith(`Round 1 on ${SHA_A}:\n- [ ] Rename var — kit/b.js\n- [ ] Typo — docs/a.md\n`));
+  assert.equal(followupItems({ round: 2, head: SHA_B, findings: [findings[0]] }), `Round 2 on ${SHA_B}:\n- [ ] Rename var — kit/b.js\n`);
+});
+
+test('parseNumstat reads counts, binaries and odd file names', () => {
+  assert.deepEqual(parseNumstat('3\t1\tREADME.md\0-\t-\tlogo.png\x001\t0\ta\tb.json\0'), [
+    { file: 'README.md', added: 3, deleted: 1 },
+    { file: 'logo.png', added: null, deleted: null },
+    { file: 'a\tb.json', added: 1, deleted: 0 },
+  ]);
+  assert.deepEqual(parseNumstat(''), []);
+});
+
+test('protected paths cover process, security and dependency files at any depth', () => {
+  for (const f of ['.github/workflows/ci.yml', '.claude/settings.json', '.codex/config.toml', '.agents/skills/x.md',
+    '_bmad/a.yaml', '.aplabs/rules.json', 'AGENTS.md', 'CLAUDE.md', 'package.json', 'package-lock.json', 'yarn.lock',
+    'pnpm-lock.yaml', 'bun.lockb', 'npm-shrinkwrap.json', 'examples/x/package.json', 'sub/.claude/x.md', 'docs/AGENTS.md']) {
+    assert.ok(isProtectedPath(f), f);
+  }
+  for (const f of ['README.md', 'docs/a.md', 'config/clock.json', 'docs/deadlock.md', 'tsconfig.json']) {
+    assert.ok(!isProtectedPath(f), f);
+  }
+});
+
+test('exemptionFor: reverts, docs-only and small config changes are exempt; protected paths never are', () => {
+  const ch = (file, added = 1, deleted = 0) => ({ file, added, deleted });
+  const docs = [ch('README.md'), ch('docs/guide.mdx'), ch('docs/diagram.svg'), ch('kit/NOTES.MD')];
+  const rev = (verifiedRevert) => ({ verifiedRevert });
+  assert.equal(exemptionFor({ commits: [rev(true)], changes: [ch('kit/a.js', 50, 50)] }), 'revert');
+  assert.equal(exemptionFor({ commits: [rev(true), rev(true)], changes: [ch('.github/ci.yml')] }), 'revert');
+  assert.equal(exemptionFor({ commits: [rev(true), rev(false)], changes: [ch('kit/a.js')] }), null);
+  assert.equal(exemptionFor({ commits: [rev(false)], changes: [ch('kit/a.js')] }), null, 'a forged Revert title is not verified');
+  assert.equal(exemptionFor({ commits: [], changes: [] }), null, 'nothing to classify is not exempt');
+  assert.equal(exemptionFor({ commits: [rev(false)], changes: [] }), null);
+
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: docs }), 'docs only');
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [...docs, ch('AGENTS.md')] }), null);
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('.github/PULL_REQUEST_TEMPLATE.md')] }), null);
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('CLAUDE.md')] }), null);
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [...docs, ch('kit/a.js')] }), null);
+
+  const small = 'config changes of 10 lines or fewer';
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('a.json', 4, 1), ch('b.yml', 2, 0), ch('c.yaml', 1, 0), ch('d.toml', 1, 0),
+    ch('.gitignore', 1, 0)] }), small, 'exactly 10 lines');
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('sub/.editorconfig', 2, 2)] }), small);
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('a.json', 6, 5)] }), null, '11 lines');
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('a.json', 1, 0), { file: 'b.json', added: null, deleted: null }] }), null,
+    'a binary disqualifies');
+  for (const file of ['package.json', 'package-lock.json', '.github/dependabot.yml', '.claude/settings.json', '_bmad/config.yaml',
+    '.aplabs/rules.json', '.codex/config.toml', '.agents/x.yaml']) {
+    assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch(file)] }), null, file);
+  }
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('README.md'), ch('a.json')] }), null, 'docs plus config is neither');
+});
+
+test('isValidState accepts an optional positive integer follow-up issue', () => {
+  assert.equal(isValidState({ branch: 'b', rounds: [], followup: 42 }), true);
+  for (const followup of [0, -1, 1.5, '42', null]) {
+    assert.equal(isValidState({ branch: 'b', rounds: [], followup }), false, JSON.stringify(followup));
+  }
+});
+
+test('revertedCommit reads the sha a git revert message names', () => {
+  const sha = 'a'.repeat(40);
+  assert.equal(revertedCommit(`Revert "Add x"\n\nThis reverts commit ${sha}.\n`), sha);
+  assert.equal(revertedCommit('Revert "Add x"\n\nNo sha here.'), null);
+  assert.equal(revertedCommit(`This reverts commit ${'a'.repeat(39)}.`), null);
+});
+
+test('withoutExemptLine drops a stale exempt line and nothing else', () => {
+  assert.equal(withoutExemptLine('A\n\nReview: exempt — docs only\n'), 'A\n\n');
+  assert.equal(withoutExemptLine('A\nReview: exempt — revert\nB'), 'A\nB');
+  assert.equal(withoutExemptLine('A\n```\n\n\n\n```\nB'), 'A\n```\n\n\n\n```\nB');
+});
+
+test('isClean accepts the common paraphrases of a clean verdict', () => {
+  for (const v of ['No blocking findings.', 'I found no blocking issues in the branch changes.', 'No issues found.']) assert.ok(isClean(v), v);
+  assert.ok(!isClean('Looks interesting, some thoughts below.'));
 });
