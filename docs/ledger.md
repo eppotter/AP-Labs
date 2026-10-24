@@ -53,6 +53,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #62 | 2026-10-24 | 6.2 | user-visible | T1 | `/brightside` opens a private menu built from the hub and module files, and Say hello answers with the person's and client's names; retried Slack events run once and `npm run slack:manifest` keeps the app's commands in sync. | — |
 | #64 | 2026-10-24 | — | fix | T3 | Brightside's profile tiers `profiles/**` at T3 so access changes get full review; the review parser accepts Codex's "no defects/problems/bugs" wording. | — |
 | #65 | 2026-10-24 | 7.4 | groundwork | T3 | Adds the SQL guardrail every query will pass before it runs: one read-only statement only, no file, network or env access, and no way to reach a protected column (by name, wildcard or whole-row reference). Brightside's profile names its protected columns in the new `sql.forbidden_columns` key. | — |
+| pending | 2026-10-24 | 7.5 | user-visible | T3 | Every query now runs through one locked, read-only reader behind the SQL guardrail, and a Dataset entry on /brightside shows the data's source, version, as-of date and table sizes; missing data is reported plainly and the app keeps running (MotherDuck stays DEP-011). | — |
 
 ## Deferrals (DEP)
 

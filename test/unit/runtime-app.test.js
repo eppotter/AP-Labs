@@ -27,13 +27,22 @@ function env(extra = {}) {
   return { APLABS_NO_KEYCHAIN: '1', SLACK_BOT_TOKEN: BOT, SLACK_APP_TOKEN: APP, APLABS_PROFILE: PROFILE, APLABS_APP_DIR: APP_DIR, ...extra };
 }
 
+// A data source that is always available, so boot tests don't depend on a
+// built fixture. Tests of the real runner live in runtime-data.test.js.
+const fakeData = () => ({
+  open: async () => {},
+  run: async () => [],
+  describe: () => ({ source: 'local fixture', file: 'fake.duckdb', available: true, problem: null }),
+  close: () => {},
+});
+
 async function boot(e, deps = {}) {
   const lines = [];
   const noKeychain = () => assert.fail('the Keychain must not be read');
   const res = await main({
     env: e,
     cwd: os.tmpdir(),
-    deps: { App: FakeSlackApp, write: (line) => lines.push(line), readKeychain: noKeychain, ...deps },
+    deps: { App: FakeSlackApp, write: (line) => lines.push(line), readKeychain: noKeychain, data: fakeData(), ...deps },
   });
   const entries = lines.map((l) => JSON.parse(l));
   return { ...res, lines, entries, text: lines.join('\n') };
@@ -195,6 +204,35 @@ test('the startup line names the environment and the hub commands it registered'
   assert.deepEqual(entries[0].hubs, ['/alpha', '/beta']);
   assert.equal(entries[0].modules, 4);
   assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
+});
+
+test('a missing data file is logged and the app starts anyway, its startup line saying the data is unavailable', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-app-data-'));
+  try {
+    const file = path.join(dir, 'missing.duckdb');
+    const { code, app, entries, data } = await boot(env({ APLABS_DATA_PATH: file }), { data: undefined });
+    assert.equal(code, 0);
+    assert.equal(app.started, true);
+    assert.deepEqual(entries.map((e) => e.level), ['warn', 'info']);
+    assert.equal(entries[0].msg, 'data unavailable; starting anyway');
+    assert.equal(entries[0].reason, 'the data file does not exist');
+    assert.ok(!JSON.stringify(entries[0]).includes(dir), 'the path is not logged');
+    assert.equal(entries[1].data, 'unavailable');
+    data.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the startup line says the data is available when it opened', async () => {
+  const { entries } = await boot(env());
+  assert.equal(entries[0].data, 'available');
+});
+
+test('refuses to start when APLABS_DATA_PATH is not absolute', async () => {
+  const { code, entries } = await boot(env({ APLABS_DATA_PATH: 'var/x.duckdb' }));
+  assert.equal(code, 1);
+  assert.ok(entries[0].problems.includes('APLABS_DATA_PATH must be an absolute path'));
 });
 
 test('a retried event with an event_id already seen is processed once', async () => {
