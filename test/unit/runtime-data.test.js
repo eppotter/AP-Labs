@@ -143,8 +143,11 @@ test('a placeholder with no value, a positional placeholder and a non-scalar val
   await assert.rejects(data.run('SELECT 1 AS n', 'not an object'), (err) => err.rule === PARAM_RULES.BAD_VALUE);
 });
 
-test('no file outside kit/runtime/data and kit/fixture/build.js imports @duckdb/node-api', () => {
-  const allowed = new Set(['kit/runtime/data/index.js', 'kit/fixture/build.js']);
+test('no file outside kit/runtime/data, kit/fixture/build.js and kit/fixture/motherduck.js imports @duckdb/node-api', () => {
+  // motherduck.js (Story 7.7) opens the human-run MotherDuck connection for
+  // fixture:publish and status --remote. It can't go through kit/runtime/data,
+  // whose lockdown forbids the network by design, and the app never loads it.
+  const allowed = new Set(['kit/runtime/data/index.js', 'kit/fixture/build.js', 'kit/fixture/motherduck.js']);
   const pkg = ['@duckdb', 'node-api'].join('/');
   const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '*.js', '*.cjs', '*.mjs'], { cwd: REPO, encoding: 'utf8' })
     .split('\n').filter(Boolean);
