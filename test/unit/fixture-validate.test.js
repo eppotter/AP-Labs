@@ -109,6 +109,24 @@ test('a forbidden column is refused unless the check declares it; the declaratio
   assert.ok(open.every((r) => r.outcome === 'pass'), JSON.stringify(open));
 });
 
+// Issue #77 item 2: DuckDB quotes the value it failed on ("Could not convert
+// string '00402x'"), so a check that lifted a protected column shows only the
+// error's class, never the message.
+test('a check that lifted a protected column and errors shows only the error class, never the value', async (t) => {
+  const db = await builtDb(t);
+  const dir = checksCopy(t, {
+    'zz-cast.sql': "-- Postal codes cast to numbers.\n-- protected-columns: shops.postal_code\nSELECT shop_id FROM shops WHERE CAST(postal_code || 'x' AS INTEGER) > 0\n",
+  });
+  const results = await validate({ checks: loadChecks(dir), db, forbiddenColumns: ['shops.postal_code'] });
+  const cast = results.find((r) => r.id === 'zz-cast');
+  assert.equal(cast.outcome, 'fail');
+  assert.equal(cast.error, 'Conversion Error (message withheld: the check reads a protected column)');
+  assert.doesNotMatch(JSON.stringify(results), /00402|00013|x'/);
+  // A check that lifted nothing keeps DuckDB's first line: it can name no protected value.
+  const plain = await validate({ checks: loadChecks(checksCopy(t, { 'zz-bad.sql': '-- Bad.\nSELECT nope FROM shops\n' })), db, forbiddenColumns: ['shops.postal_code'] });
+  assert.match(plain.find((r) => r.id === 'zz-bad').error, /Binder Error: .*nope/);
+});
+
 test('a check that is not a read-only query fails as could not run', async (t) => {
   const db = await builtDb(t);
   const dir = checksCopy(t, { 'writes.sql': "-- Tries to write.\nDELETE FROM shops WHERE shop_id = 1\n" });

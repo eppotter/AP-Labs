@@ -20,7 +20,8 @@
 //   -- protected-columns: clients.phone
 //
 // and only that check runs without it. Output never shows a row's values, only
-// how many rows a check returned, so a protected value is never printed.
+// how many rows a check returned, and an error in such a check shows only its
+// class, so a protected value is never printed.
 //
 // A check that cannot run (refused, or a DuckDB error) fails. No checks, or no
 // built fixture, fails too: an empty run is never a pass.
@@ -95,12 +96,22 @@ function loadChecks(fixtureDir) {
   });
 }
 
+// What a failed run may show. DuckDB quotes the value it failed on (for
+// example "Could not convert string '…'"), so a check that lifted a protected
+// column shows only the error's class or the guardrail's rule (issue #77).
+function errorText(err, lifted) {
+  const first = String(err.message).split('\n')[0];
+  if (!lifted) return first;
+  if (err.code === 'QUERY_REFUSED') return `query refused (${err.rule})`;
+  const cls = /^([A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)* Error):/.exec(first);
+  return `${cls ? cls[1] : 'error'} (message withheld: the check reads a protected column)`;
+}
+
 // Runs each check against `db`. forbiddenColumns: the profile's list.
 // Returns [{ id, description, outcome: 'pass' | 'fail', rows?, error? }].
 async function validate({ checks, db, forbiddenColumns = [] }) {
   const sources = new Map();
-  const sourceFor = (lifted) => {
-    const cols = forbiddenColumns.filter((c) => !lifted.includes(String(c).toLowerCase()));
+  const sourceFor = (cols) => {
     const key = cols.join(',');
     if (!sources.has(key)) sources.set(key, createData({ file: db, profile: { sql: { forbidden_columns: cols } } }));
     return sources.get(key);
@@ -109,11 +120,13 @@ async function validate({ checks, db, forbiddenColumns = [] }) {
   try {
     for (const check of checks) {
       const base = { id: check.id, description: check.description };
+      const cols = forbiddenColumns.filter((c) => !check.protectedColumns.includes(String(c).toLowerCase()));
+      const lifted = cols.length < forbiddenColumns.length;
       try {
-        const rows = await sourceFor(check.protectedColumns).run(check.sql);
+        const rows = await sourceFor(cols).run(check.sql);
         results.push({ ...base, outcome: rows.length === 0 ? 'pass' : 'fail', rows: rows.length });
       } catch (err) {
-        results.push({ ...base, outcome: 'fail', error: String(err.message).split('\n')[0] });
+        results.push({ ...base, outcome: 'fail', error: errorText(err, lifted) });
       }
     }
   } finally {
