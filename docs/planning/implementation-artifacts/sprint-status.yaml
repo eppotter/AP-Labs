@@ -35,24 +35,24 @@ project_key: NOKEY
 tracking_system: file-system
 story_location: docs/planning/implementation-artifacts
 development_status:
-  epic-1: in-progress
+  epic-1: done
   1-1-codex-reviews-a-claude-written-pr-within-budget: done
   1-2-claude-reviews-codex-written-work-with-a-no-codex-fallback: done
   1-3-triage-follow-ups-exemptions-and-the-same-cause-stop: done
-  1-4-the-refuter-must-reproduce-a-p1-before-it-blocks: backlog
-  epic-1-retrospective: optional
+  1-4-the-refuter-must-reproduce-a-p1-before-it-blocks: done
+  epic-1-retrospective: done
 
-  epic-2: backlog
-  2-1-the-session-announces-the-orchestrator-and-checks-the-profil: backlog
-  2-2-nine-agents-with-job-matched-tools: backlog
+  epic-2: in-progress
+  2-1-the-session-announces-the-orchestrator-and-checks-the-profil: in-progress
+  2-2-nine-agents-with-job-matched-tools: in-progress
   2-3-the-rules-layer-routes-every-stage: backlog
   2-4-the-write-gate: backlog
   2-5-plan-approval-scales-with-the-computed-tier: backlog
   2-6-clients-switch-on-add-on-stages: backlog
   epic-2-retrospective: optional
 
-  epic-3: backlog
-  3-1-the-verify-harness-runs-the-profile-s-checks: backlog
+  epic-3: in-progress
+  3-1-the-verify-harness-runs-the-profile-s-checks: done
   3-2-the-end-of-turn-hook-runs-verify: backlog
   epic-3-retrospective: optional
 
@@ -62,8 +62,8 @@ development_status:
   4-3-prove-onboarding-on-brightside: backlog
   epic-4-retrospective: optional
 
-  epic-5: backlog
+  epic-5: in-progress
   5-1-a-ledger-row-for-every-build: backlog
-  5-2-the-measured-retro: backlog
-  5-3-slack-progress-updates: backlog
+  5-2-the-measured-retro: done
+  5-3-slack-progress-updates: done
   epic-5-retrospective: optional
