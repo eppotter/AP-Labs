@@ -130,3 +130,19 @@ test('outbox: several processes checking then appending the same keys at once re
   assert.equal(keys.length, 25, `each key once, got ${keys.length} lines`);
   assert.equal(new Set(keys).size, 25);
 });
+
+test('the ledger keeps a stopped write\'s progress record whole, latest first, and a done record beside it (#89)', () => {
+  const file = freshPath();
+  const { ledger } = openOutbox(file);
+  const pslot = 'email\u0000addContacts\u0001progress\u0000k';
+  const slot = 'email\u0000addContacts\u0000k';
+  const two = [{ size: 100, result: { added: 100 } }, { size: 50, result: { added: 50 } }];
+  assert.equal(ledger.get(pslot), undefined);
+  ledger.set(pslot, { input: 'fp', partial: true, batchSize: 100, completed: two.slice(0, 1) });
+  ledger.set(pslot, { input: 'fp', partial: true, batchSize: 100, completed: two });
+  assert.deepEqual(ledger.get(pslot), { input: 'fp', partial: true, batchSize: 100, completed: two });
+  assert.equal(ledger.get(slot), undefined, 'progress is not a done record');
+  ledger.set(slot, { input: 'fp', result: { added: 150 } });
+  assert.deepEqual(ledger.get(slot), { input: 'fp', result: { added: 150 } });
+  assert.deepEqual(lines(file).map((r) => r.type), ['progress', 'progress', 'done']);
+});

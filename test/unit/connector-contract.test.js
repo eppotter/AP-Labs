@@ -16,7 +16,8 @@ const Module = require('node:module');
 const { spawnSync } = require('node:child_process');
 const { defineConnector, GLOBAL_KILL_SWITCH } = require('../../kit/runtime/connectors/contract');
 const { connectorContract, fakeClock } = require('../../kit/runtime/connectors/suite');
-const { KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict } = require('../../kit/runtime/errors');
+const { KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure } = require('../../kit/runtime/errors');
+const settle = (p) => p.then((value) => ({ value }), (error) => ({ error }));
 const { messageFor } = require('../../kit/runtime/messages');
 const { createLog } = require('../../kit/runtime/log');
 const sdk = require('../../kit/runtime/sdk');
@@ -356,8 +357,9 @@ test('a kill switch flipped partway through a write stops the requests still to 
     assert.equal(sent, 2, `${name}: no request went out after the switch was flipped`);
     assert.equal(await c.read.get().then((r) => r.ok), true, `${name}: reads keep working`);
     delete env[name];
-    sent = 2;
-    assert.deepEqual(await c.write.put({ idempotencyKey: 'k', dryRun: false }), { sent: 7 }, `${name}: the stopped write did not use up its key`);
+    // The stopped write did not use up its key, and its retry resumes after
+    // the 2 requests already sent instead of sending them again (#89 round 2).
+    assert.deepEqual(await c.write.put({ idempotencyKey: 'k', dryRun: false }), { sent: 5 }, `${name}: the retry sent only the 3 requests still to come`);
   }
 });
 
@@ -492,6 +494,314 @@ test('a 429 is retried through the rate limiter, honouring Retry-After, then fai
   const w = make([limited('1'), null]);
   assert.deepEqual(await w.c.write.put({ idempotencyKey: 'k', dryRun: false }), { put: true });
   assert.equal(w.at.length, 2);
+});
+
+test('an HTTP-date Retry-After is read against the injected clock, capped, and a write re-checks the kill switch after the wait (#89)', async () => {
+  const T0 = Date.parse('2026-10-24T12:00:00Z');
+  const limited = (retryAfter) => Object.assign(new Error('HTTP 429 Too Many Requests'), { status: 429, headers: { 'retry-after': retryAfter } });
+  const httpDate = (ms) => new Date(ms).toUTCString();
+  function make(answers, { onSleep } = {}) {
+    let t = T0;
+    const at = [];
+    const slept = [];
+    const env = { DEMO_TOKEN: TOKEN };
+    const c = defineConnector(spec()).create({
+      log: quietLog(), env,
+      now: () => t,
+      sleep: async (ms) => { slept.push(ms); t += ms; if (onSleep) onSleep(env); },
+      onRequest: (info) => { at.push(info.at); const a = answers.shift(); if (a) throw a(t); },
+    });
+    return { c, at, slept };
+  }
+  // The date is 5 s after the injected now (not the wall clock): the retry waits 5 s.
+  const ok = make([(t) => limited(httpDate(t + 5000)), null]);
+  assert.deepEqual(await ok.c.read.get(), { ok: true });
+  assert.equal(ok.at.length, 2);
+  assert.equal(ok.at[1] - ok.at[0], 5000, `waited ${ok.at[1] - ok.at[0]} ms, not the 5 s the date asked`);
+  // A date already past retries without waiting beyond the rate limit.
+  const past = make([(t) => limited(httpDate(t - 60_000)), null]);
+  assert.deepEqual(await past.c.read.get(), { ok: true });
+  assert.ok(past.at[1] - past.at[0] < 1000, `waited ${past.at[1] - past.at[0]} ms for a past date`);
+  // A date past the cap fails at once with ConnectorFailed, and nothing sleeps that long.
+  const far = make([(t) => limited(httpDate(t + 2 * 3600_000)), null]);
+  await assert.rejects(far.c.read.get(), (e) => e instanceof ConnectorFailed && /over the 60 s limit/.test(e.reason));
+  assert.equal(far.at.length, 1);
+  assert.ok(far.slept.every((ms) => ms <= 60_000), `slept ${far.slept}`);
+  // A huge seconds value is capped the same way.
+  const huge = make([() => limited('1e12'), null]);
+  await assert.rejects(huge.c.read.get(), (e) => e instanceof ConnectorFailed && /over the 60 s limit/.test(e.reason));
+  assert.equal(huge.at.length, 1);
+  const endless = make([() => limited('Infinity'), null]);
+  await assert.rejects(endless.c.read.get(), (e) => e instanceof ConnectorFailed && /without limit, over the 60 s limit/.test(e.reason));
+  assert.equal(endless.at.length, 1);
+  // A kill switch flipped during the Retry-After wait stops the write's retry.
+  const w = make([(t) => limited(httpDate(t + 3000)), null], { onSleep: (env) => { env.DEMO_OFF = '1'; } });
+  await assert.rejects(w.c.write.put({ idempotencyKey: 'k89', dryRun: false }), KillSwitchOn);
+  assert.equal(w.at.length, 1, 'the retry was not sent');
+  // A read keeps working through the same switch.
+  const r = make([(t) => limited(httpDate(t + 3000)), null], { onSleep: (env) => { env.DEMO_OFF = '1'; } });
+  assert.deepEqual(await r.c.read.get(), { ok: true });
+});
+
+// A batched write that the system records item by item: system.sent lists
+// every item id it received, in order.
+function batchedPush({ batchSize = 2, perItemIdempotency, partlyFails } = {}) {
+  const system = { sent: [], calls: 0 };
+  const op = {
+    plan: (i) => i,
+    apply: async (input, ctx) => {
+      let n = 0;
+      for (const batch of ctx.batches(input.items)) {
+        n += await ctx.request(() => { system.calls += 1; system.sent.push(...batch.map((x) => x.id)); return batch.length; }, { size: batch.length });
+      }
+      if (partlyFails) throw new PartialFailure('1 failed', { succeeded: n - 1, failed: 1, failedRefs: ['p0'] });
+      return { pushed: n };
+    },
+  };
+  if (perItemIdempotency !== undefined) op.perItemIdempotency = perItemIdempotency;
+  const connector = defineConnector(spec({ rateLimit: { perSecond: 10, batchSize }, write: { push: op } }));
+  return { connector, system };
+}
+
+test('a batched write stopped partway (kill switch or failure) records its progress, so a retry with the same key and input resumes after the last sent batch (#89 round 2)', async () => {
+  const input = (key, count = 5) => ({ items: items(count), idempotencyKey: key, dryRun: false });
+  // The kill switch flips after the first batch went out.
+  {
+    const { connector, system } = batchedPush();
+    const env = { DEMO_TOKEN: TOKEN };
+    let requests = 0;
+    const c = connector.create({ log: quietLog(), env, ...fakeClock(), onRequest: () => { requests += 1; if (requests === 1) env.DEMO_OFF = '1'; } });
+    const stopped = await settle(c.write.push(input('ks')));
+    assert.ok(stopped.error instanceof KillSwitchOn, `got ${stopped.error ? stopped.error.name : 'a result'}`);
+    assert.deepEqual(stopped.error.details.sent, { batches: 1, items: 2, recorded: true });
+    assert.deepEqual(system.sent, ['p0', 'p1']);
+    const words = messageFor(stopped.error, { admin: 'Dana' });
+    assert.match(words, /partway/);
+    assert.match(words, /\b2 items were sent\b/);
+    assert.doesNotMatch(words, /nothing was sent/i);
+    delete env.DEMO_OFF;
+    assert.deepEqual(await c.write.push(input('ks')), { pushed: 5 });
+    assert.deepEqual(system.sent, ['p0', 'p1', 'p2', 'p3', 'p4'], 'each item went once: the retry resumed after the sent batch');
+    // Done now: a repeat calls nothing.
+    assert.deepEqual(await c.write.push(input('ks')), { pushed: 5 });
+    assert.equal(system.calls, 3);
+  }
+  // A failure (an outage) after the first batch: the same.
+  {
+    const { connector, system } = batchedPush();
+    let requests = 0;
+    const c = connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, ...fakeClock(), onRequest: () => { requests += 1; if (requests === 2) throw Object.assign(new Error('HTTP 503'), { status: 503 }); } });
+    const failed = await settle(c.write.push(input('outage')));
+    assert.ok(failed.error instanceof ConnectorFailed && !(failed.error instanceof PartialFailure), `got ${failed.error && failed.error.name}`);
+    assert.deepEqual(failed.error.details.sent, { batches: 1, items: 2, recorded: true });
+    assert.match(messageFor(failed.error), /couldn't finish sending to Demo: 2 items were sent/);
+    assert.deepEqual(await c.write.push(input('outage')), { pushed: 5 });
+    assert.deepEqual(system.sent, ['p0', 'p1', 'p2', 'p3', 'p4']);
+  }
+  // A rejected sign-in partway says what went too.
+  const auth = new ConnectorAuthFailed('HTTP 401', { connector: 'demo', system: 'Demo', operation: 'push', sent: { batches: 1, items: 1 } });
+  assert.match(messageFor(auth), /partway through: 1 item was sent before it stopped/);
+  // A failure before anything was sent says nothing was sent, and records nothing.
+  {
+    const { connector, system } = batchedPush();
+    let fail = true;
+    const c = connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, ...fakeClock(), onRequest: () => { if (fail) throw new Error('HTTP 503'); } });
+    const failed = await settle(c.write.push(input('none')));
+    assert.equal(failed.error.details.sent, undefined);
+    fail = false;
+    assert.deepEqual(await c.write.push(input('none')), { pushed: 5 });
+    assert.deepEqual(system.sent, ['p0', 'p1', 'p2', 'p3', 'p4']);
+  }
+});
+
+test('resuming a stopped write needs the same input and batch size, else IdempotencyConflict and nothing is sent (#89 round 2)', async () => {
+  const store = new Map();
+  const idempotency = { get: (k) => store.get(k), set: (k, v) => { store.set(k, v); } };
+  const input = (count) => ({ items: items(count), idempotencyKey: 'k', dryRun: false });
+  const first = batchedPush({ batchSize: 2 });
+  let requests = 0;
+  const c = first.connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, ...fakeClock(), onRequest: () => { requests += 1; if (requests === 2) throw new Error('HTTP 503'); } });
+  await assert.rejects(c.write.push(input(5)), ConnectorFailed);
+  assert.deepEqual(first.system.sent, ['p0', 'p1']);
+  // Same key, other input.
+  await assert.rejects(c.write.push(input(4)), IdempotencyConflict);
+  // Same key and input, but the connector now batches by 3 (a redeploy).
+  const other = batchedPush({ batchSize: 3 });
+  const c3 = other.connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, ...fakeClock() });
+  await assert.rejects(c3.write.push(input(5)), (e) => e instanceof IdempotencyConflict && /batch size/.test(e.reason));
+  assert.equal(other.system.calls, 0);
+  assert.deepEqual(first.system.sent, ['p0', 'p1']);
+  // A store that keeps only { input, result } mangles the progress record:
+  // the retry fails closed instead of sending it all again.
+  const lossy = new Map();
+  const narrow = { get: (k) => lossy.get(k), set: (k, { input: i, result }) => { lossy.set(k, { input: i, result }); } };
+  const third = batchedPush({ batchSize: 2 });
+  let n = 0;
+  const cl = third.connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency: narrow, ...fakeClock(), onRequest: () => { n += 1; if (n === 2) throw new Error('HTTP 503'); } });
+  await assert.rejects(cl.write.push(input(5)), ConnectorFailed);
+  await assert.rejects(cl.write.push(input(5)), (e) => e instanceof ConnectorFailed && /progress record/.test(e.reason));
+  assert.deepEqual(third.system.sent, ['p0', 'p1']);
+});
+
+// A write whose system answers each batch with `answer(batch)`, stopped by an
+// outage on the second request. Returns what the store holds and what was sent.
+async function stoppedWith(answer, { idempotency } = {}) {
+  const store = new Map();
+  const ledger = idempotency || { get: (k) => store.get(k), set: (k, v) => { store.set(k, v); } };
+  const sent = [];
+  const connector = defineConnector(spec({
+    write: {
+      push: {
+        plan: (i) => i,
+        apply: async (input, ctx) => {
+          const out = [];
+          for (const batch of ctx.batches(input.items)) {
+            out.push(await ctx.request(() => { sent.push(...batch.map((x) => x.id)); return answer(batch); }, { size: batch.length }));
+          }
+          return { batches: out.length };
+        },
+      },
+    },
+  }));
+  const lines = [];
+  let n = 0;
+  const c = connector.create({
+    log: createLog({ write: (line) => lines.push(JSON.parse(line)) }), env: { DEMO_TOKEN: TOKEN }, idempotency: ledger, ...fakeClock(),
+    onRequest: () => { n += 1; if (n === 2) throw new Error('HTTP 503'); },
+  });
+  const input = { items: items(5), idempotencyKey: 'k', dryRun: false };
+  const first = await settle(c.write.push(input));
+  return { c, input, first, store, sent, lines };
+}
+
+test('a progress record never holds an answer with contact data: such a write fails closed on retry, and sends nothing more (#89 round 3)', async () => {
+  const { c, input, first, store, sent } = await stoppedWith((batch) => ({ count: batch.length, id: 'c_123', contacts: batch.map((x) => ({ email: x.email })) }));
+  assert.ok(first.error instanceof ConnectorFailed);
+  const held = JSON.stringify([...store.values()]);
+  assert.doesNotMatch(held, /example\.invalid/, `the store holds contact data: ${held}`);
+  assert.deepEqual(first.error.details.sent, { batches: 1, items: 2, recorded: true });
+  const retry = await settle(c.write.push(input));
+  assert.ok(retry.error instanceof ConnectorFailed && /could not be kept/.test(retry.error.reason), `got ${retry.error && retry.error.reason}`);
+  assert.deepEqual(sent, ['p0', 'p1'], 'nothing was sent again');
+});
+
+test('a progress record keeps counts and id-shaped refs, so a write answered with them resumes (#89 round 3)', async () => {
+  const answers = [];
+  const { c, input, store, sent } = await stoppedWith((batch) => {
+    const a = { count: batch.length, ok: true, ids: batch.map((x, i) => `c_${answers.length}${i}`) };
+    answers.push(a);
+    return a;
+  });
+  const held = [...store.values()][0];
+  assert.deepEqual(held.completed, [{ size: 2, result: answers[0] }]);
+  assert.deepEqual(await c.write.push(input), { batches: 3 });
+  assert.deepEqual(sent, ['p0', 'p1', 'p2', 'p3', 'p4']);
+});
+
+test('a progress record that could not be saved is marked unrecorded, logged as an error, and never called safe to retry (#89 round 3)', async () => {
+  const store = new Map();
+  const idempotency = { get: (k) => store.get(k), set: (k, v) => { if (k.includes('\u0001progress')) throw new Error('disk full'); store.set(k, v); } };
+  const { first, lines } = await stoppedWith(() => 1, { idempotency });
+  assert.ok(first.error instanceof ConnectorFailed);
+  assert.deepEqual(first.error.details.sent, { batches: 1, items: 2, recorded: false });
+  assert.ok(lines.some((l) => l.level === 'error' && /progress could not be recorded/.test(l.msg)), JSON.stringify(lines));
+  const words = messageFor(first.error, { admin: 'Dana' });
+  assert.match(words, /Dana should check what arrived before anyone tries again/);
+  assert.doesNotMatch(words, /safe/i);
+  const ks = new KillSwitchOn({ connector: 'demo', system: 'Demo', env: 'DEMO_OFF', sent: { batches: 1, items: 2, recorded: false } });
+  assert.match(messageFor(ks, { admin: 'Dana' }), /Dana should check what arrived before anyone tries again/);
+  const auth = new ConnectorAuthFailed('HTTP 401', { connector: 'demo', system: 'Demo', operation: 'push', sent: { batches: 1, items: 2, recorded: false } });
+  assert.match(messageFor(auth, { admin: 'Dana' }), /Dana should check what arrived before anyone tries again/);
+});
+
+test('a per-item PartialFailure whose stale progress could not be cleared is not called safe to retry (#89 round 3)', async () => {
+  const store = new Map();
+  let broken = false;
+  const idempotency = { get: (k) => store.get(k), set: (k, v) => { if (broken && k.includes('\u0001progress')) throw new Error('disk full'); store.set(k, v); } };
+  const { connector } = batchedPush({ perItemIdempotency: true, partlyFails: true });
+  let n = 0;
+  const c = connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, ...fakeClock(), onRequest: () => { n += 1; if (n === 2) throw new Error('HTTP 503'); } });
+  const input = { items: items(4), idempotencyKey: 'k', dryRun: false };
+  await assert.rejects(c.write.push(input), ConnectorFailed);
+  broken = true;
+  const partly = await settle(c.write.push(input));
+  assert.ok(partly.error instanceof PartialFailure);
+  assert.equal(partly.error.details.retrySafe, false);
+  assert.doesNotMatch(messageFor(partly.error), /safe/);
+});
+
+test('a resumed write whose requests changed since the first try fails closed (#89 round 2)', async () => {
+  let shift = 0;
+  const sent = [];
+  const connector = defineConnector(spec({
+    write: {
+      push: {
+        plan: (i) => i,
+        apply: async (input, ctx) => {
+          await ctx.request(() => { sent.push('a'); }, { size: 1 + shift });
+          await ctx.request(() => { sent.push('b'); }, { size: 1 });
+          return { ok: true };
+        },
+      },
+    },
+  }));
+  let requests = 0;
+  const c = connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, ...fakeClock(), onRequest: () => { requests += 1; if (requests === 2) throw new Error('HTTP 503'); } });
+  await assert.rejects(c.write.push({ idempotencyKey: 'k', dryRun: false }), ConnectorFailed);
+  shift = 1;
+  await assert.rejects(c.write.push({ idempotencyKey: 'k', dryRun: false }), (e) => e instanceof ConnectorFailed && /changed/.test(e.reason));
+  assert.deepEqual(sent, ['a']);
+});
+
+test('after a PartialFailure, a per-item idempotent write re-sends on retry; any other write never re-sends what it sent (#89 round 2)', async () => {
+  const input = { items: items(4), idempotencyKey: 'k', dryRun: false };
+  const safe = batchedPush({ perItemIdempotency: true, partlyFails: true });
+  const s = safe.connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, ...fakeClock() });
+  await assert.rejects(s.write.push(input), PartialFailure);
+  await assert.rejects(s.write.push(input), PartialFailure);
+  assert.equal(safe.system.calls, 4, 'the retry re-sent: the system keys each item');
+  const unsafe = batchedPush({ partlyFails: true });
+  const u = unsafe.connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, ...fakeClock() });
+  await assert.rejects(u.write.push(input), PartialFailure);
+  await assert.rejects(u.write.push(input), PartialFailure);
+  assert.equal(unsafe.system.calls, 2, 'the retry sent nothing twice');
+});
+
+test('a call waiting in the limiter re-checks a Retry-After hold set while it slept (#89 round 2)', async () => {
+  let t = 0;
+  const tick = () => new Promise((r) => setImmediate(r));
+  const at = [];
+  let first = true;
+  const c = defineConnector(spec()).create({
+    log: quietLog(), env: { DEMO_TOKEN: TOKEN },
+    now: () => t,
+    sleep: async (ms) => { t += ms; await tick(); await tick(); },
+    onRequest: async (info) => {
+      at.push(info.at);
+      if (first) {
+        first = false;
+        await tick();
+        throw Object.assign(new Error('HTTP 429'), { status: 429, headers: { 'retry-after': '5' } });
+      }
+    },
+  });
+  const results = await Promise.all([c.read.get(), c.read.get()]);
+  assert.deepEqual(results, [{ ok: true }, { ok: true }]);
+  assert.equal(at.length, 3);
+  for (const when of at.slice(1)) assert.ok(when >= 5000, `a call went at ${when} ms, inside the 5 s hold: ${at}`);
+});
+
+test('err.retryAfter may be a Date, read against the injected clock (#89 round 2)', async () => {
+  let t = Date.parse('2026-10-24T12:00:00Z');
+  const at = [];
+  const answers = [() => Object.assign(new Error('HTTP 429'), { status: 429, retryAfter: new Date(t + 4000) })];
+  const c = defineConnector(spec()).create({
+    log: quietLog(), env: { DEMO_TOKEN: TOKEN },
+    now: () => t, sleep: async (ms) => { t += ms; },
+    onRequest: (info) => { at.push(info.at); const a = answers.shift(); if (a) throw a(); },
+  });
+  assert.deepEqual(await c.read.get(), { ok: true });
+  assert.equal(at[1] - at[0], 4000);
 });
 
 test('create() needs the app logger, so every credential registers with it (AD-12, #82)', () => {

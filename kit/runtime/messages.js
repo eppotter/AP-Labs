@@ -16,18 +16,31 @@ function escapeText(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+const sentWords = ({ items }) => `${items} ${items === 1 ? 'item was' : 'items were'} sent`;
+// When what went could not be recorded (sent.recorded false), a retry may send
+// it again, so the next step is always a check first, never a retry (#89).
+const checkFirst = (admin, { start = true } = {}) => `${start ? admin.charAt(0).toUpperCase() + admin.slice(1) : admin} should check what arrived before anyone tries again.`;
+
 const MESSAGES = [
   [NotSetUp, ({ client, admin }) => `You're not set up in ${escapeText(client)}'s bot yet, so you only see what's open to everyone. Ask ${admin} to add you.`],
   [AccessDenied, ({ label, admin }) => `You don't have access to ${escapeText(label)}; ask ${admin}.`],
   [ConfigFault, ({ admin }) => `That option isn't set up correctly, so I can't open it right now. I've logged the problem; please tell ${admin}.`],
   [DataUnavailable, () => "The data isn't available right now, so I can't answer that. The app is still running; please tell your admin."],
-  [KillSwitchOn, ({ system }) => `Sending to ${escapeText(system)} is switched off right now, so nothing was sent. Please tell your admin.`],
+  // A write stopped partway (details.sent: { batches, items, recorded }) says what
+  // already went, never "nothing was sent" (#89).
+  [KillSwitchOn, ({ system, sent }, { admin }) => (sent
+    ? `Sending to ${escapeText(system)} was switched off partway through: ${sentWords(sent)} before it stopped, and the rest weren't. `
+      + (sent.recorded === false ? `I couldn't record that, so please tell ${admin}. ${checkFirst(admin)}` : `Please tell ${admin}.`)
+    : `Sending to ${escapeText(system)} is switched off right now, so nothing was sent. Please tell your admin.`)],
   // Subclasses of ConnectorFailed come first: the first match wins.
   // A missing credential is a setup fault, worded like ConfigFault; a rejected
   // one says so. Neither reads as a passing outage (AD-17).
-  [ConnectorAuthFailed, ({ system, setup }, { admin }) => (setup
-    ? `${escapeText(system)} isn't set up correctly, so I can't reach it. I've logged the problem; please tell ${admin}.`
-    : `${escapeText(system)} turned down my sign-in, so I couldn't reach it. Please tell ${admin}; trying again won't help until it's fixed.`)],
+  [ConnectorAuthFailed, ({ system, setup, sent }, { admin }) => (sent
+    ? `${escapeText(system)} turned down my sign-in partway through: ${sentWords(sent)} before it stopped, and the rest weren't. Please tell ${admin}; trying again won't help until it's fixed.`
+      + (sent.recorded === false ? ` I couldn't record what went, so ${checkFirst(admin, { start: false })}` : '')
+    : setup
+      ? `${escapeText(system)} isn't set up correctly, so I can't reach it. I've logged the problem; please tell ${admin}.`
+      : `${escapeText(system)} turned down my sign-in, so I couldn't reach it. Please tell ${admin}; trying again won't help until it's fixed.`)],
   [IdempotencyConflict, ({ system }, { admin }) => `That was already sent to ${escapeText(system)} with different contents, so I didn't send it again. Please tell ${admin}.`],
   // Counts only: the failed refs go to the log, never to the person. A retry
   // is called safe only when the write declares per-item idempotency
@@ -36,7 +49,10 @@ const MESSAGES = [
     + (retrySafe === true
       ? `Nothing was sent twice, so trying again is safe: it sends only the ${failed} that failed. If they keep failing, please tell ${admin}.`
       : `Please tell ${admin} before trying again.`)],
-  [ConnectorFailed, ({ system }, { admin }) => `I couldn't reach ${escapeText(system)} just now. Please try again later, or tell ${admin} if it keeps happening.`],
+  [ConnectorFailed, ({ system, sent }, { admin }) => (sent
+    ? `I couldn't finish sending to ${escapeText(system)}: ${sentWords(sent)} before it stopped, and the rest weren't. `
+      + (sent.recorded === false ? `I couldn't record that, so please tell ${admin}. ${checkFirst(admin)}` : `Please tell ${admin} before trying again.`)
+    : `I couldn't reach ${escapeText(system)} just now. Please try again later, or tell ${admin} if it keeps happening.`)],
 ];
 
 // Hub wording (Story 6.4). A hub file may set its own welcome and feedback

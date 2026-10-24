@@ -27,6 +27,37 @@
 //     working. The env is read on every call and again before every request
 //     a write makes, so flipping a switch takes effect at once, even partway
 //     through a push: the requests still to come are refused.
+//   - A live write that stops partway (a kill switch, an outage, a rejected
+//     sign-in) keeps a record of the requests that went: when it stops, each
+//     completed request is stored in the idempotency store, beside the write's slot
+//     (at "<connector id>\u0000<operation>\u0001progress\u0000<key>"), as
+//     { input, partial: true, batchSize, completed: [{ size, result }] }
+//     (a write that completes stores nothing extra; a process that dies
+//     mid-write records nothing). A store must keep that value whole and
+//     return the latest one set (a mangled one fails closed). A request's
+//     answer is kept only when it is nothing but counts, flags and id-shaped
+//     refs; any other answer (contact data, free text) is never stored, the
+//     request is marked opaque, and a retry that reaches it fails closed with
+//     ConnectorFailed, sending nothing more. If the record can't be saved,
+//     details.sent.recorded is false, an error line is logged, and the
+//     person is told the admin should check what arrived before anyone
+//     retries (never that a retry is safe). Only a request that answered is
+//     recorded: one that timed out after the system had already processed
+//     it can't be, so a retry may send it again; adapters should pass the
+//     system's own dedupe keys (ctx.idempotencyKey per item) where it has them. A retry with the same key and input
+//     re-runs apply, answers those requests from the record without calling
+//     the system, and sends only the rest (#89). The record is bound to the
+//     input fingerprint and the batch size: other input, or the same input
+//     under another batch size, is refused with IdempotencyConflict and
+//     sends nothing; a resumed request whose size changed fails closed with
+//     ConnectorFailed. apply must make the same requests in the same order
+//     for the same input, and a durable store must hold the requests'
+//     answers. The error that leaves carries details.sent ({ batches, items },
+//     items being the requests' sizes), and the person's message says what
+//     went instead of "nothing was sent". After a PartialFailure a write that
+//     declares perItemIdempotency drops the record, so its retry re-sends and
+//     the system keeps only the items it lacks; any other write keeps it, so
+//     its retry sends nothing twice.
 //   - Every write needs an idempotencyKey. A repeated key (per operation)
 //     with the same input returns the first result and calls nothing; two
 //     concurrent calls with one key share one apply. The input is fingerprinted
@@ -55,8 +86,12 @@
 //     and refuses a batch larger than batchSize. ctx.batches(items) splits a
 //     list into batches of batchSize. A call that fails with status 429 is
 //     retried through the limiter, which holds every call for its Retry-After
-//     (up to 60 s; longer fails at once), at most 3 attempts in all; then the
-//     operation fails with ConnectorFailed.
+//     (seconds, an HTTP date or a Date, a date read against deps.now; up to
+//     60 s, and longer fails at once), at most 3 attempts in all; then the
+//     operation fails with ConnectorFailed. A call already waiting in the
+//     limiter re-checks the hold when it wakes, so it can't go inside a hold
+//     set while it slept. A write re-checks its kill switch after the wait,
+//     before the retry is sent (#89).
 //   - Every error that leaves an operation is a ConnectorFailed (or
 //     ConnectorAuthFailed / KillSwitchOn) built fresh from a redacted message:
 //     the connector's own credentials, any token connect() obtained and passed
@@ -128,6 +163,10 @@ function isIdShaped(ref) {
   if (/^[0-9._:-]+$/.test(ref) && ref.replace(/[^0-9]/g, '').length >= 7) return false;
   return true;
 }
+// A field name a progress record may keep: a plain identifier, never one
+// named like a credential or contact data.
+const SAFE_FIELD = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const SECRET_FIELD = /token|secret|password|passwd|api_?key|apikey|auth|email|phone|name|address/i;
 const isCount = (n) => Number.isSafeInteger(n) && n >= 0;
 
 // Throws naming the field when a declaration breaks the contract.
@@ -203,8 +242,16 @@ function createLimiter(perSecond, now, sleep) {
   let gate = Promise.resolve();
   const limit = () => {
     const turn = gate.then(async () => {
-      const wait = Math.max(last + interval, heldUntil) - now();
-      if (wait > 0) await sleep(wait);
+      let wait = Math.max(last + interval, heldUntil) - now();
+      // A hold set while this call slept (another call's 429) is honoured
+      // too: re-checked after every wake, looping only while the hold grew,
+      // so a clock that doesn't move can't spin it (#89).
+      while (wait > 0) {
+        const held = heldUntil;
+        await sleep(wait);
+        if (heldUntil <= held) break;
+        wait = heldUntil - now();
+      }
       last = now();
     });
     gate = turn.catch(() => {});
@@ -215,15 +262,22 @@ function createLimiter(perSecond, now, sleep) {
 }
 
 // Retry-After from a 429, in ms: err.retryAfter (seconds) or the header,
-// as seconds or an HTTP date. 0 when absent or unreadable.
-function retryAfterMs(err) {
+// as seconds, an HTTP date or a Date. A date is read against the connector's
+// clock (deps.now), not the wall clock, so an injected clock governs it (#89).
+// 0 when absent, unreadable or in the past; a number too large to be finite
+// ("Infinity", "1e400") is Infinity, so the caller's cap refuses it.
+function retryAfterMs(err, now) {
   const h = err.headers;
   const raw = err.retryAfter ?? (h && (typeof h.get === 'function' ? h.get('retry-after') : h['retry-after'] ?? h['Retry-After']));
-  if (raw === undefined || raw === null || raw === '') return 0;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return 0;
+  if (raw instanceof Date) {
+    const when = raw.getTime();
+    return Number.isFinite(when) ? Math.max(0, when - now()) : 0;
+  }
   const seconds = Number(raw);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  if (!Number.isNaN(seconds)) return Math.max(0, seconds * 1000);
   const date = Date.parse(String(raw));
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
+  return Number.isFinite(date) ? Math.max(0, date - now()) : 0;
 }
 
 // In-flight writes per idempotency store, so instances sharing a store also
@@ -234,6 +288,21 @@ function inFlightFor(store) {
   if (!IN_FLIGHT.has(store)) IN_FLIGHT.set(store, new Map());
   return IN_FLIGHT.get(store);
 }
+
+// A live write that failed, with what it had sent (or null), carried to the
+// write's catch so a caller joining the same in-flight write gets it too.
+class Stopped {
+  constructor(err, sent) { this.err = err; this.sent = sent; }
+}
+const sentSoFar = (completed) => {
+  const done = completed.filter(Boolean);
+  return Object.freeze({ batches: done.length, items: done.reduce((n, r) => n + r.size, 0) });
+};
+
+// Where a stopped write keeps its progress: beside its slot, never equal to
+// one ("\u0001" can't be in an operation name), so a store keeping
+// { input, result } per slot keeps working.
+const progressSlot = (id, operation, key) => `${id}\u0000${operation}\u0001progress\u0000${key}`;
 
 const memoryLedger = () => { const m = new Map(); return Object.freeze({ get: (k) => m.get(k), set: (k, v) => { m.set(k, v); } }); };
 
@@ -334,7 +403,52 @@ function defineConnector(spec) {
       return { client: spec.connect ? await spec.connect({ secret, registerSecret, simulate: deps.simulate, data: deps.data }) : null };
     }
 
-    function context(operation, kind, client, extra = {}) {
+    // What a progress record keeps of a request: its size and, only when it
+    // is nothing but counts, flags and id-shaped refs, its answer. Any other
+    // answer (contact data, free text) is never stored: the request is marked
+    // opaque, and a retry that reaches it fails closed (#89).
+    function keepable(value, depth = 0) {
+      if (value === null || typeof value === 'boolean') return true;
+      if (typeof value === 'number') return Number.isFinite(value);
+      if (typeof value === 'string') return isIdShaped(value) && clean(value) === value;
+      if (depth >= 4 || typeof value !== 'object') return false;
+      if (Array.isArray(value)) return value.every((v) => keepable(v, depth + 1));
+      if (Object.getPrototypeOf(value) !== Object.prototype) return false;
+      return Object.entries(value).every(([k, v]) => SAFE_FIELD.test(k) && !SECRET_FIELD.test(k) && keepable(v, depth + 1));
+    }
+    function note(size, result) {
+      if (result === undefined) return { size };
+      return keepable(result) ? { size, result } : { size, opaque: true };
+    }
+
+    // progress (a live write only): the write's batch-level record, so a
+    // retry with the same key and input resumes after the requests already
+    // sent. Request i that completed on an earlier try is answered from the
+    // record without calling the system; each request that completes now is
+    // noted, and the write saves the notes if it stops (#89).
+    function context(operation, kind, client, extra = {}, progress = null) {
+      async function send(fn, size) {
+        for (let attempt = 1; ; attempt += 1) {
+          await limit();
+          // Re-checked before every request of a write, after the wait, so a
+          // switch flipped partway through a push stops the requests still to come.
+          if (kind === 'write') refuseIfSwitchedOff();
+          try {
+            if (deps.onRequest) await deps.onRequest({ connector: declaration.id, operation, kind, size, at: now() });
+            return await fn();
+          } catch (err) {
+            // A 429 was not processed, so retrying it is safe, writes included.
+            if (!err || err.status !== 429) throw err;
+            if (attempt >= RATE_LIMIT_ATTEMPTS) throw new Error(`still rate limited after ${RATE_LIMIT_ATTEMPTS} attempts`);
+            const wait = retryAfterMs(err, now);
+            if (!(wait <= MAX_RETRY_AFTER_MS)) {
+              const asked = Number.isFinite(wait) ? `${Math.ceil(wait / 1000)} s` : 'without limit';
+              throw new Error(`rate limited: asked to wait ${asked}, over the ${MAX_RETRY_AFTER_MS / 1000} s limit`);
+            }
+            limit.hold(wait);
+          }
+        }
+      }
       return Object.freeze({
         operation,
         client,
@@ -348,25 +462,22 @@ function defineConnector(spec) {
           if (!Number.isInteger(size) || size < 0 || size > declaration.rateLimit.batchSize) {
             throw new Error(`batch of ${size} is over the batch size of ${declaration.rateLimit.batchSize}`);
           }
-          for (let attempt = 1; ; attempt += 1) {
-            await limit();
-            // Re-checked before every request of a write, after the wait, so a
-            // switch flipped partway through a push stops the requests still to come.
-            if (kind === 'write') refuseIfSwitchedOff();
-            try {
-              if (deps.onRequest) await deps.onRequest({ connector: declaration.id, operation, kind, size, at: now() });
-              return await fn();
-            } catch (err) {
-              // A 429 was not processed, so retrying it is safe, writes included.
-              if (!err || err.status !== 429) throw err;
-              if (attempt >= RATE_LIMIT_ATTEMPTS) throw new Error(`still rate limited after ${RATE_LIMIT_ATTEMPTS} attempts`);
-              const wait = retryAfterMs(err);
-              if (wait > MAX_RETRY_AFTER_MS) {
-                throw new Error(`rate limited: asked to wait ${Math.ceil(wait / 1000)} s, over the ${MAX_RETRY_AFTER_MS / 1000} s limit`);
-              }
-              limit.hold(wait);
+          if (!progress) return send(fn, size);
+          const index = progress.next;
+          progress.next += 1;
+          const done = progress.completed[index];
+          if (done) {
+            // The adapter must ask the same requests in the same order on a
+            // retry; one that changed means the record can't be trusted.
+            if (done.size !== size) throw new Error(`request ${index + 1} of this write changed since the first try (size ${done.size}, now ${size}), so it was stopped before sending`);
+            if (done.opaque === true) {
+              throw new Error(`request ${index + 1}'s answer could not be kept (it held more than counts and ids), so this write can't resume; nothing more was sent`);
             }
+            return done.result;
           }
+          const result = await send(fn, size);
+          progress.completed[index] = note(size, result);
+          return result;
         },
       });
     }
@@ -374,7 +485,7 @@ function defineConnector(spec) {
     // A write's PartialFailure, rebuilt from its counts alone (the adapter's
     // text is dropped: it may name refs or contact data) with id-shaped refs,
     // or null when its counts don't add up (then it is a plain ConnectorFailed).
-    function partial(err, operation) {
+    function partial(err, operation, sent = null) {
       const { succeeded, failed, failedRefs } = err.details || {};
       if (!isCount(succeeded) || !isCount(failed) || failed < 1 || !Array.isArray(failedRefs) || failedRefs.length !== failed) return null;
       const refs = failedRefs.map((r) => {
@@ -382,7 +493,9 @@ function defineConnector(spec) {
         if (typeof ref !== 'string' || !isIdShaped(ref)) return MASK;
         return clean(ref) === ref ? ref : MASK;
       });
-      const retrySafe = declaration.perItemIdempotency.includes(operation);
+      // Not safe when the write's progress could not be updated: a stale
+      // record could make the retry skip what failed (#89).
+      const retrySafe = declaration.perItemIdempotency.includes(operation) && !(sent && sent.recorded === false);
       log.warn('connector write partly failed', {
         connector: declaration.id, operation, succeeded, failed, failed_refs: refs, retry_safe: retrySafe,
       });
@@ -392,13 +505,15 @@ function defineConnector(spec) {
     }
 
     // Every error leaving an operation is rebuilt from a redacted message.
-    function rethrow(err, operation, kind) {
-      if (err instanceof KillSwitchOn) throw err;
+    // sent: what a write stopped partway had already sent ({ batches, items }),
+    // added to the error's details so its message is honest about it.
+    function rethrow(err, operation, kind, sent = null) {
+      if (err instanceof KillSwitchOn) throw sent ? new KillSwitchOn({ ...err.details, sent }) : err;
       if (err instanceof IdempotencyConflict) throw new IdempotencyConflict(clean(err.reason), details(operation));
       // Only a write can partly apply: a read fails whole (fail closed). The
       // adapter's text never leaves with a PartialFailure, valid or not.
       if (err instanceof PartialFailure) {
-        const rebuilt = kind === 'write' ? partial(err, operation) : null;
+        const rebuilt = kind === 'write' ? partial(err, operation, sent) : null;
         if (rebuilt) throw rebuilt;
         const why = kind === 'write' ? 'counts must be whole numbers, failed at least 1, one ref per failed item' : 'a read cannot partly fail';
         throw new ConnectorFailed(`invalid partial failure (${why})`, details(operation));
@@ -409,9 +524,10 @@ function defineConnector(spec) {
         session = null;
         // setup: a credential is not set (a setup fault), not a rejected one.
         const setup = err instanceof ConnectorAuthFailed && err.details && err.details.setup === true;
-        throw new ConnectorAuthFailed(reason, setup ? { ...details(operation), setup: true } : details(operation));
+        const base = sent ? { ...details(operation), sent } : details(operation);
+        throw new ConnectorAuthFailed(reason, setup ? { ...base, setup: true } : base);
       }
-      throw new ConnectorFailed(reason, details(operation));
+      throw new ConnectorFailed(reason, sent ? { ...details(operation), sent } : details(operation));
     }
 
     const read = {};
@@ -456,15 +572,64 @@ function defineConnector(spec) {
               if (!done || done.input !== input) throw conflict();
               return done.result;
             }
-            const { client } = await open(name);
-            const result = await op.apply(rest, context(name, 'write', client, { idempotencyKey: key }));
-            const settled = result === undefined ? null : result;
-            await ledger.set(slot, { input, result: settled });
-            return settled;
+            // Stopped partway on an earlier try: resume after what was sent,
+            // only when the requests can be the same ones (same input, same
+            // batch size). A record the store mangled fails closed.
+            const batchSize = declaration.rateLimit.batchSize;
+            const pslot = progressSlot(declaration.id, name, key);
+            const saved = await ledger.get(pslot);
+            let completed = [];
+            if (saved !== undefined) {
+              if (!saved || saved.partial !== true || !Array.isArray(saved.completed)) {
+                throw new Error('the idempotency store returned a write progress record it could not have been given, so nothing was sent');
+              }
+              if (saved.input !== input) throw conflict();
+              if (saved.batchSize !== batchSize) {
+                throw new IdempotencyConflict(`idempotencyKey "${key}" was first tried with a batch size of ${saved.batchSize}, now ${batchSize}, so the sent batches can't be matched`, details(name));
+              }
+              completed = saved.completed.slice();
+            }
+            const progress = {
+              next: 0,
+              completed,
+              save: () => ledger.set(pslot, { input, partial: true, batchSize, completed: progress.completed.slice() }),
+            };
+            try {
+              const { client } = await open(name);
+              const result = await op.apply(rest, context(name, 'write', client, { idempotencyKey: key }, progress));
+              const settled = result === undefined ? null : result;
+              await ledger.set(slot, { input, result: settled });
+              return settled;
+            } catch (err) {
+              const sentAny = progress.completed.some(Boolean);
+              // A write keyed per item re-sends after a PartialFailure (the
+              // system drops the items it has), so its retry must call the
+              // system again: drop the record. Any other write keeps it, so
+              // nothing it sent is sent twice.
+              const resend = err instanceof PartialFailure && declaration.perItemIdempotency.includes(name);
+              const counts = sentAny ? sentSoFar(progress.completed) : null;
+              if (resend) progress.completed = [];
+              let recorded = true;
+              if ((sentAny && !resend) || (resend && saved !== undefined)) {
+                try {
+                  await progress.save();
+                } catch (_) {
+                  // Unrecorded: a retry would send it all again. The error
+                  // says so (sent.recorded false) and the person is told the
+                  // admin should check what arrived before anyone retries.
+                  recorded = false;
+                  log.error('connector write progress could not be recorded: a retry may send again', {
+                    connector: declaration.id, operation: name, sent_batches: counts ? counts.batches : 0,
+                  });
+                }
+              }
+              throw new Stopped(err, counts ? Object.freeze({ ...counts, recorded }) : null);
+            }
           })();
           inFlight.set(slot, { input, run });
           try { return await run; } finally { inFlight.delete(slot); }
         } catch (err) {
+          if (err instanceof Stopped) return rethrow(err.err, name, 'write', err.sent);
           return rethrow(err, name, 'write');
         }
       };

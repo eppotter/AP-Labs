@@ -281,9 +281,17 @@ test('email: a batch of 100 contacts reads the outbox a fixed number of times, n
     if (p === file) reads.push(p);
     return real.call(this, p, ...rest);
   });
+  // One contact and 100 contacts read the outbox the same few times: the done
+  // slot, the stopped-write progress slot (#89), and one transaction each to
+  // add and to record.
+  const one = await instance.write.addContacts({ listId, contacts: contacts(1), idempotencyKey: 'L1', ...live });
+  assert.equal(one.added, 1);
+  const forOne = reads.length;
+  reads.length = 0;
   const res = await instance.write.addContacts({ listId, contacts: contacts(100), idempotencyKey: 'L', ...live });
   assert.equal(res.added, 100);
-  assert.ok(reads.length <= 3, `read the outbox ${reads.length} times`);
+  assert.equal(reads.length, forOne, `100 contacts read the outbox ${reads.length} times, 1 contact ${forOne}`);
+  assert.ok(reads.length <= 4, `read the outbox ${reads.length} times`);
 });
 
 test('email: instances on one outbox share in-flight writes, so a concurrent reused key with another input is refused (DEP-012)', async () => {

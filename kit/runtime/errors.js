@@ -40,8 +40,10 @@ class DataUnavailable extends RuntimeRefusal {
 }
 
 // A connector write was refused because a kill switch is on: the connector's
-// own (killSwitchEnv) or the global APLABS_WRITES_OFF. Raised before any I/O,
-// so nothing was written (Story 8.1). details: { connector, system, env }
+// own (killSwitchEnv) or the global APLABS_WRITES_OFF (Story 8.1). Raised
+// before any I/O, so nothing was written, unless the switch flipped partway
+// through a write: then details.sent ({ batches, items }) says what had gone
+// (#89). details: { connector, system, env, sent? }
 class KillSwitchOn extends RuntimeRefusal {
   constructor(details) {
     super(`writes to ${details.system} are switched off (${details.env})`, details);
@@ -50,7 +52,8 @@ class KillSwitchOn extends RuntimeRefusal {
 }
 
 // A connector call failed (Story 8.1). reason is already redacted and is for
-// the log, never shown to the person. details: { connector, system, operation }
+// the log, never shown to the person. details: { connector, system, operation },
+// plus sent ({ batches, items }) when a write failed after some requests went.
 class ConnectorFailed extends RuntimeRefusal {
   constructor(reason, details) {
     super(`${details.system} ${details.operation} failed: ${reason}`, details);
