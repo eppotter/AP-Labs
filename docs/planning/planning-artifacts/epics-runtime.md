@@ -299,6 +299,7 @@ So that a new tool takes minutes, not a day of wiring.
 **And** `kit/runtime/paths.js` exports the identical-engine set (`kit/**`, `profiles/_schema/**`; AD-1), and a test copies the template into a temp fork's app dir and asserts it registers while every engine path is untouched
 **And** grep tests fail if any file under the app dir (template dev: `examples/brightside/app/`) imports a `kit/` path other than `kit/runtime/sdk`, or if any engine file references `examples/`
 **And** the guide states that handler code is trusted, reviewed code, not sandboxed: it can reach `process.env`, and the protection is that the LLM has no tools and all output is redacted
+**And** a "clean bones" CI job copies the repo, deletes `examples/brightside/` and `profiles/brightside/`, then runs `npm run check`, `npm test` and a boot smoke test against a minimal stub profile; it fails if the template no longer stands alone without the example client (Ely, 2026-10-24)
 
 ## Epic 7: Brightside's data, queried safely
 
@@ -885,3 +886,37 @@ So that a new fork is running before the deep dive ends.
 **And** it says a fork may append dependencies to `package.json` but never edits `kit/**` or `profiles/_schema/**` (fixes go to the template)
 **And** each human-only step (anything with a credential) is marked as such
 **And** a structural test fails when the guide names a command or file that does not exist
+
+### Story 11.5: Template releases flow cleanly into client forks
+
+**Implements:** FR15
+**Estimate:** M
+**Architecture:** AD-1
+
+As AP Labs,
+I want every improvement to the template to reach each client's fork with one command and no hand-merging,
+So that we iterate on the bones without rebuilding them for every client.
+
+**Acceptance Criteria:**
+
+**Given** the template repo
+**When** a release is cut
+**Then** it is a git tag `vX.Y.Z` with a `CHANGELOG.md` entry (what changed, anything a fork must do), created by `npm run template:release -- <version>`, which refuses unless `main` is green and the clean-bones job passes
+**And** `v0.1.0` marks the Orchestrator phase and is tagged retroactively on the commit where that phase finished
+
+**Given** a client fork with the template recorded as its `upstream` remote
+**When** `npm run template:update -- vX.Y.Z` runs
+**Then** it fetches that tag, merges it on a new branch, runs `npm run check && npm test`, and opens a PR in the fork naming the version and linking the changelog
+**And** it refuses, naming the files, if the fork has edited anything under `kit/**` or `profiles/_schema/**` since its last template version
+
+**Given** a fork
+**When** CI runs
+**Then** an "engine untouched" check fails if `kit/**` or `profiles/_schema/**` differs from the template version recorded in `.aplabs/template-version`
+
+**Given** a release that changes the profile format
+**When** a fork updates
+**Then** a migration script for that `schema_version` step upgrades the fork's profile automatically, and the update PR shows the profile diff for human review
+
+**Given** the fork guide (Story 11.4)
+**When** a consultant reads it
+**Then** it explains forks, `upstream`, "clients add, never edit the engine", and how to take an update, in plain language
