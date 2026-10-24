@@ -37,6 +37,7 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 
 - **Node 20, bash.** `npm ci`, then `npm run check && npm test` before every commit.
 - **Git:** branch off `main`, one PR per block, merge commits (no squash). Never push to `main` directly.
+- **Commits end with an `Agent: <harness> <model>` trailer**, for example `Agent: claude-code claude-opus-5-5` or `Agent: codex gpt-6-luna`. Cross-model review uses it to pick the other model as reviewer.
 - **PR descriptions open with `**What this does:**`** followed by one or two plain-language sentences. Technical detail goes below.
 - **Tests read client specifics from fixtures,** never from `profiles/brightside/` or any client path.
 - **Profiles are untrusted input.** The schema rejects unknown keys. `.aplabs/**` always floors at T3.

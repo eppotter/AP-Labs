@@ -24,7 +24,7 @@ This document breaks the Orchestrator spec (`SPEC.md`, standing in for a PRD) an
 - FR5: Ceremony follows the computed tier: T0–T1 proceed and report; T2–T3 and onboarding builds need plan approval; T3 adds plan review. (CAP-5)
 - FR6: The verify harness runs the profile's checks (argv, no shell, env allowlist, timeout); a skip never counts as passed; the Stop hook blocks only on a failed check. (CAP-6)
 - FR7: Cross-model review: the P1/P2 rubric, round counting, refusal of a 4th round without an explicit go, P1-only from round 2, the same-file-twice flag, a `Review rounds: n/3` PR line, and a labelled same-model fallback. (CAP-7)
-- FR8: A P1 blocks only when the Refuter reproduces it. (CAP-8)
+- FR8: A P1 blocks when the Refuter reproduces it, does not block when it cannot be reproduced, and escalates to the human when it cannot be verified locally. (CAP-8)
 - FR9: The Onboarder writes the client files for SQLsmith, Architect and Connector, plus the org-context doc, each known truth backed by a check and a client sign-off. It is proven on Brightside in the fixture phase. (CAP-9)
 - FR10: Add-on stages enabled in the profile slot between core stages without removing any. (CAP-10)
 - FR11: Every build leaves a ledger row, and a retro script measures merged PRs against the budgets. (CAP-11)
@@ -120,7 +120,7 @@ So that every change gets an independent check that cannot loop forever.
 **Given** 3 rounds used on the branch
 **When** a 4th is requested
 **Then** it is refused unless `--over-budget "<the human's reason>"` is passed
-**And** the PR body carries `Review rounds: n/3` and the reviewed head SHA; the round state persists per branch outside tracked files
+**And** the PR body carries `Review rounds: n/3` and the reviewed head SHA; round state persists per branch in `.git/aplabs/review/<branch>.json`, never in tracked files
 **And** tests cover every case above with a stub reviewer
 
 ### Story 1.2: Claude reviews Codex-written work, with a no-Codex fallback
@@ -133,7 +133,7 @@ So that review independence holds even when a client has no Codex.
 
 **Acceptance Criteria:**
 
-**Given** the PR's commits carry an `Agent: codex …` trailer
+**Given** the PR's commits carry an `Agent: codex …` trailer (convention in `AGENTS.md`; a PR with no trailer defaults to the Codex reviewer)
 **When** I run `npm run review`
 **Then** the reviewer is a read-only Claude CLI (Read, Glob, Grep only; no shell, no MCP, no saved session)
 
@@ -177,7 +177,7 @@ So that false alarms do not cost review rounds.
 
 **Given** P1 findings in a round
 **When** triage runs
-**Then** each P1 goes to a generic Refuter agent (`.claude/agents/refuter.md`; read and run, never edit) with the head SHA
+**Then** the script lists the P1s, the session delegates each to a generic Refuter agent (`.claude/agents/refuter.md`; read and run, never edit) with the head SHA, and the script records each verdict (`npm run review -- --refute <id> <verdict>`)
 
 **Given** a Refuter verdict
 **When** it is recorded
@@ -207,6 +207,7 @@ So that I never build against a broken setup unknowingly.
 **Then** the banner lists every validation error and says the profile must be fixed before building
 **And** with no profile the repo is ungoverned and the session stays silent
 **And** hooks are repo-local (`.claude/settings.json`, `.codex/hooks.json`), thin bash over Node, and fail open
+**And** the banner reports whether hooks are active; Codex loads hooks only from the main checkout after the user trusts them, so an untrusted Codex session is told it is unguarded
 **And** tests cover valid, invalid and missing profiles with fixture repos
 
 ### Story 2.2: Nine agents with job-matched tools
@@ -279,6 +280,7 @@ So that ceremony matches blast radius.
 **When** an edit is attempted
 **Then** it is blocked until the human's own message in the session transcript contains `approve plan <slug>`
 **And** a T3 plan also needs a `bmad-review` pass before the phrase is accepted
+**And** where a harness's hooks cannot read the human's messages (Codex may not expose the transcript), the gate says plainly that approval is unenforced there rather than assuming it is covered
 **And** tests cover each tier and the onboarding case
 
 ### Story 2.6: Clients switch on add-on stages

@@ -40,8 +40,8 @@ A vision to realise, with a pain behind it. AP Labs forks this template for ever
   - **intent:** Every PR outside the exemptions gets a read-only review from the other model under the P1/P2 rubric and the 3-round budget, with a labelled same-model fallback.
   - **success:** Script tests with a stubbed reviewer show round counting, refusal of a 4th round without an explicit go, P1-only from round 2, the same-file-twice flag, and `Review rounds: n/3` written to the PR body.
 - **CAP-8**
-  - **intent:** A P1 finding blocks only when the Refuter reproduces it.
-  - **success:** A P1 the Refuter cannot reproduce is recorded as not blocking.
+  - **intent:** A P1 finding blocks when the Refuter reproduces it, is recorded as non-blocking when the Refuter cannot reproduce it, and goes to the human when it cannot be verified locally.
+  - **success:** Tests show all three outcomes: confirmed blocks, not-reproduced does not block, cannot-verify is escalated and never silently dropped.
 - **CAP-9**
   - **intent:** An onboarding build turns discovery into the client files SQLsmith, Architect and Connector load, plus the org-context document, each known truth backed by a check and a named client sign-off.
   - **success:** An onboarding run on the Brightside fixture produces those files, and every known-truth check passes. The agent is built in the Orchestrator phase; this proving run happens in the fixture phase.
