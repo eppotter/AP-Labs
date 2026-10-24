@@ -31,6 +31,8 @@ Before you write one, check `.aplabs/context/connectors.md` and ask Connector: a
 | `read.<name>(input, ctx)` | A read operation. Read-only and least privilege: fetch only the fields the call names. The engine can't see what an adapter fetches, so the contract and its suite don't check this: it is a review item for Connector on every connector. |
 | `write.<name>` | `{ plan(input), apply(input, ctx) }`. `plan` says what would be written, with no I/O; `apply` writes. |
 
+The app creates one instance per process with `connector.create({ log, ... })`. `log`, the app's logger (`kit/runtime/log`), is required: `create` fails without it, so every credential the connector reads is masked in every log line (AD-12). A test passes `testLog()` from `#sdk`.
+
 Inside an operation, `ctx` has `client` (from `connect`), `request(fn, { size })` (every call to the system goes through it), `batches(items)` (splits a list by `batchSize`), `operation`, and on a write `idempotencyKey`. Pass the key on to the system when its API takes one. For a list, give each item its own key, the write's key plus the item's id (`${ctx.idempotencyKey}:${item.id}`), never a per-batch suffix: a retry after a partial failure then resends only the items the system has not seen, however the rows are ordered or batched.
 
 ## The safe defaults

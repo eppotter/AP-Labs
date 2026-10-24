@@ -21,6 +21,7 @@ const { createLog } = require('../../kit/runtime/log');
 const sdk = require('../../kit/runtime/sdk');
 const { makeFork, REPO } = require('../fixtures/temp-fork');
 
+const quietLog = () => createLog({ write: () => {} });
 const TEMPLATE_DIR = path.join(REPO, 'kit/templates/connector');
 const template = require('../../kit/templates/connector/connector');
 // The template's adapter with another batch size (a redeploy that changed it).
@@ -168,7 +169,7 @@ test('the SDK exposes the contract to app code', () => {
 
 test('any non-empty kill-switch value counts as on, even "0"; killSwitch() names it', async () => {
   const env = { DEMO_TOKEN: TOKEN };
-  const c = defineConnector(spec()).create({ env });
+  const c = defineConnector(spec()).create({ log: quietLog(), env });
   assert.equal(c.killSwitch(), null);
   for (const value of ['1', '0', 'false']) {
     env.DEMO_OFF = value;
@@ -182,7 +183,7 @@ test('any non-empty kill-switch value counts as on, even "0"; killSwitch() names
 
 test('a write without an idempotency key is refused before any I/O', async () => {
   let calls = 0;
-  const c = defineConnector(spec()).create({ env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } });
+  const c = defineConnector(spec()).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } });
   for (const key of [undefined, '', 42, 'x'.repeat(257)]) {
     await assert.rejects(c.write.put({ idempotencyKey: key, dryRun: false }), (e) => e instanceof ConnectorFailed && /idempotencyKey/.test(e.message));
   }
@@ -193,7 +194,7 @@ test('an injected idempotency store carries keys across instances (a restart)', 
   const m = new Map();
   const idempotency = { get: (k) => m.get(k), set: (k, v) => { m.set(k, v); } };
   let calls = 0;
-  const make = () => defineConnector(spec()).create({ env: { DEMO_TOKEN: TOKEN }, idempotency, onRequest: () => { calls += 1; } });
+  const make = () => defineConnector(spec()).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, onRequest: () => { calls += 1; } });
   assert.deepEqual(await make().write.put({ idempotencyKey: 'k1', dryRun: false }), { put: true });
   assert.deepEqual(await make().write.put({ idempotencyKey: 'k1', dryRun: false }), { put: true });
   assert.equal(calls, 1);
@@ -202,7 +203,7 @@ test('an injected idempotency store carries keys across instances (a restart)', 
 test('a failed write does not record its key, so a retry writes', async () => {
   let fail = true;
   let calls = 0;
-  const c = defineConnector(spec()).create({ env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; if (fail) throw new Error('503'); } });
+  const c = defineConnector(spec()).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; if (fail) throw new Error('503'); } });
   await assert.rejects(c.write.put({ idempotencyKey: 'k', dryRun: false }), ConnectorFailed);
   fail = false;
   assert.deepEqual(await c.write.put({ idempotencyKey: 'k', dryRun: false }), { put: true });
@@ -216,7 +217,7 @@ test('credentials are read once and connect runs once; an auth error drops them 
   const c = defineConnector(spec({
     connect: ({ secret }) => { connects += 1; return { token: secret('DEMO_TOKEN') }; },
     read: { get: async (i, ctx) => ctx.request(() => ctx.client.token) },
-  })).create({ env, onRequest: () => { if (reject) throw Object.assign(new Error('nope'), { status: 401 }); } });
+  })).create({ log: quietLog(), env, onRequest: () => { if (reject) throw Object.assign(new Error('nope'), { status: 401 }); } });
   assert.equal(await c.read.get(), TOKEN);
   assert.equal(await c.read.get(), TOKEN);
   assert.equal(connects, 1);
@@ -231,10 +232,10 @@ test('credentials are read once and connect runs once; an auth error drops them 
 test('connect gets the query runner from deps.data, for a connector that reads the client\'s data (Story 8.2)', async () => {
   const data = { run: async () => [] };
   let got;
-  const c = defineConnector(spec({ connect: (args) => { got = args; return {}; } })).create({ env: { DEMO_TOKEN: TOKEN }, data });
+  const c = defineConnector(spec({ connect: (args) => { got = args; return {}; } })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, data });
   await c.read.get();
   assert.equal(got.data, data);
-  const none = defineConnector(spec({ connect: (args) => { got = args; return {}; } })).create({ env: { DEMO_TOKEN: TOKEN } });
+  const none = defineConnector(spec({ connect: (args) => { got = args; return {}; } })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
   await none.read.get();
   assert.equal(got.data, undefined, 'no runner unless one is given');
 });
@@ -258,14 +259,14 @@ test('the suite passes its deps option to every instance it creates, but keeps i
 });
 
 test('an operation may read only the credentials it declared', async () => {
-  const c = defineConnector(spec({ connect: ({ secret }) => secret('OTHER_TOKEN') })).create({ env: { DEMO_TOKEN: TOKEN, OTHER_TOKEN: 'x' } });
+  const c = defineConnector(spec({ connect: ({ secret }) => secret('OTHER_TOKEN') })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN, OTHER_TOKEN: 'x' } });
   await assert.rejects(c.read.get(), (e) => e instanceof ConnectorFailed && /OTHER_TOKEN is not a declared credential/.test(e.message));
 });
 
 test('credentials are registered with the log, so log lines mask them too', async () => {
   const lines = [];
   const log = createLog({ write: (l) => lines.push(l) });
-  const c = defineConnector(spec()).create({ env: { DEMO_TOKEN: TOKEN }, log });
+  const c = defineConnector(spec()).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, log });
   await c.read.get();
   log.info(`token is ${TOKEN}`);
   assert.ok(!lines.join('\n').includes(TOKEN));
@@ -274,7 +275,7 @@ test('credentials are registered with the log, so log lines mask them too', asyn
 test('a request over the batch size is refused; batches() splits by it', async () => {
   const c = defineConnector(spec({
     write: { put: { plan: (i) => i, apply: async (i, ctx) => ({ batches: ctx.batches([1, 2, 3, 4, 5]).map((b) => b.length), r: await ctx.request(() => 1, { size: 3 }) }) } },
-  })).create({ env: { DEMO_TOKEN: TOKEN } });
+  })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
   await assert.rejects(c.write.put({ idempotencyKey: 'k', dryRun: false }), /batch of 3 is over the batch size of 2/);
 });
 
@@ -282,7 +283,7 @@ test('the limiter waits between calls on the injected clock', async () => {
   const clock = fakeClock();
   const at = [];
   const c = defineConnector(spec({ rateLimit: { perSecond: 4, batchSize: 1 } })).create({
-    env: { DEMO_TOKEN: TOKEN }, ...clock, onRequest: (info) => { at.push(info.at); },
+    log: quietLog(), env: { DEMO_TOKEN: TOKEN }, ...clock, onRequest: (info) => { at.push(info.at); },
   });
   await Promise.all([1, 2, 3].map(() => c.read.get()));
   assert.deepEqual(at, [0, 250, 500]);
@@ -326,7 +327,7 @@ test('a kill switch flipped partway through a write stops the requests still to 
           },
         },
       },
-    })).create({ env });
+    })).create({ log: quietLog(), env });
     await assert.rejects(c.write.put({ idempotencyKey: 'k', dryRun: false }), (e) => e instanceof KillSwitchOn && e.details.env === name);
     assert.equal(sent, 2, `${name}: no request went out after the switch was flipped`);
     assert.equal(await c.read.get().then((r) => r.ok), true, `${name}: reads keep working`);
@@ -346,7 +347,7 @@ test('with a slow idempotency store, two concurrent calls with one key still app
     set: async (k, v) => { m.set(k, v); },
   };
   let calls = 0;
-  const c = defineConnector(spec()).create({ env: { DEMO_TOKEN: TOKEN }, idempotency, onRequest: () => { calls += 1; } });
+  const c = defineConnector(spec()).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, onRequest: () => { calls += 1; } });
   const both = await Promise.all([1, 2].map(() => c.write.put({ idempotencyKey: 'k', dryRun: false })));
   assert.deepEqual(both, [{ put: true }, { put: true }]);
   assert.equal(calls, 1, 'the second call joined the first instead of applying again');
@@ -356,7 +357,7 @@ test('a reused idempotency key with a different input is refused, never answered
   let calls = 0;
   const c = defineConnector(spec({
     write: { put: { plan: (i) => i, apply: async (i, ctx) => ctx.request(() => ({ put: i.value })) } },
-  })).create({ env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } });
+  })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } });
   assert.deepEqual(await c.write.put({ idempotencyKey: 'k', value: { a: 1, b: 2 }, dryRun: false }), { put: { a: 1, b: 2 } });
   assert.deepEqual(await c.write.put({ value: { b: 2, a: 1 }, idempotencyKey: 'k', dryRun: false }), { put: { a: 1, b: 2 } }, 'key order is not a different input');
   const conflict = (e) => e instanceof IdempotencyConflict && e instanceof ConnectorFailed && e.code === 'IDEMPOTENCY_CONFLICT';
@@ -381,13 +382,13 @@ test('the template keys each item, so a retry with reordered rows or a new batch
     let pushes = 0;
     // The first push fails on its second batch: a and b reached the system.
     const first = templateWithBatchSize(2).create({
-      env, simulate: { state },
+      log: quietLog(), env, simulate: { state },
       onRequest: (info) => { if (info.operation === 'addItems' && ++pushes === 2) throw new Error('503 from the system'); },
     });
     const { listId } = await first.write.createList({ name: 'l', idempotencyKey: 'list', dryRun: false });
     await assert.rejects(first.write.addItems({ listId, items: rows(ids), idempotencyKey: 'push-1', dryRun: false }), ConnectorFailed);
     assert.deepEqual(state.lists.get(listId).items.map((i) => i.id), ['a', 'b']);
-    const retry = retryWith().create({ env, simulate: { state } });
+    const retry = retryWith().create({ log: quietLog(), env, simulate: { state } });
     await retry.write.addItems({ listId, items: rows(order), idempotencyKey: 'push-1', dryRun: false });
     assert.deepEqual(state.lists.get(listId).items.map((i) => i.id).sort(), ids, `${what}: every row is in the list exactly once`);
   }
@@ -405,7 +406,7 @@ test('an async connect is awaited once; a rejected one is dropped, and an auth-s
       return { token: secret('DEMO_TOKEN') };
     },
     read: { get: async (i, ctx) => ctx.request(() => ctx.client.token) },
-  })).create({ env: { DEMO_TOKEN: TOKEN } });
+  })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
   await assert.rejects(c.read.get(), ConnectorAuthFailed);
   fail = 'down';
   await assert.rejects(c.read.get(), (e) => e instanceof ConnectorFailed && !(e instanceof ConnectorAuthFailed));
@@ -425,7 +426,7 @@ test('connect can register a token it obtains, and JSON token fields are masked 
   const c = defineConnector(spec({
     async connect({ registerSecret }) { return { token: registerSecret(obtained) }; },
     read: { get: async (i, ctx) => ctx.request(() => { throw new Error(body); }) },
-  })).create({ env: { DEMO_TOKEN: TOKEN }, log });
+  })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, log });
   body = `upstream echoed ${obtained}`;
   await assert.rejects(c.read.get(), (e) => e instanceof ConnectorFailed && !e.message.includes(obtained));
   log.info(`token ${obtained}`);
@@ -444,7 +445,7 @@ test('a 429 is retried through the rate limiter, honouring Retry-After, then fai
     const clock = fakeClock();
     const at = [];
     const c = defineConnector(spec({ rateLimit: { perSecond: 10, batchSize: 2 } })).create({
-      env: { DEMO_TOKEN: TOKEN }, ...clock,
+      log: quietLog(), env: { DEMO_TOKEN: TOKEN }, ...clock,
       onRequest: (info) => { at.push(info.at); const a = answers.shift(); if (a) throw a; },
     });
     return { c, at };
@@ -467,4 +468,12 @@ test('a 429 is retried through the rate limiter, honouring Retry-After, then fai
   const w = make([limited('1'), null]);
   assert.deepEqual(await w.c.write.put({ idempotencyKey: 'k', dryRun: false }), { put: true });
   assert.equal(w.at.length, 2);
+});
+
+test('create() needs the app logger, so every credential registers with it (AD-12, #82)', () => {
+  const c = defineConnector(spec());
+  for (const log of [undefined, null, {}, { registerSecret() {} }]) {
+    assert.throws(() => c.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, log }), /deps\.log/);
+  }
+  assert.doesNotThrow(() => c.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, log: createLog({ write: () => {} }) }));
 });

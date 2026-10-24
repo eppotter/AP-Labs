@@ -7,7 +7,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { connectorContract, ConnectorAuthFailed, ConnectorFailed } = require('#sdk');
+const {
+  connectorContract, testLog, ConnectorAuthFailed, ConnectorFailed,
+} = require('#sdk');
 const connector = require('./connector');
 
 // Not a credential: any non-empty value stands in for the API key.
@@ -37,7 +39,7 @@ function fakeData() {
 
 function crm({ simulate, data = fakeData(), now, sleep } = {}) {
   const requests = [];
-  const instance = connector.create({ env: { ...ENV }, data, simulate, now, sleep, onRequest: (r) => requests.push(r) });
+  const instance = connector.create({ log: testLog(), env: { ...ENV }, data, simulate, now, sleep, onRequest: (r) => requests.push(r) });
   return { instance, data, requests };
 }
 
@@ -109,13 +111,13 @@ test('crm: a lookup needs exactly one of a whole-number clientId or an email', a
 });
 
 test('crm: without a query runner it fails with a plain reason, never a result', async () => {
-  const c = connector.create({ env: { ...ENV } });
+  const c = connector.create({ log: testLog(), env: { ...ENV } });
   await assert.rejects(c.read.lookupClient({ clientId: 1 }), (e) => e instanceof ConnectorFailed && /query runner/.test(e.reason));
 });
 
 test('crm: a missing API key fails closed before the runner is called', async () => {
   const data = fakeData();
-  const c = connector.create({ env: {}, data });
+  const c = connector.create({ log: testLog(), env: {}, data });
   await assert.rejects(c.read.lookupClient({ clientId: 1 }), (e) => e instanceof ConnectorAuthFailed && /BRIGHTSIDE_CRM_KEY/.test(e.reason));
   assert.equal(data.queries.length, 0);
 });

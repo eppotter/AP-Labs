@@ -13,7 +13,7 @@
 //     write: { addContacts: { plan: (input) => preview, apply: async (input, ctx) => result } },
 //   });
 //
-//   const crm = connector.create({ env, log });  // one instance per process
+//   const crm = connector.create({ env, log });  // log is required; one instance per process
 //   await crm.read.lookupClient({ clientId, fields: ['email'] });
 //   await crm.write.addContacts({ ...input, idempotencyKey, dryRun: false });
 //
@@ -57,7 +57,6 @@
 
 const crypto = require('node:crypto');
 const { readSecret, redact } = require('../../lib/secrets');
-const { createLog } = require('../log');
 const {
   KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 } = require('../errors');
@@ -184,8 +183,9 @@ function defineConnector(spec) {
     write: Object.freeze(Object.keys(spec.write || {})),
   });
 
-  // deps: env (default process.env), log (a kit/runtime/log logger: secrets
-  // are registered with it), now and sleep (tests inject a clock),
+  // deps: env (default process.env), log (required: the app's
+  // kit/runtime/log logger, so every credential registers with it, AD-12;
+  // a test passes its own, for example the SDK's testLog()), now and sleep (tests inject a clock),
   // idempotency ({ get(key), set(key, result) }), onRequest(info) (tests: runs
   // before each call to the system; it may throw to simulate the system
   // failing), simulate (passed to connect() as is, for an adapter's own
@@ -193,8 +193,11 @@ function defineConnector(spec) {
   // as is, for a connector that reads the client's data: its reads then pass
   // the SQL guardrail and the profile's forbidden columns).
   function create(deps = {}) {
+    const { log } = deps;
+    if (!log || typeof log.registerSecret !== 'function' || typeof log.redact !== 'function') {
+      throw new Error(`connector "${declaration.id}": create() needs deps.log, the app's logger (kit/runtime/log), so its credentials are masked in every log line`);
+    }
     const env = deps.env || process.env;
-    const log = deps.log || createLog({ write: () => {} });
     const now = deps.now || Date.now;
     const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     const ledger = deps.idempotency || (() => { const m = new Map(); return { get: (k) => m.get(k), set: (k, v) => { m.set(k, v); } }; })();

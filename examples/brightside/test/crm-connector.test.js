@@ -14,6 +14,7 @@ const { build } = require('../../../kit/fixture/build');
 const { createData, QueryRefusedError } = require('../../../kit/runtime/data');
 const { loadProfile } = require('../../../kit/lib/profile');
 const { ConnectorAuthFailed } = require('../../../kit/runtime/errors');
+const { createLog } = require('../../../kit/runtime/log');
 const crm = require('../app/connectors/crm/connector');
 
 const ROOT = path.join(__dirname, '../../..');
@@ -42,7 +43,7 @@ async function fixtureClient(id) {
 }
 
 test('the mock CRM finds a fixture client by id and by email, with only client_id, name, email and zone', async () => {
-  const c = crm.create({ env: { ...ENV }, data });
+  const c = crm.create({ log: createLog({ write: () => {} }), env: { ...ENV }, data });
   const expected = await fixtureClient(1);
   assert.ok(expected, 'the fixture has client 1');
   const byId = await c.read.lookupClient({ clientId: 1 });
@@ -54,7 +55,7 @@ test('the mock CRM finds a fixture client by id and by email, with only client_i
 });
 
 test('phone and address never come back, and the runner refuses them for Brightside', async () => {
-  const c = crm.create({ env: { ...ENV }, data });
+  const c = crm.create({ log: createLog({ write: () => {} }), env: { ...ENV }, data });
   const got = JSON.stringify(await c.read.lookupClient({ clientId: 2 }));
   const [{ n }] = await data.run('SELECT count(*) AS n FROM clients');
   assert.ok(Number(n) > 0, 'sanity: the fixture has clients');
@@ -64,6 +65,6 @@ test('phone and address never come back, and the runner refuses them for Brights
 });
 
 test('the simulated auth failure fails closed over the real fixture', async () => {
-  const c = crm.create({ env: { ...ENV }, data, simulate: { authFailure: true } });
+  const c = crm.create({ log: createLog({ write: () => {} }), env: { ...ENV }, data, simulate: { authFailure: true } });
   await assert.rejects(c.read.lookupClient({ clientId: 1 }), ConnectorAuthFailed);
 });

@@ -16,7 +16,8 @@
 // optional: one write that takes a list, so batching can be checked.
 //
 // options.deps is merged into every create(deps) call, for what the connector
-// needs beyond the suite's own (for example data: a stand-in query runner).
+// needs beyond the suite's own (for example data: a stand-in query runner, or
+// log: by default the suite passes a silent logger).
 // The suite's env, now, sleep and onRequest always win.
 //
 // The suite drives the connector with a fake env (fake credential values for
@@ -26,6 +27,7 @@
 const assert = require('node:assert/strict');
 const util = require('node:util');
 const { KillSwitchOn, ConnectorFailed, ConnectorAuthFailed } = require('../errors');
+const { createLog } = require('../log');
 
 const GLOBAL_KILL_SWITCH = 'APLABS_WRITES_OFF';
 const ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
@@ -51,6 +53,7 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
     const state = { failWith: null };
     const liveEnv = { ...(credentials ? Object.fromEntries(authEnv.map((n) => [n, fakeSecret(n)])) : {}), ...env };
     const instance = connector.create({
+      log: createLog({ write: () => {} }),
       ...deps,
       env: liveEnv,
       now: clock.now,
