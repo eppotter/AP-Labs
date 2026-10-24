@@ -6,7 +6,10 @@
 //
 // The webhook URL is a secret: anyone holding it can post to the channel. It
 // must never reach stdout, stderr or an error message, so every message built
-// from something we do not control goes through redact() first.
+// from something we do not control goes through redact() first. The redaction
+// itself lives in kit/lib/secrets (AD-12); this keeps notify's mask and pattern.
+
+const secrets = require('../secrets');
 
 const KINDS = {
   merged: '✅',
@@ -64,10 +67,10 @@ function isSlackWebhook(url) {
 
 // Strips the given secret and anything shaped like a Slack webhook, with or
 // without the scheme, so a URL echoed back by fetch or Slack cannot leak.
+const WEBHOOK_PATTERN = /(?:https?:\/\/)?hooks\.slack\.com\/services\/[^\s'"<>)]*/gi;
+
 function redact(text, secret) {
-  let out = String(text);
-  if (secret) out = out.split(secret).join('[webhook]');
-  return out.replace(/(?:https?:\/\/)?hooks\.slack\.com\/services\/[^\s'"<>)]*/gi, '[webhook]');
+  return secrets.redact(text, [secret], { mask: '[webhook]', patterns: [WEBHOOK_PATTERN] });
 }
 
 function notConfiguredHelp(service = DEFAULT_KEYCHAIN_SERVICE) {

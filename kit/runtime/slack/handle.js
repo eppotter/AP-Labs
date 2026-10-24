@@ -1,0 +1,46 @@
+'use strict';
+
+// The shared handler wrapper (AD-6): every command, action, view and message
+// listener is registered through handle(). It acknowledges first (Slack wants
+// an ack within 3 s; events and messages have none to send), then runs the
+// work. Any error after the ack is logged and turned into a plain message to
+// the same person: never silence, never the error's own text.
+//
+// Event de-duplication on event_id (AD-6) arrives with the store (Story 6.2).
+
+const PLAIN_ERROR = "Sorry, something went wrong on my side and I couldn't finish that. "
+  + 'Please try again in a minute. If it keeps happening, tell your admin.';
+
+// Replies privately to whoever triggered the listener: response_url for
+// commands and actions, the DM itself for a direct message, else an ephemeral
+// message in the channel it came from.
+async function replyPrivately(args, text) {
+  if (typeof args.respond === 'function') {
+    return args.respond({ response_type: 'ephemeral', replace_original: false, text });
+  }
+  const ev = args.message || args.event || {};
+  if (ev.channel_type === 'im' && typeof args.say === 'function') return args.say({ text });
+  const user = ev.user || (args.body && args.body.user && args.body.user.id);
+  const channel = ev.channel || (args.body && args.body.channel && args.body.channel.id);
+  if (user && channel && args.client) return args.client.chat.postEphemeral({ channel, user, text });
+  throw new Error('no private reply path for this listener');
+}
+
+// name labels the listener in logs; work(args) does the job.
+function handle(name, work, { log }) {
+  return async (args) => {
+    if (typeof args.ack === 'function') await args.ack();
+    try {
+      await work(args);
+    } catch (err) {
+      log.error('handler failed', { handler: name, err });
+      try {
+        await replyPrivately(args, PLAIN_ERROR);
+      } catch (replyErr) {
+        log.error('could not tell the person about a failure', { handler: name, err: replyErr });
+      }
+    }
+  };
+}
+
+module.exports = { handle, replyPrivately, PLAIN_ERROR };

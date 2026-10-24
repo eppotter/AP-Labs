@@ -6,7 +6,8 @@
 //
 // Posts {"text": "<emoji> <message>"} to a Slack incoming webhook. The webhook
 // comes from env APLABS_SLACK_WEBHOOK, else on macOS the Keychain item named by
-// APLABS_SLACK_KEYCHAIN_SERVICE (default aplabs-slack-webhook). The URL is
+// APLABS_SLACK_KEYCHAIN_SERVICE (default aplabs-slack-webhook), unless
+// APLABS_NO_KEYCHAIN=1 (kit/lib/secrets). The URL is
 // never printed; every error built from fetch or Slack output is redacted.
 // --dry-run prints the text and touches neither the Keychain nor the network.
 //
@@ -14,7 +15,6 @@
 // 2 usage. main is async because fetch is; deps lets tests inject fetch, the
 // Keychain reader, the platform and the output streams.
 
-const { execFileSync } = require('node:child_process');
 const {
   DEFAULT_KEYCHAIN_SERVICE,
   TIMEOUT_MS,
@@ -25,19 +25,7 @@ const {
   redact,
   notConfiguredHelp,
 } = require('../lib/notify');
-
-// stderr is discarded: security's "item not found" text is noise, and it is
-// never allowed to carry the secret onto the terminal.
-function readKeychain(service) {
-  try {
-    return execFileSync('security', ['find-generic-password', '-s', service, '-w'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-  } catch {
-    return null;
-  }
-}
+const { readSecret } = require('../lib/secrets');
 
 async function main(argv, env = process.env, deps = {}) {
   const out = deps.out || ((s) => console.log(s));
@@ -57,13 +45,13 @@ async function main(argv, env = process.env, deps = {}) {
     return 0;
   }
 
-  // An empty env var counts as unset, so a blank export does not mask the Keychain.
+  // Env first, then the macOS Keychain (kit/lib/secrets).
   const service = env.APLABS_SLACK_KEYCHAIN_SERVICE || DEFAULT_KEYCHAIN_SERVICE;
-  let url = env.APLABS_SLACK_WEBHOOK || '';
-  if (!url && (deps.platform || process.platform) === 'darwin') {
-    url = (deps.readKeychain || readKeychain)(service) || '';
-  }
-  url = url.trim();
+  const url = readSecret('APLABS_SLACK_WEBHOOK', service, {
+    env,
+    platform: deps.platform,
+    readKeychain: deps.readKeychain,
+  }) || '';
   if (!url) {
     err(notConfiguredHelp(service));
     return 1;
