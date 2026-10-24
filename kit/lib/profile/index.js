@@ -27,6 +27,14 @@ class ProfileError extends Error {
   }
 }
 
+class NotGoverningError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'NotGoverningError';
+    this.code = 'PROFILE_NOT_GOVERNING';
+  }
+}
+
 let _validate = null;
 function schemaValidator() {
   if (!_validate) {
@@ -59,6 +67,40 @@ function findProfilePath(startDir = process.cwd(), env = process.env) {
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+// The profile that governs a command run as a check. `npm run verify` names
+// the profile that defined the check in APLABS_GOVERNING_PROFILE (absolute),
+// so it wins; else findProfilePath. An explicit path (a --profile flag,
+// relative to cwd) must be that profile when one governs: a fork that copies
+// a check naming another client's profile fails instead of silently
+// enforcing that client's rules (issue #77). Returns a path or null. Throws
+// ProfileError, or a NotGoverningError for an explicit path that isn't it.
+function governingProfilePath(explicit, cwd = process.cwd(), env = process.env) {
+  let governing;
+  if (env.APLABS_GOVERNING_PROFILE) {
+    if (!path.isAbsolute(env.APLABS_GOVERNING_PROFILE)) throw new ProfileError('APLABS_GOVERNING_PROFILE must be an absolute path');
+    governing = env.APLABS_GOVERNING_PROFILE;
+  } else {
+    governing = findProfilePath(cwd, env);
+  }
+  if (!explicit) return governing;
+  const named = path.resolve(cwd, explicit);
+  if (governing && !sameFile(named, governing)) {
+    throw new NotGoverningError(`--profile ${explicit} is not the governing profile (${governing})`);
+  }
+  return named;
+}
+
+function sameFile(a, b) {
+  const real = (f) => {
+    try {
+      return fs.realpathSync(f);
+    } catch {
+      return path.resolve(f);
+    }
+  };
+  return real(a) === real(b);
 }
 
 function duplicates(values) {
@@ -138,4 +180,4 @@ function loadProfile(file = findProfilePath()) {
   return validateProfile(parsed, file);
 }
 
-module.exports = { loadProfile, validateProfile, findProfilePath, ProfileError, PROFILE_REL };
+module.exports = { loadProfile, validateProfile, findProfilePath, governingProfilePath, ProfileError, NotGoverningError, PROFILE_REL };

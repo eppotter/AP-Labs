@@ -19,6 +19,7 @@ const { loadProfile } = require('../../../../kit/lib/profile');
 const { truthChecksFor, loadTruths } = require('../../../../kit/lib/truths');
 const { contextDirFor } = require('../../../../kit/lib/onboard');
 const { runChecks } = require('../../../../kit/lib/verify/runner');
+const { checkEnv } = require('../../../../kit/lib/verify');
 const { TRUTH_IDS } = require('../lib/truths');
 
 const REPO = path.resolve(__dirname, '..', '..', '..', '..');
@@ -51,9 +52,14 @@ test.after(async () => {
 test('every check in checks/ passes on the committed seeds, with Brightside\'s forbidden columns', async (t) => {
   const { out } = await builtFixture();
   const checks = loadChecks(FIXTURE_DIR);
-  assert.equal(checks.length, 12);
+  assert.equal(checks.length, 14);
   const results = await validate({ checks, db: out, forbiddenColumns: FORBIDDEN });
   assert.deepEqual(results.filter((r) => r.outcome !== 'pass'), []);
+});
+
+test('the profile\'s fixture-validate check names no profile: verify passes the governing one', () => {
+  const check = PROFILE.verify.checks.find((c) => c.id === 'fixture-validate');
+  assert.deepEqual(check.run, ['node', 'kit/fixture/validate.js', 'examples/brightside/fixture']);
 });
 
 test('data.md holds one truth per planted target: owner Dana Reyes, pending sign-off, tolerance 0', () => {
@@ -66,15 +72,18 @@ test('data.md holds one truth per planted target: owner Dana Reyes, pending sign
     assert.deepEqual(e.truth.tolerance, { kind: 'abs', value: 0 }, e.id);
     assert.equal(e.truth.owner, 'Dana Reyes', e.id);
     assert.equal(e.truth.signedOff, 'pending', e.id);
-    assert.deepEqual(e.truth.run, ['node', 'kit/fixture/query.js', '--profile', 'profiles/brightside/profile.yml', `examples/brightside/fixture/truths/${e.id}.sql`], e.id);
+    // No --profile: the governing profile applies, so a fork that copies the
+    // block enforces its own forbidden columns, never Brightside's (issue #77).
+    assert.deepEqual(e.truth.run, ['node', 'kit/fixture/query.js', `examples/brightside/fixture/truths/${e.id}.sql`], e.id);
   }
 });
 
 test('each truth runs through the query runner, as npm run verify runs it, and matches its target', async (t) => {
   const { out } = await builtFixture();
-  // As verify passes it: no APLABS_PROFILE (the argv names the profile). The
-  // data file is the temp build, so APLABS_DATA_PATH is set here only.
-  const env = { PATH: process.env.PATH, APLABS_DATA_PATH: out };
+  // As verify passes it: no APLABS_PROFILE, the governing profile in
+  // APLABS_GOVERNING_PROFILE. The data file is the temp build, so
+  // APLABS_DATA_PATH is set here only.
+  const env = checkEnv({ PATH: process.env.PATH, APLABS_DATA_PATH: out }, ['APLABS_DATA_PATH'], PROFILE_FILE);
   const { results } = await runChecks(truthChecksFor(PROFILE_FILE), env, REPO);
   assert.deepEqual(results.map((r) => [r.id, r.outcome, r.reason || null]), TRUTH_IDS.map((id) => [`truth:${id}`, 'pass', null]));
 });
@@ -106,110 +115,240 @@ function writeCsv(file, { cols, rows }) {
   fs.writeFileSync(file, `${[cols.join(','), ...rows.map((r) => cols.map((c) => r[c]).join(','))].join('\n')}\n`);
 }
 
-// A copy of the seeds with one row broken per check, and a schema with its
-// foreign keys removed so an orphan can load at all (DuckDB enforces them).
-// Each break touches rows no other break touches. Returns { dir, broken }:
-// the check each break targets.
-function brokenFixture(t) {
+// The breaks: one per check, each touching rows no other break touches. A
+// break's pick(t_, take) chooses its rows from the unedited seeds and returns
+// the edit, so it picks the same rows alone or with the others.
+const TABLES = ['crews', 'clients', 'invoices', 'payments', 'visits', 'plans', 'plan_price_changes', 'invoice_lines', 'crew_memberships', 'fixture_meta'];
+const BREAKS = [
+  {
+    // A crew in a zone that does not exist. DuckDB enforces the schema's
+    // foreign keys, so only the stripped schema copy lets it load (issue #77).
+    check: 'integrity-foreign-keys',
+    pick: (t_) => () => { t_.crews.rows[0].zone_id = 'nowhere'; },
+  },
+  {
+    // A client with no property.
+    check: 'integrity-orphans',
+    pick: (t_) => {
+      const extra = { ...t_.clients.rows[0], client_id: String(t_.clients.rows.length + 1), email: 'orphan.client@home.invalid' };
+      return () => {
+        t_.clients.rows.push(extra);
+        t_.fixture_meta.rows.find((r) => r.key === 'rows_clients').value = String(t_.clients.rows.length);
+      };
+    },
+  },
+  {
+    // An invoice whose total is one cent more than its lines.
+    check: 'integrity-invoice-total',
+    pick: (t_, take) => {
+      const inv = t_.invoices.rows[0];
+      take('invoices', inv.invoice_id);
+      take('visits', inv.visit_id);
+      return () => { inv.total_cents = String(Number(inv.total_cents) + 1); };
+    },
+  },
+  {
+    // A payment larger than its invoice.
+    check: 'integrity-payments-within-invoice',
+    pick: (t_, take, used) => {
+      const pay = t_.payments.rows.find((p) => !used.invoices.has(p.invoice_id));
+      const payInv = t_.invoices.rows.find((i) => i.invoice_id === pay.invoice_id);
+      take('invoices', payInv.invoice_id);
+      take('visits', payInv.visit_id);
+      return () => { pay.amount_cents = String(Number(pay.amount_cents) + Number(payInv.total_cents)); };
+    },
+  },
+  {
+    // An invoiced visit marked cancelled.
+    check: 'integrity-invoice-per-completed-visit',
+    pick: (t_, take, used) => {
+      const invoicedVisit = new Set(t_.invoices.rows.map((i) => i.visit_id));
+      const v = t_.visits.rows.find((x) => invoicedVisit.has(x.visit_id) && !used.visits.has(x.visit_id));
+      take('visits', v.visit_id);
+      return () => { v.status = 'cancelled'; };
+    },
+  },
+  {
+    // A plan visit the day before its plan starts.
+    check: 'integrity-plan-visits-in-period',
+    pick: (t_, take, used) => {
+      const planById = new Map(t_.plans.rows.map((p) => [p.plan_id, p]));
+      const early = t_.visits.rows.find((v) => v.plan_id && !used.visits.has(v.visit_id));
+      take('visits', early.visit_id);
+      take('plans', early.plan_id);
+      const start = new Date(`${planById.get(early.plan_id).start_date}T00:00:00Z`);
+      return () => { early.visit_date = new Date(start.getTime() - 86_400_000).toISOString().slice(0, 10); };
+    },
+  },
+  {
+    // An open plan marked cancelled.
+    check: 'integrity-plan-status',
+    pick: (t_, take, used) => {
+      const open = t_.plans.rows.find((p) => p.end_date === '' && !used.plans.has(p.plan_id));
+      take('plans', open.plan_id);
+      return () => { open.status = 'cancelled'; };
+    },
+  },
+  {
+    // A cancelled plan that ends after as_of.
+    check: 'integrity-no-end-after-as-of',
+    pick: (t_, take, used) => {
+      const ended = t_.plans.rows.find((p) => p.end_date !== '' && !used.plans.has(p.plan_id));
+      take('plans', ended.plan_id);
+      return () => { ended.end_date = '2026-10-15'; };
+    },
+  },
+  {
+    // A payment made the day after as_of (issue #77 item 8).
+    check: 'integrity-no-date-after-as-of',
+    pick: (t_, take, used) => {
+      const pay = t_.payments.rows.find((p) => !used.invoices.has(p.invoice_id));
+      take('invoices', pay.invoice_id);
+      return () => { pay.paid_on = dayAfterAsOf(t_); };
+    },
+  },
+  {
+    // A plan whose price is one cent off its latest change.
+    check: 'integrity-plan-price',
+    pick: (t_, take, used) => {
+      const priced = t_.plans.rows.find((p) => !used.plans.has(p.plan_id));
+      take('plans', priced.plan_id);
+      return () => { priced.price_cents = String(Number(priced.price_cents) + 1); };
+    },
+  },
+  {
+    // A package line that also names an add-on (issue #77 item 7).
+    check: 'integrity-invoice-line-item',
+    pick: (t_, take, used) => {
+      const addOn = t_.invoice_lines.rows.find((l) => l.add_on_id !== '').add_on_id;
+      const line = t_.invoice_lines.rows.find((l) => l.package_id !== '' && !used.invoices.has(l.invoice_id));
+      take('invoices', line.invoice_id);
+      return () => { line.add_on_id = addOn; };
+    },
+  },
+  {
+    // A staff member's ended period stretched onto their next one.
+    check: 'integrity-crew-membership-overlap',
+    pick: (t_) => {
+      const byStaff = new Map();
+      for (const m of t_.crew_memberships.rows) byStaff.set(m.staff_name, [...(byStaff.get(m.staff_name) || []), m]);
+      const pair = [...byStaff.values()].map((ms) => ms.slice().sort((a, b) => a.start_date.localeCompare(b.start_date)))
+        .find((ms) => ms.length >= 2 && ms[0].end_date !== '');
+      assert.ok(pair, 'the seeds have a staff member with two periods');
+      return () => { pair[0].end_date = pair[1].start_date; };
+    },
+  },
+  {
+    // A real-looking email.
+    check: 'synthetic-email',
+    pick: (t_) => () => { t_.clients.rows[1].email = 'real.person@example.com'; },
+  },
+  {
+    // An out-of-range phone.
+    check: 'synthetic-phone',
+    pick: (t_) => () => { t_.clients.rows[2].phone = '555-0200'; },
+  },
+];
+
+function dayAfterAsOf(t_) {
+  const asOf = t_.fixture_meta.rows.find((r) => r.key === 'as_of').value;
+  return new Date(Date.parse(`${asOf}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+}
+
+// A copy of the fixture with the named breaks applied (default: all), then
+// extra(t_) if given, and a schema with its foreign keys removed so an orphan
+// can load at all.
+function brokenFixture(t, only = BREAKS.map((b) => b.check), extra = null) {
   const dir = tmpDir(t);
   fs.cpSync(path.join(FIXTURE_DIR, 'seeds'), path.join(dir, 'seeds'), { recursive: true });
   const schema = fs.readFileSync(path.join(FIXTURE_DIR, 'schema.sql'), 'utf8').replace(/ REFERENCES \w+ \(\w+\)/g, '');
   assert.doesNotMatch(schema, /REFERENCES/);
   fs.writeFileSync(path.join(dir, 'schema.sql'), schema);
   const file = (name) => path.join(dir, 'seeds', `${name}.csv`);
-  const t_ = Object.fromEntries(['crews', 'clients', 'invoices', 'payments', 'visits', 'plans', 'crew_memberships', 'fixture_meta']
-    .map((name) => [name, readCsv(file(name))]));
-  const broken = [];
+  const t_ = Object.fromEntries(TABLES.map((name) => [name, readCsv(file(name))]));
   const used = { invoices: new Set(), visits: new Set(), plans: new Set() };
   const take = (kind, id) => {
     assert.ok(!used[kind].has(id), `${kind} ${id} broken twice`);
     used[kind].add(id);
   };
-
-  // A crew in a zone that does not exist.
-  t_.crews.rows[0].zone_id = 'nowhere';
-  broken.push('integrity-foreign-keys');
-
-  // A client with no property.
-  const extra = { ...t_.clients.rows[0], client_id: String(t_.clients.rows.length + 1), email: 'orphan.client@home.invalid' };
-  t_.clients.rows.push(extra);
-  t_.fixture_meta.rows.find((r) => r.key === 'rows_clients').value = String(t_.clients.rows.length);
-  broken.push('integrity-orphans');
-
-  // An invoice whose total is one cent more than its lines.
-  const inv = t_.invoices.rows[0];
-  take('invoices', inv.invoice_id);
-  take('visits', inv.visit_id);
-  inv.total_cents = String(Number(inv.total_cents) + 1);
-  broken.push('integrity-invoice-total');
-
-  // A payment larger than its invoice.
-  const pay = t_.payments.rows.find((p) => !used.invoices.has(p.invoice_id));
-  const payInv = t_.invoices.rows.find((i) => i.invoice_id === pay.invoice_id);
-  take('invoices', payInv.invoice_id);
-  take('visits', payInv.visit_id);
-  pay.amount_cents = String(Number(pay.amount_cents) + Number(payInv.total_cents));
-  broken.push('integrity-payments-within-invoice');
-
-  // An invoiced visit marked cancelled.
-  const invoicedVisit = new Set(t_.invoices.rows.map((i) => i.visit_id));
-  const cancelledVisit = t_.visits.rows.find((v) => invoicedVisit.has(v.visit_id) && !used.visits.has(v.visit_id));
-  take('visits', cancelledVisit.visit_id);
-  cancelledVisit.status = 'cancelled';
-  broken.push('integrity-invoice-per-completed-visit');
-
-  // A plan visit the day before its plan starts.
-  const planById = new Map(t_.plans.rows.map((p) => [p.plan_id, p]));
-  const early = t_.visits.rows.find((v) => v.plan_id && !used.visits.has(v.visit_id));
-  take('visits', early.visit_id);
-  take('plans', early.plan_id);
-  const start = new Date(`${planById.get(early.plan_id).start_date}T00:00:00Z`);
-  early.visit_date = new Date(start.getTime() - 86_400_000).toISOString().slice(0, 10);
-  broken.push('integrity-plan-visits-in-period');
-
-  // An open plan marked cancelled.
-  const open = t_.plans.rows.find((p) => p.end_date === '' && !used.plans.has(p.plan_id));
-  take('plans', open.plan_id);
-  open.status = 'cancelled';
-  broken.push('integrity-plan-status');
-
-  // A cancelled plan that ends after as_of.
-  const ended = t_.plans.rows.find((p) => p.end_date !== '' && !used.plans.has(p.plan_id));
-  take('plans', ended.plan_id);
-  ended.end_date = '2026-10-15';
-  broken.push('integrity-no-end-after-as-of');
-
-  // A plan whose price is one cent off its latest change.
-  const priced = t_.plans.rows.find((p) => !used.plans.has(p.plan_id));
-  take('plans', priced.plan_id);
-  priced.price_cents = String(Number(priced.price_cents) + 1);
-  broken.push('integrity-plan-price');
-
-  // A staff member's ended period stretched onto their next one.
-  const byStaff = new Map();
-  for (const m of t_.crew_memberships.rows) byStaff.set(m.staff_name, [...(byStaff.get(m.staff_name) || []), m]);
-  const pair = [...byStaff.values()].map((ms) => ms.sort((a, b) => a.start_date.localeCompare(b.start_date)))
-    .find((ms) => ms.length >= 2 && ms[0].end_date !== '');
-  assert.ok(pair, 'the seeds have a staff member with two periods');
-  pair[0].end_date = pair[1].start_date;
-  broken.push('integrity-crew-membership-overlap');
-
-  // A real-looking email and an out-of-range phone.
-  t_.clients.rows[1].email = 'real.person@example.com';
-  broken.push('synthetic-email');
-  t_.clients.rows[2].phone = '555-0200';
-  broken.push('synthetic-phone');
-
+  const edits = BREAKS.map((b) => [b.check, b.pick(t_, take, used)]);
+  for (const [check, edit] of edits) if (only.includes(check)) edit();
+  if (extra) extra(t_);
   for (const [name, table] of Object.entries(t_)) writeCsv(file(name), table);
   fs.cpSync(path.join(FIXTURE_DIR, 'checks'), path.join(dir, 'checks'), { recursive: true });
-  return { dir, broken };
+  return dir;
 }
 
-test('a deliberately broken seed fails each integrity and synthetic-only check exactly once', async (t) => {
-  const { dir, broken } = brokenFixture(t);
+async function validateBroken(t, only, extra) {
+  const dir = brokenFixture(t, only, extra);
   const out = path.join(dir, 'broken.duckdb');
   await build({ fixtureDir: dir, out });
-  const results = await validate({ checks: loadChecks(dir), db: out, forbiddenColumns: FORBIDDEN });
-  assert.deepEqual(broken.slice().sort(), results.map((r) => r.id).sort(), 'one break per check');
+  return validate({ checks: loadChecks(dir), db: out, forbiddenColumns: FORBIDDEN });
+}
+
+const failures = (results) => results.filter((r) => r.outcome !== 'pass').map((r) => [r.id, r.rows ?? r.error]);
+
+test('every check has exactly one break', () => {
+  assert.deepEqual(BREAKS.map((b) => b.check).sort(), loadChecks(FIXTURE_DIR).map((c) => c.id).sort());
+});
+
+test('a deliberately broken seed fails each integrity and synthetic-only check exactly once', async (t) => {
+  const results = await validateBroken(t);
   assert.deepEqual(results.map((r) => [r.id, r.outcome, r.rows]), results.map((r) => [r.id, 'fail', 1]));
+});
+
+// Which check failed for which break: each break alone fails its own check
+// with one row, and every other check passes.
+test('each break alone fails only its own check', async (t) => {
+  const got = await Promise.all(BREAKS.map(async (b) => [b.check, failures(await validateBroken(t, [b.check]))]));
+  assert.deepEqual(got, BREAKS.map((b) => [b.check, [[b.check, 1]]]));
+});
+
+// Issue #77 item 5: with no as_of to compare against, the as_of checks would
+// return no rows and pass. Each returns one guard row instead.
+test('with no as_of row in fixture_meta, the as_of check fails on its guard row', async (t) => {
+  const results = await validateBroken(t, [], (t_) => { t_.fixture_meta.rows = t_.fixture_meta.rows.filter((r) => r.key !== 'as_of'); });
+  const byId = Object.fromEntries(results.map((r) => [r.id, r]));
+  for (const id of ['integrity-no-end-after-as-of', 'integrity-no-date-after-as-of']) {
+    assert.deepEqual([byId[id].outcome, byId[id].rows], ['fail', 1], id);
+  }
+});
+
+// Issue #77 item 8: the outstanding and clients-total truths count on every
+// event date being on or before as_of. The paid_on break is in BREAKS; these
+// are the other three dates, each alone.
+for (const [what, edit] of [
+  ['an invoice issued', (t_) => { t_.invoices.rows[0].issued_on = dayAfterAsOf(t_); }],
+  ['a one-off visit', (t_) => { t_.visits.rows.find((v) => v.plan_id === '').visit_date = dayAfterAsOf(t_); }],
+  ['a client created', (t_) => { t_.clients.rows[0].created_on = dayAfterAsOf(t_); }],
+]) {
+  test(`${what} after as_of fails integrity-no-date-after-as-of only`, async (t) => {
+    assert.deepEqual(failures(await validateBroken(t, [], edit)), [['integrity-no-date-after-as-of', 1]]);
+  });
+}
+
+// Issue #77 item 6: integrity-plan-price also checks the changes themselves.
+// Each break moves one change of a plan with two or more, so the plan's
+// latest change (and so its price) stays the same: only the new rule fails.
+function changesOfAPlanWithTwo(t_) {
+  const byPlan = new Map();
+  for (const c of t_.plan_price_changes.rows) byPlan.set(c.plan_id, [...(byPlan.get(c.plan_id) || []), c]);
+  const changes = [...byPlan.values()].find((cs) => cs.length >= 2).sort((a, b) => a.effective_date.localeCompare(b.effective_date));
+  return { plan: t_.plans.rows.find((p) => p.plan_id === changes[0].plan_id), changes };
+}
+
+test('a price change before its plan starts fails integrity-plan-price only', async (t) => {
+  const results = await validateBroken(t, [], (t_) => {
+    const { plan, changes } = changesOfAPlanWithTwo(t_);
+    changes[0].effective_date = new Date(Date.parse(`${plan.start_date}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+  });
+  assert.deepEqual(failures(results), [['integrity-plan-price', 1]]);
+});
+
+test('a price change whose old price is not the previous new price fails integrity-plan-price only', async (t) => {
+  const results = await validateBroken(t, [], (t_) => {
+    const { changes } = changesOfAPlanWithTwo(t_);
+    changes[1].old_price_cents = String(Number(changes[1].old_price_cents) + 1);
+  });
+  assert.deepEqual(failures(results), [['integrity-plan-price', 1]]);
 });

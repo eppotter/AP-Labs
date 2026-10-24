@@ -9,7 +9,8 @@
 // (Story 4.2, run as checks `truth:<id>` and judged on
 // the number they print), and spawns each argv in order,
 // without a shell, from the repo root (cwd), stdin ignored. A check sees only
-// the fixed env allowlist plus verify.env_allow, and its whole process group
+// the fixed env allowlist plus verify.env_allow, and the profile's path as
+// APLABS_GOVERNING_PROFILE (kit/lib/verify checkEnv), and its whole process group
 // is SIGKILLed after its timeout_seconds (kit/lib/verify/runner). One line per check, then a JSON summary as the last stdout
 // line. Output tails of failed and timed-out checks go to stderr. Each run's
 // outcomes are recorded in <git-dir>/aplabs/verify/last.json for the session
@@ -20,7 +21,7 @@
 // profile error.
 
 const { findProfilePath, loadProfile, PROFILE_REL } = require('../lib/profile');
-const { USAGE, parseArgs, childEnv, tail, checkLine, summarize, exitCode } = require('../lib/verify');
+const { USAGE, parseArgs, checkEnv, tail, checkLine, summarize, exitCode } = require('../lib/verify');
 const { runChecks, installSignalCleanup } = require('../lib/verify/runner');
 const { truthChecksFor } = require('../lib/truths');
 const { writeLastResult } = require('../lib/verify/last');
@@ -63,7 +64,7 @@ async function main(argv, env = process.env, cwd = process.cwd()) {
   const envAllow = profile.verify.env_allow;
   if (!checks.length) console.log('verify: SKIPPED (0 checks)');
   installSignalCleanup();
-  const { results } = await runChecks(checks, childEnv(env, envAllow), cwd, {
+  const { results } = await runChecks(checks, checkEnv(env, envAllow, profileFile), cwd, {
     onResult: (result) => {
       console.log(checkLine(result));
       if (result.outcome === 'fail' || result.outcome === 'timeout') {

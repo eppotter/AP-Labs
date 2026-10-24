@@ -6,9 +6,11 @@
 //
 // The bridge a known truth's `run` uses (kit/lib/truths), so a truth's SQL
 // goes through the same guardrail and locked, read-only DuckDB as the app
-// (kit/runtime/data), never a separate connection. The profile is --profile
-// (relative to cwd), else APLABS_PROFILE, else .aplabs/profile.yml above cwd;
-// its forbidden columns apply in full. The data file is the runtime's
+// (kit/runtime/data), never a separate connection. The profile is the
+// governing one (kit/lib/profile governingProfilePath: the one `npm run
+// verify` names, else APLABS_PROFILE, else .aplabs/profile.yml above cwd);
+// --profile (relative to cwd) must be that profile when one governs, so a
+// truth needs no --profile (issue #77). Its forbidden columns apply in full. The data file is the runtime's
 // (APLABS_DATA_PATH, else <var>/fixture/<client id>.duckdb).
 //
 // The query must return exactly one row with one non-null value, which is
@@ -18,9 +20,9 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { findProfilePath, loadProfile, PROFILE_REL } = require('../lib/profile');
+const { governingProfilePath, loadProfile, PROFILE_REL } = require('../lib/profile');
 const { createData, dataPathFor } = require('../runtime/data');
-const { notBuilt, shownPath } = require('./validate');
+const { notBuilt, shownPath, PROFILE_ERRORS } = require('./validate');
 
 const USAGE = 'usage: node kit/fixture/query.js [--profile <file>] <sql-file>';
 
@@ -67,14 +69,14 @@ async function main(argv, { env = process.env, cwd = process.cwd() } = {}) {
   }
   let profile;
   try {
-    const profileFile = args.profile ? path.resolve(cwd, args.profile) : findProfilePath(cwd, env);
+    const profileFile = governingProfilePath(args.profile, cwd, env);
     if (!profileFile) {
       console.error(`query: no profile (pass --profile, set APLABS_PROFILE or add ${PROFILE_REL})`);
       return 2;
     }
     profile = loadProfile(profileFile);
   } catch (err) {
-    if (err.code !== 'PROFILE_INVALID') throw err;
+    if (!PROFILE_ERRORS.has(err.code)) throw err;
     console.error(`query: ${err.message}`);
     return 2;
   }

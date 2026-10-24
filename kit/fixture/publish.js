@@ -27,8 +27,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { defaultOut } = require('./build');
-const { loadChecks, validate, resultLine, notBuilt, shownPath } = require('./validate');
-const { findProfilePath, loadProfile } = require('../lib/profile');
+const { loadChecks, validate, resultLine, notBuilt, shownPath, PROFILE_ERRORS } = require('./validate');
+const { governingProfilePath, loadProfile } = require('../lib/profile');
 const { forbiddenColumnsOf } = require('../runtime/sql');
 const remote = require('./remote');
 
@@ -112,17 +112,22 @@ async function main(argv, deps = {}) {
     return 2;
   }
   let forbiddenColumns = [];
+  let clientId = null;
   try {
-    const profileFile = args.profile ? path.resolve(cwd, args.profile) : findProfilePath(cwd, env);
-    if (profileFile) forbiddenColumns = forbiddenColumnsOf(loadProfile(profileFile));
+    const profileFile = governingProfilePath(args.profile, cwd, env);
+    if (profileFile) {
+      const profile = loadProfile(profileFile);
+      forbiddenColumns = forbiddenColumnsOf(profile);
+      clientId = profile.client.id;
+    }
   } catch (e) {
-    if (e.code !== 'PROFILE_INVALID') throw e;
+    if (!PROFILE_ERRORS.has(e.code)) throw e;
     err(`fixture:publish: ${e.message}`);
     return 2;
   }
 
   // 1. Local: built, not stale, every check passes. Nothing secret yet.
-  const db = args.db ? path.resolve(cwd, args.db) : defaultOut(fixtureDir, args.name, env);
+  const db = args.db ? path.resolve(cwd, args.db) : defaultOut(fixtureDir, args.name, env, clientId);
   if (!fs.existsSync(db)) {
     err(`fixture:publish: ${notBuilt(shownPath(cwd, db))}`);
     return 1;
