@@ -5,18 +5,15 @@
 //   npm run review [-- --over-budget "<the human's reason>"]
 //
 // Needs an open PR for the branch, so every round is visible to the retro.
-// Runs Codex read-only with stdin closed, counts rounds per branch, refuses a
-// fourth without the human's go, flags a file that drew blocking findings in
-// two rounds running, and writes `Review rounds: n/3` and `Reviewed head: <sha>`
-// into the PR body.
+// Chooses the other model from Agent trailers, falls back read-only when its
+// binary is missing, counts rounds per branch, and updates the PR body.
 //
 // State lives in <git-dir>/aplabs/review/<branch>.json, never in tracked
 // files. A reviewer run that fails or says nothing readable does not count.
 // Exit codes: 0 round done, 1 round failed (not counted), 2 refused or usage,
 // 3 budget spent.
 //
-// Codex and gh are resolved from APLABS_REVIEW_CODEX_BIN and APLABS_GH_BIN so
-// tests can stub them; no test makes a model or network call.
+// Reviewer and gh binaries can be overridden so tests need no model or network.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -32,6 +29,8 @@ const {
   repeatedBlockingFiles,
   withRoundsLine,
   withReviewedHeadLine,
+  pickReviewer,
+  withFallbackLine,
   parseArgs,
   sanitizeBranch,
 } = require('../lib/review');
@@ -48,6 +47,7 @@ function main(argv, env = process.env, cwd = process.cwd()) {
   }
   const { overBudget } = args;
   const codexBin = env.APLABS_REVIEW_CODEX_BIN || 'codex';
+  const claudeBin = env.APLABS_REVIEW_CLAUDE_BIN || 'claude';
   const ghBin = env.APLABS_GH_BIN || 'gh';
   const run = (cmd, cmdArgs) => execFileSync(cmd, cmdArgs, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   const git = (...a) => run('git', a);
@@ -58,6 +58,7 @@ function main(argv, env = process.env, cwd = process.cwd()) {
     return 2;
   }
   const head = git('rev-parse', 'HEAD');
+  const trailers = git('log', '--format=%(trailers:key=Agent,valueonly)', 'origin/main..HEAD').split('\n').filter(Boolean);
   const repoRoot = git('rev-parse', '--show-toplevel');
   const dir = path.join(git('rev-parse', '--absolute-git-dir'), 'aplabs', 'review');
   fs.mkdirSync(dir, { recursive: true });
@@ -101,16 +102,42 @@ function main(argv, env = process.env, cwd = process.cwd()) {
   const logPath = path.join(dir, `${stem}.round-${round}.log`);
   fs.rmSync(verdictPath, { force: true });
   const log = fs.openSync(logPath, 'w');
-  let codex;
+  const runReviewer = (reviewer) => {
+    if (reviewer === 'codex') {
+      return spawnSync(codexBin, ['exec', '--sandbox', 'read-only', '-o', verdictPath, 'review', promptFor(state)],
+        { cwd, env, stdio: ['ignore', log, log] });
+    }
+    let diff;
+    try {
+      diff = execFileSync('git', ['diff', '--no-ext-diff', '--no-textconv', 'origin/main...HEAD'],
+        { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      return { status: 1, error };
+    }
+    const result = spawnSync(claudeBin, [
+      '--print', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk',
+      '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-session-persistence', '--no-chrome',
+      '--disable-slash-commands', promptFor(state, { diffOnStdin: true }),
+    ], { cwd, env, input: diff, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    if (result.stderr) fs.writeSync(log, result.stderr);
+    if (result.stdout) fs.writeFileSync(verdictPath, result.stdout);
+    return result;
+  };
+  const initial = pickReviewer({ trailers, codexAvailable: true, claudeAvailable: true });
+  let selection = initial;
+  let result;
   try {
-    codex = spawnSync(codexBin, ['exec', '--sandbox', 'read-only', '-o', verdictPath, 'review', promptFor(state)],
-      { cwd, env, stdio: ['ignore', log, log] });
+    result = runReviewer(selection.reviewer);
+    if (result.error && result.error.code === 'ENOENT') {
+      selection = pickReviewer({ trailers, codexAvailable: selection.reviewer !== 'codex', claudeAvailable: selection.reviewer !== 'claude' });
+      result = runReviewer(selection.reviewer);
+    }
   } finally {
     fs.closeSync(log);
   }
-  if (codex.status !== 0 || !fs.existsSync(verdictPath)) {
-    const why = codex.error ? codex.error.message : `exited ${codex.status}`;
-    console.error(`codex ${why}; this round does not count. Log: ${logPath}`);
+  if (result.status !== 0 || !fs.existsSync(verdictPath)) {
+    const why = result.error ? result.error.message : `exited ${result.status}`;
+    console.error(`${selection.reviewer} ${why}; this round does not count. Log: ${logPath}`);
     return 1;
   }
   const verdict = fs.readFileSync(verdictPath, 'utf8');
@@ -124,14 +151,15 @@ function main(argv, env = process.env, cwd = process.cwd()) {
     console.error(`Could not read findings or a clean verdict from ${verdictPath}; this round does not count.\n${verdict}`);
     return 1;
   }
-  state.rounds.push({ head, at: new Date().toISOString(), findings, ...(overBudget ? { overBudget } : {}) });
+  state.rounds.push({ head, at: new Date().toISOString(), findings, reviewer: selection.reviewer, fallback: selection.fallback,
+    ...(overBudget ? { overBudget } : {}) });
   const tmp = `${statePath}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
   fs.renameSync(tmp, statePath);
 
   const p1 = findings.filter((f) => f.priority === 'P1').length;
   console.log(verdict.trim());
-  console.log(`\nRound ${round}/${ROUND_BUDGET} on ${head.slice(0, 12)}: ${p1} blocking, ${findings.length - p1} non-blocking.` +
+  console.log(`\nRound ${round}/${ROUND_BUDGET} on ${head.slice(0, 12)} (reviewer: ${selection.reviewer}${selection.fallback ? ', same-model fallback' : ''}): ${p1} blocking, ${findings.length - p1} non-blocking.` +
     (overBudget ? ` Over budget with the human's go: ${overBudget}.` : ''));
   if (findings.length > p1) console.log('File the non-blocking ones in one issue: gh issue create --label review-followup.');
   const repeated = repeatedBlockingFiles(state.rounds);
@@ -142,7 +170,7 @@ function main(argv, env = process.env, cwd = process.cwd()) {
   if (p1 === 0) console.log('No blocking findings: the review is done. Do not run another round.');
 
   const bodyPath = path.join(dir, `${stem}.pr-body.md`);
-  fs.writeFileSync(bodyPath, withReviewedHeadLine(withRoundsLine(pr.body || '', round), head));
+  fs.writeFileSync(bodyPath, withFallbackLine(withReviewedHeadLine(withRoundsLine(pr.body || '', round), head), selection.fallback));
   try {
     run(ghBin, ['pr', 'edit', String(pr.number), '--body-file', bodyPath]);
   } catch {

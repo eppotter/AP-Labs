@@ -19,11 +19,15 @@ Label a finding [P1] only if it is blocking: it loses or corrupts data, breaks a
 Everything else is [P2]: edge cases far beyond today's data, hardening, polish, style, missing tests for non-blocking cases.
 Report each finding as "- [P1|P2] <title> — <path>:<line>" with a short explanation. Say "No blocking findings." if there is no P1.`;
 
-function promptFor(state) {
+function promptFor(state, { diffOnStdin = false } = {}) {
+  const rubric = diffOnStdin
+    ? RUBRIC.replace("Review this branch's changes against origin/main (git diff origin/main...HEAD) and read AGENTS.md.",
+      'Review the diff supplied on stdin and read AGENTS.md.')
+    : RUBRIC;
   const previous = state.rounds[state.rounds.length - 1];
-  if (!previous) return RUBRIC;
+  if (!previous) return rubric;
   const seen = state.rounds.flatMap((r) => r.findings).map((f) => `- [${f.priority}] ${f.title} — ${f.file}`);
-  return `${RUBRIC}
+  return `${rubric}
 
 This is round ${state.rounds.length + 1} of ${ROUND_BUDGET}. Report [P1] findings only; non-blocking items go to a follow-up issue.
 Earlier rounds reviewed up to ${previous.head} and reported:
@@ -75,6 +79,29 @@ function repeatedBlockingFiles(rounds) {
 
 const ROUNDS_LINE = /^Review rounds:.*$/m;
 const HEAD_LINE = /^Reviewed head:.*$/m;
+const FALLBACK_LINE = /^Review: same-model fallback$/m;
+
+function pickReviewer({ trailers, codexAvailable, claudeAvailable }) {
+  let codexAuthors = 0;
+  let claudeAuthors = 0;
+  for (const trailer of trailers) {
+    const harness = trailer.trim().toLowerCase().split(/\s+/, 1)[0];
+    if (harness === 'codex') codexAuthors++;
+    if (harness === 'claude-code') claudeAuthors++;
+  }
+  const author = codexAuthors > claudeAuthors ? 'codex' : 'claude';
+  const preferred = author === 'codex' ? 'claude' : 'codex';
+  const other = preferred === 'codex' ? 'claude' : 'codex';
+  const available = (name) => name === 'codex' ? codexAvailable : claudeAvailable;
+  if (available(preferred)) return { reviewer: preferred, fallback: false };
+  if (available(other)) return { reviewer: other, fallback: true };
+  return { reviewer: preferred, fallback: false };
+}
+
+function withFallbackLine(body, fallback) {
+  if (fallback) return FALLBACK_LINE.test(body) ? body : `${body.trimEnd()}\n\nReview: same-model fallback\n`;
+  return body.replace(/^Review: same-model fallback\n?/m, '').replace(/\n{3,}/g, '\n\n');
+}
 
 function withRoundsLine(body, rounds) {
   const line = `Review rounds: ${rounds}/${ROUND_BUDGET}`;
@@ -128,6 +155,8 @@ module.exports = {
   repeatedBlockingFiles,
   withRoundsLine,
   withReviewedHeadLine,
+  pickReviewer,
+  withFallbackLine,
   parseArgs,
   sanitizeBranch,
 };
