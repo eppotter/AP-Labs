@@ -69,7 +69,7 @@ A vision to realise. The Orchestrator gives builders a governed way to build; th
 
 ## Constraints
 
-- Runtime is Node 20 and bash. Only the fixture toolchain is open.
+- Runtime is Node 24 (LTS) and bash (ADR 0004; was Node 20). Only the fixture toolchain is open.
 - Slack is the only surface. The module contract stays surface-agnostic in shape; only the Slack adapter ships.
 - The consumer surface is menus and typed forms, not an open chat box. Plain English enters through a module's input.
 - Private delivery by default (DM or ephemeral). Channel delivery is a declared, tested exception.
