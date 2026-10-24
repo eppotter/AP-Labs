@@ -567,6 +567,17 @@ test('a commit merely titled Revert is reviewed: the exemption is verified, not 
   assert.ok(t.codexRan(), 'forged revert is reviewed');
 });
 
+test('reverting a commit that is not on main is reviewed', () => {
+  const t = setup();
+  t.openPr();
+  t.commitFiles({ 'kit/a.js': 'module.exports = 1;\n' }, 'Add a');
+  t.git('revert', '--no-edit', 'HEAD');
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.out, /Exempt from review/);
+  assert.ok(t.codexRan(), 'a revert of a branch-only commit is reviewed');
+});
+
 test('process, dependency, binary and larger changes are never exempt', () => {
   const cases = {
     'agent instructions': { 'AGENTS.md': 'Rules\n' },

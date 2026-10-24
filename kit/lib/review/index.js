@@ -68,7 +68,8 @@ function isValidState(state) {
     (state.followup === undefined || (Number.isInteger(state.followup) && state.followup > 0));
 }
 
-const isClean = (verdict) => /no blocking findings|no (actionable |discrete )?(issues|findings)/i.test(verdict);
+// Reviewers paraphrase the rubric's "No blocking findings."; accept the common forms.
+const isClean = (verdict) => /no (blocking |actionable |discrete )?(issues|findings)/i.test(verdict);
 
 // A reviewer's output is usable when every finding-like line parses and it has
 // findings or says it is clean. Anything else is a failed attempt.

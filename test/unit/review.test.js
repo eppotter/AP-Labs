@@ -325,3 +325,8 @@ test('withoutExemptLine drops a stale exempt line and nothing else', () => {
   assert.equal(withoutExemptLine('A\nReview: exempt — revert\nB'), 'A\nB');
   assert.equal(withoutExemptLine('A\n```\n\n\n\n```\nB'), 'A\n```\n\n\n\n```\nB');
 });
+
+test('isClean accepts the common paraphrases of a clean verdict', () => {
+  for (const v of ['No blocking findings.', 'I found no blocking issues in the branch changes.', 'No issues found.']) assert.ok(isClean(v), v);
+  assert.ok(!isClean('Looks interesting, some thoughts below.'));
+});

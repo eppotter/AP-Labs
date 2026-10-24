@@ -131,6 +131,9 @@ function main(argv, env = process.env, cwd = process.cwd()) {
       const target = revertedCommit(git('log', '-1', '--format=%B', sha));
       if (!target) return { verifiedRevert: false };
       try {
+        // Only a commit already on main can be reverted: a side commit shaped
+        // like the inverse of this one would otherwise forge the exemption.
+        git('merge-base', '--is-ancestor', target, 'origin/main');
         const diff = (a, b) => raw('git', ['diff', '--no-ext-diff', '--no-textconv', a, b]);
         const mine = diff(`${sha}^`, sha);
         return { verifiedRevert: mine.length > 0 && mine === diff(target, `${target}^`) };
