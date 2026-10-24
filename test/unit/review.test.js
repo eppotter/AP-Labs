@@ -14,6 +14,12 @@ const {
   repeatedBlockingFiles,
   withRoundsLine,
   withReviewedHeadLine,
+  REFUTER_VERDICTS,
+  withRefuterIds,
+  findP1,
+  blockingFindings,
+  withRefuterLine,
+  refuterBlock,
   pickReviewer,
   withFallbackLine,
   withFollowupLine,
@@ -329,4 +335,104 @@ test('withoutExemptLine drops a stale exempt line and nothing else', () => {
 test('isClean accepts the common paraphrases of a clean verdict', () => {
   for (const v of ['No blocking findings.', 'I found no blocking issues in the branch changes.', 'No issues found.']) assert.ok(isClean(v), v);
   assert.ok(!isClean('Looks interesting, some thoughts below.'));
+});
+
+test('isClean accepts up to two words between "no" and issues/findings, as Codex writes them', () => {
+  for (const v of ['I found no blocking issues in the branch changes.',
+    'I found no new blocking issues in the subsequent commits or their interaction with the rest of the diff.',
+    'No new findings.', 'There are no P1-level findings.']) {
+    assert.ok(isClean(v), v);
+  }
+  for (const v of ['I have no idea whether these issues matter.', 'No time to check all findings.', 'Issues found below.',
+    'Know issues: none listed', 'There are notable issues.']) {
+    assert.ok(!isClean(v), v);
+  }
+});
+
+test('rubric says every finding must use the exact line format or be ignored', () => {
+  assert.match(RUBRIC, /Every finding, including non-blocking ones, must be a line in exactly the "- \[P1\|P2\] <title> — <path>:<line>" format; findings in any other form are ignored\./);
+});
+
+const refuted = (file, verdict, id = 'R1-1') => ({ ...p1(file), id, verdict });
+
+test('withRefuterIds numbers a round\'s P1s R<round>-<n> in order, pending, and leaves P2s alone', () => {
+  assert.deepEqual(withRefuterIds(2, [p1('a.js'), p2('b.js'), p1('c.js')]), [
+    { ...p1('a.js'), id: 'R2-1', verdict: 'pending' },
+    p2('b.js'),
+    { ...p1('c.js'), id: 'R2-2', verdict: 'pending' },
+  ]);
+  assert.deepEqual(withRefuterIds(1, []), []);
+});
+
+test('findP1 finds a P1 by id in any round', () => {
+  const rounds = [round(SHA_A, [refuted('a.js', 'pending', 'R1-1')]), round(SHA_B, [refuted('b.js', 'pending', 'R2-1')])];
+  assert.equal(findP1(rounds, 'R1-1').file, 'a.js');
+  assert.equal(findP1(rounds, 'R2-1').file, 'b.js');
+  assert.equal(findP1(rounds, 'R3-1'), undefined);
+});
+
+test('blockingFindings: latest round P1s block unless not reproduced; escalated ones block from any round', () => {
+  assert.deepEqual(REFUTER_VERDICTS, ['confirmed', 'not-reproduced', 'cannot-verify']);
+  const latest = (verdict) => blockingFindings([round(SHA_A, [refuted('a.js', verdict)])]);
+  assert.equal(latest('pending').length, 1, 'pending blocks');
+  assert.equal(latest('confirmed').length, 1);
+  assert.equal(latest('cannot-verify').length, 1);
+  assert.equal(latest('not-reproduced').length, 0);
+  assert.equal(blockingFindings([round(SHA_A, [p1('a.js')])]).length, 1, 'a P1 with no verdict blocks');
+  assert.deepEqual(blockingFindings([round(SHA_A, [p2('a.js')])]), []);
+  assert.deepEqual(blockingFindings([]), []);
+
+  const earlier = (verdict) => blockingFindings([round(SHA_A, [refuted('a.js', verdict)]), round(SHA_B, [])]);
+  assert.equal(earlier('cannot-verify').length, 1, 'an escalation is never dropped by a later round');
+  for (const v of ['pending', 'confirmed', 'not-reproduced']) assert.equal(earlier(v).length, 0, v);
+});
+
+test('repeatedBlockingFiles ignores P1s that were not reproduced', () => {
+  const twice = (a, b) => repeatedBlockingFiles([round(SHA_A, [refuted('a.js', a)]), round(SHA_B, [refuted('a.js', b, 'R2-1')])]);
+  assert.deepEqual(twice('confirmed', 'pending'), ['a.js']);
+  assert.deepEqual(twice('cannot-verify', 'confirmed'), ['a.js']);
+  assert.deepEqual(twice('not-reproduced', 'pending'), []);
+  assert.deepEqual(twice('confirmed', 'not-reproduced'), []);
+});
+
+test('withRefuterLine counts every P1 on the branch and replaces the line in place', () => {
+  const rounds = [
+    round(SHA_A, [refuted('a.js', 'confirmed', 'R1-1'), refuted('b.js', 'not-reproduced', 'R1-2'), p2('c.js')]),
+    round(SHA_B, [refuted('d.js', 'cannot-verify', 'R2-1'), refuted('e.js', 'pending', 'R2-2'), p1('legacy.js')]),
+  ];
+  const line = 'Refuter: 1 confirmed, 1 not reproduced, 1 escalated, 2 pending';
+  assert.equal(withRefuterLine('Body', rounds), `Body\n\n${line}\n`);
+  assert.equal(withRefuterLine('A\nRefuter: 0 confirmed, 0 not reproduced, 0 escalated, 9 pending\nB', rounds), `A\n${line}\nB`);
+});
+
+test('refuterBlock lists pending P1s with the exact Refuter instruction', () => {
+  const block = refuterBlock([refuted('kit/a.js', 'pending', 'R1-1'), p2('kit/b.js'), refuted('kit/c.js', 'confirmed', 'R1-2')], SHA_A);
+  assert.match(block, /^\nRefuter: test each P1 before fixing it\.\n {2}R1-1 {2}breaks it — kit\/a\.js\n/);
+  assert.doesNotMatch(block, /R1-2|kit\/b\.js/);
+  assert.ok(block.endsWith(`Delegate each to the Refuter agent (.claude/agents/refuter.md) with the head SHA (${SHA_A}), then record the result with ` +
+    'npm run review -- --refute <id> <confirmed|not-reproduced|cannot-verify> [--note "<evidence>"]'));
+  assert.equal(refuterBlock([p2('kit/b.js')], SHA_A), '');
+});
+
+test('parseArgs reads --refute with an optional note and rejects everything else', () => {
+  assert.deepEqual(parseArgs(['--refute', 'R1-2', 'confirmed']), { refute: { id: 'R1-2', verdict: 'confirmed' } });
+  assert.deepEqual(parseArgs(['--refute', 'R12-1', 'not-reproduced', '--note', 'ran node --test: 0 failures']),
+    { refute: { id: 'R12-1', verdict: 'not-reproduced', note: 'ran node --test: 0 failures' } });
+  for (const argv of [['--refute'], ['--refute', 'R1-1'], ['--refute', 'R1-1', 'maybe'], ['--refute', 'X1', 'confirmed'],
+    ['--refute', 'R1-1', 'confirmed', '--note'], ['--refute', 'R1-1', 'confirmed', '--note', ' '],
+    ['--refute', 'R1-1', 'confirmed', '--other', 'x'], ['--refute', 'R1-1', 'confirmed', '--note', 'a', 'b'],
+    ['--over-budget', 'go', '--refute', 'R1-1', 'confirmed'], ['--refute', 'R1-1', 'pending']]) {
+    assert.ok(parseArgs(argv).error, `expected an error for ${JSON.stringify(argv)}`);
+  }
+});
+
+test('isValidState checks Refuter fields on findings', () => {
+  const state = (finding) => ({ branch: 'b', rounds: [{ head: 'x', findings: [finding] }] });
+  for (const verdict of ['pending', 'confirmed', 'not-reproduced', 'cannot-verify']) {
+    assert.equal(isValidState(state({ ...p1('a.js'), id: 'R1-1', verdict, note: 'n' })), true, verdict);
+  }
+  assert.equal(isValidState(state(p1('a.js'))), true, 'a pre-Refuter P1');
+  for (const bad of [{ ...p1('a.js'), verdict: 'maybe' }, { ...p1('a.js'), id: 3 }, { ...p1('a.js'), note: 1 }, null]) {
+    assert.equal(isValidState(state(bad)), false, JSON.stringify(bad));
+  }
 });

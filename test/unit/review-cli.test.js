@@ -109,7 +109,8 @@ test('round 1: read-only codex with stdin closed, verdict and summary printed, P
   assert.doesNotMatch(r.out, /fake codex chatter/, 'codex output goes to the log, not the terminal');
   assert.doesNotMatch(r.out, /No blocking findings: the review is done/);
 
-  assert.equal(t.body(), `What this does: tests.\nKind: infra\n\nReview rounds: 1/3\nReviewed head: ${head}\n\nReview follow-up: #42\n`);
+  assert.equal(t.body(), `What this does: tests.\nKind: infra\n\nReview rounds: 1/3\nReviewed head: ${head}\n\nReview follow-up: #42\n\n` +
+    'Refuter: 0 confirmed, 0 not reproduced, 0 escalated, 1 pending\n');
   assert.match(t.ghCalls(), /^pr edit 7 --body-file /m);
   const s = t.state();
   assert.equal(s.branch, BRANCH);
@@ -236,7 +237,7 @@ test('rounds 2 and 3 ask for P1 only, list earlier findings, update the body in 
   assert.match(prompt2, new RegExp(`commits after ${h1}`));
   assert.match(r2.out, /Same class twice: kit\/a\.js/);
   assert.equal(t.body(), `What this does: tests.\nKind: infra\n\nReview rounds: 2/3\nReviewed head: ${h2}\n\nReview follow-up: #42\n\n` +
-    'Review stop: same class twice — kit/a.js\n');
+    'Refuter: 0 confirmed, 0 not reproduced, 0 escalated, 2 pending\n\nReview stop: same class twice — kit/a.js\n');
 
   const h3 = t.commit('three');
   const r3 = t.review([], { FAKE_CODEX_VERDICT: t.verdict(CLEAN_VERDICT) });
@@ -246,7 +247,7 @@ test('rounds 2 and 3 ask for P1 only, list earlier findings, update the body in 
   assert.match(t.codexArgs(), new RegExp(`commits after ${h2}`));
   assert.match(r3.out, /No blocking findings: the review is done/);
   assert.equal(t.body(), `What this does: tests.\nKind: infra\n\nReview rounds: 3/3\nReviewed head: ${h3}\n\nReview follow-up: #42\n\n` +
-    'Review stop: same class twice — kit/a.js\n');
+    'Refuter: 0 confirmed, 0 not reproduced, 0 escalated, 2 pending\n\nReview stop: same class twice — kit/a.js\n');
 
   t.commit('four');
   t.resetCodex();
@@ -481,7 +482,8 @@ test('a failed follow-up issue still counts the round, exits 1 and prints the co
   assert.doesNotMatch(r.err, /label create/, 'the label step worked, so it is not in the retry');
   assert.match(r.err, /add "Review follow-up: #<issue>" to the PR body/);
   assert.match(fs.readFileSync(file, 'utf8'), /- \[ \] Rename var — kit\/b\.js/);
-  assert.equal(t.body(), `What this does: tests.\nKind: infra\n\nReview rounds: 1/3\nReviewed head: ${head}\n`, 'the body is still updated');
+  assert.equal(t.body(), `What this does: tests.\nKind: infra\n\nReview rounds: 1/3\nReviewed head: ${head}\n\n` +
+    'Refuter: 0 confirmed, 0 not reproduced, 0 escalated, 1 pending\n', 'the body is still updated');
 
   const u = setup();
   u.openPr();
@@ -649,4 +651,141 @@ test('main is exported for in-process use', (t) => {
   const { main } = require(cli);
   assert.equal(typeof main, 'function');
   assert.equal(main(['--bogus'], {}), 2);
+});
+
+const REFUTE_HINT = 'npm run review -- --refute <id> <confirmed|not-reproduced|cannot-verify> [--note "<evidence>"]';
+
+test('a round with P1s gives each an id, prints the Refuter block and is not done', () => {
+  const t = setup();
+  t.openPr();
+  const head = t.commit();
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict('- [P1] A — kit/a.js:1\n- [P2] B — kit/b.js:1\n- [P1] C — kit/c.js:1\n') });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(t.state().rounds[0].findings.map((f) => [f.id, f.verdict]), [['R1-1', 'pending'], [undefined, undefined], ['R1-2', 'pending']]);
+  const summary = r.out.indexOf('Round 1/3');
+  const block = r.out.indexOf('Refuter: test each P1 before fixing it.');
+  assert.ok(summary >= 0 && block > summary, 'the Refuter block follows the summary');
+  assert.match(r.out, /^ {2}R1-1 {2}A — kit\/a\.js$/m);
+  assert.match(r.out, /^ {2}R1-2 {2}C — kit\/c\.js$/m);
+  assert.ok(r.out.includes(`Delegate each to the Refuter agent (.claude/agents/refuter.md) with the head SHA (${head}), then record the result with ${REFUTE_HINT}`));
+  assert.doesNotMatch(r.out, /the review is done/);
+  assert.match(t.body(), /^Refuter: 0 confirmed, 0 not reproduced, 0 escalated, 2 pending$/m);
+
+  const clean = setup();
+  clean.openPr();
+  clean.commit();
+  const c = clean.review([], { FAKE_CODEX_VERDICT: clean.verdict(P2_ONLY) });
+  assert.doesNotMatch(c.out, /Refuter/);
+  assert.doesNotMatch(clean.body(), /Refuter/, 'no P1, no Refuter line');
+  assert.match(c.out, /the review is done/);
+});
+
+test('--refute records verdicts without a reviewer run or a round, updates the body, and says when the review is done', () => {
+  const t = setup();
+  t.openPr();
+  t.commit();
+  assert.equal(t.review([], { FAKE_CODEX_VERDICT: t.verdict('- [P1] A — kit/a.js:1\n- [P1] B — kit/b.js:1\n') }).code, 0);
+  t.resetCodex();
+  const calls = t.ghCalls();
+
+  const r1 = t.review(['--refute', 'R1-1', 'not-reproduced', '--note', 'node --test test/a.test.js: 4 pass, 0 fail']);
+  assert.equal(r1.code, 0, r1.err);
+  assert.match(r1.out, /Recorded R1-1 \(A — kit\/a\.js\): not-reproduced\./);
+  assert.match(r1.out, /Still blocking: R1-2 \(pending\)\./);
+  assert.doesNotMatch(r1.out, /the review is done/);
+  assert.ok(!t.codexRan() && !t.claudeRan(), 'no reviewer run');
+  const s = t.state();
+  assert.equal(s.rounds.length, 1, 'no round counted');
+  assert.equal(s.rounds[0].findings[0].verdict, 'not-reproduced');
+  assert.equal(s.rounds[0].findings[0].note, 'node --test test/a.test.js: 4 pass, 0 fail');
+  assert.equal(t.body().match(/^Refuter: 0 confirmed, 1 not reproduced, 0 escalated, 1 pending$/gm).length, 1);
+  assert.doesNotMatch(t.ghCalls().slice(calls.length), /issue|label/);
+
+  const r2 = t.review(['--refute', 'R1-2', 'not-reproduced']);
+  assert.equal(r2.code, 0, r2.err);
+  assert.match(r2.out, /No blocking findings: the review is done/);
+  assert.equal(t.body().match(/^Refuter: 0 confirmed, 2 not reproduced, 0 escalated, 0 pending$/gm).length, 1, 'replaced in place');
+
+  const r3 = t.review(['--refute', 'R1-2', 'confirmed']);
+  assert.equal(r3.code, 0, r3.err);
+  assert.match(r3.out, /Still blocking: R1-2 \(confirmed\)/);
+  assert.equal(t.state().rounds[0].findings[1].note, undefined);
+  assert.match(t.body(), /^Refuter: 1 confirmed, 1 not reproduced, 0 escalated, 0 pending$/m);
+});
+
+test('cannot-verify is escalated, keeps blocking after later clean rounds, and works over budget for earlier rounds', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('one');
+  assert.equal(t.review([], { FAKE_CODEX_VERDICT: t.verdict('- [P1] Needs live auth — kit/auth.js:1\n') }).code, 0);
+  const r = t.review(['--refute', 'R1-1', 'cannot-verify', '--note', 'needs a live OAuth token']);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /R1-1 is escalated to the human: the Refuter could not verify it\. Tell them; do not drop it\./);
+  assert.match(r.out, /Still blocking: R1-1 \(cannot-verify\)/);
+  assert.match(t.body(), /^Refuter: 0 confirmed, 0 not reproduced, 1 escalated, 0 pending$/m);
+
+  for (const n of ['two', 'three']) {
+    t.commit(n);
+    const c = t.review([], { FAKE_CODEX_VERDICT: t.verdict(CLEAN_VERDICT) });
+    assert.equal(c.code, 0, c.err);
+    assert.doesNotMatch(c.out, /the review is done/);
+    assert.match(c.out, /Not done: R1-1 escalated to the human and still open\./);
+  }
+  t.commit('four');
+  assert.equal(t.review([], { FAKE_CODEX_VERDICT: t.verdict(CLEAN_VERDICT) }).code, 3, 'budget spent');
+  t.resetCodex();
+  const late = t.review(['--refute', 'R1-1', 'not-reproduced', '--note', 'the human checked it live']);
+  assert.equal(late.code, 0, late.err);
+  assert.match(late.out, /the review is done/);
+  assert.ok(!t.codexRan());
+  assert.equal(t.state().rounds.length, 3);
+});
+
+test('--refute usage errors and unknown ids exit 2 before gh or a reviewer', () => {
+  const t = setup();
+  t.openPr();
+  t.commit();
+  for (const args of [['--refute'], ['--refute', 'R1-1'], ['--refute', 'R1-1', 'maybe'], ['--refute', 'R1-1', 'confirmed', '--note']]) {
+    const r = t.review(args);
+    assert.equal(r.code, 2, JSON.stringify(args));
+    assert.match(r.err, /usage:/);
+  }
+  const none = t.review(['--refute', 'R1-1', 'confirmed']);
+  assert.equal(none.code, 2, 'no state yet');
+  assert.match(none.err, /No P1 R1-1/);
+  assert.equal(t.ghCalls(), '');
+
+  assert.equal(t.review([], { FAKE_CODEX_VERDICT: t.verdict(P1_VERDICT) }).code, 0);
+  const calls = t.ghCalls();
+  const unknown = t.review(['--refute', 'R1-2', 'confirmed']);
+  assert.equal(unknown.code, 2);
+  assert.match(unknown.err, /No P1 R1-2/);
+  assert.equal(t.ghCalls(), calls, 'refused before gh');
+  assert.equal(t.state().rounds[0].findings[0].verdict, 'pending');
+});
+
+test('a failed PR-body update after --refute keeps the verdict and exits 1', () => {
+  const t = setup();
+  t.openPr();
+  t.commit();
+  assert.equal(t.review([], { FAKE_CODEX_VERDICT: t.verdict(P1_VERDICT) }).code, 0);
+  t.ghFlag('edit-fails');
+  const r = t.review(['--refute', 'R1-1', 'confirmed']);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /R1-1 recorded, but the PR body was not updated/);
+  assert.equal(t.state().rounds[0].findings[0].verdict, 'confirmed');
+});
+
+test('the same-cause stop skips a file whose earlier P1 was not reproduced', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('one');
+  assert.equal(t.review([], { FAKE_CODEX_VERDICT: t.verdict('- [P1] A — kit/a.js:1\n') }).code, 0);
+  assert.equal(t.review(['--refute', 'R1-1', 'not-reproduced']).code, 0);
+  t.commit('two');
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict('- [P1] A again — kit/a.js:2\n') });
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.out, /Same class twice/);
+  assert.doesNotMatch(t.body(), /Review stop/);
+  assert.match(r.out, /^ {2}R2-1 {2}A again — kit\/a\.js$/m);
 });

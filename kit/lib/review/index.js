@@ -1,7 +1,7 @@
 'use strict';
 
-// Cross-model review (Stories 1.1-1.3): the pure half. Rubric, round prompts,
-// verdict parsing, PR-body lines, follow-up text, exemptions and argument parsing. No I/O here; the CLI in
+// Cross-model review (Stories 1.1-1.4): the pure half. Rubric, round prompts,
+// verdict parsing, PR-body lines, follow-up text, exemptions, Refuter verdicts and argument parsing. No I/O here; the CLI in
 // kit/review/cli.js does git, gh, codex and the state file.
 //
 // Budget: three rounds per branch. Round 1 asks for P1 and P2; rounds 2 and 3
@@ -17,7 +17,8 @@ const ROUND_BUDGET = 3;
 const RUBRIC = `Review this branch's changes against origin/main (git diff origin/main...HEAD) and read AGENTS.md.
 Label a finding [P1] only if it is blocking: it loses or corrupts data, breaks auth, permissions or a safety invariant in AGENTS.md, or breaks the main path this branch delivers for today's data and usage.
 Everything else is [P2]: edge cases far beyond today's data, hardening, polish, style, missing tests for non-blocking cases.
-Report each finding as "- [P1|P2] <title> — <path>:<line>" with a short explanation. Say "No blocking findings." if there is no P1.`;
+Report each finding as "- [P1|P2] <title> — <path>:<line>" with a short explanation. Say "No blocking findings." if there is no P1.
+Every finding, including non-blocking ones, must be a line in exactly the "- [P1|P2] <title> — <path>:<line>" format; findings in any other form are ignored.`;
 
 function promptFor(state, { diffOnStdin = false } = {}) {
   const rubric = diffOnStdin
@@ -64,12 +65,20 @@ function unparsedFindingLines(verdict) {
 // The state file is untrusted input: anything but the expected shape stops the run.
 function isValidState(state) {
   return Boolean(state) && typeof state.branch === 'string' && Array.isArray(state.rounds) &&
-    state.rounds.every((r) => r && typeof r.head === 'string' && Array.isArray(r.findings)) &&
+    state.rounds.every((r) => r && typeof r.head === 'string' && Array.isArray(r.findings) && r.findings.every(isValidFinding)) &&
     (state.followup === undefined || (Number.isInteger(state.followup) && state.followup > 0));
 }
 
-// Reviewers paraphrase the rubric's "No blocking findings."; accept the common forms.
-const isClean = (verdict) => /no (blocking |actionable |discrete )?(issues|findings)/i.test(verdict);
+// A P1 recorded before Story 1.4 has no id or verdict; one recorded since has both.
+function isValidFinding(f) {
+  return Boolean(f) && typeof f === 'object' && (f.id === undefined || typeof f.id === 'string') &&
+    (f.verdict === undefined || f.verdict === 'pending' || REFUTER_VERDICTS.includes(f.verdict)) &&
+    (f.note === undefined || typeof f.note === 'string');
+}
+
+// Reviewers paraphrase the rubric's "No blocking findings."; accept "no" with up
+// to two words before "issues" or "findings" ("I found no new blocking issues").
+const isClean = (verdict) => /\bno\s+(?:[\w-]+\s+){0,2}(?:issues|findings)\b/i.test(verdict);
 
 // A reviewer's output is usable when every finding-like line parses and it has
 // findings or says it is clean. Anything else is a failed attempt.
@@ -82,10 +91,11 @@ function readVerdict(verdict, repoRoot = '') {
   return { findings };
 }
 
-// Files that drew a blocking finding in each of the last two rounds: the "same class twice" stop.
+// Files that drew a blocking finding in each of the last two rounds: the "same
+// class twice" stop. A P1 the Refuter could not reproduce does not count.
 function repeatedBlockingFiles(rounds) {
   if (rounds.length < 2) return [];
-  const blocking = (r) => new Set(r.findings.filter((f) => f.priority === 'P1').map((f) => f.file));
+  const blocking = (r) => new Set(r.findings.filter((f) => f.priority === 'P1' && f.verdict !== 'not-reproduced').map((f) => f.file));
   const last = blocking(rounds[rounds.length - 1]);
   return [...blocking(rounds[rounds.length - 2])].filter((f) => last.has(f));
 }
@@ -96,6 +106,7 @@ const FALLBACK_LINE = /^Review: same-model fallback$/m;
 const FOLLOWUP_LINE = /^Review follow-up:.*$/m;
 const STOP_LINE = /^Review stop:.*$/m;
 const EXEMPT_LINE = /^Review: exempt\b.*$/m;
+const REFUTER_LINE = /^Refuter:.*$/m;
 const KIND_LINE = /^Kind: (user-visible|groundwork|fix|infra|docs)$/m;
 
 // Replaces an existing line in place, otherwise appends it as its own paragraph.
@@ -236,11 +247,52 @@ function withReviewedHeadLine(body, sha) {
   return `${body.trimEnd()}\n\n${line}\n`;
 }
 
-const USAGE = `usage: npm run review [-- --over-budget "<the human's reason>"]`;
+// The Refuter (Story 1.4): each P1 is tested before it blocks. A counted round
+// gives its P1s ids R<round>-<n> and verdict 'pending'; `--refute` records the
+// result. not-reproduced is kept as a record but no longer blocks.
+const REFUTER_VERDICTS = ['confirmed', 'not-reproduced', 'cannot-verify'];
+const REFUTE_USAGE = 'npm run review -- --refute <id> <confirmed|not-reproduced|cannot-verify> [--note "<evidence>"]';
 
-// Strict flags: any argument other than `--over-budget <text>` must not start a paid round.
+function withRefuterIds(round, findings) {
+  let n = 0;
+  return findings.map((f) => (f.priority === 'P1' ? { ...f, id: `R${round}-${++n}`, verdict: 'pending' } : f));
+}
+
+const findP1 = (rounds, id) => rounds.flatMap((r) => r.findings).find((f) => f.priority === 'P1' && f.id === id);
+
+// P1s that still block: the latest round's unless not reproduced (pending blocks
+// until the Refuter has run), plus escalated ones from any round, which only
+// the human clears. An earlier round's other P1s were checked by the round after it.
+function blockingFindings(rounds) {
+  const last = rounds.length - 1;
+  return rounds.flatMap((r, i) => r.findings.filter((f) => f.priority === 'P1' &&
+    (i === last ? f.verdict !== 'not-reproduced' : f.verdict === 'cannot-verify')));
+}
+
+// Counts every P1 on the branch; one recorded before Story 1.4 counts as pending.
+function withRefuterLine(body, rounds) {
+  const p1s = rounds.flatMap((r) => r.findings).filter((f) => f.priority === 'P1');
+  const count = (verdict) => p1s.filter((f) => (f.verdict ?? 'pending') === verdict).length;
+  return withLine(body, REFUTER_LINE, `Refuter: ${count('confirmed')} confirmed, ${count('not-reproduced')} not reproduced, ` +
+    `${count('cannot-verify')} escalated, ${count('pending')} pending`);
+}
+
+// What the CLI prints after a round with P1s: each pending one and what to do with it.
+function refuterBlock(findings, head) {
+  const pending = findings.filter((f) => f.priority === 'P1' && f.verdict === 'pending');
+  if (!pending.length) return '';
+  return `\nRefuter: test each P1 before fixing it.\n${pending.map((f) => `  ${f.id}  ${f.title} — ${f.file}`).join('\n')}\n` +
+    `Delegate each to the Refuter agent (.claude/agents/refuter.md) with the head SHA (${head}), then record the result with ` +
+    `${REFUTE_USAGE}`;
+}
+
+const USAGE = `usage: npm run review [-- --over-budget "<the human's reason>"]\n       ${REFUTE_USAGE}`;
+
+// Strict flags: any argument other than `--over-budget <text>` must not start a
+// paid round. `--refute` takes the whole argument list and never starts one.
 function parseArgs(argv) {
   if (argv.includes('--help') || argv.includes('-h')) return { help: true };
+  if (argv.includes('--refute')) return parseRefute(argv);
   let overBudget;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] !== '--over-budget') return { error: `unknown argument: ${argv[i]}` };
@@ -250,6 +302,16 @@ function parseArgs(argv) {
     }
   }
   return { overBudget };
+}
+
+function parseRefute(argv) {
+  const [flag, id, verdict, ...rest] = argv;
+  if (flag !== '--refute' || !id || !verdict) return { error: '--refute needs a P1 id and a verdict' };
+  if (!/^R\d+-\d+$/.test(id)) return { error: `not a P1 id: ${id} (they look like R1-2)` };
+  if (!REFUTER_VERDICTS.includes(verdict)) return { error: `verdict must be one of ${REFUTER_VERDICTS.join(', ')}, not ${verdict}` };
+  if (!rest.length) return { refute: { id, verdict } };
+  if (rest[0] !== '--note' || rest.length !== 2 || !rest[1].trim()) return { error: '--refute takes only --note "<evidence>" after the verdict' };
+  return { refute: { id, verdict, note: rest[1] } };
 }
 
 // Branch name -> state file stem. Unsafe bytes become %XX, and % itself is
@@ -274,6 +336,12 @@ module.exports = {
   repeatedBlockingFiles,
   withRoundsLine,
   withReviewedHeadLine,
+  REFUTER_VERDICTS,
+  withRefuterIds,
+  findP1,
+  blockingFindings,
+  withRefuterLine,
+  refuterBlock,
   pickReviewer,
   withFallbackLine,
   withFollowupLine,
