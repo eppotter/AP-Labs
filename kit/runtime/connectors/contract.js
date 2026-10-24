@@ -35,7 +35,8 @@
 //     deps.idempotency ({ get, set }, holding { input, result }) or, by
 //     default, in memory for the instance's life.
 //   - Credentials are read once through kit/lib/secrets (env only) and cached
-//     with the client connect() returns; a missing one fails closed with
+//     with the client connect() returns (or resolves to: connect may be async,
+//     and a rejected connect is dropped, not cached); a missing one fails closed with
 //     ConnectorAuthFailed naming the env var, before any I/O. An auth error
 //     from the system (an error with status 401 or 403, or a thrown
 //     ConnectorAuthFailed) fails closed too and drops the cached client so the
@@ -189,9 +190,19 @@ function defineConnector(spec) {
       if (switched) throw new KillSwitchOn({ connector: declaration.id, system: declaration.system, env: switched });
     }
 
-    // Reads every declared credential (once), then connects (once).
+    // Reads every declared credential (once), then connects (once). connect
+    // may be async: concurrent first calls share one connect, and a rejected
+    // one is dropped so the next call reads the credentials and connects again
+    // (rethrow maps an auth-style rejection to ConnectorAuthFailed).
     function open(operation) {
       if (session) return session;
+      const opening = connectOnce(operation);
+      session = opening;
+      opening.catch(() => { if (session === opening) session = null; });
+      return opening;
+    }
+
+    async function connectOnce(operation) {
       const values = {};
       for (const name of declaration.auth.env) {
         const value = readSecret(name, null, { env });
@@ -203,8 +214,7 @@ function defineConnector(spec) {
         if (!Object.hasOwn(values, name)) throw new Error(`${declaration.id}: ${name} is not a declared credential`);
         return values[name];
       };
-      session = { client: spec.connect ? spec.connect({ secret, simulate: deps.simulate, data: deps.data }) : null };
-      return session;
+      return { client: spec.connect ? await spec.connect({ secret, simulate: deps.simulate, data: deps.data }) : null };
     }
 
     function context(operation, kind, client, extra = {}) {
@@ -248,7 +258,7 @@ function defineConnector(spec) {
     for (const [name, op] of Object.entries(spec.read || {})) {
       read[name] = async (input = {}) => {
         try {
-          const { client } = open(name);
+          const { client } = await open(name);
           return await op(input, context(name, 'read', client));
         } catch (err) {
           return rethrow(err, name);
@@ -284,7 +294,7 @@ function defineConnector(spec) {
               if (!done || done.input !== input) throw conflict();
               return done.result;
             }
-            const { client } = open(name);
+            const { client } = await open(name);
             const result = await op.apply(rest, context(name, 'write', client, { idempotencyKey: key }));
             const settled = result === undefined ? null : result;
             await ledger.set(slot, { input, result: settled });

@@ -392,3 +392,26 @@ test('the template keys each item, so a retry with reordered rows or a new batch
     assert.deepEqual(state.lists.get(listId).items.map((i) => i.id).sort(), ids, `${what}: every row is in the list exactly once`);
   }
 });
+
+test('an async connect is awaited once; a rejected one is dropped, and an auth-style rejection is ConnectorAuthFailed (#82)', async () => {
+  let connects = 0;
+  let fail = 'auth';
+  const c = defineConnector(spec({
+    async connect({ secret }) {
+      connects += 1;
+      await new Promise((r) => setImmediate(r));
+      if (fail === 'auth') throw Object.assign(new Error('invalid_grant'), { status: 401 });
+      if (fail === 'down') throw new Error('connect ECONNRESET');
+      return { token: secret('DEMO_TOKEN') };
+    },
+    read: { get: async (i, ctx) => ctx.request(() => ctx.client.token) },
+  })).create({ env: { DEMO_TOKEN: TOKEN } });
+  await assert.rejects(c.read.get(), ConnectorAuthFailed);
+  fail = 'down';
+  await assert.rejects(c.read.get(), (e) => e instanceof ConnectorFailed && !(e instanceof ConnectorAuthFailed));
+  fail = null;
+  assert.deepEqual(await Promise.all([c.read.get(), c.read.get()]), [TOKEN, TOKEN]);
+  assert.equal(connects, 3, 'each rejection was dropped; the two concurrent calls shared one connect');
+  await c.read.get();
+  assert.equal(connects, 3);
+});
