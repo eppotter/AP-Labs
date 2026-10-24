@@ -4,7 +4,9 @@
 //
 //   npm run verify [-- --strict]
 //
-// Reads verify.checks from .aplabs/profile.yml and spawns each argv in order,
+// Reads verify.checks from .aplabs/profile.yml, then the known truths in
+// .aplabs/context/data.md (Story 4.2, run as checks `truth:<id>` and judged on
+// the number they print), and spawns each argv in order,
 // without a shell, from the repo root (cwd), stdin ignored. A check sees only
 // the fixed env allowlist plus verify.env_allow, and its whole process group
 // is SIGKILLed after its timeout_seconds (kit/lib/verify/runner). One line per check, then a JSON summary as the last stdout
@@ -17,6 +19,7 @@
 const { findProfilePath, loadProfile, PROFILE_REL } = require('../lib/profile');
 const { USAGE, parseArgs, childEnv, tail, checkLine, summarize, exitCode } = require('../lib/verify');
 const { runChecks, installSignalCleanup } = require('../lib/verify/runner');
+const { truthChecksFor } = require('../lib/truths');
 
 const emit = (summary) => console.log(JSON.stringify(summary));
 
@@ -33,6 +36,7 @@ async function main(argv, env = process.env, cwd = process.cwd()) {
   }
 
   let profile;
+  let profileFile;
   try {
     const file = findProfilePath(cwd);
     if (!file) {
@@ -42,6 +46,7 @@ async function main(argv, env = process.env, cwd = process.cwd()) {
       return exitCode(summary, args);
     }
     profile = loadProfile(file);
+    profileFile = file;
   } catch (err) {
     if (err.code !== 'PROFILE_INVALID') throw err;
     console.error(err.message);
@@ -49,7 +54,9 @@ async function main(argv, env = process.env, cwd = process.cwd()) {
     return 2;
   }
 
-  const { checks, env_allow: envAllow } = profile.verify;
+  // The profile's checks, then the known truths in .aplabs/context/data.md.
+  const checks = [...profile.verify.checks, ...truthChecksFor(profileFile)];
+  const envAllow = profile.verify.env_allow;
   if (!checks.length) console.log('verify: SKIPPED (0 checks)');
   installSignalCleanup();
   const { results } = await runChecks(checks, childEnv(env, envAllow), cwd, {

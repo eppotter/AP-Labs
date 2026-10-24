@@ -42,6 +42,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #37 | 2026-10-24 | 3.2 | infra | — | The end-of-turn hook runs the profile's checks and blocks only on a failed one; a check's whole process group is killed on timeout (#24). | DEP-003, DEP-008 |
 | #39 | 2026-10-24 | 1.5 | infra | — | `npm run land` merges a PR only when CI passed, the reviewed head is the head being merged, and no blocker is open. | — |
 | #42 | 2026-10-24 | 4.1 | infra | — | Adds the four client file templates, `npm run onboard` to create and check them, and a banner line until each is signed off by its client owner. | — |
+| #44 | 2026-10-24 | 4.2 | infra | — | Each known truth in `data.md` carries a check that `npm run verify` and the end-of-turn hook run against the client's number; the banner flags truths not checked or signed off. | DEP-010 |
 
 ## Deferrals (DEP)
 
@@ -56,3 +57,4 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | DEP-007 | 2026-10-24 | Orchestrator | open | — | Plan approvals are recorded only in Claude Code sessions; Codex's UserPromptSubmit hook is unproven, so Codex sessions can't record an approval. | Story 2.5 |
 | DEP-008 | 2026-10-24 | Orchestrator | open | — | Watch whether blocking the turn end on any failing check (e.g. mid-TDD red tests) slows builders; Varsity only reported test failures before review. | Story 3.2 |
 | DEP-009 | 2026-10-24 | Orchestrator | open | — | `npm run retro` reads only PR bodies, so it can't flag a PR merged while CI was red (as #19 was); add a CI-state-at-merge check. | docs/planning/implementation-artifacts/retro-epics-2-3-5.md |
+| DEP-010 | 2026-10-24 | Orchestrator | open | — | Block plan approval for data work while a known truth fails its check; deferred from Story 4.2, which only reports failing truths in verify and the end-of-turn hook. | Story 4.2 |

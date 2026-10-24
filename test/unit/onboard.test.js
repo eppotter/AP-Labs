@@ -71,7 +71,7 @@ test('templates carry the sections their specialists load', () => {
   has('guardrails.md', ['Guardrails', 'Protected systems', 'Write paths', 'Approvers', 'Cost limits', 'Rule cards']);
   has('connectors.md', ['Systems', 'Missing connections']);
   has('org.md', ['What the company does', 'Teams', 'Tools and systems', 'Vocabulary']);
-  assert.match(read('data.md'), /Known truths\n\n<!-- PLACEHOLDER: Story 4\.2/);
+  assert.match(read('data.md'), /## Known truths\n\nEach known truth is a fenced block/);
   assert.match(read('guardrails.md'), /- rule:[\s\S]*- owner:[\s\S]*- evidence:[\s\S]*- status:/);
 });
 
@@ -79,6 +79,10 @@ test('parseFrontmatter rejects missing frontmatter, missing fields and bad dates
   assert.match(parseFrontmatter('# no front\n').error, /no frontmatter/);
   assert.match(parseFrontmatter('---\nowner: x\n---\n').error, /missing signed_off, signed_off_by, updated/);
   assert.match(parseFrontmatter('---\nowner: x\nsigned_off: soon\nsigned_off_by: x\nupdated: x\n---\n').error, /ISO date/);
+  for (const bad of ['2026-02-30', '2026-13-01', '2026-04-31', '2025-02-29']) {
+    assert.match(parseFrontmatter(`---\nowner: x\nsigned_off: ${bad}\nsigned_off_by: x\nupdated: x\n---\n`).error, /real ISO date/, bad);
+  }
+  assert.equal(parseFrontmatter('---\nowner: x\nsigned_off: 2028-02-29\nsigned_off_by: x\nupdated: x\n---\n').data.signed_off, '2028-02-29');
   assert.match(parseFrontmatter('---\nowner: [unclosed\n---\n').error, /not valid YAML/);
   assert.match(parseFrontmatter('---\n- a\n---\n').error, /not a mapping/);
   assert.equal(parseFrontmatter(`---\n${SIGNED}\n---\n`).data.signed_off, '2026-10-01');

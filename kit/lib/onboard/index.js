@@ -12,18 +12,18 @@
 //   signed_off_by:  who signed off (the owner, captured by a facilitator)
 //   updated:        ISO date of the last edit
 //
-// A file counts as signed off only when signed_off is a real ISO date and
-// signed_off_by names someone. Anything else (pending, a malformed date,
+// A file counts as signed off only when signed_off is a real calendar date
+// (kit/lib/dates rejects 2026-02-30) and signed_off_by names someone. Anything else (pending, a malformed date,
 // broken frontmatter) is awaiting sign-off.
 
 const fs = require('fs');
 const path = require('path');
 const YAML = require('yaml');
+const { isIsoDate } = require('../dates');
 
 const FILES = ['org.md', 'data.md', 'guardrails.md', 'connectors.md'];
 const FIELDS = ['owner', 'signed_off', 'signed_off_by', 'updated'];
 const TEMPLATES_DIR = path.join(__dirname, '../../templates/context');
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 const USAGE = [
   'usage: npm run onboard -- --init | --status',
@@ -45,7 +45,6 @@ function parseArgs(argv) {
 // The context directory sits beside the profile: <dir of profile.yml>/context.
 const contextDirFor = (profileFile) => path.join(path.dirname(profileFile), 'context');
 
-const isIsoDate = (v) => typeof v === 'string' && ISO_DATE.test(v) && !Number.isNaN(Date.parse(v));
 const filled = (v) => typeof v === 'string' && v.trim() !== '';
 
 // Parses the leading `---` frontmatter block. Returns { data } or { error }.
@@ -62,7 +61,7 @@ function parseFrontmatter(text) {
   const absent = FIELDS.filter((f) => !(f in data));
   if (absent.length) return { error: `frontmatter is missing ${absent.join(', ')}` };
   const s = data.signed_off;
-  if (s !== 'pending' && !isIsoDate(s)) return { error: 'signed_off must be pending or an ISO date (YYYY-MM-DD)' };
+  if (s !== 'pending' && !isIsoDate(s)) return { error: 'signed_off must be pending or a real ISO date (YYYY-MM-DD)' };
   return { data };
 }
 

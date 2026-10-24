@@ -52,7 +52,14 @@ const elapsed = (started) => Math.round(Number(process.hrtime.bigint() - started
 // `timeoutMs` overrides the check's own timeout_seconds (the Stop hook passes
 // the smaller of the two and its own remaining budget); `deadlineHit` is true
 // when the run was killed by that override rather than by the check's timeout.
+//
+// Two optional fields serve known truths (kit/lib/truths): a check with a
+// `problem` fails with that reason and spawns nothing; a check with a
+// `judge(stdout)` that exits 0 gets its outcome from the judge instead.
 function runCheck(check, env, cwd, { timeoutMs } = {}) {
+  if (check.problem) {
+    return Promise.resolve({ id: check.id, seconds: 0, outcome: 'fail', reason: check.problem, stdout: '', stderr: '' });
+  }
   const ownMs = check.timeout_seconds * 1000;
   const limitMs = timeoutMs === undefined ? ownMs : Math.min(ownMs, timeoutMs);
   const started = process.hrtime.bigint();
@@ -71,11 +78,14 @@ function runCheck(check, env, cwd, { timeoutMs } = {}) {
         live.delete(child.pid);
       }
       const r = { status, signal, error };
+      const stdout = Buffer.concat(out.stdout).toString('utf8');
+      let verdict = classify(r);
+      if (verdict.outcome === 'pass' && check.judge) verdict = check.judge(stdout);
       resolve({
         id: check.id,
         seconds: elapsed(started),
-        ...classify(r),
-        stdout: Buffer.concat(out.stdout).toString('utf8'),
+        ...verdict,
+        stdout,
         stderr: Buffer.concat(out.stderr).toString('utf8'),
         ...(error && error.code === 'ETIMEDOUT' && limitMs < ownMs ? { deadlineHit: true } : {}),
       });
