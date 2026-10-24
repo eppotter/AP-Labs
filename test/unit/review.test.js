@@ -521,3 +521,54 @@ test('the prose-finding guard ignores negations, settled P1s, formatted lines an
 test('isClean accepts "defects", "problems" and "bugs" paraphrases (Codex on #57)', () => {
   for (const v of ['No blocking or non-blocking defects were found in the diff.', 'No problems found.', 'I found no bugs.']) assert.ok(isClean(v), v);
 });
+
+// Issue #81: on PR #80 Codex reasoned aloud inside a finding line and the
+// parser filed it as a P2. This is that line, verbatim from the round's -o file.
+const PR80_LINE = '- [P2] Redact credentials from connector initialization errors — `kit/runtime/connectors/contract.js:179` — If `connect()` throws while initializing, the error is caught and sanitized by the caller, but credentials read earlier in the loop are not added to `seen` until after each registration; more importantly, `log.registerSecret` failures or errors that embed credentials can escape before `session` is assigned and may expose details. Wait, credentials are added before connect. The notable issue is `connect()` synchronous throw is caught yes. No finding? Need actual issue. Key inFlight race: ledger.get async concurrent both call, then inFlight check after await; first sets after awaiting ledger get, event scheduling second likewise; first resumes sets inFlight and starts run; likely fine. Durable store not atomic across process (not exactly guarantee). check suite output. Final no findings likely. Verify code concern generated error constructor. Output exact requested.';
+
+test('a finding line that reasons aloud is never filed: the attempt fails (#81, PR #80)', () => {
+  const r = readVerdict(`${PR80_LINE}\n`);
+  assert.equal(r.findings, undefined);
+  assert.match(r.error, /1 finding line\(s\) read like reasoning, not a finding:\n- \[P2\] Redact credentials/);
+  assert.match(readVerdict(`${PR80_LINE}\nVERDICT: CLEAN\n`).error, /read like reasoning/);
+});
+
+test('hedges in a finding line fail the attempt; plain explanations still parse', () => {
+  const hedged = [
+    '- [P2] Retry drops the id — kit/a.js:3 — The message omits it. Wait, it is added later.',
+    '- [P2] Retry drops the id — kit/a.js:3 — Hmm, maybe not.',
+    '- [P2] Retry drops the id — kit/a.js:3 — No finding? Probably fine.',
+    '- [P2] Race in the ledger — kit/a.js:3 — likely fine on one process.',
+    '- [P2] Does the retry drop the id? — kit/a.js:3',
+    '- [P1] Data loss — kit/a.js:3 — Actually, never mind, the guard catches it.',
+  ];
+  for (const line of hedged) assert.match(readVerdict(`${line}\nVERDICT: CLEAN\n`).error ?? '', /read like reasoning/, line);
+  const plain = [
+    '- [P2] Retry drops the id — `kit/a.js:3` — The error says "write failed" without naming the connector, so two connectors are ambiguous.',
+    '- [P1] Gate skips approval — kit/a.js:3 — `approve()` returns early when the plan is missing, so a write runs unapproved; is that path reachable? Yes, from the CLI.',
+    '- [P2] Wait timeout is hard-coded — kit/a.js:3 — The 30 s wait cannot be configured.',
+  ];
+  for (const line of plain) assert.equal(readVerdict(`${line}\nVERDICT: CLEAN\n`).findings?.length, 1, line);
+});
+
+test('only the final structured output counts: reasoning and tool traces in a Codex transcript are ignored (#81)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const transcript = fs.readFileSync(path.join(__dirname, '../fixtures/review/codex-transcript-reasoning.log'), 'utf8');
+  assert.deepEqual(readVerdict(transcript), {
+    findings: [{ priority: 'P2', title: 'Retry message drops the connector id', file: 'kit/runtime/connectors/suite.js' }],
+  });
+  const clean = transcript.replace(/^codex\n[\s\S]*$/m, 'codex\nNo blocking findings.\nVERDICT: CLEAN\ntokens used\n9\n');
+  assert.deepEqual(readVerdict(clean), { findings: [] }, 'a [P1] and a BLOCKING line in the reasoning do not count');
+});
+
+test('thinking blocks are ignored and findings must come before the VERDICT line', () => {
+  const thinking = '<thinking>\n- [P1] Maybe data loss — kit/a.js:1\nVERDICT: BLOCKING\n</thinking>\nNo blocking findings.\nVERDICT: CLEAN\n';
+  assert.deepEqual(readVerdict(thinking), { findings: [] });
+  const after = readVerdict('- [P2] Nit — kit/a.js:2\nVERDICT: CLEAN\n- [P1] Data loss — kit/b.js:1\n');
+  assert.match(after.error, /1 finding line\(s\) after the VERDICT line:\n- \[P1\] Data loss/);
+});
+
+test('the rubric asks for one sentence per finding and no reasoning in the finding line (#81)', () => {
+  assert.match(RUBRIC_BODY, /one sentence per finding; no reasoning in the finding line/i);
+});
