@@ -415,3 +415,25 @@ test('an async connect is awaited once; a rejected one is dropped, and an auth-s
   await c.read.get();
   assert.equal(connects, 3);
 });
+
+test('connect can register a token it obtains, and JSON token fields are masked in errors (#82)', async () => {
+  // Fake values shaped like tokens, not credentials.
+  const obtained = 'fake-oauth-access-Qm4t';
+  const lines = [];
+  const log = createLog({ write: (l) => lines.push(l) });
+  let body = '';
+  const c = defineConnector(spec({
+    async connect({ registerSecret }) { return { token: registerSecret(obtained) }; },
+    read: { get: async (i, ctx) => ctx.request(() => { throw new Error(body); }) },
+  })).create({ env: { DEMO_TOKEN: TOKEN }, log });
+  body = `upstream echoed ${obtained}`;
+  await assert.rejects(c.read.get(), (e) => e instanceof ConnectorFailed && !e.message.includes(obtained));
+  log.info(`token ${obtained}`);
+  assert.ok(!lines.join('\n').includes(obtained), 'the app logger masks it too');
+  body = '{"access_token": "fake-at-1x", "refresh_token":"fake-rt-2y","id_token" :"fake-it-3z","scope":"read"}';
+  await assert.rejects(c.read.get(), (e) => {
+    for (const v of ['fake-at-1x', 'fake-rt-2y', 'fake-it-3z']) assert.ok(!e.message.includes(v), `${v} leaked: ${e.message}`);
+    assert.match(e.message, /"scope":"read"/);
+    return true;
+  });
+});

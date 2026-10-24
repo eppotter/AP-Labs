@@ -8,7 +8,7 @@
 //     auth: { env: ['ACME_CRM_TOKEN'] },          // env var NAMES, never values
 //     killSwitchEnv: 'ACME_CRM_OFF',
 //     rateLimit: { perSecond: 5, batchSize: 100 },
-//     connect: ({ secret }) => makeClient(secret('ACME_CRM_TOKEN')),  // also gets { data, simulate }
+//     connect: ({ secret }) => makeClient(secret('ACME_CRM_TOKEN')),  // also gets { registerSecret, data, simulate }
 //     read: { lookupClient: async (input, ctx) => ctx.request(() => ctx.client.get(...)) },
 //     write: { addContacts: { plan: (input) => preview, apply: async (input, ctx) => result } },
 //   });
@@ -47,7 +47,9 @@
 //     list into batches of batchSize.
 //   - Every error that leaves an operation is a ConnectorFailed (or
 //     ConnectorAuthFailed / KillSwitchOn) built fresh from a redacted message:
-//     the connector's own credentials, credential-shaped strings and the log
+//     the connector's own credentials, any token connect() obtained and passed
+//     to registerSecret, credential-shaped strings (headers, query values,
+//     URL passwords, JSON access_token / refresh_token / id_token) and the log
 //     redactor's patterns are masked, and the original error is not kept.
 
 const crypto = require('node:crypto');
@@ -68,6 +70,7 @@ const PATTERNS = [
   /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi,
   /([?&;](?:access_token|refresh_token|token|api[_-]?key|apikey|key|secret|client_secret|password|signature|sig)=)[^&\s'"<>]+/gi,
   /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/:@'"<>]+:[^\s/@'"<>]+@/gi,
+  /"(?:access_token|refresh_token|id_token)"\s*:\s*"(?:[^"\\]|\\.)*"/gi,
 ];
 
 const isFn = (f) => typeof f === 'function';
@@ -203,18 +206,24 @@ function defineConnector(spec) {
     }
 
     async function connectOnce(operation) {
+      // Masks a value in this connector's errors and in every app log line.
+      const registerSecret = (value) => {
+        if (typeof value !== 'string' || !value) throw new Error(`${declaration.id}: registerSecret takes a non-empty string`);
+        log.registerSecret(value);
+        if (!seen.includes(value)) seen.push(value);
+        return value;
+      };
       const values = {};
       for (const name of declaration.auth.env) {
         const value = readSecret(name, null, { env });
         if (!value) throw new ConnectorAuthFailed(`${name} is not set`, details(operation));
-        values[name] = log.registerSecret(value);
-        if (!seen.includes(value)) seen.push(value);
+        values[name] = registerSecret(value);
       }
       const secret = (name) => {
         if (!Object.hasOwn(values, name)) throw new Error(`${declaration.id}: ${name} is not a declared credential`);
         return values[name];
       };
-      return { client: spec.connect ? await spec.connect({ secret, simulate: deps.simulate, data: deps.data }) : null };
+      return { client: spec.connect ? await spec.connect({ secret, registerSecret, simulate: deps.simulate, data: deps.data }) : null };
     }
 
     function context(operation, kind, client, extra = {}) {
