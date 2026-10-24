@@ -120,6 +120,44 @@ test('round 1: read-only codex with stdin closed, verdict and summary printed, P
   assert.match(t.git('status', '--porcelain'), /^$/, 'state never lands in tracked files');
 });
 
+const CLAUDE_ARGV = [
+  '--print', '--restricted', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk',
+  '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-session-persistence', '--no-chrome', '--disable-slash-commands',
+];
+
+test('Claude reviewer argv is pinned exactly: read-only tools, dontAsk, empty strict MCP, no session, no chrome, no slash commands, reads confined to the repo (--restricted)', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: codex gpt-6-luna');
+  const r = t.review([], { FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 0, r.err);
+  const args = t.claudeArgs();
+  assert.deepEqual(args.slice(0, -1), CLAUDE_ARGV, 'any added or changed flag must be a deliberate test change');
+  assert.equal(args.length, CLAUDE_ARGV.length + 1, 'the prompt is the only other argument');
+  assert.ok(!args.some((a) => /^--(add-dir|dangerously|allow-dangerously|settings|plugin-dir|agents)/.test(a)));
+});
+
+test('later Claude rounds get the full diff, then a header and the diff since the last reviewed head', () => {
+  const t = setup();
+  t.openPr();
+  const h1 = t.commitFiles({ 'kit/a.js': 'const first = 1;\n' }, 'one\n\nAgent: codex gpt-6-luna');
+  assert.equal(t.review([], { FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) }).code, 0);
+  assert.doesNotMatch(fs.readFileSync(path.join(t.claude, 'stdin.txt'), 'utf8'), /Changes since/, 'round 1 has no since section');
+
+  t.commitFiles({ 'kit/b.js': 'const second = 2;\n' }, 'two\n\nAgent: codex gpt-6-luna');
+  const r2 = t.review([], { FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r2.code, 0, r2.err);
+  const stdin = fs.readFileSync(path.join(t.claude, 'stdin.txt'), 'utf8');
+  const header = `===== Changes since ${h1} (git diff ${h1}..HEAD) =====\n`;
+  const [full, since] = stdin.split(header);
+  assert.ok(since !== undefined, 'the since header is on a line of its own');
+  assert.match(full, /const first = 1/);
+  assert.match(full, /const second = 2/);
+  assert.match(since, /const second = 2/);
+  assert.doesNotMatch(since, /const first = 1/);
+  assert.ok(t.claudeArgs().at(-1).includes(`commits after ${h1} (their diff is on stdin after the line "${header.trim()}")`));
+});
+
 test('Codex-authored commits use Claude with exact read-only flags and the three-dot diff on stdin', () => {
   const t = setup();
   t.openPr();
@@ -132,10 +170,7 @@ test('Codex-authored commits use Claude with exact read-only flags and the three
   const r = t.review([], { FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
   assert.equal(r.code, 0, r.err);
   const args = t.claudeArgs();
-  assert.deepEqual(args.slice(0, 13), [
-    '--print', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk',
-    '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-session-persistence', '--no-chrome', '--disable-slash-commands',
-  ]);
+  assert.deepEqual(args.slice(0, CLAUDE_ARGV.length), CLAUDE_ARGV);
   assert.match(args.at(-1), /diff supplied on stdin/);
   assert.doesNotMatch(args.at(-1), /git diff origin\/main\.\.\.HEAD/);
   assert.match(fs.readFileSync(path.join(t.claude, 'stdin.txt'), 'utf8'), /const value = 1/);

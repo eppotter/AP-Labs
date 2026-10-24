@@ -43,14 +43,15 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #39 | 2026-10-24 | 1.5 | infra | — | `npm run land` merges a PR only when CI passed, the reviewed head is the head being merged, and no blocker is open. | — |
 | #42 | 2026-10-24 | 4.1 | infra | — | Adds the four client file templates, `npm run onboard` to create and check them, and a banner line until each is signed off by its client owner. | — |
 | #44 | 2026-10-24 | 4.2 | infra | — | Each known truth in `data.md` carries a check that `npm run verify` and the end-of-turn hook run against the client's number; the banner flags truths not checked or signed off. | DEP-010 |
-| pending | 2026-10-24 | — | fix | — | Hardening: T3 plan reviews must come from the current plan, duplicate ledger tables fail, add-on stage lists can't drift, odd comma numbers are rejected, the banner flags truths that failed at last verify, and fork CI runs verify strictly. | DEP-003, DEP-006 |
+| #46 | 2026-10-24 | — | fix | — | Hardens review and land: later Claude rounds also get the diff since the last reviewed head, the rubric is built from parts, Claude's flags are pinned by a test, a CLEAN verdict hiding a prose blocker fails, and repeated exempt lines refuse a merge. | — |
+| pending | 2026-10-24 | — | fix | — | Hardening: T3 plan reviews must come from the current plan, duplicate ledger tables fail, add-on stage lists can't drift, odd comma numbers are rejected, the banner flags truths that failed at last verify, and fork CI runs verify strictly. | DEP-001, DEP-002, DEP-003, DEP-006 |
 
 ## Deferrals (DEP)
 
 | DEP | Opened | Owner | Status | Blocks | What | Source |
 |---|---|---|---|---|---|---|
-| DEP-001 | 2026-10-24 | Orchestrator | open | — | Non-blocking review follow-ups from PR #12 (Story 1.2). | [#13](https://github.com/eppotter/AP-Labs/issues/13) |
-| DEP-002 | 2026-10-24 | Orchestrator | open | — | Non-blocking review follow-ups from PR #14 (Story 1.3). | [#15](https://github.com/eppotter/AP-Labs/issues/15) |
+| DEP-001 | 2026-10-24 | Orchestrator | closed | — | Non-blocking review follow-ups from PR #12 (Story 1.2). | [#13](https://github.com/eppotter/AP-Labs/issues/13) |
+| DEP-002 | 2026-10-24 | Orchestrator | closed | — | Non-blocking review follow-ups from PR #14 (Story 1.3). | [#15](https://github.com/eppotter/AP-Labs/issues/15) |
 | DEP-003 | 2026-10-24 | Orchestrator | closed | — | Non-blocking review follow-ups from PR #23 (Story 3.1). | [#24](https://github.com/eppotter/AP-Labs/issues/24) |
 | DEP-004 | 2026-10-24 | Orchestrator | open | Story 4.3 | Story 4.3 (prove onboarding on Brightside) is deferred to the fixture phase: it needs the Brightside dataset. | `docs/planning/planning-artifacts/epics.md` (Story 4.3) |
 | DEP-005 | 2026-10-24 | Orchestrator | open | — | The Codex SessionStart and gate output formats are unproven against a live, trusted Codex session. | [#27](https://github.com/eppotter/AP-Labs/pull/27) |
