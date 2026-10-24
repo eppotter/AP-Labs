@@ -27,6 +27,11 @@
 // Seam: canUse(person, module) returns 'allowed' | 'denied' | 'error' (true
 // and false are read as allowed and denied); person is { id, user } with user
 // the profile user or null. Tests may inject their own.
+//
+// Data (Story 7.5): a handler gets ctx.data.run(sql, params), the query runner
+// (kit/runtime/data) with the manifest's declared parameter names, so a
+// parameter the manifest does not declare is refused. When the data is
+// unavailable the person is told so plainly and the app keeps running.
 
 const access = require('../access');
 const { NotSetUp, AccessDenied, ConfigFault } = require('../errors');
@@ -36,6 +41,7 @@ const {
   buildMenu, buildHelp, moduleIdFromAction, hubIdFromHelpAction, OPEN_ACTION, HELP_ACTION,
 } = require('../registry/menu');
 const { isVisible } = require('../registry');
+const { DATA_UNAVAILABLE, DataUnavailableError } = require('../data');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 
@@ -85,7 +91,20 @@ function joinedUser(event) {
   return u && typeof u === 'object' ? u : null;
 }
 
-function registerHubs(app, { registry, profile, env, log, store, canUse = defaultCanUse(profile) }) {
+// The data a module's handler sees: run() with the manifest's parameters as
+// the declared names. Without a data source, every run is unavailable.
+function moduleData(data, mod) {
+  const declared = (mod.parameters || []).map((p) => p.name);
+  return Object.freeze({
+    run: (sql, params) => {
+      if (!data) return Promise.reject(new DataUnavailableError('no data source'));
+      return data.run(sql, params, { declared });
+    },
+    describe: () => (data ? data.describe() : { available: false }),
+  });
+}
+
+function registerHubs(app, { registry, profile, env, log, store, data = null, canUse = defaultCanUse(profile) }) {
   const admin = access.adminContact(profile);
   const personOf = (slackId) => ({ id: slackId, user: access.personFor(profile, slackId) });
   const decide = (person, mod) => {
@@ -153,12 +172,19 @@ function registerHubs(app, { registry, profile, env, log, store, canUse = defaul
     }
     const name = await personName(client, user, log);
     log.info('module dispatched', { module: mod.id, hub: mod.hub });
-    await mod.run({
-      person: { id: user.id, name },
-      client: { id: profile.client.id, name: profile.client.name },
-      module: { id: mod.id, label: mod.label },
-      reply: (message) => respond(ephemeral(message)),
-    });
+    try {
+      await mod.run({
+        person: { id: user.id, name },
+        client: { id: profile.client.id, name: profile.client.name },
+        module: { id: mod.id, label: mod.label },
+        data: moduleData(data, mod),
+        reply: (message) => respond(ephemeral(message)),
+      });
+    } catch (err) {
+      if (!err || err.code !== 'DATA_UNAVAILABLE') throw err;
+      log.warn('data unavailable', { module: mod.id, reason: err.reason || err.message });
+      await respond(ephemeral(DATA_UNAVAILABLE));
+    }
   }, { log, store }));
 }
 

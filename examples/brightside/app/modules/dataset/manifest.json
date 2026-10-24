@@ -1,0 +1,10 @@
+{
+  "id": "dataset",
+  "hub": "brightside",
+  "label": "Dataset",
+  "description": "See which data the bot reads: its source, version, as-of date and table sizes.",
+  "resource": "DATASET",
+  "archetype": "handler",
+  "environments": ["dev", "prod"],
+  "handler": "handler.js"
+}

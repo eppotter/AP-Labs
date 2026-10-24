@@ -17,6 +17,11 @@
 // App dir: APLABS_APP_DIR (absolute), else <repo>/app (AD-2). Environment:
 // APLABS_ENV (default "dev"); module entries show only where they say.
 //
+// Story 7.5: boot opens the data file (kit/runtime/data: APLABS_DATA_PATH,
+// else the built fixture) read-only and locked. A missing or unreadable file
+// is logged and the app starts anyway; a module that needs the data tells the
+// person it is unavailable.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
@@ -31,6 +36,7 @@ const { registerGreeting } = require('../slack/greeting');
 const { registerHubs } = require('../slack/hubs');
 const { loadRegistry, ENV_PATTERN } = require('../registry');
 const { createStore } = require('../store');
+const { createData, dataPathFor } = require('../data');
 
 const REPO = path.resolve(__dirname, '../../..');
 const DEFAULT_ENV = 'dev';
@@ -90,12 +96,18 @@ function checkConfig({ env, cwd, deps = {} }) {
     problems.push(...loaded.problems.map((p) => `app: ${p}`));
     registry = loaded.registry;
   }
-  return { problems, tokens, profile, profilePath, registry, env: runEnv };
+  let dataFile = null;
+  if (profile) {
+    const d = dataPathFor(profile, env);
+    if (d.problem) problems.push(d.problem);
+    dataFile = d.path || null;
+  }
+  return { problems, tokens, profile, profilePath, registry, dataFile, env: runEnv };
 }
 
 // Builds the Bolt app in Socket Mode with the redacting logger. App is
 // injectable so tests use a fake Slack client.
-function createApp({ tokens, profile, registry, env, store, log, App }) {
+function createApp({ tokens, profile, registry, env, store, data, log, App }) {
   const AppClass = App || require('@slack/bolt').App;
   const app = new AppClass({
     token: tokens.SLACK_BOT_TOKEN,
@@ -108,7 +120,7 @@ function createApp({ tokens, profile, registry, env, store, log, App }) {
     log.error('slack app error', { err });
   });
   registerGreeting(app, { profile, log, store });
-  registerHubs(app, { registry, profile, env, log, store });
+  registerHubs(app, { registry, profile, env, log, store, data });
   return app;
 }
 
@@ -124,10 +136,19 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
 
   // createApp inside the try: a throw while building the app (it may carry a
   // token) still goes through the redacting logger.
+  // The data never blocks boot: a failed open is logged, and retried on use.
+  const data = deps.data || createData({ file: cfg.dataFile, profile: cfg.profile });
+  try {
+    await data.open();
+  } catch (err) {
+    if (err.code !== 'DATA_UNAVAILABLE') throw err;
+    log.warn('data unavailable; starting anyway', { source: data.describe().source, reason: err.reason });
+  }
+
   let app;
   try {
     const store = deps.store || createStore({ now: deps.now });
-    app = createApp({ ...cfg, store, log, App: deps.App });
+    app = createApp({ ...cfg, store, data, log, App: deps.App });
     await app.start();
   } catch (err) {
     log.error('could not connect to Slack', { err });
@@ -140,9 +161,10 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     env: cfg.env,
     hubs: cfg.registry.hubs.map((h) => h.command),
     modules: cfg.registry.modules.length,
+    data: data.describe().available ? 'available' : 'unavailable',
     instance: 'single instance',
   });
-  return { code: 0, app, log };
+  return { code: 0, app, log, data };
 }
 
 // Anything that escapes main() is logged through the same redacting logger
@@ -163,7 +185,7 @@ module.exports = { main, checkConfig, createApp, installCrashHandlers, SECRETS }
 if (require.main === module) {
   const log = createLog();
   const bootFailed = installCrashHandlers(log);
-  main({ deps: { log } }).then(({ code, app }) => {
+  main({ deps: { log } }).then(({ code, app, data }) => {
     if (code !== 0) {
       process.exitCode = code;
       // Bolt may hold the process open after a failed start.
@@ -172,7 +194,10 @@ if (require.main === module) {
     }
     const stop = (signal) => {
       log.info('stopping', { signal });
-      Promise.resolve(app.stop()).finally(() => process.exit(0));
+      Promise.resolve(app.stop()).finally(() => {
+        data.close();
+        process.exit(0);
+      });
     };
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);

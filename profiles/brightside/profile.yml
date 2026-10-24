@@ -42,6 +42,10 @@ resources:
   - key: HELLO_WORLD
     label: Say hello
     open_access: true
+  # Runtime: the Dataset module (Story 7.5). Open until access by profile (Story 6.3).
+  - key: DATASET
+    label: Dataset
+    open_access: true
 
 users:
   - id: dana
