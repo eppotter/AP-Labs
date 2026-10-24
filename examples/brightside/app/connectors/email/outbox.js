@@ -26,9 +26,12 @@
 // One writer at a time, across processes. A bot and a CLI can both write, so
 // each check-then-append runs inside transaction(), which holds an exclusive
 // lockfile (<file>.lock, holding the owner's pid) and reads the file once.
-// A lock whose pid has exited, or older than lockStaleMs, is stale and taken
-// over. A live lock is waited on for up to lockWaitMs, then the write fails
-// loudly (a retry with the same key is safe). One residual gap: taking over a
+// A lock whose owner pid is alive is never taken over, however old it is (a
+// slow writer keeps its lock). A lock is stale, and taken over, only when its
+// pid has exited, or when the file holds no readable pid and is older than
+// lockStaleMs (a writer that died mid-create). A live lock is waited on for up
+// to lockWaitMs, then the write fails loudly (a retry with the same key is
+// safe). One residual gap: taking over a
 // stale lock is rename-then-check, so two processes taking over the same stale
 // lock in the same instant could, in theory, both proceed. This is a mock; a
 // real store would use the vendor's own idempotency.
@@ -110,7 +113,8 @@ function lockfile(lock, { waitMs, staleMs }) {
     let pid;
     try { ({ pid } = JSON.parse(text)); } catch (_) { pid = undefined; }
     const known = Number.isInteger(pid) && pid > 0;
-    const stale = Date.now() - stat.mtimeMs > staleMs || (known && !alive(pid));
+    // A live owner is never stale; age only expires a lock with no readable pid.
+    const stale = known ? !alive(pid) : Date.now() - stat.mtimeMs > staleMs;
     return { pid: known ? pid : undefined, stale, text };
   }
 
@@ -152,7 +156,8 @@ function lockfile(lock, { waitMs, staleMs }) {
   };
 }
 
-// opts: lockWaitMs (default 2000), lockStaleMs (default 30000).
+// opts: lockWaitMs (default 2000), lockStaleMs (default 30000; applies only to
+// a lock file with no readable pid).
 function openOutbox(file, { lockWaitMs = 2000, lockStaleMs = 30_000 } = {}) {
   if (typeof file !== 'string' || !file) throw new Error('the outbox needs a file path');
   const acquire = lockfile(`${file}.lock`, { waitMs: lockWaitMs, staleMs: lockStaleMs });

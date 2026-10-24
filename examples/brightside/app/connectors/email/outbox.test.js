@@ -1,8 +1,9 @@
 'use strict';
 
 // The outbox's own safety: owner-only permissions on an existing file, and one
-// writer at a time across processes (a lockfile around check-then-append, with
-// stale locks taken over). Every test writes to its own temporary outbox.
+// writer at a time across processes (a lockfile around check-then-append, a
+// lock taken over only when its owner is gone). Every test writes to its own
+// temporary outbox.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -78,18 +79,35 @@ test('outbox: a lock left by a process that has exited is taken over', () => {
   assert.equal(fs.existsSync(`${file}.lock`), false);
 });
 
-test('outbox: a lock older than the stale age is taken over, even from a live pid', (t) => {
+test('outbox: a lock held by a live pid is never taken over, however old: the second writer fails loudly', (t) => {
   const file = freshPath();
-  holdLock(file, liveProcess(t), new Date(Date.now() - 120_000));
-  openOutbox(file, { lockWaitMs: 100, lockStaleMs: 60_000 }).append(list('a'));
-  assert.deepEqual(lines(file).map((l) => l.key), ['a']);
+  const outbox = openOutbox(file, { lockWaitMs: 100, lockStaleMs: 60_000 });
+  outbox.append(list('a'));
+  const pid = liveProcess(t);
+  holdLock(file, pid, new Date(Date.now() - 120_000));
+  const before = fs.readFileSync(`${file}.lock`, 'utf8');
+  assert.throws(() => outbox.append(list('b')), new RegExp(`locked by another process \\(pid ${pid}\\)`));
+  assert.deepEqual(lines(file).map((l) => l.key), ['a'], 'nothing appended');
+  assert.equal(fs.readFileSync(`${file}.lock`, 'utf8'), before, 'the live writer keeps its lock');
 });
 
-test('outbox: an unreadable lock file is treated as held, not as free', () => {
+test('outbox: an unparseable lock file is treated as held while it is newer than the stale age', () => {
   const file = freshPath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(`${file}.lock`, 'garbage');
   assert.throws(() => openOutbox(file, { lockWaitMs: 50 }).append(list('a')), /locked by another process/);
+  assert.ok(fs.existsSync(`${file}.lock`));
+});
+
+test('outbox: an unparseable lock file older than the stale age is taken over', () => {
+  const file = freshPath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const old = new Date(Date.now() - 120_000);
+  fs.writeFileSync(`${file}.lock`, 'garbage');
+  fs.utimesSync(`${file}.lock`, old, old);
+  openOutbox(file, { lockWaitMs: 50, lockStaleMs: 60_000 }).append(list('a'));
+  assert.deepEqual(lines(file).map((l) => l.key), ['a']);
+  assert.equal(fs.existsSync(`${file}.lock`), false);
 });
 
 test('outbox: several processes checking then appending the same keys at once record each key exactly once', async () => {
