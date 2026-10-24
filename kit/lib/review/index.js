@@ -125,6 +125,12 @@ function withFallbackLine(body, fallback) {
     (m, lead, before, after) => (lead ? `${lead}${before.length + after.length ? '\n' : ''}` : ''));
 }
 
+// A counted round means the PR was reviewed after all: drop a stale exempt line.
+function withoutExemptLine(body) {
+  return body.replace(/(^|\n)(\n*)Review: exempt\b[^\n]*(?:\n|$)(\n*)/,
+    (m, lead, before, after) => (lead ? `${lead}${before.length + after.length ? '\n' : ''}` : ''));
+}
+
 function withRoundsLine(body, rounds) {
   return withLine(body, ROUNDS_LINE, `Review rounds: ${rounds}/${ROUND_BUDGET}`);
 }
@@ -198,10 +204,18 @@ function isConfigPath(file) {
   return /\.(json|ya?ml|toml)$/i.test(base) || base === '.gitignore' || base === '.editorconfig';
 }
 
-// Why a PR needs no review round, or null. subjects are the commit subjects in
-// origin/main..HEAD; changes come from parseNumstat on origin/main...HEAD.
-function exemptionFor({ subjects, changes }) {
-  if (subjects.length && subjects.every((s) => s.startsWith('Revert "'))) return 'revert';
+// The commit a `git revert` message says it undoes, or null.
+function revertedCommit(message) {
+  const m = /^This reverts commit ([0-9a-f]{40})\.?$/m.exec(message);
+  return m ? m[1] : null;
+}
+
+// Why a PR needs no review round, or null. commits are origin/main..HEAD, each
+// with verifiedRevert: the CLI sets it only when the commit's diff is exactly
+// the reverse of the commit its message names. A "Revert" title alone is
+// forgeable and never exempts. changes come from parseNumstat on origin/main...HEAD.
+function exemptionFor({ commits, changes }) {
+  if (commits.length && commits.every((c) => c.verifiedRevert)) return 'revert';
   if (!changes.length || changes.some((c) => isProtectedPath(c.file))) return null;
   if (changes.every((c) => isDocsPath(c.file))) return 'docs only';
   const lines = changes.reduce((n, c) => n + (c.added ?? Infinity) + (c.deleted ?? Infinity), 0);
@@ -272,6 +286,8 @@ module.exports = {
   parseNumstat,
   isProtectedPath,
   exemptionFor,
+  revertedCommit,
+  withoutExemptLine,
   parseArgs,
   sanitizeBranch,
 };

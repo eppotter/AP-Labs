@@ -555,6 +555,18 @@ test('exempt PRs run no reviewer, count no round and say why in the body', () =>
   }
 });
 
+test('a commit merely titled Revert is reviewed: the exemption is verified, not trusted', () => {
+  const t = setup();
+  t.openPr();
+  t.commitFiles({ 'kit/a.js': 'module.exports = 1;\n' }, 'Add a');
+  t.git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  t.commitFiles({ '.github/ci.yml': 'on: never\n' }, 'Revert "Add a"');
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.out, /Exempt from review/);
+  assert.ok(t.codexRan(), 'forged revert is reviewed');
+});
+
 test('process, dependency, binary and larger changes are never exempt', () => {
   const cases = {
     'agent instructions': { 'AGENTS.md': 'Rules\n' },

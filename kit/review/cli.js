@@ -42,6 +42,8 @@ const {
   followupIssue,
   parseNumstat,
   exemptionFor,
+  revertedCommit,
+  withoutExemptLine,
   parseArgs,
   sanitizeBranch,
 } = require('../lib/review');
@@ -125,7 +127,17 @@ function main(argv, env = process.env, cwd = process.cwd()) {
   };
 
   const exempt = exemptionFor({
-    subjects: git('log', '--format=%s', 'origin/main..HEAD').split('\n').filter(Boolean),
+    commits: git('rev-list', 'origin/main..HEAD').split('\n').filter(Boolean).map((sha) => {
+      const target = revertedCommit(git('log', '-1', '--format=%B', sha));
+      if (!target) return { verifiedRevert: false };
+      try {
+        const diff = (a, b) => raw('git', ['diff', '--no-ext-diff', '--no-textconv', a, b]);
+        const mine = diff(`${sha}^`, sha);
+        return { verifiedRevert: mine.length > 0 && mine === diff(target, `${target}^`) };
+      } catch {
+        return { verifiedRevert: false };
+      }
+    }),
     changes: parseNumstat(raw('git', ['diff', '--numstat', '-z', '--no-renames', '--no-textconv', 'origin/main...HEAD'])),
   });
   if (exempt) {
@@ -239,7 +251,7 @@ function main(argv, env = process.env, cwd = process.cwd()) {
     }
   }
 
-  let text = withFallbackLine(withReviewedHeadLine(withRoundsLine(pr.body || '', round), head), selection.fallback);
+  let text = withFallbackLine(withReviewedHeadLine(withRoundsLine(withoutExemptLine(pr.body || ''), round), head), selection.fallback);
   if (state.followup) text = withFollowupLine(text, state.followup);
   if (!editBody(withStopLine(text, repeated))) {
     console.error(`Round ${round} counted, but the PR body was not updated. Run: ${ghBin} pr edit ${pr.number} --body-file ${bodyPath}`);

@@ -27,6 +27,8 @@ const {
   parseNumstat,
   isProtectedPath,
   exemptionFor,
+  revertedCommit,
+  withoutExemptLine,
   parseArgs,
   sanitizeBranch,
 } = require('../../kit/lib/review');
@@ -276,31 +278,32 @@ test('protected paths cover process, security and dependency files at any depth'
 test('exemptionFor: reverts, docs-only and small config changes are exempt; protected paths never are', () => {
   const ch = (file, added = 1, deleted = 0) => ({ file, added, deleted });
   const docs = [ch('README.md'), ch('docs/guide.mdx'), ch('docs/diagram.svg'), ch('kit/NOTES.MD')];
-  assert.equal(exemptionFor({ subjects: ['Revert "Add x"'], changes: [ch('kit/a.js', 50, 50)] }), 'revert');
-  assert.equal(exemptionFor({ subjects: ['Revert "Add x"', 'Revert "Add y"'], changes: [ch('.github/ci.yml')] }), 'revert');
-  assert.equal(exemptionFor({ subjects: ['Revert "Add x"', 'Fix y'], changes: [ch('kit/a.js')] }), null);
-  assert.equal(exemptionFor({ subjects: ['Reverting x'], changes: [ch('kit/a.js')] }), null);
-  assert.equal(exemptionFor({ subjects: [], changes: [] }), null, 'nothing to classify is not exempt');
-  assert.equal(exemptionFor({ subjects: ['wip'], changes: [] }), null);
+  const rev = (verifiedRevert) => ({ verifiedRevert });
+  assert.equal(exemptionFor({ commits: [rev(true)], changes: [ch('kit/a.js', 50, 50)] }), 'revert');
+  assert.equal(exemptionFor({ commits: [rev(true), rev(true)], changes: [ch('.github/ci.yml')] }), 'revert');
+  assert.equal(exemptionFor({ commits: [rev(true), rev(false)], changes: [ch('kit/a.js')] }), null);
+  assert.equal(exemptionFor({ commits: [rev(false)], changes: [ch('kit/a.js')] }), null, 'a forged Revert title is not verified');
+  assert.equal(exemptionFor({ commits: [], changes: [] }), null, 'nothing to classify is not exempt');
+  assert.equal(exemptionFor({ commits: [rev(false)], changes: [] }), null);
 
-  assert.equal(exemptionFor({ subjects: ['docs'], changes: docs }), 'docs only');
-  assert.equal(exemptionFor({ subjects: ['docs'], changes: [...docs, ch('AGENTS.md')] }), null);
-  assert.equal(exemptionFor({ subjects: ['docs'], changes: [ch('.github/PULL_REQUEST_TEMPLATE.md')] }), null);
-  assert.equal(exemptionFor({ subjects: ['docs'], changes: [ch('CLAUDE.md')] }), null);
-  assert.equal(exemptionFor({ subjects: ['docs'], changes: [...docs, ch('kit/a.js')] }), null);
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: docs }), 'docs only');
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [...docs, ch('AGENTS.md')] }), null);
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('.github/PULL_REQUEST_TEMPLATE.md')] }), null);
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('CLAUDE.md')] }), null);
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [...docs, ch('kit/a.js')] }), null);
 
   const small = 'config changes of 10 lines or fewer';
-  assert.equal(exemptionFor({ subjects: ['cfg'], changes: [ch('a.json', 4, 1), ch('b.yml', 2, 0), ch('c.yaml', 1, 0), ch('d.toml', 1, 0),
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('a.json', 4, 1), ch('b.yml', 2, 0), ch('c.yaml', 1, 0), ch('d.toml', 1, 0),
     ch('.gitignore', 1, 0)] }), small, 'exactly 10 lines');
-  assert.equal(exemptionFor({ subjects: ['cfg'], changes: [ch('sub/.editorconfig', 2, 2)] }), small);
-  assert.equal(exemptionFor({ subjects: ['cfg'], changes: [ch('a.json', 6, 5)] }), null, '11 lines');
-  assert.equal(exemptionFor({ subjects: ['cfg'], changes: [ch('a.json', 1, 0), { file: 'b.json', added: null, deleted: null }] }), null,
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('sub/.editorconfig', 2, 2)] }), small);
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('a.json', 6, 5)] }), null, '11 lines');
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('a.json', 1, 0), { file: 'b.json', added: null, deleted: null }] }), null,
     'a binary disqualifies');
   for (const file of ['package.json', 'package-lock.json', '.github/dependabot.yml', '.claude/settings.json', '_bmad/config.yaml',
     '.aplabs/rules.json', '.codex/config.toml', '.agents/x.yaml']) {
-    assert.equal(exemptionFor({ subjects: ['cfg'], changes: [ch(file)] }), null, file);
+    assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch(file)] }), null, file);
   }
-  assert.equal(exemptionFor({ subjects: ['mixed'], changes: [ch('README.md'), ch('a.json')] }), null, 'docs plus config is neither');
+  assert.equal(exemptionFor({ commits: [{ verifiedRevert: false }], changes: [ch('README.md'), ch('a.json')] }), null, 'docs plus config is neither');
 });
 
 test('isValidState accepts an optional positive integer follow-up issue', () => {
@@ -308,4 +311,17 @@ test('isValidState accepts an optional positive integer follow-up issue', () => 
   for (const followup of [0, -1, 1.5, '42', null]) {
     assert.equal(isValidState({ branch: 'b', rounds: [], followup }), false, JSON.stringify(followup));
   }
+});
+
+test('revertedCommit reads the sha a git revert message names', () => {
+  const sha = 'a'.repeat(40);
+  assert.equal(revertedCommit(`Revert "Add x"\n\nThis reverts commit ${sha}.\n`), sha);
+  assert.equal(revertedCommit('Revert "Add x"\n\nNo sha here.'), null);
+  assert.equal(revertedCommit(`This reverts commit ${'a'.repeat(39)}.`), null);
+});
+
+test('withoutExemptLine drops a stale exempt line and nothing else', () => {
+  assert.equal(withoutExemptLine('A\n\nReview: exempt — docs only\n'), 'A\n\n');
+  assert.equal(withoutExemptLine('A\nReview: exempt — revert\nB'), 'A\nB');
+  assert.equal(withoutExemptLine('A\n```\n\n\n\n```\nB'), 'A\n```\n\n\n\n```\nB');
 });
