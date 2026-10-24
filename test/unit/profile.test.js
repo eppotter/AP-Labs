@@ -32,8 +32,16 @@ test('fills defaults on a minimal profile', () => {
   assert.deepEqual(p.inert, []);
   assert.deepEqual(p.gate, { exempt: [], engagement_ttl_minutes: 60 });
   assert.deepEqual(p.resources, []);
-  assert.deepEqual(p.verify, { checks: [] });
+  assert.deepEqual(p.verify, { checks: [], env_allow: [] });
   assert.deepEqual(p.users[0], { id: 'solo', name: 'Solo', role: 'admin', identities: {}, grants: [], deny: [] });
+});
+
+test('defaults a verify check timeout to 300 seconds', () => {
+  const p = loadProfile(fixture('full'));
+  assert.equal(p.verify.checks[0].timeout_seconds, 300);
+  const q = validateProfile({ ...parsed('minimal'), verify: { checks: [{ id: 'u', run: ['x'], timeout_seconds: 5 }], env_allow: ['DB_URL'] } });
+  assert.equal(q.verify.checks[0].timeout_seconds, 5);
+  assert.deepEqual(q.verify.env_allow, ['DB_URL']);
 });
 
 test('defaults admin_grantable to true and open_access to false', () => {
@@ -66,6 +74,10 @@ test('rejects schema violations', () => {
   rejects({ ...parsed('minimal'), gate: { engagement_ttl_minutes: 0 } }, /engagement_ttl_minutes/);
   rejects({ ...parsed('minimal'), verify: { checks: [{ id: 'unit', run: 'npm test' }] } }, /\/verify\/checks\/0\/run must be array/);
   rejects({ ...parsed('minimal'), verify: { checks: [{ id: 'unit', run: [] }] } }, /\/verify\/checks\/0\/run/);
+  rejects({ ...parsed('minimal'), verify: { checks: [{ id: 'unit', run: ['x'], timeout_seconds: 0 }] } }, /timeout_seconds/);
+  rejects({ ...parsed('minimal'), verify: { checks: [{ id: 'unit', run: ['x'], timeout_seconds: 3601 }] } }, /timeout_seconds/);
+  rejects({ ...parsed('minimal'), verify: { env_allow: ['lower'] } }, /\/verify\/env_allow\/0/);
+  rejects({ ...parsed('minimal'), verify: { env_allow: ['A', 'A'] } }, /\/verify\/env_allow/);
   rejects([], /must be a YAML mapping/);
   rejects(null, /must be a YAML mapping/);
 });

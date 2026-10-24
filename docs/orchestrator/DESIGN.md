@@ -38,6 +38,8 @@ Scope and order of work: [ADR 0002](../adr/0002-engagement-starter-template.md),
 
 **Removed:** Varsity's Leadership Panel (seven business-unit personas). It was rarely used.
 
+**Roster:** each agent above except the Orchestrator is a file in [`.claude/agents/`](../../.claude/agents/). `test/unit/agents.test.js` pins the roster and every agent's tool list, so changing either is a design change.
+
 ## 3. Two kinds of build (decided)
 
 **Regular build:** a feature, fix or change. The Onboarder is not involved. The specialists load the client's files.
@@ -152,6 +154,8 @@ Adapted from CanonCRM (`docs/agent-coordination.md` §5 and its p3 adapter).
 
 - **A ledger row per build,** plus `DEP` rows for anything deferred or blocked. Missing shared infrastructure is routed to its owner, never built inside a feature.
 - **A measured retro** at each phase boundary, after every 5 merged PRs, and when a PR exhausts its review budget. Each breach becomes a rule edit or a structural check.
+
+The measurement is `npm run retro -- --since YYYY-MM-DD` (or `--prs 11,12,14` for a named set; `--json` for the raw result). Run it at each epic boundary, after every 5 merged PRs, and when a PR exhausts its review budget. It reads merged PRs through `gh` and prints one row per PR from the lines the review script writes (Kind, review rounds, fallback or exemption), plus commits and hours from open to merge. Under the table it flags each breach: more than 3 review rounds, a `Review stop:` line, fix PRs above 25% of PRs with a known Kind, and a reviewed PR with no Kind line. PRs with none of the review lines predate the tooling: they are listed but never counted as breaches.
 
 ## 8. Open
 

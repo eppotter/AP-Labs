@@ -19,7 +19,7 @@ test('scaffold layout exists', () => {
     'kit/lib/profile/index.js',
     'kit/lib/permissions/index.js',
     'kit/lib/tier/index.js',
-    'kit/verify/run-all.sh',
+    'kit/verify/run-all.js',
     'profiles/_schema/profile.schema.json',
     'profiles/brightside/profile.yml',
     'examples/brightside-install',
@@ -46,8 +46,10 @@ test('not-implemented helper throws a coded error', () => {
   assert.throws(() => notImplemented('x')(), { code: 'NOT_IMPLEMENTED' });
 });
 
-test('verify harness reports zero checks as skipped, not passed', () => {
-  const out = execFileSync('bash', [at('kit/verify/run-all.sh')], { encoding: 'utf8' });
-  assert.match(out, /SKIPPED/);
+test('verify harness reports this repo (no profile) as skipped, not passed', () => {
+  const env = { PATH: process.env.PATH };
+  const out = execFileSync(process.execPath, [at('kit/verify/run-all.js')], { cwd: root, env, encoding: 'utf8' });
+  assert.match(out, /SKIPPED \(no \.aplabs\/profile\.yml\)/);
   assert.doesNotMatch(out, /PASS/);
+  assert.equal(JSON.parse(out.trim().split('\n').pop()).ok, false);
 });
