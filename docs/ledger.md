@@ -58,6 +58,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #70 | 2026-10-24 | 7.5 | user-visible | T3 | Every query now runs through one locked, read-only reader behind the SQL guardrail, and a Dataset entry on /brightside shows the data's source, version, as-of date and table sizes; missing data is reported plainly and the app keeps running (MotherDuck stays DEP-011). | — |
 | #72 | 2026-10-24 | 6.4 | user-visible | T1 | The first time a person opens a hub they see its short welcome above the menu; every menu ends with Help listing only what they can use and how to give feedback; and a person who joins the workspace gets a private hello naming the hubs they can use. | — |
 | #74 | 2026-10-24 | 6.5 | groundwork | T2 | A builder adds a module by copying `kit/templates/module` into the app dir and filling in its manifest; a bad manifest fails tests and startup naming the module and field; app code imports the engine only through `#sdk`; and a CI job proves the template runs with the Brightside example deleted. | — |
+| #75 | 2026-10-24 | — | docs | T1 | Epic 6 retro (7 PRs, no breaches), sprint tracker brought up to date, and a build-loop rule: two stories that edit the same engine file don't run in parallel unless the later builder resolves the merge. | — |
 
 ## Deferrals (DEP)
 

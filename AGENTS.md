@@ -102,6 +102,7 @@ Scope changes mid-program: `bmad-correct-course`. Do not route to BMAD's build, 
 ### The build loop, per story
 
 1. Delegate the story to the builder. The brief ends with: "stop after reporting; never start another story; do not open a PR".
+   Before running two stories in parallel, compare the files each will touch. If both edit the same engine file, run them one after the other, or tell the later builder to merge main and resolve the conflicts itself before it reports.
 2. When it reports, verify its worktree before anything else: the right branch, a clean `git status`, and the local head equal to the pushed head.
 3. If the branch conflicts with main, merge main in.
 4. Open a draft PR. The body starts with `**What this does:**` and has a `Kind:` line.
