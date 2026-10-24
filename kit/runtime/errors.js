@@ -60,7 +60,8 @@ class ConnectorFailed extends RuntimeRefusal {
 }
 
 // The system refused the connector's credentials, or a declared credential is
-// not set. Reads and writes fail closed: no data comes back. Same details.
+// not set (then details.setup is true: a setup fault, worded apart from a
+// rejected key). Reads and writes fail closed: no data comes back. Same details.
 class ConnectorAuthFailed extends ConnectorFailed {
   constructor(reason, details) {
     super(reason, details);

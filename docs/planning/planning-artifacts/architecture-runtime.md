@@ -202,7 +202,7 @@ Dependency rule: arrows point inward only. Engine code never `require`s or names
 
 - **Binds:** CAP-4, CAP-9, CAP-10, UX-DR2
 - **Prevents:** each module inventing its refusal wording; a config fault shown as a denial.
-- **Rule:** Engine code throws typed errors (`NotSetUp`, `AccessDenied`, `ConfigFault`, `GuardrailBlocked`, `DataUnavailable`, `LlmUnavailable`, `SessionExpired`, `PreviewInvalid`, `KillSwitchOn`). `kit/runtime/messages.js` maps each to one plain message with a next step. Handlers never build refusal text themselves.
+- **Rule:** Engine code throws typed errors (`NotSetUp`, `AccessDenied`, `ConfigFault`, `GuardrailBlocked`, `DataUnavailable`, `LlmUnavailable`, `SessionExpired`, `PreviewInvalid`, `KillSwitchOn`, `ConnectorFailed`, `ConnectorAuthFailed`, `IdempotencyConflict`). `kit/runtime/messages.js` maps each to one plain message with a next step. A connector auth failure has two messages: a credential that is not set is a setup fault (`details.setup`, worded like `ConfigFault`), and a credential the system rejected says so; neither reads as a passing outage. Handlers never build refusal text themselves.
 
 ### AD-18: Fixture tooling is offline and separate from the runtime
 

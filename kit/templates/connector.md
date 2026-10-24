@@ -43,7 +43,7 @@ Inside an operation, `ctx` has `client` (from `connect`), `request(fn, { size })
 - **Fail closed.** A missing credential or an auth error from the system fails the call with `ConnectorAuthFailed`; a read never returns empty or partial data instead. Any other failure is a `ConnectorFailed`.
 - **No credential in an error.** Every error is rebuilt from a redacted message: the connector's credentials, tokens passed to `registerSecret`, `Bearer` and `Basic` headers, `token=`-style query values, passwords in URLs and JSON `access_token`, `refresh_token` and `id_token` fields are masked. The original error is not kept, so nothing on it leaks.
 
-`kit/runtime/messages` turns `KillSwitchOn` and `ConnectorFailed` into a plain message for the person; the reason goes to the log only.
+`kit/runtime/messages` turns `KillSwitchOn`, `ConnectorFailed`, `ConnectorAuthFailed` and `IdempotencyConflict` into a plain message for the person; the reason goes to the log only. A missing credential (a setup fault) and a credential the system rejected get different messages, and neither says to try again later.
 
 ## The contract suite
 

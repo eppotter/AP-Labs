@@ -294,8 +294,23 @@ test('kill-switch and connector errors have plain messages that name the system,
   assert.equal(messageFor(new KillSwitchOn({ ...d, env: 'DEMO_OFF' })), 'Sending to Demo &lt;CRM&gt; is switched off right now, so nothing was sent. Please tell your admin.');
   const failed = new ConnectorFailed('HTTP 500 from host', d);
   assert.equal(messageFor(failed), "I couldn't reach Demo &lt;CRM&gt; just now. Please try again later, or tell your admin if it keeps happening.");
-  assert.equal(messageFor(new ConnectorAuthFailed('HTTP 401', d)), messageFor(failed));
   assert.ok(!messageFor(failed).includes('500'));
+});
+
+test('a missing key, a rejected key, an outage and a reused key each get their own plain message (AD-17, #82)', async () => {
+  const d = { connector: 'demo', system: 'Demo', operation: 'get' };
+  const missing = await defineConnector(spec()).create({ log: quietLog(), env: {} }).read.get().catch((e) => e);
+  assert.ok(missing instanceof ConnectorAuthFailed && missing.details.setup === true, 'a missing key is flagged as a setup fault');
+  const rejected = await defineConnector(spec({ read: { get: async (i, ctx) => ctx.request(() => { throw Object.assign(new Error('no'), { status: 401 }); }) } }))
+    .create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } }).read.get().catch((e) => e);
+  assert.ok(rejected instanceof ConnectorAuthFailed && !rejected.details.setup);
+  const words = [missing, rejected, new ConnectorFailed('HTTP 500', d), new IdempotencyConflict('reused', d)].map(messageFor);
+  assert.equal(words[0], "Demo isn't set up correctly, so I can't reach it. I've logged the problem; please tell your admin.");
+  assert.equal(words[1], "Demo turned down my sign-in, so I couldn't reach it. Please tell your admin; trying again won't help until it's fixed.");
+  assert.equal(words[2], "I couldn't reach Demo just now. Please try again later, or tell your admin if it keeps happening.");
+  assert.equal(words[3], "That was already sent to Demo with different contents, so I didn't send it again. Please tell your admin.");
+  assert.equal(new Set(words).size, 4);
+  for (const w of words) assert.doesNotMatch(w, /DEMO_TOKEN|401|500|reused/);
 });
 
 test('the template\'s own test passes once copied into a fork', (t) => {

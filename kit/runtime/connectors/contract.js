@@ -242,7 +242,7 @@ function defineConnector(spec) {
       const values = {};
       for (const name of declaration.auth.env) {
         const value = readSecret(name, null, { env });
-        if (!value) throw new ConnectorAuthFailed(`${name} is not set`, details(operation));
+        if (!value) throw new ConnectorAuthFailed(`${name} is not set`, { ...details(operation), setup: true });
         values[name] = registerSecret(value);
       }
       const secret = (name) => {
@@ -297,7 +297,9 @@ function defineConnector(spec) {
       const reason = clean(raw);
       if (isAuthError(err)) {
         session = null;
-        throw new ConnectorAuthFailed(reason, details(operation));
+        // setup: a credential is not set (a setup fault), not a rejected one.
+        const setup = err instanceof ConnectorAuthFailed && err.details && err.details.setup === true;
+        throw new ConnectorAuthFailed(reason, setup ? { ...details(operation), setup: true } : details(operation));
       }
       throw new ConnectorFailed(reason, details(operation));
     }
