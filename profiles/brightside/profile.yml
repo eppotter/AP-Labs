@@ -9,6 +9,8 @@ client:
 # Blast radius. Highest match wins; unmatched code floors at T1.
 tiers:
   T3:
+    # Access decisions: who can use what (in a client fork this file is .aplabs/profile.yml, always T3).
+    - "profiles/**"
     - "billing/**"
     - "customers/export/**"
     # Runtime: writes to client systems, connections and secrets.
