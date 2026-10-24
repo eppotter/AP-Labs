@@ -252,6 +252,45 @@ test('publish: refuses with no build, no checks, or a stale build', async (t) =>
   assert.match(noChecks.stderr, /no checks/);
 });
 
+// Issue #85: no profile means no forbidden columns are known, so publish
+// refuses with exit 2, exactly like validate and query, before any check runs.
+test('publish: no profile fails closed with exit 2, before any check, token read or connection', async (t) => {
+  const f = await fixture(t);
+  let keychainReads = 0;
+  const r = await runMain(publish, [f.dir, '--db', f.db], {
+    env: withToken, cwd: f.root, readKeychain: () => { keychainReads += 1; return null; },
+  });
+  assert.equal(r.code, 2, r.all);
+  assert.match(r.stderr, /fixture:publish: no profile \(pass --profile, set APLABS_PROFILE or add \.aplabs\/profile\.yml\); nothing was published/);
+  assert.doesNotMatch(r.all, /PASS|FAIL/);
+  assert.equal(keychainReads, 0);
+});
+
+// Issue #87: --db can name any file. Publish uploads only a build of these
+// seeds: a file whose stamp is genuine for other data, or that has no valid
+// stamp, is refused before the token is read.
+test('publish: refuses a file that is not the build of these seeds, even when validly stamped (issue #87)', async (t) => {
+  const f = await fixture(t);
+  const other = path.join(f.root, 'other', 'fixture');
+  fs.cpSync(f.dir, other, { recursive: true });
+  const shops = path.join(other, 'seeds', 'shops.csv');
+  fs.writeFileSync(shops, fs.readFileSync(shops, 'utf8').replace('00402', '98101'));
+  const foreign = path.join(f.root, 'other.duckdb');
+  await build({ fixtureDir: other, out: foreign });
+  let keychainReads = 0;
+  const opts = { env: withToken, readKeychain: () => { keychainReads += 1; return null; } };
+  const r = await pub({ ...f, db: foreign }, [], opts);
+  assert.equal(r.code, 1, r.all);
+  assert.match(r.stderr, /is not the npm run fixture:build output of these seeds.*nothing was published/s);
+
+  const unstamped = path.join(f.root, 'unstamped.duckdb');
+  await build({ fixtureDir: f.dir, out: unstamped, stamp: false });
+  const u = await pub({ ...f, db: unstamped }, [], opts);
+  assert.equal(u.code, 1, u.all);
+  assert.match(u.stderr, /has no valid fixture:build stamp.*nothing was published/s);
+  assert.equal(keychainReads, 0);
+});
+
 test('publish: a missing token exits 1 with how to configure it, after the Keychain is consulted', async (t) => {
   const f = await fixture(t);
   const asked = [];

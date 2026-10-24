@@ -20,7 +20,7 @@ try {
   throw new Error('fixture-validate tests: @duckdb/node-api is not installed. Run npm ci in this worktree, then rerun npm test.');
 }
 
-const { build, isFixtureBuild } = require('../../kit/fixture/build');
+const { build, isFixtureBuild, isBuildOf, readRows } = require('../../kit/fixture/build');
 const { readHeader, loadChecks, validate, parseArgs } = require('../../kit/fixture/validate');
 const query = require('../../kit/fixture/query');
 
@@ -150,6 +150,42 @@ test('a check that lifts a protected column runs only on the fixture:build outpu
   const junk = path.join(tmpDir(t), 'junk.duckdb');
   fs.writeFileSync(junk, 'not a database');
   assert.equal(await isFixtureBuild(junk), false);
+});
+
+// Issue #87: the stamp must not be carried into other data. It names a digest
+// of the file's whole content, so a fixed string or a stamp copied from a real
+// build onto other rows is not a build.
+test('the build stamp is bound to the file content: a fixed or copied stamp is not a build (issue #87)', async (t) => {
+  const genuine = await builtDb(t);
+  const [{ comment }] = await readRows(genuine, "SELECT comment FROM duckdb_tables() WHERE table_name = 'fixture_meta'");
+  assert.match(comment, /^aplabs fixture:build \(synthetic seeds\) content-sha256:[0-9a-f]{64}$/);
+  assert.equal(await isFixtureBuild(genuine), true);
+
+  // The pre-#87 stamp, a fixed string anyone could write onto any file.
+  const legacy = path.join(tmpDir(t), 'legacy.duckdb');
+  await build({ fixtureDir: MINI, out: legacy, stamp: 'aplabs fixture:build (synthetic seeds)' });
+  assert.equal(await isFixtureBuild(legacy), false);
+
+  // A genuine stamp carried onto other rows ("real" postal codes, same shape and counts).
+  const other = path.join(tmpDir(t), 'other');
+  fs.cpSync(MINI, other, { recursive: true });
+  const shops = path.join(other, 'seeds', 'shops.csv');
+  fs.writeFileSync(shops, fs.readFileSync(shops, 'utf8').replace('00402', '98101'));
+  const carried = path.join(tmpDir(t), 'carried.duckdb');
+  await build({ fixtureDir: other, out: carried, stamp: comment });
+  assert.equal(await isFixtureBuild(carried), false);
+  const results = await validate({ checks: loadChecks(FIXTURE), db: carried, forbiddenColumns: ['shops.postal_code'] });
+  const lifted = results.find((r) => r.id === 'shops-postal-code-digits');
+  assert.equal(lifted.outcome, 'fail');
+  assert.match(lifted.error, /^refused: protected-columns runs only on the npm run fixture:build output/);
+
+  // The same data built and stamped for real is a build of its own seeds, not of MINI's.
+  const own = path.join(tmpDir(t), 'own.duckdb');
+  await build({ fixtureDir: other, out: own });
+  assert.equal(await isFixtureBuild(own), true);
+  assert.equal(await isBuildOf(own, other), true);
+  assert.equal(await isBuildOf(own, MINI), false);
+  assert.equal(await isBuildOf(genuine, MINI), true);
 });
 
 test('a check that is not a read-only query fails as could not run', async (t) => {

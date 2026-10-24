@@ -20,7 +20,15 @@ APLABS_PROFILE="$PWD/profiles/brightside/profile.yml" npm run fixture:validate
 APLABS_PROFILE="$PWD/profiles/brightside/profile.yml" npm run fixture:publish
 ```
 
-`fixture:publish` refuses, and changes nothing remotely, unless the local build exists, is not older than the seeds, and every check passes. It then:
+`fixture:publish` refuses, and changes nothing remotely, unless all of these hold:
+
+- a profile governs (`--profile`, `APLABS_PROFILE` or `.aplabs/profile.yml`). With no profile the forbidden columns are unknown, so it exits 2 before any check runs, like `fixture:validate`.
+- the local build exists and is not older than the seeds.
+- the build carries a valid `fixture:build` stamp. The stamp names a hash of the file's whole content, so a stamp written by hand or copied onto other data does not count.
+- the build holds exactly what a fresh build of the seeds holds. Publish rebuilds the seeds into a temporary file (offline, about a second) and compares. `--db` can name any file, and only the synthetic seeds are ever published.
+- every check passes.
+
+Every refusal happens before the token is read or a connection opens. It then:
 
 1. uploads the build to `brightside_fixture__publishing`,
 2. adds a `fixture_publish` table recording the fixture version, seeds hash, as-of date, publish time and row counts,

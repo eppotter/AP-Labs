@@ -8,8 +8,13 @@
 // Replaces the shared MotherDuck database (default <client>_fixture, see
 // kit/fixture/remote databaseNameFor) with the local build, in this order:
 //
-//   1. Refuse unless the build exists, matches seeds/fixture_meta.csv (not
-//      stale) and every checks/*.sql passes (kit/fixture/validate).
+//   1. Refuse unless a profile governs (its forbidden columns guard the
+//      checks; no profile is exit 2, as in validate and query, issue #85),
+//      the build exists, matches seeds/fixture_meta.csv (not stale), carries
+//      a valid build stamp, holds exactly what a fresh build of the seeds
+//      holds (kit/fixture/build isBuildOf, issue #87: --db can name any
+//      file, and only the synthetic seeds are published) and every
+//      checks/*.sql passes (kit/fixture/validate).
 //   2. Read the token (kit/lib/secrets); a missing one exits 1 saying how to
 //      set it. It is registered with the redactor before connecting.
 //   3. Upload the build to <database>__publishing, add the fixture_publish
@@ -18,7 +23,8 @@
 //   4. Swap: CREATE OR REPLACE DATABASE <database> FROM <staging> (a
 //      MotherDuck copy), check the result, then drop staging.
 //
-// Any failure before step 4 leaves the shared database as it was. The swap
+// Every refusal in step 1 or 2 comes before any connection, so it changes
+// nothing remotely. Any failure before step 4 leaves the shared database as it was. The swap
 // itself is one statement but not a transaction with the drop: if the drop
 // fails, the next publish removes the leftover staging copy first.
 // Exit codes: 0 published, 1 refused or failed (closing the connection
@@ -26,9 +32,9 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { defaultOut } = require('./build');
+const { defaultOut, isFixtureBuild, isBuildOf, FixtureBuildError } = require('./build');
 const { loadChecks, validate, resultLine, notBuilt, shownPath, PROFILE_ERRORS } = require('./validate');
-const { governingProfilePath, loadProfile } = require('../lib/profile');
+const { governingProfilePath, loadProfile, PROFILE_REL } = require('../lib/profile');
 const { forbiddenColumnsOf } = require('../runtime/sql');
 const remote = require('./remote');
 
@@ -111,23 +117,26 @@ async function main(argv, deps = {}) {
     err(`fixture:publish: --database: ${badName}`);
     return 2;
   }
-  let forbiddenColumns = [];
-  let clientId = null;
+  // No profile means no forbidden columns are known: refuse (issue #85).
+  let profile;
   try {
     const profileFile = governingProfilePath(args.profile, cwd, env);
-    if (profileFile) {
-      const profile = loadProfile(profileFile);
-      forbiddenColumns = forbiddenColumnsOf(profile);
-      clientId = profile.client.id;
+    if (!profileFile) {
+      err(`fixture:publish: no profile (pass --profile, set APLABS_PROFILE or add ${PROFILE_REL}); nothing was published`);
+      return 2;
     }
+    profile = loadProfile(profileFile);
   } catch (e) {
     if (!PROFILE_ERRORS.has(e.code)) throw e;
     err(`fixture:publish: ${e.message}`);
     return 2;
   }
 
-  // 1. Local: built, not stale, every check passes. Nothing secret yet.
-  const db = args.db ? path.resolve(cwd, args.db) : defaultOut(fixtureDir, args.name, env, clientId);
+  const forbiddenColumns = forbiddenColumnsOf(profile);
+
+  // 1. Local: built, not stale, the seeds' own build, every check passes.
+  // Nothing secret yet.
+  const db = args.db ? path.resolve(cwd, args.db) : defaultOut(fixtureDir, args.name, env, profile.client.id);
   if (!fs.existsSync(db)) {
     err(`fixture:publish: ${notBuilt(shownPath(cwd, db))}`);
     return 1;
@@ -135,6 +144,23 @@ async function main(argv, deps = {}) {
   const local = await remote.localSnapshot({ fixtureDir, db });
   if (local.stale.length) {
     err(`fixture:publish: the build is older than the seeds:\n  ${local.stale.join('\n  ')}\nRun npm run fixture:build, then publish again.`);
+    return 1;
+  }
+  const shownDb = shownPath(cwd, db);
+  if (!(await isFixtureBuild(db))) {
+    err(`fixture:publish: ${shownDb} has no valid fixture:build stamp (it was not written by npm run fixture:build, or changed since); nothing was published`);
+    return 1;
+  }
+  let seedsBuild;
+  try {
+    seedsBuild = await isBuildOf(db, fixtureDir);
+  } catch (e) {
+    if (!(e instanceof FixtureBuildError)) throw e;
+    err(`fixture:publish: the seeds in ${shownPath(cwd, fixtureDir)} do not build: ${e.message}; nothing was published`);
+    return 1;
+  }
+  if (!seedsBuild) {
+    err(`fixture:publish: ${shownDb} is not the npm run fixture:build output of these seeds (${shownPath(cwd, fixtureDir)}): its content differs from a fresh build. Run npm run fixture:build, then publish again; nothing was published`);
     return 1;
   }
   const checks = loadChecks(fixtureDir);
