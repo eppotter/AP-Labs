@@ -52,7 +52,7 @@ test.after(async () => {
 test('every check in checks/ passes on the committed seeds, with Brightside\'s forbidden columns', async (t) => {
   const { out } = await builtFixture();
   const checks = loadChecks(FIXTURE_DIR);
-  assert.equal(checks.length, 12);
+  assert.equal(checks.length, 13);
   const results = await validate({ checks, db: out, forbiddenColumns: FORBIDDEN });
   assert.deepEqual(results.filter((r) => r.outcome !== 'pass'), []);
 });
@@ -118,7 +118,7 @@ function writeCsv(file, { cols, rows }) {
 // The breaks: one per check, each touching rows no other break touches. A
 // break's pick(t_, take) chooses its rows from the unedited seeds and returns
 // the edit, so it picks the same rows alone or with the others.
-const TABLES = ['crews', 'clients', 'invoices', 'payments', 'visits', 'plans', 'plan_price_changes', 'crew_memberships', 'fixture_meta'];
+const TABLES = ['crews', 'clients', 'invoices', 'payments', 'visits', 'plans', 'plan_price_changes', 'invoice_lines', 'crew_memberships', 'fixture_meta'];
 const BREAKS = [
   {
     // A crew in a zone that does not exist. DuckDB enforces the schema's
@@ -205,6 +205,16 @@ const BREAKS = [
       const priced = t_.plans.rows.find((p) => !used.plans.has(p.plan_id));
       take('plans', priced.plan_id);
       return () => { priced.price_cents = String(Number(priced.price_cents) + 1); };
+    },
+  },
+  {
+    // A package line that also names an add-on (issue #77 item 7).
+    check: 'integrity-invoice-line-item',
+    pick: (t_, take, used) => {
+      const addOn = t_.invoice_lines.rows.find((l) => l.add_on_id !== '').add_on_id;
+      const line = t_.invoice_lines.rows.find((l) => l.package_id !== '' && !used.invoices.has(l.invoice_id));
+      take('invoices', line.invoice_id);
+      return () => { line.add_on_id = addOn; };
     },
   },
   {
