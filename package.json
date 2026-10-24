@@ -12,7 +12,7 @@
     "review": "node kit/review/cli.js",
     "retro": "node kit/retro/cli.js",
     "notify": "node kit/notify/cli.js",
-    "verify": "bash kit/verify/run-all.sh"
+    "verify": "node kit/verify/run-all.js"
   },
   "dependencies": {
     "ajv": "8.20.0",
