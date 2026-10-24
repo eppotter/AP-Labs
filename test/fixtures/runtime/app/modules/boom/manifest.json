@@ -1,0 +1,10 @@
+{
+  "id": "boom",
+  "hub": "beta",
+  "label": "Boom",
+  "description": "Always fails.",
+  "resource": "OPEN_THING",
+  "archetype": "handler",
+  "environments": ["dev"],
+  "handler": "handler.js"
+}

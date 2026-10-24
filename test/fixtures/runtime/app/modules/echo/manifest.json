@@ -1,0 +1,10 @@
+{
+  "id": "echo",
+  "hub": "alpha",
+  "label": "Echo",
+  "description": "Says who you are & where <you> are.",
+  "resource": "OPEN_THING",
+  "archetype": "handler",
+  "environments": ["dev", "prod"],
+  "handler": "handler.js"
+}

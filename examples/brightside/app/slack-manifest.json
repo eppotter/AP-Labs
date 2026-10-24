@@ -12,16 +12,32 @@
     "bot_user": {
       "display_name": "Brightside Bot (dev)",
       "always_online": true
-    }
+    },
+    "slash_commands": [
+      {
+        "command": "/brightside",
+        "description": "Open the Brightside menu",
+        "should_escape": false
+      }
+    ]
   },
   "oauth_config": {
     "scopes": {
-      "bot": ["commands", "chat:write", "im:write", "im:history", "files:write", "users:read"]
+      "bot": [
+        "commands",
+        "chat:write",
+        "im:write",
+        "im:history",
+        "files:write",
+        "users:read"
+      ]
     }
   },
   "settings": {
     "event_subscriptions": {
-      "bot_events": ["message.im"]
+      "bot_events": [
+        "message.im"
+      ]
     },
     "interactivity": {
       "is_enabled": true

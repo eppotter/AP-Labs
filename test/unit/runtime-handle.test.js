@@ -73,3 +73,19 @@ test('a rejected ack is logged, the work is skipped, and the person still gets t
   assert.equal(log.lines[0].msg, 'ack failed');
   assert.equal(log.lines[0].fields.handler, 'cmd');
 });
+
+test('with a store, an event_id seen before is skipped; commands and actions without one never are', async () => {
+  const { createStore } = require('../../kit/runtime/store');
+  const store = createStore();
+  const lines = [];
+  const log = { error: () => {}, info: (msg, fields) => lines.push({ msg, fields }) };
+  let runs = 0;
+  const fn = handle('ev', async () => { runs += 1; }, { log, store });
+  await fn({ body: { event_id: 'Ev9' } });
+  await fn({ body: { event_id: 'Ev9', retry_attempt: 2 }, context: { retryNum: 2 } });
+  await fn({ body: { event_id: 'Ev10' } });
+  await fn({ ack: async () => {}, body: { type: 'block_actions' } });
+  await fn({ ack: async () => {}, body: { type: 'block_actions' } });
+  assert.equal(runs, 4);
+  assert.deepEqual(lines, [{ msg: 'duplicate event skipped', fields: { handler: 'ev', event_id: 'Ev9', retry: 2 } }]);
+});

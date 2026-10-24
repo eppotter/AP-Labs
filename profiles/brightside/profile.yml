@@ -9,6 +9,8 @@ client:
 # Blast radius. Highest match wins; unmatched code floors at T1.
 tiers:
   T3:
+    # Access decisions: who can use what (in a client fork this file is .aplabs/profile.yml, always T3).
+    - "profiles/**"
     - "billing/**"
     - "customers/export/**"
     # Runtime: writes to client systems, connections and secrets.
@@ -36,6 +38,10 @@ resources:
     admin_grantable: false
   - key: VERIFY_SKIP
     label: Waive a skipped verify check
+  # Runtime: the hello-world module on the /brightside hub (open to everyone).
+  - key: HELLO_WORLD
+    label: Say hello
+    open_access: true
 
 users:
   - id: dana

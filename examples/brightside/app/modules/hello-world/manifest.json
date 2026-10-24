@@ -1,0 +1,10 @@
+{
+  "id": "hello-world",
+  "hub": "brightside",
+  "label": "Say hello",
+  "description": "Check the bot knows who you are and who it works for.",
+  "resource": "HELLO_WORLD",
+  "archetype": "handler",
+  "environments": ["dev", "prod"],
+  "handler": "handler.js"
+}
