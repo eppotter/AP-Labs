@@ -8,7 +8,7 @@
 //     auth: { env: ['ACME_CRM_TOKEN'] },          // env var NAMES, never values
 //     killSwitchEnv: 'ACME_CRM_OFF',
 //     rateLimit: { perSecond: 5, batchSize: 100 },
-//     connect: ({ secret }) => makeClient(secret('ACME_CRM_TOKEN')),
+//     connect: ({ secret }) => makeClient(secret('ACME_CRM_TOKEN')),  // also gets { data, simulate }
 //     read: { lookupClient: async (input, ctx) => ctx.request(() => ctx.client.get(...)) },
 //     write: { addContacts: { plan: (input) => preview, apply: async (input, ctx) => result } },
 //   });
@@ -142,7 +142,9 @@ function defineConnector(spec) {
   // idempotency ({ get(key), set(key, result) }), onRequest(info) (tests: runs
   // before each call to the system; it may throw to simulate the system
   // failing), simulate (passed to connect() as is, for an adapter's own
-  // failure simulation in tests).
+  // failure simulation in tests), data (the query runner, passed to connect()
+  // as is, for a connector that reads the client's data: its reads then pass
+  // the SQL guardrail and the profile's forbidden columns).
   function create(deps = {}) {
     const env = deps.env || process.env;
     const log = deps.log || createLog({ write: () => {} });
@@ -176,7 +178,7 @@ function defineConnector(spec) {
         if (!Object.hasOwn(values, name)) throw new Error(`${declaration.id}: ${name} is not a declared credential`);
         return values[name];
       };
-      session = { client: spec.connect ? spec.connect({ secret, simulate: deps.simulate }) : null };
+      session = { client: spec.connect ? spec.connect({ secret, simulate: deps.simulate, data: deps.data }) : null };
       return session;
     }
 

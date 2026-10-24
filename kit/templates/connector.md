@@ -27,7 +27,7 @@ Before you write one, check `.aplabs/context/connectors.md` and ask Connector: a
 | `auth.env` | The **names** of the env vars holding its credentials (`["ACME_CRM_TOKEN"]`), never values; `[]` for a system with no credential (a mock). Read once through `kit/lib/secrets`, cached with the client, and registered with the log so no line shows them. Only declared names can be read. |
 | `killSwitchEnv` | The connector's own kill switch (`ACME_CRM_OFF`). When set, every write refuses before any I/O. |
 | `rateLimit` | `{ perSecond, batchSize }` from the system's documented limits. Calls are spaced to `perSecond` (the engine waits, never drops); a request over `batchSize` is refused. |
-| `connect({ secret })` | Builds the client once per process. `secret(name)` returns a declared credential. On a 401 or 403 the client must throw an error with that `status` (or a `ConnectorAuthFailed`). |
+| `connect({ secret, data, simulate })` | Builds the client once per process. `secret(name)` returns a declared credential. On a 401 or 403 the client must throw an error with that `status` (or a `ConnectorAuthFailed`). `data` is the query runner when the connector was created with `{ data }` (a connector over the client's own data, such as a mock); its SQL then passes the guardrail and the profile's forbidden columns. `simulate` is the test-only `deps.simulate`, for the adapter's own failure simulation. |
 | `read.<name>(input, ctx)` | A read operation. Read-only and least privilege: fetch only the fields the call names. |
 | `write.<name>` | `{ plan(input), apply(input, ctx) }`. `plan` says what would be written, with no I/O; `apply` writes. |
 
@@ -45,7 +45,7 @@ Inside an operation, `ctx` has `client` (from `connect`), `request(fn, { size })
 
 ## The contract suite
 
-`connectorContract(connector, samples)` from `#sdk` registers the shared tests: the declaration, dry run, both kill switches, idempotency, the rate limit, batching, fail-closed reads and redacted errors. It runs the connector with fake credentials, a fake clock and a fake system failure, so it never needs the real system. `samples.read` and `samples.write` must cover every operation; `samples.bulk` (one write that takes a list) is optional and checks batching.
+`connectorContract(connector, samples)` from `#sdk` registers the shared tests: the declaration, dry run, both kill switches, idempotency, the rate limit, batching, fail-closed reads and redacted errors. It runs the connector with fake credentials, a fake clock and a fake system failure, so it never needs the real system. `samples.read` and `samples.write` must cover every operation; `samples.bulk` (one write that takes a list) is optional and checks batching. A third argument's `deps` is passed to every instance the suite creates, for what the connector needs besides credentials (for example `{ deps: { data } }` with a stand-in runner); the suite's own env, clock and `onRequest` still win.
 
 ## Connector code is trusted, not sandboxed
 

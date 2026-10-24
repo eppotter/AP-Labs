@@ -15,6 +15,10 @@
 // write sample is a function of the idempotency key). samples.bulk is
 // optional: one write that takes a list, so batching can be checked.
 //
+// options.deps is merged into every create(deps) call, for what the connector
+// needs beyond the suite's own (for example data: a stand-in query runner).
+// The suite's env, now, sleep and onRequest always win.
+//
 // The suite drives the connector with a fake env (fake credential values for
 // every auth.env name), a fake clock, and deps.onRequest to count calls to the
 // system and make the system fail. It never needs a real system.
@@ -32,7 +36,7 @@ function fakeClock() {
   return { now: () => t, sleep: async (ms) => { t += ms; } };
 }
 
-function connectorContract(connector, samples = {}, { test = require('node:test') } = {}) {
+function connectorContract(connector, samples = {}, { test = require('node:test'), deps = {} } = {}) {
   const decl = connector && connector.declaration;
   const label = decl && decl.id ? decl.id : 'connector';
   const reads = (decl && decl.read) || [];
@@ -47,6 +51,7 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
     const state = { failWith: null };
     const liveEnv = { ...(credentials ? Object.fromEntries(authEnv.map((n) => [n, fakeSecret(n)])) : {}), ...env };
     const instance = connector.create({
+      ...deps,
       env: liveEnv,
       now: clock.now,
       sleep: clock.sleep,
