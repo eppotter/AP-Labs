@@ -6,7 +6,9 @@
 // work. Any error after the ack is logged and turned into a plain message to
 // the same person: never silence, never the error's own text.
 //
-// Event de-duplication on event_id (AD-6) arrives with the store (Story 6.2).
+// Events are de-duplicated on event_id in the store's `event` namespace (10
+// minutes), so a retried delivery (retry_attempt / x-slack-retry-num) is
+// processed once. Commands and actions carry no event_id and are never skipped.
 
 const PLAIN_ERROR = "Sorry, something went wrong on my side and I couldn't finish that. "
   + 'Please try again in a minute. If it keeps happening, tell your admin.';
@@ -26,8 +28,19 @@ async function replyPrivately(args, text) {
   throw new Error('no private reply path for this listener');
 }
 
-// name labels the listener in logs; work(args) does the job.
-function handle(name, work, { log }) {
+// True when this event_id was already seen; otherwise records it. Synchronous:
+// no await between the check and the set.
+function isDuplicateEvent(args, store) {
+  const id = args.body && args.body.event_id;
+  if (!store || typeof id !== 'string' || !id) return false;
+  if (store.get('event', id) !== undefined) return true;
+  store.set('event', id, true);
+  return false;
+}
+
+// name labels the listener in logs; work(args) does the job. store (optional)
+// turns on event de-duplication.
+function handle(name, work, { log, store }) {
   const tellPerson = async (args) => {
     try {
       await replyPrivately(args, PLAIN_ERROR);
@@ -47,6 +60,11 @@ function handle(name, work, { log }) {
         return;
       }
     }
+    if (isDuplicateEvent(args, store)) {
+      const retry = args.context && args.context.retryNum;
+      log.info('duplicate event skipped', { handler: name, event_id: args.body.event_id, retry: retry === undefined ? null : retry });
+      return;
+    }
     try {
       await work(args);
     } catch (err) {
@@ -56,4 +74,4 @@ function handle(name, work, { log }) {
   };
 }
 
-module.exports = { handle, replyPrivately, PLAIN_ERROR };
+module.exports = { handle, replyPrivately, isDuplicateEvent, PLAIN_ERROR };

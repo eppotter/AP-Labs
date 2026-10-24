@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/eppotter/AP-Labs/kit/runtime/schema/module.schema.json",
+  "title": "AP Labs module manifest",
+  "description": "One module: an entry on a hub's menu. Lives at <app>/modules/<id>/manifest.json; its handler, SQL template and test sit in the same folder. Unknown keys are errors.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "hub", "label", "description", "resource", "archetype", "environments"],
+  "properties": {
+    "id": { "description": "Must equal the module's folder name.", "$ref": "#/$defs/slug" },
+    "hub": { "description": "The id of the hub whose menu lists it.", "$ref": "#/$defs/slug" },
+    "label": { "description": "The menu button's text.", "type": "string", "$ref": "#/$defs/text", "maxLength": 60 },
+    "description": { "description": "One line under the button.", "type": "string", "$ref": "#/$defs/text", "maxLength": 200 },
+    "resource": { "description": "The profile resource key that grants it.", "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+    "archetype": { "enum": ["handler", "scoped-pull", "approval-write"] },
+    "environments": {
+      "description": "Where it shows (APLABS_ENV). Left off the menu, and refused at dispatch, everywhere else.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/slug" }
+    },
+    "handler": { "description": "The handler file in the module's folder.", "type": "string", "$ref": "#/$defs/file", "pattern": "^[a-z0-9][a-z0-9._-]*\\.js$" },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "type"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+          "type": { "enum": ["string", "integer", "number", "boolean", "date"] },
+          "description": { "$ref": "#/$defs/text" },
+          "enum": { "type": "array", "minItems": 1, "uniqueItems": true },
+          "min": { "type": "number" },
+          "max": { "type": "number" },
+          "default": {},
+          "required": { "type": "boolean" }
+        }
+      }
+    },
+    "query": { "description": "The SQL template file in the module's folder.", "type": "string", "$ref": "#/$defs/file", "pattern": "^[a-z0-9][a-z0-9._-]*\\.sql$" },
+    "scoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputs", "weights"],
+      "properties": {
+        "inputs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" } },
+        "weights": { "type": "object", "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" }, "additionalProperties": { "type": "number" } }
+      }
+    },
+    "write": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connector", "operation", "destination", "fields"],
+      "properties": {
+        "connector": { "$ref": "#/$defs/slug" },
+        "operation": { "type": "string", "pattern": "^[a-z][a-zA-Z0-9_]*$" },
+        "destination": { "$ref": "#/$defs/text" },
+        "fields": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" } }
+      }
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "archetype": { "const": "handler" } } }, "then": { "required": ["handler"] } },
+    { "if": { "properties": { "archetype": { "const": "scoped-pull" } } }, "then": { "required": ["parameters", "query"] } },
+    { "if": { "properties": { "archetype": { "const": "approval-write" } } }, "then": { "required": ["parameters", "query", "write"] } }
+  ],
+  "$defs": {
+    "slug": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 },
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "file": { "type": "string", "maxLength": 128 }
+  }
+}

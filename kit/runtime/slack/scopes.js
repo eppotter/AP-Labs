@@ -1,9 +1,8 @@
 'use strict';
 
 // The runtime Slack app's bot scopes and events (AD-5). Exactly these; adding
-// one needs an Architect review. The app manifest (<app>/slack-manifest.json)
-// must match: an example test checks the committed manifest, and Story 6.2's
-// generator builds it from these.
+// one needs an Architect review. `npm run slack:manifest` writes these into
+// the app manifest (<app>/slack-manifest.json); a test fails if it drifts.
 
 const BOT_SCOPES = Object.freeze(['commands', 'chat:write', 'im:write', 'im:history', 'files:write', 'users:read']);
 

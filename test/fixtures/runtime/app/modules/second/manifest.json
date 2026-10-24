@@ -1,0 +1,10 @@
+{
+  "id": "second",
+  "hub": "alpha",
+  "label": "Second",
+  "description": "Replies with blocks.",
+  "resource": "OPEN_THING",
+  "archetype": "handler",
+  "environments": ["dev", "prod"],
+  "handler": "handler.js"
+}

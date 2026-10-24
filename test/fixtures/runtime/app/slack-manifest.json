@@ -1,0 +1,4 @@
+{
+  "display_information": { "name": "Fixture Bot" },
+  "features": { "bot_user": { "display_name": "Fixture Bot", "always_online": true } }
+}

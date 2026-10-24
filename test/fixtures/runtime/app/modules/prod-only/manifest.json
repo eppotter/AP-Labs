@@ -1,0 +1,10 @@
+{
+  "id": "prod-only",
+  "hub": "alpha",
+  "label": "Prod only",
+  "description": "Hidden in dev.",
+  "resource": "OPEN_THING",
+  "archetype": "handler",
+  "environments": ["prod"],
+  "handler": "handler.js"
+}
