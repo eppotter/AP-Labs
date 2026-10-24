@@ -82,6 +82,9 @@ Agents (`.claude/agents/<name>.md`): onboarder, sqlsmith, architect, connector, 
 
 - **Add-on stages:** a profile can switch on `stages.addons` (`dev_test`, `dark_launch`, `review_queue`). The session banner shows the resolved list; add-ons slot between core stages and never remove one.
 
+- **Onboarding builds:** at engagement start, or when the client adds a new system or data source (scoped to that slice). Log it with `npm run engage -- --kind onboarding --plan <slug>`; it always needs `approve plan <slug>`, at any tier. Then `npm run onboard -- --init` creates the client files in `.aplabs/context/`.
+  The onboarder agent runs discovery and fills `data.md`, `guardrails.md` and `connectors.md`; the scribe agent drafts `org.md`. Each file records its named client owner's sign-off in its frontmatter (`npm run onboard -- --status` shows them). Known truths get checks (Story 4.2).
+
 Scope changes mid-program: `bmad-correct-course`. Do not route to BMAD's build, code-review or retro skills, its persona agents, or p3's experimental extras.
 
 ### Ceremony by tier

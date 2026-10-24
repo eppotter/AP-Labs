@@ -7,10 +7,14 @@
 // A repo is GOVERNED iff it has .aplabs/profile.yml (found the way every other
 // kit module finds it: APLABS_PROFILE, else walk up from the start directory).
 // Ungoverned repos get no output at all.
+//
+// A governed repo whose client files (.aplabs/context/, Story 4.1) are missing
+// or awaiting sign-off gets one extra onboarding line; none once all are signed.
 
 const path = require('path');
 const { loadProfile, findProfilePath, ProfileError } = require('../profile');
 const { CORE: STAGES, resolveStages } = require('../stages');
+const { contextDirFor, contextStatus, bannerLine: onboardingLine } = require('../onboard');
 
 const NAME = 'AP Labs Orchestrator';
 
@@ -29,19 +33,22 @@ function hookOutput(message, context) {
   };
 }
 
-function bannerForProfile(profile, file) {
+function bannerForProfile(profile, file, onboarding = null) {
   const client = oneLine(profile.client.name);
   const resolved = resolveStages(profile);
   const stages = stageLine(resolved);
   const which = resolved.some((s) => !s.core) ? 'the core stages and its add-on stages' : 'the core stages';
-  return hookOutput(
-    `${NAME} on deck for ${client}. Stages: ${stages}`,
-    [
-      `${NAME} is active for ${client} (profile: ${file}).`,
-      'You are the Orchestrator for this session: scope the ask, route work to specialists, bring one plan to the gate, and do not write production code yourself.',
-      `Every build runs ${which} in order: ${stages}.`,
-    ].join('\n'),
-  );
+  const message = [`${NAME} on deck for ${client}. Stages: ${stages}`];
+  const context = [
+    `${NAME} is active for ${client} (profile: ${file}).`,
+    'You are the Orchestrator for this session: scope the ask, route work to specialists, bring one plan to the gate, and do not write production code yourself.',
+    `Every build runs ${which} in order: ${stages}.`,
+  ];
+  if (onboarding) {
+    message.push(onboarding);
+    context.push(`${onboarding} (npm run onboard -- --status lists each file; see "Onboarding builds" in AGENTS.md).`);
+  }
+  return hookOutput(message.join('\n'), context.join('\n'));
 }
 
 function bannerForError(err) {
@@ -75,7 +82,8 @@ function sessionStart(startDir) {
     if (err instanceof ProfileError) return bannerForError(err);
     throw err;
   }
-  return bannerForProfile(profile, path.relative(startDir, file) || file);
+  const onboarding = onboardingLine(contextStatus(contextDirFor(path.resolve(file))));
+  return bannerForProfile(profile, path.relative(startDir, file) || file, onboarding);
 }
 
 module.exports = { NAME, STAGES, hookOutput, bannerForProfile, bannerForError, sessionStart };

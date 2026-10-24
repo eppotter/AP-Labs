@@ -30,11 +30,17 @@ function tmpDir() {
 }
 
 // A temp repo with .aplabs/profile.yml copied from a fixture, or the given text.
+// It is fully onboarded (all four client files signed off), so these tests see
+// the banner with no onboarding line; test/unit/onboard.test.js covers that line.
 function repo({ from, text } = {}) {
   const d = tmpDir();
   if (from || text) {
-    fs.mkdirSync(path.join(d, '.aplabs'));
+    fs.mkdirSync(path.join(d, '.aplabs/context'), { recursive: true });
     fs.writeFileSync(path.join(d, '.aplabs/profile.yml'), text ?? fs.readFileSync(fixture(from), 'utf8'));
+    for (const f of ['org.md', 'data.md', 'guardrails.md', 'connectors.md']) {
+      fs.writeFileSync(path.join(d, '.aplabs/context', f),
+        '---\nowner: Pat\nsigned_off: 2026-10-01\nsigned_off_by: Pat\nupdated: 2026-10-01\n---\n');
+    }
   }
   return d;
 }
