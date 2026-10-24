@@ -33,6 +33,8 @@ Do not re-raise those. Check that the P1s were fixed, then look at the commits a
 
 // A finding's path is made repo-relative: an absolute repo-root prefix and any
 // leading ./ are stripped; a path that is already relative is kept as-is.
+const FINDING = /^- \[(P\d)\] (.+?) — `?([^\s`]+?)(?::\d[\d-]*)?`?(?:[ \t].*)?$/gm;
+
 function parseFindings(verdict, repoRoot = '') {
   const root = repoRoot.replace(/\/+$/, '');
   const relative = (file) => {
@@ -40,11 +42,25 @@ function parseFindings(verdict, repoRoot = '') {
     while (f.startsWith('./')) f = f.slice(2);
     return f;
   };
-  return [...verdict.matchAll(/^- \[(P\d)\] (.+?) — (\S+?)(?::\d[\d-]*)?\s*$/gm)].map((m) => ({
+  // Reviewers wrap the path in backticks and add an explanation on the same
+  // line as often as they follow the rubric's bare format; accept both.
+  return [...verdict.matchAll(FINDING)].map((m) => ({
     priority: m[1] === 'P1' ? 'P1' : 'P2',
     title: m[2],
     file: relative(m[3]),
   }));
+}
+
+// Lines that look like findings but do not parse. A round with any of these
+// does not count: a finding must never be lost silently.
+function unparsedFindingLines(verdict) {
+  return verdict.split('\n').filter((l) => /^- \[P\d\]/.test(l) && !new RegExp(FINDING.source).test(l));
+}
+
+// The state file is untrusted input: anything but the expected shape stops the run.
+function isValidState(state) {
+  return Boolean(state) && typeof state.branch === 'string' && Array.isArray(state.rounds) &&
+    state.rounds.every((r) => r && typeof r.head === 'string' && Array.isArray(r.findings));
 }
 
 const isClean = (verdict) => /no blocking findings|no (actionable |discrete )?(issues|findings)/i.test(verdict);
@@ -106,6 +122,8 @@ module.exports = {
   USAGE,
   promptFor,
   parseFindings,
+  unparsedFindingLines,
+  isValidState,
   isClean,
   repeatedBlockingFiles,
   withRoundsLine,

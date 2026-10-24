@@ -7,6 +7,8 @@ const {
   RUBRIC,
   promptFor,
   parseFindings,
+  unparsedFindingLines,
+  isValidState,
   isClean,
   repeatedBlockingFiles,
   withRoundsLine,
@@ -130,4 +132,25 @@ test('sanitizeBranch keeps safe chars and encodes the rest injectively', () => {
   assert.notEqual(sanitizeBranch('a/b'), sanitizeBranch('a%2Fb'));
   assert.match(sanitizeBranch('feat/ü ~x'), /^[A-Za-z0-9._%-]+$/);
   assert.throws(() => sanitizeBranch(''));
+});
+
+test('parseFindings accepts backticked paths with an explanation on the same line', () => {
+  const verdict = 'No blocking findings.\n\n- [P2] Reject malformed state — `kit/review/cli.js:60` If the state file has the wrong shape, refuse.\n- [P1] Bare form — lib/a.js:3\n';
+  assert.deepEqual(parseFindings(verdict), [
+    { priority: 'P2', title: 'Reject malformed state', file: 'kit/review/cli.js' },
+    { priority: 'P1', title: 'Bare form', file: 'lib/a.js' },
+  ]);
+  assert.deepEqual(unparsedFindingLines(verdict), []);
+});
+
+test('unparsedFindingLines catches finding-like lines the parser cannot read', () => {
+  assert.deepEqual(unparsedFindingLines('- [P1] No path at all\n- [P2] ok — a.js:1\n'), ['- [P1] No path at all']);
+});
+
+test('isValidState accepts only the expected shape', () => {
+  assert.equal(isValidState({ branch: 'b', rounds: [] }), true);
+  assert.equal(isValidState({ branch: 'b', rounds: [{ head: 'x', findings: [] }] }), true);
+  for (const bad of [null, {}, { branch: 'b' }, { branch: 'b', rounds: {} }, { branch: 1, rounds: [] }, { branch: 'b', rounds: [{ head: 'x' }] }]) {
+    assert.equal(isValidState(bad), false, JSON.stringify(bad));
+  }
 });

@@ -245,6 +245,27 @@ test('a corrupt state file stops the run instead of resetting the budget', () =>
   assert.ok(!t.codexRan());
 });
 
+test('a state file with the wrong shape also stops the run', () => {
+  const t = setup();
+  t.openPr();
+  t.commit();
+  fs.mkdirSync(t.stateDir, { recursive: true });
+  fs.writeFileSync(t.statePath, JSON.stringify({ branch: 'x', rounds: 'nope' }));
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 1);
+  assert.ok(!t.codexRan());
+});
+
+test('a verdict with an unparseable finding line does not count', () => {
+  const t = setup();
+  t.openPr();
+  t.commit();
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict('No blocking findings.\n- [P1] Something with no path\n') });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Could not parse 1 finding line/);
+  assert.equal(t.state(), null);
+});
+
 test('a failed PR-body update is reported after the round is counted', () => {
   const t = setup();
   t.openPr();

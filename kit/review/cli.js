@@ -26,6 +26,8 @@ const {
   USAGE,
   promptFor,
   parseFindings,
+  unparsedFindingLines,
+  isValidState,
   isClean,
   repeatedBlockingFiles,
   withRoundsLine,
@@ -65,6 +67,7 @@ function main(argv, env = process.env, cwd = process.cwd()) {
   if (fs.existsSync(statePath)) {
     try {
       state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      if (!isValidState(state)) throw new Error('bad shape');
     } catch {
       // Never reset the budget by accident: an unreadable state file stops here.
       console.error(`Cannot read review state ${statePath}. Fix or remove it by hand.`);
@@ -112,6 +115,11 @@ function main(argv, env = process.env, cwd = process.cwd()) {
   }
   const verdict = fs.readFileSync(verdictPath, 'utf8');
   const findings = parseFindings(verdict, repoRoot);
+  const unparsed = unparsedFindingLines(verdict);
+  if (unparsed.length) {
+    console.error(`Could not parse ${unparsed.length} finding line(s) in ${verdictPath}; this round does not count.\n${unparsed.join('\n')}`);
+    return 1;
+  }
   if (!findings.length && !isClean(verdict)) {
     console.error(`Could not read findings or a clean verdict from ${verdictPath}; this round does not count.\n${verdict}`);
     return 1;
