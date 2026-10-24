@@ -28,17 +28,30 @@ async function replyPrivately(args, text) {
 
 // name labels the listener in logs; work(args) does the job.
 function handle(name, work, { log }) {
+  const tellPerson = async (args) => {
+    try {
+      await replyPrivately(args, PLAIN_ERROR);
+    } catch (replyErr) {
+      log.error('could not tell the person about a failure', { handler: name, err: replyErr });
+    }
+  };
   return async (args) => {
-    if (typeof args.ack === 'function') await args.ack();
+    if (typeof args.ack === 'function') {
+      try {
+        await args.ack();
+      } catch (ackErr) {
+        // Slack never got the ack, so the work is not run; the person still
+        // hears that it failed.
+        log.error('ack failed', { handler: name, err: ackErr });
+        await tellPerson(args);
+        return;
+      }
+    }
     try {
       await work(args);
     } catch (err) {
       log.error('handler failed', { handler: name, err });
-      try {
-        await replyPrivately(args, PLAIN_ERROR);
-      } catch (replyErr) {
-        log.error('could not tell the person about a failure', { handler: name, err: replyErr });
-      }
+      await tellPerson(args);
     }
   };
 }

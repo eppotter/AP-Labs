@@ -15,10 +15,8 @@
 // main() takes env, cwd and deps so tests inject a fake Slack App class and
 // capture output; no test touches the network or the real Keychain.
 
-const fs = require('node:fs');
-const path = require('node:path');
 const { readSecret } = require('../../lib/secrets');
-const { loadProfile, PROFILE_REL } = require('../../lib/profile');
+const { loadProfile, findProfilePath, ProfileError, PROFILE_REL } = require('../../lib/profile');
 const { createLog, slackLogger } = require('../log');
 const { registerGreeting } = require('../slack/greeting');
 
@@ -27,17 +25,6 @@ const SECRETS = Object.freeze([
   { env: 'SLACK_BOT_TOKEN', keychain: 'aplabs-slack-bot-token', prefix: 'xoxb-', what: 'the bot token' },
   { env: 'SLACK_APP_TOKEN', keychain: 'aplabs-slack-app-token', prefix: 'xapp-', what: 'the app-level token' },
 ]);
-
-function findProfileUp(startDir) {
-  let dir = path.resolve(startDir);
-  for (;;) {
-    const candidate = path.join(dir, PROFILE_REL);
-    if (fs.existsSync(candidate)) return candidate;
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
 
 // Collects every boot problem. Returns { problems, tokens, profile, profilePath }.
 // Problems name variables and profile errors, never a secret's value.
@@ -58,12 +45,12 @@ function checkConfig({ env, cwd, deps = {} }) {
 
   let profilePath = null;
   let profile = null;
-  if (env.APLABS_PROFILE) {
-    if (path.isAbsolute(env.APLABS_PROFILE)) profilePath = env.APLABS_PROFILE;
-    else problems.push(`APLABS_PROFILE must be an absolute path, got "${env.APLABS_PROFILE}"`);
-  } else {
-    profilePath = findProfileUp(cwd);
+  try {
+    profilePath = findProfilePath(cwd, env);
     if (!profilePath) problems.push(`APLABS_PROFILE is not set and no ${PROFILE_REL} was found`);
+  } catch (e) {
+    if (!(e instanceof ProfileError)) throw e;
+    problems.push(e.message);
   }
   if (profilePath) {
     try {
@@ -103,8 +90,11 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     return { code: 1 };
   }
 
-  const app = createApp({ tokens: cfg.tokens, profile: cfg.profile, log, App: deps.App });
+  // createApp inside the try: a throw while building the app (it may carry a
+  // token) still goes through the redacting logger.
+  let app;
   try {
+    app = createApp({ tokens: cfg.tokens, profile: cfg.profile, log, App: deps.App });
     await app.start();
   } catch (err) {
     log.error('could not connect to Slack', { err });
@@ -119,10 +109,25 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   return { code: 0, app, log };
 }
 
-module.exports = { main, checkConfig, createApp, SECRETS };
+// Anything that escapes main() is logged through the same redacting logger
+// (tokens already registered), then the process exits 1. proc is injectable
+// for tests.
+function installCrashHandlers(log, proc = process) {
+  const crash = (what) => (err) => {
+    log.error(what, { err });
+    proc.exit(1);
+  };
+  proc.on('uncaughtException', crash('uncaught exception'));
+  proc.on('unhandledRejection', crash('unhandled rejection'));
+  return crash('boot failed');
+}
+
+module.exports = { main, checkConfig, createApp, installCrashHandlers, SECRETS };
 
 if (require.main === module) {
-  main().then(({ code, app, log }) => {
+  const log = createLog();
+  const bootFailed = installCrashHandlers(log);
+  main({ deps: { log } }).then(({ code, app }) => {
     if (code !== 0) {
       process.exitCode = code;
       // Bolt may hold the process open after a failed start.
@@ -135,5 +140,5 @@ if (require.main === module) {
     };
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
-  });
+  }).catch(bootFailed);
 }

@@ -57,3 +57,19 @@ test('when no private reply path exists, both failures are logged and nothing th
   await fn({});
   assert.equal(log.lines.length, 2);
 });
+
+test('a rejected ack is logged, the work is skipped, and the person still gets the plain message', async () => {
+  const log = quietLog();
+  let worked = false;
+  const fn = handle('cmd', async () => { worked = true; }, { log });
+  const replies = [];
+  await fn({
+    ack: async () => { throw new Error('ack timed out'); },
+    respond: async (msg) => { replies.push(msg); },
+  });
+  assert.equal(worked, false);
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].text, PLAIN_ERROR);
+  assert.equal(log.lines[0].msg, 'ack failed');
+  assert.equal(log.lines[0].fields.handler, 'cmd');
+});

@@ -5,7 +5,7 @@
 //
 //   const log = createLog();
 //   log.registerSecret(token);           // every secret read, at boot
-//   log.info('started', { client: 'Brightside Home Cleaning' });
+//   log.info('started', { client: 'Acme' });
 //
 // Redaction runs on the field values before the line is serialised, so the
 // line stays valid JSON whatever a secret contains. Shapes that are secrets

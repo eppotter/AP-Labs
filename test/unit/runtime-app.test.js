@@ -10,7 +10,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { main } = require('../../kit/runtime/app');
+const { EventEmitter } = require('node:events');
+const { main, installCrashHandlers } = require('../../kit/runtime/app');
+const { createLog } = require('../../kit/runtime/log');
 const { FakeSlackApp } = require('../fixtures/fake-slack');
 
 const ROOT = path.join(__dirname, '../..');
@@ -110,10 +112,40 @@ test('a token with the wrong shape is refused by name, and its value never appea
   assert.ok(!text.includes(BOT));
 });
 
-test('a relative APLABS_PROFILE is refused', async () => {
+test('a relative APLABS_PROFILE is refused by name, without echoing its value', async () => {
   const { code, text } = await boot(env({ APLABS_PROFILE: 'profiles/x.yml' }));
   assert.equal(code, 1);
   assert.match(text, /APLABS_PROFILE must be an absolute path/);
+  assert.ok(!text.includes('profiles/x.yml'));
+});
+
+test('a throw while building the app is logged redacted and exits 1', async () => {
+  class ThrowingApp {
+    constructor(opts) { throw new Error(`bad options: ${opts.token}`); }
+  }
+  const { code, text } = await boot(env(), { App: ThrowingApp });
+  assert.equal(code, 1);
+  assert.match(text, /bad options/);
+  assert.ok(!text.includes(BOT));
+});
+
+test('crash handlers log uncaught errors through the redacting logger and exit 1', () => {
+  const lines = [];
+  const log = createLog({ write: (line) => lines.push(line) });
+  log.registerSecret(BOT);
+  const proc = new EventEmitter();
+  const exits = [];
+  proc.exit = (code) => exits.push(code);
+  const bootFailed = installCrashHandlers(log, proc);
+  proc.emit('uncaughtException', new Error(`boom ${BOT}`));
+  proc.emit('unhandledRejection', new Error(`later ${BOT}`));
+  bootFailed(new Error(`main threw ${BOT}`));
+  assert.deepEqual(exits, [1, 1, 1]);
+  const text = lines.join('\n');
+  assert.match(text, /uncaught exception/);
+  assert.match(text, /unhandled rejection/);
+  assert.match(text, /boot failed/);
+  assert.ok(!text.includes(BOT));
 });
 
 test('an invalid profile refuses to start and lists its validation errors', async () => {
