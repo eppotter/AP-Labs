@@ -418,3 +418,28 @@ So that rules tighten on evidence.
 **When** I run `npm run retro`
 **Then** it prints a per-PR table (Kind, review rounds, commits, hours open, fix or not) from merged PRs and flags each budget breach
 **And** the rules trigger a retro at each epic boundary and after every 5 merged PRs (ported from CanonCRM's `p3-retro.ts`)
+
+### Story 5.3: Slack progress updates
+
+**Implements:** FR11
+
+As an AP Labs builder (and later, a client team),
+I want the Orchestrator to post plain-language progress to the team's Slack channel,
+So that the team sees what landed and what needs them without asking.
+
+**Acceptance Criteria:**
+
+**Given** a Slack incoming webhook in env `APLABS_SLACK_WEBHOOK`, or else on macOS in the Keychain item `aplabs-slack-webhook` (service overridable with `APLABS_SLACK_KEYCHAIN_SERVICE`)
+**When** I run `npm run notify -- --kind <merged|epic|decision|blocked|info> "<message>"`
+**Then** it posts `{"text": "<emoji> <message>"}` (✅ merged, 🏁 epic, 🙋 decision, ⛔ blocked, 🔧 info, default info) and prints only `posted`
+**And** `--dry-run` prints the text without posting
+
+**Given** no webhook, or one that does not start with `https://hooks.slack.com/services/`
+**When** I run `npm run notify`
+**Then** it exits 1 with how to configure it (or a refusal), and usage errors exit 2
+**And** a non-2xx response, a network error or the 10-second timeout exits 1 with a redacted message
+**And** the webhook URL never appears in any output, which tests prove with an injected fetch and Keychain reader
+
+**Given** the rules in `AGENTS.md`
+**When** a story merges, an epic finishes, a human decision is needed or work is blocked
+**Then** the Orchestrator posts 1 to 3 plain-language lines naming the story or PR, never per review round, and never with secrets or client data

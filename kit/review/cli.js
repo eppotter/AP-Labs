@@ -1,15 +1,17 @@
 'use strict';
 
-// One cross-model review round with the budget built in (Stories 1.1-1.3):
+// One cross-model review round with the budget built in (Stories 1.1-1.4):
 //
 //   npm run review [-- --over-budget "<the human's reason>"]
+//   npm run review -- --refute <id> <confirmed|not-reproduced|cannot-verify> [--note "<evidence>"]
 //
 // Needs an open PR for the branch with a Kind line, so every round is visible
 // to the retro. Revert, docs-only and tiny config PRs are exempt: no round.
 // Chooses the other model from Agent trailers, falls back to the same model
 // when that reviewer is missing or gives no usable verdict, counts rounds per
 // branch, files non-blocking findings in one follow-up issue per PR, and
-// updates the PR body.
+// updates the PR body. Each P1 gets an id for the Refuter; --refute records
+// its verdict with no reviewer run and no round counted, even over budget.
 //
 // State lives in <git-dir>/aplabs/review/<branch>.json, never in tracked
 // files. A reviewer run that fails or says nothing readable does not count.
@@ -30,6 +32,11 @@ const {
   repeatedBlockingFiles,
   withRoundsLine,
   withReviewedHeadLine,
+  withRefuterIds,
+  findP1,
+  blockingFindings,
+  withRefuterLine,
+  refuterBlock,
   pickReviewer,
   withFallbackLine,
   withFollowupLine,
@@ -58,7 +65,7 @@ function main(argv, env = process.env, cwd = process.cwd()) {
     console.error(`${args.error}\n${USAGE}`);
     return 2;
   }
-  const { overBudget } = args;
+  const { overBudget, refute } = args;
   const codexBin = env.APLABS_REVIEW_CODEX_BIN || 'codex';
   const claudeBin = env.APLABS_REVIEW_CLAUDE_BIN || 'claude';
   const ghBin = env.APLABS_GH_BIN || 'gh';
@@ -95,6 +102,10 @@ function main(argv, env = process.env, cwd = process.cwd()) {
       return 1;
     }
   }
+  if (refute && !findP1(state.rounds, refute.id)) {
+    console.error(`No P1 ${refute.id} in this branch's review state. The ids are printed after each round.`);
+    return 2;
+  }
   const saveState = () => {
     const tmp = `${statePath}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
@@ -125,6 +136,25 @@ function main(argv, env = process.env, cwd = process.cwd()) {
       return false;
     }
   };
+
+  if (refute) {
+    const finding = findP1(state.rounds, refute.id);
+    Object.assign(finding, { verdict: refute.verdict, refutedAt: new Date().toISOString() });
+    if (refute.note) finding.note = refute.note;
+    else delete finding.note;
+    saveState();
+    console.log(`Recorded ${refute.id} (${finding.title} — ${finding.file}): ${refute.verdict}.`);
+    if (refute.verdict === 'cannot-verify') {
+      console.log(`${refute.id} is escalated to the human: the Refuter could not verify it. Tell them; do not drop it.`);
+    }
+    const blocking = blockingFindings(state.rounds);
+    console.log(blocking.length ? `Still blocking: ${blocking.map((f) => `${f.id ?? f.title} (${f.verdict ?? 'pending'})`).join(', ')}.` : DONE);
+    if (!editBody(withRefuterLine(pr.body || '', state.rounds))) {
+      console.error(`${refute.id} recorded, but the PR body was not updated. Run: ${ghBin} pr edit ${pr.number} --body-file ${bodyPath}`);
+      return 1;
+    }
+    return 0;
+  }
 
   const exempt = exemptionFor({
     commits: git('rev-list', 'origin/main..HEAD').split('\n').filter(Boolean).map((sha) => {
@@ -222,7 +252,8 @@ function main(argv, env = process.env, cwd = process.cwd()) {
       return 1;
     }
   }
-  const { verdict, findings } = outcome;
+  const { verdict } = outcome;
+  const findings = withRefuterIds(round, outcome.findings);
   state.rounds.push({ head, at: new Date().toISOString(), findings, reviewer: selection.reviewer, fallback: selection.fallback,
     ...(overBudget ? { overBudget } : {}) });
   saveState();
@@ -236,7 +267,10 @@ function main(argv, env = process.env, cwd = process.cwd()) {
     console.log(`Same class twice: ${repeated.join(', ')} drew blocking findings in two rounds running. ` +
       'Stop patching. Write the shared premise in the PR body, then restructure or cut it from scope.');
   }
-  if (p1 === 0) console.log('No blocking findings: the review is done. Do not run another round.');
+  if (p1) console.log(refuterBlock(findings, head));
+  const blocking = blockingFindings(state.rounds);
+  if (!blocking.length) console.log(DONE);
+  else if (!p1) console.log(`Not done: ${blocking.map((f) => f.id).join(', ')} escalated to the human and still open.`);
 
   let ok = true;
   const p2s = findings.filter((f) => f.priority === 'P2');
@@ -256,12 +290,15 @@ function main(argv, env = process.env, cwd = process.cwd()) {
 
   let text = withFallbackLine(withReviewedHeadLine(withRoundsLine(withoutExemptLine(pr.body || ''), round), head), selection.fallback);
   if (state.followup) text = withFollowupLine(text, state.followup);
+  if (p1) text = withRefuterLine(text, state.rounds);
   if (!editBody(withStopLine(text, repeated))) {
     console.error(`Round ${round} counted, but the PR body was not updated. Run: ${ghBin} pr edit ${pr.number} --body-file ${bodyPath}`);
     return 1;
   }
   return ok ? 0 : 1;
 }
+
+const DONE = 'No blocking findings: the review is done. Do not run another round.';
 
 // Files a round's P2s: a comment on the PR's follow-up issue when it has one,
 // otherwise a new issue labelled review-followup. Returns { issue } or
