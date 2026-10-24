@@ -33,6 +33,7 @@ test('fills defaults on a minimal profile', () => {
   assert.deepEqual(p.gate, { exempt: [], engagement_ttl_minutes: 60 });
   assert.deepEqual(p.resources, []);
   assert.deepEqual(p.verify, { checks: [], env_allow: [] });
+  assert.deepEqual(p.sql, { forbidden_columns: [] });
   assert.deepEqual(p.users[0], { id: 'solo', name: 'Solo', role: 'admin', identities: {}, grants: [], deny: [] });
 });
 
@@ -48,6 +49,16 @@ test('defaults admin_grantable to true and open_access to false', () => {
   const p = validateProfile({ ...parsed('minimal'), resources: [{ key: 'X', label: 'X' }] });
   assert.equal(p.resources[0].admin_grantable, true);
   assert.equal(p.resources[0].open_access, false);
+});
+
+test('accepts sql.forbidden_columns as unique lower-case "table.column" strings', () => {
+  const p = validateProfile({ ...parsed('minimal'), sql: { forbidden_columns: ['people.phone', 'sites.postal_code'] } });
+  assert.deepEqual(p.sql.forbidden_columns, ['people.phone', 'sites.postal_code']);
+  rejects({ ...parsed('minimal'), sql: { forbidden_columns: ['phone'] } }, /\/sql\/forbidden_columns\/0/);
+  rejects({ ...parsed('minimal'), sql: { forbidden_columns: ['People.Phone'] } }, /\/sql\/forbidden_columns\/0/);
+  rejects({ ...parsed('minimal'), sql: { forbidden_columns: ['a.b.c'] } }, /\/sql\/forbidden_columns\/0/);
+  rejects({ ...parsed('minimal'), sql: { forbidden_columns: ['a.b', 'a.b'] } }, /\/sql\/forbidden_columns/);
+  rejects({ ...parsed('minimal'), sql: { forbidden: [] } }, /\/sql has unknown key "forbidden"/);
 });
 
 test('result is deep-frozen and the input is not mutated', () => {

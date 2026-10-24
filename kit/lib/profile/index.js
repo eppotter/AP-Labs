@@ -92,6 +92,7 @@ function validateProfile(profile, file) {
   p.resources = (p.resources || []).map((r) => ({ admin_grantable: true, open_access: false, ...r }));
   p.stages = { addons: [], ...p.stages };
   p.verify = { checks: [], env_allow: [], ...p.verify };
+  p.sql = { forbidden_columns: [], ...p.sql };
   p.verify.checks = p.verify.checks.map((c) => ({ timeout_seconds: 300, ...c }));
   p.users = p.users.map((u) => ({ identities: {}, grants: [], deny: [], ...u }));
 
