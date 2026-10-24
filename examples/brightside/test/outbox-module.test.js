@@ -117,6 +117,15 @@ test('at most five lists are shown, and the reply says how many there are', asyn
   assert.match(replies[0], /· 0 contacts ·/);
 });
 
+test('a torn line in the outbox (which refuses writes) is skipped in the read-only view', async (t) => {
+  const file = tmpFile(t);
+  list(openOutbox(file), 'a', 'win-back-west', people(2));
+  fs.appendFileSync(file, '{"type":"contact","key":"a:3"');
+  const replies = [];
+  await handler({ reply: async (m) => replies.push(m) }, { file });
+  assert.match(replies[0], /^\*win-back-west\* · 2 contacts · /m);
+});
+
 test('with nothing sent yet (no outbox file), the person is told so', async (t) => {
   const replies = [];
   await handler({ reply: async (m) => replies.push(m) }, { file: tmpFile(t) });

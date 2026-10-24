@@ -25,8 +25,9 @@ function contactLine({ email, first_name: name }) {
 }
 
 // file: the outbox to read (tests); the app uses var/outbox/email.jsonl.
+// A torn or corrupt line is skipped here (a read-only view); writes refuse it.
 module.exports = async function outbox({ reply }, { file = outboxPath() } = {}) {
-  const { total, lists } = summarise(readRecords(file), { lists: LISTS, sample: SAMPLE });
+  const { total, lists } = summarise(readRecords(file, { lenient: true }), { lists: LISTS, sample: SAMPLE });
   if (!total) {
     await reply('*Email outbox*\nNothing has been sent to the email tool yet.');
     return;

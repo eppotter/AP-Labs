@@ -9,7 +9,9 @@
 // The "system" is the outbox file (./outbox.js, default var/outbox/email.jsonl,
 // gitignored): each list and contact the tool accepts is a line there with its
 // idempotency key. The same file is the connector's idempotency store, so a
-// repeated key adds nothing even after a restart.
+// repeated key adds nothing even after a restart. If the outbox can't be read
+// or has a torn or corrupt line, every write fails closed rather than treat it
+// as empty, and one process writes at a time (a lockfile): see ./outbox.js.
 //
 // BRIGHTSIDE_EMAIL_KEY is a stand-in "API key", as the mock CRM's is: the
 // contract reads it like any credential and fails closed when it is unset, but
@@ -29,7 +31,9 @@
 // with a ConnectorFailed whose reason gives both counts and the failed refs.
 // A failed call does not use up its key, so a retry with the same input sends
 // the same contacts again and the tool adds only the ones it has no key for:
-// the failed ones. A call that succeeds returns { listId, added, alreadyAdded }.
+// the failed ones. A contact's key carries its list (the write's key, listId
+// and external_ref), so the same key on another list adds the contacts there
+// rather than count them as done. A call that succeeds returns { listId, added, alreadyAdded }.
 
 const crypto = require('node:crypto');
 const { defineConnector } = require('#sdk');
@@ -70,30 +74,36 @@ function mockEmailTool(outbox, simulate = {}) {
   return {
     // A key the tool has seen returns that list; otherwise a new list.
     createList(name, key) {
-      const seen = outbox.find('list', key);
-      if (seen) return { listId: seen.payload.listId, name: seen.payload.name };
-      const listId = `list-${crypto.createHash('sha256').update(key).digest('hex').slice(0, 12)}`;
-      outbox.append({ type: 'list', operation: 'createList', key, payload: { listId, name } });
-      return { listId, name };
+      return outbox.transaction((tx) => {
+        const seen = tx.find('list', key);
+        if (seen) return { listId: seen.payload.listId, name: seen.payload.name };
+        const listId = `list-${crypto.createHash('sha256').update(key).digest('hex').slice(0, 12)}`;
+        tx.append({ type: 'list', operation: 'createList', key, payload: { listId, name } });
+        return { listId, name };
+      });
     },
-    // Adds each contact whose key it has not seen. Returns what it added,
-    // what it already had and what it refused.
+    // Adds each contact whose key it has not seen on this list. Returns what
+    // it added, what it already had and what it refused. One locked read of
+    // the outbox per batch.
     addContacts(listId, keyed) {
-      if (!outbox.records().some((r) => r.type === 'list' && r.payload && r.payload.listId === listId)) {
-        throw new Error(`no list ${listId} in the email tool`);
-      }
-      const out = { added: 0, alreadyAdded: 0, failed: [] };
-      const fail = simulate.failContacts || new Set();
-      for (const { key, ...contact } of keyed) {
-        if (outbox.find('contact', key)) { out.alreadyAdded += 1; continue; }
-        if (fail.has(contact.external_ref)) {
-          out.failed.push({ external_ref: contact.external_ref, reason: 'the email tool refused the address' });
-          continue;
+      return outbox.transaction((tx) => {
+        if (!tx.records.some((r) => r.type === 'list' && r.payload && r.payload.listId === listId)) {
+          throw new Error(`no list ${listId} in the email tool`);
         }
-        outbox.append({ type: 'contact', operation: 'addContacts', key, payload: { listId, ...contact } });
-        out.added += 1;
-      }
-      return out;
+        const out = { added: 0, alreadyAdded: 0, failed: [] };
+        const fail = simulate.failContacts || new Set();
+        for (const { key, ...contact } of keyed) {
+          const seen = tx.find('contact', key);
+          if (seen && seen.payload && seen.payload.listId === listId) { out.alreadyAdded += 1; continue; }
+          if (fail.has(contact.external_ref)) {
+            out.failed.push({ external_ref: contact.external_ref, reason: 'the email tool refused the address' });
+            continue;
+          }
+          tx.append({ type: 'contact', operation: 'addContacts', key, payload: { listId, ...contact } });
+          out.added += 1;
+        }
+        return out;
+      });
     },
   };
 }
@@ -130,8 +140,9 @@ function declare(outbox) {
           const checked = checkContacts(contacts);
           const total = { added: 0, alreadyAdded: 0, failed: [] };
           for (const batch of ctx.batches(checked)) {
-            // A key per contact (the write's key plus its ref), never per batch.
-            const keyed = batch.map((c) => ({ ...c, key: `${ctx.idempotencyKey}:${c.external_ref}` }));
+            // A key per contact (the write's key, the list and the ref), never
+            // per batch: the same key on another list is another contact.
+            const keyed = batch.map((c) => ({ ...c, key: `${ctx.idempotencyKey}:${listId}:${c.external_ref}` }));
             const res = await ctx.request(() => ctx.client.addContacts(listId, keyed), { size: batch.length });
             total.added += res.added;
             total.alreadyAdded += res.alreadyAdded;
