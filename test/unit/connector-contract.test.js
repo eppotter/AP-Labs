@@ -216,6 +216,35 @@ test('credentials are read once and connect runs once; an auth error drops them 
   assert.equal(connects, 2);
 });
 
+test('connect gets the query runner from deps.data, for a connector that reads the client\'s data (Story 8.2)', async () => {
+  const data = { run: async () => [] };
+  let got;
+  const c = defineConnector(spec({ connect: (args) => { got = args; return {}; } })).create({ env: { DEMO_TOKEN: TOKEN }, data });
+  await c.read.get();
+  assert.equal(got.data, data);
+  const none = defineConnector(spec({ connect: (args) => { got = args; return {}; } })).create({ env: { DEMO_TOKEN: TOKEN } });
+  await none.read.get();
+  assert.equal(got.data, undefined, 'no runner unless one is given');
+});
+
+test('the suite passes its deps option to every instance it creates, but keeps its own env, clock and onRequest', async () => {
+  const seen = [];
+  const connector = {
+    declaration: template.declaration,
+    create(deps) { seen.push(deps); return template.create(deps); },
+  };
+  const data = { run: async () => [] };
+  const cases = [];
+  connectorContract(connector, SAMPLES, {
+    test: (name, opts, fn) => cases.push({ fn: fn || opts, opts: fn ? opts : {} }),
+    deps: { data, env: { MY_SYSTEM_TOKEN: 'ignored' }, onRequest: () => assert.fail('the suite\'s own onRequest is kept') },
+  });
+  for (const c of cases) if (!c.opts.skip) await c.fn();
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every((d) => d.data === data), 'every instance gets deps.data');
+  assert.ok(seen.every((d) => d.env.MY_SYSTEM_TOKEN !== 'ignored'), 'the suite\'s fake env wins');
+});
+
 test('an operation may read only the credentials it declared', async () => {
   const c = defineConnector(spec({ connect: ({ secret }) => secret('OTHER_TOKEN') })).create({ env: { DEMO_TOKEN: TOKEN, OTHER_TOKEN: 'x' } });
   await assert.rejects(c.read.get(), (e) => e instanceof ConnectorFailed && /OTHER_TOKEN is not a declared credential/.test(e.message));
