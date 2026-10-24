@@ -112,11 +112,11 @@ Both are installed off the shelf at pinned versions and are not modified. Our ru
 | 8. Review | Other model, Refuter | | `interrogate` (contested designs only); cross-model review, §5 |
 | 9. Ship | Orchestrator | | `opening-a-pr`, `shipping`, `babysit` |
 | **Production gate** | **Human** (server-side) | | |
-| 10. Retro | Orchestrator | | `retro`, measured against the budgets |
+| 10. Retro | Orchestrator | | `npm run retro` (our port of CanonCRM's retro script; upstream p3 has no retro playbook), measured against the budgets |
 | Scope change mid-program | Orchestrator | `bmad-correct-course` | |
 
 **Not routed to:**
-- BMAD's build, review and retro skills (`bmad-build`, `bmad-build-auto`, `bmad-code-review`, `bmad-retrospective`). p3's versions and our cross-model review are used instead.
+- BMAD's build, review and retro skills (`bmad-build`, `bmad-build-auto`, `bmad-code-review`, `bmad-retrospective`). p3's build playbooks, our cross-model review and `npm run retro` are used instead.
 - BMAD's persona agents and creative skills (`bmad-agent-*`, `bmad-party-mode`, `bmad-brainstorming`, `bmad-forge-idea`, `bmad-prfaq`).
 - p3's experimental extras (`arena`, `swarm`, `bro`).
 
