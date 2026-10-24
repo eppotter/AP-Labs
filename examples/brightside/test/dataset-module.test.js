@@ -4,23 +4,25 @@
 // Brightside Dataset module answers privately from it. The module's code is
 // the example app's; its data is the minimal engine fixture
 // (test/fixtures/fixture-build/), built into a temporary directory, and its
-// profile is a fixture, never a client's.
+// profile is a fixture, never a client's. An example test (architecture
+// carve-out, moved here from test/unit in Story 6.5): it reads the example app
+// dir and is deleted with the example in a fork.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { build } = require('../../kit/fixture/build');
-const { createData, DATA_UNAVAILABLE } = require('../../kit/runtime/data');
-const { createRegistry } = require('../../kit/runtime/registry');
-const { registerHubs } = require('../../kit/runtime/slack/hubs');
-const { createStore } = require('../../kit/runtime/store');
-const { FakeSlackApp } = require('../fixtures/fake-slack');
+const { build } = require('../../../kit/fixture/build');
+const { createData, DATA_UNAVAILABLE } = require('../../../kit/runtime/data');
+const { createRegistry } = require('../../../kit/runtime/registry');
+const { registerHubs } = require('../../../kit/runtime/slack/hubs');
+const { createStore } = require('../../../kit/runtime/store');
+const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
 
-const REPO = path.join(__dirname, '..', '..');
-const MINI = path.join(__dirname, '..', 'fixtures', 'fixture-build', 'mini');
-const DATASET = path.join(REPO, 'examples', 'brightside', 'app', 'modules', 'dataset');
+const REPO = path.join(__dirname, '..', '..', '..');
+const MINI = path.join(REPO, 'test', 'fixtures', 'fixture-build', 'mini');
+const DATASET = path.join(__dirname, '..', 'app', 'modules', 'dataset');
 const PROFILE = Object.freeze({
   client: { id: 'tiny', name: 'Tiny' },
   resources: [{ key: 'DATASET', label: 'Dataset', open_access: true }],

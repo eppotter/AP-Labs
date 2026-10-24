@@ -1,0 +1,10 @@
+{
+  "id": "my-module",
+  "hub": "my-hub",
+  "label": "My module",
+  "description": "One line that says what this tool does for the person.",
+  "resource": "MY_MODULE",
+  "archetype": "handler",
+  "environments": ["dev"],
+  "handler": "handler.js"
+}

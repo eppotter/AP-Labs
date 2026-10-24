@@ -1,0 +1,6 @@
+{
+  "id": "ops",
+  "command": "/ops",
+  "name": "Ops",
+  "description": "Open the Ops menu"
+}

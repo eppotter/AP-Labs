@@ -154,8 +154,3 @@ test('findProfilePath walks up to .aplabs/profile.yml, and APLABS_PROFILE overri
   process.env.APLABS_PROFILE = 'relative/profile.yml';
   assert.throws(() => findProfilePath(deep), /APLABS_PROFILE must be an absolute path/);
 });
-
-test('the Brightside demo profile is valid', () => {
-  const p = loadProfile(path.join(__dirname, '../../profiles/brightside/profile.yml'));
-  assert.equal(p.client.id, 'brightside');
-});

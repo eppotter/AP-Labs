@@ -41,3 +41,19 @@ jobs:
       - name: Ledger row
         if: github.event_name == 'pull_request'
         run: node scripts/ledger-check.js --base "origin/${{ github.base_ref }}"
+
+  clean-bones:
+    # The template stands alone without its example client (Story 6.5): copy
+    # the repo, delete examples/brightside/ and profiles/brightside/, then run
+    # check, test and a boot smoke test against a minimal stub profile.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Clean bones
+        run: npm run clean-bones

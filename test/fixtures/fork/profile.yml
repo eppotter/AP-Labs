@@ -1,0 +1,11 @@
+# A minimal stub fork profile (Story 6.5): the module the template tests fill
+# in sits on a gated resource, granted to one member (bo) and not another (cy).
+# Used by the template tests and the clean-bones boot smoke test.
+schema_version: 1
+client: { id: stub, name: Stub Co }
+resources:
+  - { key: WEEKLY_REPORT, label: Weekly report }
+users:
+  - { id: ada, name: Ada, role: admin, identities: { slack: UADA } }
+  - { id: bo, name: Bo, role: member, identities: { slack: UBO }, grants: [WEEKLY_REPORT] }
+  - { id: cy, name: Cy, role: member, identities: { slack: UCY } }
