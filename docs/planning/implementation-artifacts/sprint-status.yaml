@@ -114,4 +114,5 @@ development_status:
   11-2-the-app-runs-in-a-container: backlog
   11-3-two-forks-differ-only-by-profile-and-modules: backlog
   11-4-the-engagement-fork-guide: backlog
+  11-5-template-releases-flow-cleanly-into-client-forks: backlog
   epic-11-retrospective: optional
