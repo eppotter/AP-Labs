@@ -51,7 +51,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #59 | 2026-10-24 | 7.2 | groundwork | T1 | Adds 24 months of Brightside activity (plans, price changes, visits, invoices, lines, payments, `fixture_meta`) built to hit seven planted known-truth figures in `targets.json`, checked by the generator and its tests. | — |
 | #60 | 2026-10-24 | 7.3 | groundwork | T2 | `npm run fixture:build` loads the Brightside schema and seeds into a local DuckDB file (`var/fixture/brightside.duckdb`, gitignored) offline in about a second, checking every row count against `fixture_meta`; pins `@duckdb/node-api` 1.5.6-r.2. | — |
 | #62 | 2026-10-24 | 6.2 | user-visible | T1 | `/brightside` opens a private menu built from the hub and module files, and Say hello answers with the person's and client's names; retried Slack events run once and `npm run slack:manifest` keeps the app's commands in sync. | — |
-| pending | 2026-10-24 | — | fix | T3 | Brightside's profile tiers `profiles/**` at T3 so access changes get full review; the review parser accepts Codex's "no defects/problems/bugs" wording. | — |
+| #64 | 2026-10-24 | — | fix | T3 | Brightside's profile tiers `profiles/**` at T3 so access changes get full review; the review parser accepts Codex's "no defects/problems/bugs" wording. | — |
 
 ## Deferrals (DEP)
 
