@@ -36,6 +36,7 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 ## Rules
 
 - **Node 24 (LTS), bash.** `npm ci`, then `npm run check && npm test` before every commit.
+- **`npm test` takes about 2.5 minutes,** longer than the default 2-minute agent shell timeout. Give it a timeout of 400000 ms or more.
 - **Git:** branch off `main`, one PR per block, merge commits (no squash). Never push to `main` directly.
 - **Commits end with an `Agent: <harness> <model>` trailer**, for example `Agent: claude-code claude-opus-5-5` or `Agent: codex gpt-6-luna`. Cross-model review uses it to pick the other model as reviewer.
 - **PR descriptions open with `**What this does:**`** followed by one or two plain-language sentences. Technical detail goes below.

@@ -54,6 +54,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #64 | 2026-10-24 | — | fix | T3 | Brightside's profile tiers `profiles/**` at T3 so access changes get full review; the review parser accepts Codex's "no defects/problems/bugs" wording. | — |
 | #65 | 2026-10-24 | 7.4 | groundwork | T3 | Adds the SQL guardrail every query will pass before it runs: one read-only statement only, no file, network or env access, and no way to reach a protected column (by name, wildcard or whole-row reference). Brightside's profile names its protected columns in the new `sql.forbidden_columns` key. | — |
 | #67 | 2026-10-24 | 6.3 | user-visible | T1 | Hub menus and clicks follow the profile: a person's Slack id maps to their profile user, they see and can open only what they're allowed (deny wins), people not set up see only open-to-everyone entries and are told who to ask, and duplicate Slack ids fail profile validation. | — |
+| #69 | 2026-10-24 | — | infra | T1 | Runtime retro (PRs #42–#67): `npm run check` fails on committed conflict markers, the DuckDB tests say "run npm ci" when deps are missing, and AGENTS.md gives `npm test` a longer timeout. | — |
 
 ## Deferrals (DEP)
 
