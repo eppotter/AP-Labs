@@ -4,9 +4,10 @@
   "private": true,
   "description": "Governance kit for building AI agent solutions inside client organisations.",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
+    "start": "node kit/runtime/app",
     "check": "bash scripts/check-syntax.sh",
     "test": "node --test",
     "review": "node kit/review/cli.js",
@@ -20,6 +21,7 @@
     "fixture:check": "node examples/brightside/fixture/generate.js --check"
   },
   "dependencies": {
+    "@slack/bolt": "5.1.0",
     "ajv": "8.20.0",
     "yaml": "2.9.1"
   }

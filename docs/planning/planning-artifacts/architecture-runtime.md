@@ -229,7 +229,7 @@ Dependency rule: arrows point inward only. Engine code never `require`s or names
 | Node | 20 (repo engine) |
 | ajv | 8.20.0 (existing pin) |
 | yaml | 2.9.1 (existing pin) |
-| @slack/bolt | exact pin chosen and verified current in Story 6.1 |
+| @slack/bolt | 5.1.0 (Story 6.1: current release on 2026-10-24; Socket Mode app framework, brings `@slack/socket-mode` and `@slack/web-api`) |
 | @duckdb/node-api | exact pin chosen and verified current in Story 7.3 |
 | @anthropic-ai/sdk | exact pin chosen and verified current in Story 9.1 |
 

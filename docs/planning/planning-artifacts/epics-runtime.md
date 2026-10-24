@@ -74,7 +74,7 @@ No renumbering; still 29 stories. Round 3 tightens: the approval entry carries i
 
 ### NonFunctional Requirements
 
-- NFR1: Runtime is Node 20 and bash.
+- NFR1: Runtime is Node 24 (LTS) and bash (ADR 0004; was Node 20).
 - NFR2: Slack is the only surface; menus and typed forms, not an open chat box.
 - NFR3: Private delivery by default; files only to the person's DM; any channel delivery is a declared, tested exception.
 - NFR4: Each new profile key lands with the story that reads it, schema-validated, unknown keys rejected; the profile never holds secrets (AD-16).
