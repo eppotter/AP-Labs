@@ -46,7 +46,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #46 | 2026-10-24 | — | fix | — | Hardens review and land: later Claude rounds also get the diff since the last reviewed head, the rubric is built from parts, Claude's flags are pinned by a test, a CLEAN verdict hiding a prose blocker fails, and repeated exempt lines refuse a merge. | — |
 | #48 | 2026-10-24 | — | fix | — | Hardening: T3 plan reviews must come from the current plan, duplicate ledger tables fail, add-on stage lists can't drift, odd comma numbers are rejected, the banner flags truths that failed at last verify, and fork CI runs verify strictly. | DEP-001, DEP-002, DEP-003, DEP-006 |
 | #53 | 2026-10-24 | 7.1 | groundwork | T2 | Adds Brightside's deterministic fixture generator: seven reference tables (zones to properties) as committed CSV seeds plus a DuckDB schema, with `npm run fixture:check` in CI failing on any drift. | — |
-| pending | 2026-10-24 | — | infra | — | Moves the template from Node 20 (end of life) to Node 24 LTS so Slack Bolt's dependencies run on a supported runtime (ADR 0004). | — |
+| #57 | 2026-10-24 | — | infra | — | Moves the template from Node 20 (end of life) to Node 24 LTS so Slack Bolt's dependencies run on a supported runtime (ADR 0004). | — |
 
 ## Deferrals (DEP)
 
