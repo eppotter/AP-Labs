@@ -58,7 +58,8 @@ users:
   - id: dana
     name: Dana Reyes
     role: admin
-    identities: { github: dana-r }
+    # slack: the aplabs-demo member id Ely uses to drive Dana in the dev workspace.
+    identities: { github: dana-r, slack: U0CB6HDBBQX }
     grants: [TIER3_APPROVE]
   - id: marcus
     name: Marcus Lee

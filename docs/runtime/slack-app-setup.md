@@ -31,7 +31,8 @@ Env vars win over the Keychain when both are set. Never paste a token into the r
 ## 3. Run it
 
 ```bash
-APLABS_PROFILE="$PWD/profiles/brightside/profile.yml" npm start
+APLABS_PROFILE="$PWD/profiles/brightside/profile.yml" \
+  APLABS_APP_DIR="$PWD/examples/brightside/app" npm start
 ```
 
 It logs one startup line naming the client, the profile path and "single instance". Run exactly one copy: two processes would split Slack's events between them. Then send the bot a direct message in `aplabs-demo`; it replies with a short greeting.
