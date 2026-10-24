@@ -16,7 +16,9 @@
     "verify": "node kit/verify/run-all.js",
     "engage": "node kit/hooks/engage.js",
     "land": "node kit/land/cli.js",
-    "onboard": "node kit/onboard/cli.js"
+    "onboard": "node kit/onboard/cli.js",
+    "fixture:generate": "node examples/brightside/fixture/generate.js",
+    "fixture:check": "node examples/brightside/fixture/generate.js --check"
   },
   "dependencies": {
     "@slack/bolt": "5.1.0",

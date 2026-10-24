@@ -1,0 +1,16 @@
+crew_id,zone_id,name
+1,north,North crew A
+2,north,North crew B
+3,north,North crew C
+4,south,South crew A
+5,south,South crew B
+6,south,South crew C
+7,east,East crew A
+8,east,East crew B
+9,east,East crew C
+10,west,West crew A
+11,west,West crew B
+12,west,West crew C
+13,central,Central crew A
+14,central,Central crew B
+15,central,Central crew C
