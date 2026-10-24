@@ -54,3 +54,4 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | DEP-006 | 2026-10-24 | Orchestrator | open | — | Small hardening follow-ups from Story 2.6's review (add-on lists in sync, error type, unused export). | https://github.com/eppotter/AP-Labs/issues/31 |
 | DEP-007 | 2026-10-24 | Orchestrator | open | — | Plan approvals are recorded only in Claude Code sessions; Codex's UserPromptSubmit hook is unproven, so Codex sessions can't record an approval. | Story 2.5 |
 | DEP-008 | 2026-10-24 | Orchestrator | open | — | Watch whether blocking the turn end on any failing check (e.g. mid-TDD red tests) slows builders; Varsity only reported test failures before review. | Story 3.2 |
+| DEP-009 | 2026-10-24 | Orchestrator | open | — | `npm run retro` reads only PR bodies, so it can't flag a PR merged while CI was red (as #19 was); add a CI-state-at-merge check. | docs/planning/implementation-artifacts/retro-epics-2-3-5.md |
