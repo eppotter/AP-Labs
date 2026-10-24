@@ -37,7 +37,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #29 | 2026-10-24 | 2.4 | infra | — | The write gate: no edits in a client fork until work is routed to a specialist or logged with `npm run engage`. | DEP-005 |
 | #30 | 2026-10-24 | 2.6 | infra | — | Client profiles can switch on add-on stages that slot between the 8 core stages. | DEP-006 |
 | #32 | 2026-10-24 | — | fix | — | Reviewers end with a `VERDICT:` line the parser trusts first, so Codex paraphrases no longer force fallbacks. | — |
-| pending | 2026-10-24 | 5.1 | infra | — | Adds this ledger and a CI check that every PR adds a ledger row unless it is docs-only. | DEP-004 |
+| #33 | 2026-10-24 | 5.1 | infra | — | Adds this ledger and a CI check that every PR adds a ledger row unless it is docs-only. | DEP-004 |
 
 ## Deferrals (DEP)
 
