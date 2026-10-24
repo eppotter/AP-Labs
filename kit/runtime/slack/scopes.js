@@ -6,7 +6,9 @@
 
 const BOT_SCOPES = Object.freeze(['commands', 'chat:write', 'im:write', 'im:history', 'files:write', 'users:read']);
 
-// message.im delivers direct messages to the bot (needs im:history).
-const BOT_EVENTS = Object.freeze(['message.im']);
+// message.im delivers direct messages to the bot (needs im:history);
+// team_join tells it a person joined the workspace, for the join welcome
+// (Story 6.4; needs users:read).
+const BOT_EVENTS = Object.freeze(['message.im', 'team_join']);
 
 module.exports = { BOT_SCOPES, BOT_EVENTS };

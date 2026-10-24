@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { loadProfile } = require('../../kit/lib/profile');
 const { loadRegistry } = require('../../kit/runtime/registry');
-const { buildMenu, moduleIdFromAction } = require('../../kit/runtime/registry/menu');
+const { buildMenu, moduleIdFromAction, hubIdFromHelpAction } = require('../../kit/runtime/registry/menu');
 const { registerHubs, NOT_AVAILABLE } = require('../../kit/runtime/slack/hubs');
 const { PLAIN_ERROR } = require('../../kit/runtime/slack/handle');
 const { createStore } = require('../../kit/runtime/store');
@@ -32,12 +32,14 @@ function setup({ env = 'dev', canUse } = {}) {
   return { app, log };
 }
 
-const buttons = (msg) => msg.blocks.filter((b) => b.accessory).map((b) => b.accessory.action_id);
+// The Open buttons, in menu order (the Help button is checked on its own).
+const buttons = (msg) => msg.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
 
-test('each hub file registers its slash command; one listener handles Open clicks', () => {
+test('each hub file registers its slash command; one listener each handles Open and Help clicks', () => {
   const { app } = setup();
   assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
-  assert.equal(app.actionListeners.length, 1);
+  assert.equal(app.actionListeners.length, 2);
+  assert.deepEqual([...app.eventListeners.keys()], ['team_join']);
 });
 
 test('the hub command replies privately with the hub\'s visible entries, label and description', async () => {
@@ -144,7 +146,7 @@ test('by default access asks kit/lib/permissions, so open-access modules are all
 });
 
 test('buildMenu: entries become sections with an Open button each', () => {
-  const hub = { name: 'H' };
+  const hub = { id: 'h', name: 'H' };
   const { text, blocks } = buildMenu(hub, [{ id: 'a-b', label: 'A', description: 'd' }]);
   assert.equal(text, 'H: A');
   assert.deepEqual(blocks[1].accessory, {

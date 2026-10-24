@@ -16,6 +16,14 @@
 // fault, never as a denial. A replayed or stale payload never runs a handler
 // the menu would not show.
 //
+// Welcome and help (Story 6.4): the first time a person opens a hub (per
+// person per hub, in the store's `welcome` namespace, so again after a restart
+// or the 7-day TTL) the hub's welcome sits above the entries. Every menu ends
+// with Help; a Help click re-reads the same access decision as the menu, so it
+// never lists a module the person cannot open. A person joining the workspace
+// (team_join) gets a private DM naming the hubs with at least one entry they
+// can use.
+//
 // Seam: canUse(person, module) returns 'allowed' | 'denied' | 'error' (true
 // and false are read as allowed and denied); person is { id, user } with user
 // the profile user or null. Tests may inject their own.
@@ -27,9 +35,11 @@
 
 const access = require('../access');
 const { NotSetUp, AccessDenied, ConfigFault } = require('../errors');
-const { messageFor } = require('../messages');
+const { messageFor, welcomeText, feedbackText, joinWelcomeText } = require('../messages');
 const { handle } = require('./handle');
-const { buildMenu, moduleIdFromAction, OPEN_ACTION } = require('../registry/menu');
+const {
+  buildMenu, buildHelp, moduleIdFromAction, hubIdFromHelpAction, OPEN_ACTION, HELP_ACTION,
+} = require('../registry/menu');
 const { isVisible } = require('../registry');
 const { DATA_UNAVAILABLE, DataUnavailableError } = require('../data');
 
@@ -64,6 +74,23 @@ function ephemeral(message) {
   return { response_type: 'ephemeral', replace_original: false, ...m };
 }
 
+// True the first time this person opens this hub; records the visit.
+// Synchronous: no await between the check and the set (AD-7).
+function firstVisit(store, slackId, hubId) {
+  if (!store || typeof slackId !== 'string' || !slackId) return false;
+  const key = `${slackId}:${hubId}`;
+  if (store.get('welcome', key) !== undefined) return false;
+  store.set('welcome', key, true);
+  return true;
+}
+
+// team_join sends the user object; tolerate a bare id.
+function joinedUser(event) {
+  const u = event && event.user;
+  if (typeof u === 'string') return { id: u };
+  return u && typeof u === 'object' ? u : null;
+}
+
 // The data a module's handler sees: run() with the manifest's parameters as
 // the declared names. Without a data source, every run is unavailable.
 function moduleData(data, mod) {
@@ -87,14 +114,41 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
   };
   const visibleEntries = (hubId, person) => registry.entries(hubId)
     .filter((m) => isVisible(m, env) && decide(person, m) === 'allowed');
+  const notSetUp = (person) => (person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin })));
 
   for (const hub of registry.hubs) {
     app.command(hub.command, handle(`hub:${hub.id}`, async ({ command, respond }) => {
       const person = personOf(command.user_id);
-      const notice = person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin }));
-      await respond(ephemeral(buildMenu(hub, visibleEntries(hub.id, person), { notice })));
+      const welcome = firstVisit(store, command.user_id, hub.id) ? welcomeText(hub) : undefined;
+      await respond(ephemeral(buildMenu(hub, visibleEntries(hub.id, person), { notice: notSetUp(person), welcome })));
     }, { log, store }));
   }
+
+  app.action(HELP_ACTION, handle('hub:help', async ({ action, body, respond }) => {
+    const actionId = action && action.action_id;
+    const hubId = hubIdFromHelpAction(actionId);
+    const hub = registry.hubs.find((h) => h.id === hubId);
+    if (!hub) {
+      log.warn('hub action refused', { action_id: actionId, reason: 'unknown hub', env });
+      await respond(ephemeral(NOT_AVAILABLE));
+      return;
+    }
+    const person = personOf((body.user || {}).id);
+    await respond(ephemeral(buildHelp(hub, visibleEntries(hub.id, person), {
+      notice: notSetUp(person),
+      feedback: feedbackText(hub, admin),
+    })));
+  }, { log, store }));
+
+  app.event('team_join', handle('team-join', async ({ event, client }) => {
+    const user = joinedUser(event);
+    if (!user || typeof user.id !== 'string' || !user.id || user.is_bot || user.deleted) return;
+    const person = personOf(user.id);
+    const hubs = registry.hubs.filter((h) => visibleEntries(h.id, person).length > 0);
+    const text = joinWelcomeText({ client: profile.client.name, hubs, notice: notSetUp(person), admin });
+    await client.chat.postMessage({ channel: user.id, text });
+    log.info('join welcome sent', { hubs: hubs.map((h) => h.command), set_up: Boolean(person.user) });
+  }, { log, store }));
 
   app.action(OPEN_ACTION, handle('hub:dispatch', async ({ action, body, respond, client }) => {
     const user = body.user || {};
@@ -134,4 +188,4 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
   }, { log, store }));
 }
 
-module.exports = { registerHubs, personName, NOT_AVAILABLE };
+module.exports = { registerHubs, personName, firstVisit, NOT_AVAILABLE };
