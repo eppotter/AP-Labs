@@ -1,12 +1,14 @@
 ---
 id: SPEC-runtime
 companions:
-  - harvest-map.md
   - fixture-tables.md
   - demo-flow.md
+  - connector-review.md
 sources:
   - ../../../PLAN-v1.md
   - ../../../adr/0002-engagement-starter-template.md
+  - ../../planning-artifacts/architecture-runtime.md
+  - ../../../reference/runtime-harvest-map.md
 ---
 
 > **Canonical contract.** This SPEC and the files in `companions:` are the complete, preservation-validated contract for what to build, test, and validate. Source documents listed in frontmatter are for traceability — consult them only if you need narrative rationale or prose color this contract intentionally omits.
@@ -23,8 +25,8 @@ A vision to realise. The Orchestrator gives builders a governed way to build; th
   - **intent:** A fork's Slack app boots in dev from env and the profile, refuses to start when a setting is missing (naming it, never its value), and answers a person privately.
   - **success:** Boot tests with a fake Slack client cover ok, missing env and invalid profile; Ely sees a private reply in Slack.
 - **CAP-2**
-  - **intent:** Each hub is a slash command whose menu is built from registry data; adding an entry is data only.
-  - **success:** Tests build menus from fixture entries, a click dispatches the right handler, and a hidden entry is rejected at dispatch as well as left off the menu.
+  - **intent:** Each hub is a slash command whose menu is built from registry data. Adding an entry is data only; adding a hub is data plus a regenerated Slack app manifest.
+  - **success:** Tests build menus from fixture entries, a click dispatches the right handler, and a hidden entry is rejected at dispatch as well as left off the menu; a check fails when the app manifest's slash commands differ from the hub files.
 - **CAP-3**
   - **intent:** A module is one manifest (hub, label, resource key, archetype, parameters) plus one handler.
   - **success:** A module made from the template appears in its hub with no engine edit; a malformed manifest fails the check.
@@ -32,32 +34,32 @@ A vision to realise. The Orchestrator gives builders a governed way to build; th
   - **intent:** Menu visibility and every dispatch are decided by `kit/lib/permissions` against the profile, through the person's Slack identity.
   - **success:** Tests cover allow, deny-beats-allow, an unknown person and a misconfigured resource key, each with a distinct plain message.
 - **CAP-5**
-  - **intent:** One LLM service assembles prompts from the profile and `.aplabs/context/`, defines and dispatches tools, and stops at an hourly spend limit or a kill switch.
-  - **success:** Stubbed-client tests cover prompt assembly, tool dispatch, breaker trip, kill switch and timeout; no test calls a model.
+  - **intent:** One LLM service assembles prompts from the profile and a declared list of context files from `contextDirFor(profilePath)` (in template dev, `profiles/brightside/context/`), makes one structured extraction call, and stops at a kill switch, a per-person rate limit or an hourly spend limit. No LLM-callable tool can run SQL or a connector write.
+  - **success:** Stubbed-client tests cover prompt assembly, the declared context list, structured output, per-call token cap, rate limit, breaker trip, kill switch, timeout and the price table; no test calls a model.
 - **CAP-6**
   - **intent:** Every external-system adapter has one shape (auth from named env vars, read vs write operations, dry-run, idempotency key, kill switch, rate limit).
   - **success:** One shared contract test suite passes against the template adapter and the mock connector.
 - **CAP-7**
-  - **intent:** Brightside has a mock CRM (look up, update a client) and a mock email tool (create a list, add contacts) over the fixture.
-  - **success:** Both pass the contract tests; a repeated push changes nothing; every write is visible in a local outbox and never touches the fixture.
+  - **intent:** Brightside has a mock CRM (look up a client: the contract's read path) and a mock email tool (create a list, add contacts: the write path) over the fixture (`connector-review.md`).
+  - **success:** Both pass the contract tests; a repeated push changes nothing; every write is visible in a local outbox under `var/outbox/` and never touches the fixture.
 - **CAP-8**
-  - **intent:** Generated SQL runs only if it is one read-only statement that avoids the profile's forbidden columns.
-  - **success:** Tokenizer tests block DDL, DML, multiple statements, forbidden columns (including any wildcard select while forbidden columns are configured, through CTEs, `TOP n *` and quoted stars), and fail closed on unterminated strings or comments; comment markers inside literals do not confuse it.
+  - **intent:** SQL runs only through one query runner, which opens the data read-only with DuckDB's external access and extension loading off, and runs a query only if it is one read-only statement that avoids the profile's forbidden columns and DuckDB's file, network and environment functions.
+  - **success:** Tokenizer tests block DDL, DML, multiple statements, `ATTACH`/`SET`/`PRAGMA`/`INSTALL`/`LOAD`/`COPY`, file, network and env table functions, forbidden columns (including any wildcard select while forbidden columns are configured, through CTEs, `TOP n *` and quoted stars), and fail closed on unterminated strings or comments; comment markers inside literals do not confuse it; a test asserts the guardrail runs on every runner call.
 - **CAP-9**
-  - **intent:** One scoped-pull engine turns a plain-English request into the module's declared parameters, confirms them with the person, runs a guarded query and delivers the results privately.
-  - **success:** A scripted conversation on the fixture yields the expected parameters and rows; a second module configures the same engine without copying it.
+  - **intent:** One scoped-pull engine fills the module's declared, typed parameters (from a typed form, or from plain English via the LLM), confirms them with the person, binds them into the module's static query, runs it through the runner and delivers the results privately (files only to the person's DM).
+  - **success:** A scripted conversation on the fixture yields the expected parameters and rows; with the LLM off, the typed form gives the same rows; a second module configures the same engine without copying it.
 - **CAP-10**
   - **intent:** An approval-gated write shows a preview (count, sample, destination), pushes only after the same person approves, and reports the outcome.
   - **success:** Tests cover approve, cancel, expiry, wrong person, double click, partial failure, kill switch and suppressed repeat escalations.
 - **CAP-11**
-  - **intent:** Slack basics every module reuses: thread context, markdown to Slack with long-output chunking, a provenance button (parameters and SQL), first-run onboarding and help per hub, a TTL cache.
+  - **intent:** Slack basics every module reuses: acknowledge-first handling, thread context, markdown to Slack with long-output chunking, a provenance button (parameters and SQL), first-run onboarding and help per hub, one TTL store.
   - **success:** Unit tests per helper; the provenance button shows the exact SQL that ran.
 - **CAP-12**
   - **intent:** Scheduled jobs are declared as data (name, schedule, run, enabled), and their runs are logged.
   - **success:** Fake-clock tests show enabled jobs run, disabled ones skip, and a failing job is logged without crashing the app; the template ships no jobs.
 - **CAP-13**
-  - **intent:** The Brightside Tier-1 dataset (`fixture-tables.md`) is generated deterministically into versioned seed files, built offline into a local DuckDB, validated, and publishable to MotherDuck by Ely.
-  - **success:** The same seed gives identical files; the offline build takes under 60 seconds; integrity, synthetic-only and known-truth checks pass; CI needs no network.
+  - **intent:** The Brightside Tier-1 dataset (`fixture-tables.md`) is generated deterministically into versioned seed files, built offline into a local DuckDB, validated, and publishable to MotherDuck by Ely. Its known truths are `truth` blocks in Brightside's `context/data.md`, run by `npm run verify`.
+  - **success:** The same seed gives identical files; the offline build takes under 60 seconds; integrity and synthetic-only checks pass; every known truth matches its planted value; CI needs no network.
 - **CAP-14**
   - **intent:** In a fresh fork configured for Brightside, a person in Slack goes from a plain-English request through scoped pull, scoring and approval to a push to the mock email tool (`demo-flow.md`).
   - **success:** An end-to-end acceptance test through fake Slack, the fixture and the mock passes in CI; Ely runs the same flow live in Slack.
@@ -81,7 +83,10 @@ A vision to realise. The Orchestrator gives builders a governed way to build; th
 - Every LLM call passes the spend breaker and kill switch. When either stops a call, the person gets a plain message, never silence.
 - Engine code is identical across forks. Hubs, modules and the profile are the only per-fork files. Brightside demo modules ship as examples, not engine.
 - Dependencies are pinned exactly with a one-line reason each (expected: Slack Bolt, DuckDB, the Anthropic SDK).
-- No Hometown specifics outside `docs/reference/`. Varsity is read for patterns only (`harvest-map.md`).
+- No Hometown specifics outside `docs/reference/`. Varsity is read for patterns only (`docs/reference/runtime-harvest-map.md`).
+- The runtime finds its profile through `kit/lib/profile` (`APLABS_PROFILE`, an absolute path, in template dev and the container). The template repo never holds `.aplabs/profile.yml`.
+- One process per deployment: short-lived state lives in memory.
+- Architecture decisions (engine/fork paths, manifest format, store, data access, LLM isolation, secrets, health): `architecture-runtime.md`, AD-1 to AD-18.
 
 ## Non-goals
 
@@ -90,7 +95,8 @@ A vision to realise. The Orchestrator gives builders a governed way to build; th
 - Archetypes beyond scoped pull and approval-gated write.
 - A conversational chat agent.
 - The FAST lane.
-- A durable session store (in-memory with TTL only).
+- A durable session store (in-memory with TTL only), or more than one replica.
+- The bot reading MotherDuck (V1 reads the local fixture; MotherDuck is for people).
 - Cost rollups or dashboards beyond the breaker.
 - A production hosting choice.
 - Real scheduled jobs.
@@ -104,16 +110,16 @@ A vision to realise. The Orchestrator gives builders a governed way to build; th
 - Slack runs in Socket Mode for dev (no public URL). HTTP mode is a fork deploy choice.
 - Tier 1 means about 1–3k clients and 24 months of visits; committed seed files stay under 10 MB.
 - Seed data is versioned as committed generated files plus the generator. CI regenerates and fails on any diff.
-- Mock tools persist to a gitignored local outbox. The runtime never writes the fixture database.
-- Story 4.3 of the Orchestrator epics (prove onboarding on Brightside, DEP-004) stays there and becomes buildable once this phase's fixture lands.
+- Mock tools persist to a gitignored local outbox (`var/outbox/`). The runtime never writes the fixture database.
+- Story 4.3 of the Orchestrator epics (prove onboarding on Brightside, DEP-004) stays there and becomes buildable once Epic 7 lands; it reuses the truth blocks Story 7.6 writes into Brightside's `context/data.md`.
 
 ## Open Questions
 
-- **Fixture language:** Python 3.12 + `uv` for `fixtures/` only, or Node throughout? Recommend Node throughout: one toolchain in CI and forks, DuckDB is needed in Node anyway, and a seeded JS generator is enough for Tier 1.
-- **Slack app (Ely):** create the app from the repo manifest in which workspace? Recommend a dedicated AP Labs dev workspace (not Hometown), Socket Mode; Ely stores the bot, app-level and signing tokens locally.
-- **MotherDuck (Ely):** confirm the venture-email account, the invited collaborator, and that a read-only share fits the plan. Recommend Ely runs `fixture:publish` after the fixture epic merges; agents never run it.
-- **LLM in the bot:** Claude API with a metered venture key, an hourly breaker (default USD 2/hour), a kill-switch env var and a console spend cap; or form-only parameters with no LLM? Recommend the Claude API with the breaker, a cheaper model for parameter extraction, configurable.
-- **Mock connector shape:** in-process adapters writing a local outbox shown in Slack, or a local HTTP mock server? Recommend in-process: offline, simpler, same contract test.
+Decided in round 2 (recorded in the memlog): Slack workspace (the existing `aplabs-demo`), the mock connector shape (in-process), email allowed and phone and address forbidden for Brightside, and the architecture (`architecture-runtime.md`).
+
+- **Fixture language:** Python 3.12 + `uv` for the fixture only, or Node throughout? Recommend Node throughout: one toolchain in CI and forks, DuckDB is needed in Node anyway, and a seeded JS generator is enough for Tier 1.
+- **MotherDuck (Ely):** confirm the venture-email account, the invited collaborator, and that a read-only share fits the plan. Recommend Ely runs `fixture:publish` after Epic 7 merges; agents never run it. The bot reading MotherDuck needs an approved read-only service token and an injection path (DEP row, approver Ely).
+- **LLM in the bot:** Claude API with a metered venture key, an hourly breaker (default USD 2/hour), a kill switch and a console spend cap; or form-only parameters with no LLM? Recommend the Claude API with the breaker, a cheaper model for parameter extraction, configurable; the typed form is the fallback either way.
 - **Demo scenario (PLAN §5):** recommend a win-back campaign (`demo-flow.md`).
 - **Profile schema:** add runtime keys as optional, additive keys under `schema_version: 1`, or bump to 2? Recommend additive under v1; nothing is deployed.
 - **Deploy files:** ship a generic container definition and leave the host to each fork? Recommend yes.

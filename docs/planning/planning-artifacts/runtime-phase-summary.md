@@ -1,41 +1,45 @@
 # Runtime phase: summary for Ely
 
-Status: draft, awaiting approval · 2026-10-24
+Status: draft (round 2, after the Architect's review), awaiting approval · 2026-10-24
 
 **What it delivers:** the part of the template the client's people use. By the end, in a fresh fork set up for Brightside, you type a command in Slack, ask in plain English for lapsed clients to win back, check what the bot understood, see a scored list, approve it, and watch it land once in a mock email tool. That is PLAN-v1 done-definition 3, plus 1, 2, 5 and 6.
 
-**Size:** 6 phases (Epics 6–11, continuing the Orchestrator's 1–5), 27 stories, one PR each: 8 S, 17 M, 2 L. Full plan: `epics-runtime.md`. Spec: `../specs/spec-runtime/SPEC.md`.
+**Size:** 6 phases (Epics 6–11), 29 stories, one PR each: 8 S, 20 M, 1 L. Plan: `epics-runtime.md`. Design rules: `architecture-runtime.md`. Spec: `../specs/spec-runtime/SPEC.md`.
+
+**What changed since round 1:** a written architecture; the bot's SQL is locked down harder (one read-only runner, no file or network access, the LLM never writes SQL or sees rows); the bot doesn't read MotherDuck yet; CSVs go only to your DM; the existing `aplabs-demo` workspace instead of a new one; two big stories split; known truths use the checks Story 4.2 built.
 
 ## What you will see at the end of each phase
 
-| Phase | You will see |
-|---|---|
-| 6. Hello from Slack (5 stories) | The bot replies in Slack. A hub command shows a menu that only lists what your profile allows. A new module is added by copying a template |
-| 7. Brightside's data (5) | A synthetic Brightside database built offline in under a minute, checked automatically, published to MotherDuck by you, and a Dataset entry in Slack showing its version |
-| 8. Safe connections (4) | The bot can't write through SQL or show blocked columns. A mock CRM and mock email tool exist, and an Outbox entry in Slack shows what they received |
-| 9. Plain English (5) | You ask for a list in your own words, confirm the parameters, and get a private result with a CSV and a "How was this made?" button showing the SQL |
-| 10. Score, approve, push (4) | The full demo: scored list → preview → approve → pushed once, even if you double-click. Also runs as a CI test |
-| 11. Ready to fork (4) | Scheduled-job registry, a container file, a test proving two forks share the engine, and a day-one fork guide |
+| Phase | Tier | You will see |
+|---|---|---|
+| 6. Hello from Slack (5 stories) | T1 | The bot replies in Slack. A hub command shows a menu that only lists what your profile allows. A new module is added by copying a template |
+| 7. Brightside's data, queried safely (7) | T2 | A synthetic Brightside database built offline in under a minute, checked automatically with known figures, every query going through one locked-down reader, a Dataset entry in Slack, and your MotherDuck copy |
+| 8. Safe connections (3) | T1 | A standard connector shape, a mock CRM and mock email tool, and an Outbox entry in Slack showing what the email tool received |
+| 9. Plain English (6) | T1 | Fill a short form or ask in your own words, confirm the parameters, and get a private result with a CSV in your DM and a "How was this made?" button showing the SQL |
+| 10. Score, approve, push (4) | T1 | The full demo: scored list → preview → approve → pushed once, even if you double-click. Also runs as a CI test |
+| 11. Ready to fork (4) | T2 | Scheduled-job registry, a container with a health check, a test proving two forks share the engine, and a day-one fork guide |
+
+Tiers come from `node kit/lib/tier` with Brightside's profile. Phases 7 and 11 are T2 because they touch CI workflows and the Dockerfile.
 
 ## Steps only you can do
 
-1. **Slack app:** create it from the repo's manifest in a non-Hometown workspace, install it, and store the bot, app-level and signing tokens locally. Needed to see Phase 6 live; CI doesn't need it.
-2. **LLM key:** a venture Anthropic API key with a spend cap set in the console. Needed to see Phase 9 live.
-3. **MotherDuck:** venture-email account, invite your teammate, then run the publish command (Story 7.4).
+1. **Slack app (before Phase 6 live checks):** in the existing `aplabs-demo` workspace, create a separate bot app ("Brightside Bot (dev)") from the repo's manifest. Keep it apart from the "AP Labs Orchestrator" webhook app so notify and the bot never share credentials. Store the bot token (`xoxb-`) and app-level token (`xapp-`); no signing secret needed. Add your `aplabs-demo` member id to a Brightside user in the profile.
+2. **LLM key (before Phase 9 live checks):** a venture Anthropic API key with a spend cap set in the console.
+3. **Ops channel (before Story 10.3 live check):** create `#brightside-ops` in `aplabs-demo` and invite the bot. Failed pushes post counts there, never data.
+4. **MotherDuck (after Phase 7):** venture-email account, invite your teammate, then run the publish command (Story 7.7).
 
 ## Decisions for you (my recommendation in bold)
 
 | Decision | Recommendation |
 |---|---|
 | Fixture generator language | **Node throughout.** One toolchain; DuckDB is needed in Node anyway |
-| Slack workspace and mode | **A dedicated AP Labs dev workspace, Socket Mode** (no public URL) |
-| LLM in the bot | **Claude API with an hourly breaker (USD 2/hour default) and a kill switch**; cheaper model for reading requests |
-| Mock connector shape | **In-process, writing to a local outbox** shown in Slack; no mock HTTP server |
-| Demo scenario | **Win-back:** clients in a zone whose plan lapsed in the last 90 days, scored, top N pushed to the email tool |
+| LLM in the bot | **Claude API with a kill switch, a per-person limit and an hourly breaker (USD 2/hour default)**; cheaper model for reading requests; the form works when it's off |
+| Bot reading MotherDuck | **Not in V1.** The bot reads the local fixture; MotherDuck is for people. Logged as a deferred item needing your approval of a read-only token |
+| Demo scenario | **Win-back:** North-zone clients whose plan lapsed in the last 90 days, scored, top 25 pushed to the email tool |
 | Profile schema | **Add the new keys as optional under version 1**; nothing is deployed yet |
-| Deploy files | **A generic container only**; each fork picks its host |
+| Deploy files | **A generic container, one replica only**; each fork picks its host |
 
-Orchestrator Story 4.3 (prove onboarding on Brightside) becomes buildable after Phase 7; it stays in the Orchestrator plan.
+Orchestrator Story 4.3 (prove onboarding on Brightside) becomes buildable after Phase 7 and reuses its known truths.
 
 ## To approve
 

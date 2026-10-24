@@ -1,6 +1,6 @@
-# Harvest map
+# Runtime harvest map
 
-Where each capability's prior art lives. All sources are read-only.
+Reference for `docs/planning/specs/spec-runtime/SPEC.md` (moved here so prior-art paths stay under `docs/reference/`). Where each runtime capability's prior art lives. All sources are read-only.
 
 - **BI** = `git -C ~/Projects/bi-platform show main:<path>`: the live Varsity. Paths below are under `agents/varsity/` unless they start with `shared/` or `.claude/`.
 - **AP** = this repo.
@@ -16,7 +16,7 @@ Rewrite every source against the profile. Carry no Hometown hubs, names, Slack i
 | 5 | BI | `shared/claude.js`, `services/claude.js`, `prompts/system-prompt.js`, `tools/definitions.js`, `tools/handlers.js` | Hourly budget breaker, kill switch, per-call cost estimate, tool loop cap, timeout. Org context comes from the profile and `.aplabs/context/`, not a hand-written prompt |
 | 6 | BI | `services/sfdc*.js`, `services/gong.js`, `services/cw-api.js`; `.claude/skills/{sfdc,cw,jira}-connection` | Auth from env, read vs write split, batching and rate limits, the connection-standard document shape |
 | 7 | — | none | New. Uses the CAP-6 contract and the fixture |
-| 8 | BI | `tools/sql-guardrails.js` and its tests | The single-pass tokenizer, wildcard rule, fail-closed on unterminated input, and the bypass cases its header lists. Forbidden columns move to the profile |
+| 8 | BI | `tools/sql-guardrails.js` and its tests | The single-pass tokenizer, wildcard rule, fail-closed on unterminated input, and the bypass cases its header lists. Forbidden columns move to the profile. New here: the DuckDB function and statement denylist (architecture AD-9) |
 | 9 | BI | `datapull/{handler,intent,session}.js` | Interview to confirmed parameters, 30-minute session TTL, revision window, tombstone notice. One engine, not three clones (TA-16) |
 | 10 | BI | `gongcontacts/{push-session,escalation,upload,handler}.js` | Opaque CSPRNG token, user binding checked before consume, single use, 30-minute TTL, consume just before the first write, per-reason escalation suppression |
 | 11 | BI | `lib/{thread-context,markdown-to-slack,provenance,provenance-actions,team-joined,cache}.js` | Thread fetch, Slack formatting, 2,900-char section chunking, provenance block and handler, first-run onboarding, TTL cache |
