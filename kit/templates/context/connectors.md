@@ -24,6 +24,15 @@ One entry per system the client uses:
 - bulk path: how large reads or writes are done, if different
 - limits: rate limits, batch sizes, row caps, cost per call
 - notes: known failure modes and quirks
+
+Contract fields (what the system's connector declares; kit/templates/connector.md):
+- connector id: the app's connector folder (app/connectors/<id>)
+- auth env: the env var names holding its credentials, never the values ("none" for a mock)
+- kill-switch env: the env var that turns its writes off (APLABS_WRITES_OFF turns off every connector)
+- rate limit: calls per second the connector keeps to
+- batch size: the most items in one call
+- idempotency: the key each write takes and how it is built, and whether the system also dedupes
+- dry run: what a dry run of each write shows
 -->
 
 ## Missing connections

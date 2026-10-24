@@ -1,0 +1,52 @@
+# Adding a connector
+
+A connector is the one way the app reaches an external system (a CRM, an email tool, billing, any API). Every connector has the same shape, declared with `defineConnector` from `#sdk`, and passes the same contract suite. The engine enforces the guardrails; the adapter only says how to talk to the system. Adding one is a folder in the app dir. No engine file (`kit/**`, `profiles/_schema/**`) changes.
+
+Before you write one, check `.aplabs/context/connectors.md` and ask Connector: a system has one approved path per operation, and a new connection or credential is a gated human action, never created inside a build.
+
+## Steps
+
+1. Copy the template into the app dir, naming the folder after the connector's id:
+
+   ```bash
+   cp -r kit/templates/connector app/connectors/crm
+   ```
+
+   The template is two files: `connector.js` (the adapter) and `connector.test.js` (its test).
+2. Fill in the declaration (fields below) from the system's entry in `connectors.md`.
+3. Replace `connect` with the system's real client, and each operation's body with real calls. Delete the in-memory stand-in.
+4. Give the contract suite one sample input per operation in `connector.test.js`, then run `npm test`.
+5. Add the system's contract fields to `connectors.md` (kill switch, idempotency, batch size; see the template there) through Scribe and the owner's sign-off.
+
+## The declaration
+
+| Field | What it is |
+|---|---|
+| `id` | Lower-case slug (`crm`). Matches the folder name. |
+| `system` | The system's plain name (`Acme CRM`). People see it in "switched off" and "couldn't reach" messages. |
+| `auth.env` | The **names** of the env vars holding its credentials (`["ACME_CRM_TOKEN"]`), never values; `[]` for a system with no credential (a mock). Read once through `kit/lib/secrets`, cached with the client, and registered with the log so no line shows them. Only declared names can be read. |
+| `killSwitchEnv` | The connector's own kill switch (`ACME_CRM_OFF`). When set, every write refuses before any I/O. |
+| `rateLimit` | `{ perSecond, batchSize }` from the system's documented limits. Calls are spaced to `perSecond` (the engine waits, never drops); a request over `batchSize` is refused. |
+| `connect({ secret })` | Builds the client once per process. `secret(name)` returns a declared credential. On a 401 or 403 the client must throw an error with that `status` (or a `ConnectorAuthFailed`). |
+| `read.<name>(input, ctx)` | A read operation. Read-only and least privilege: fetch only the fields the call names. |
+| `write.<name>` | `{ plan(input), apply(input, ctx) }`. `plan` says what would be written, with no I/O; `apply` writes. |
+
+Inside an operation, `ctx` has `client` (from `connect`), `request(fn, { size })` (every call to the system goes through it), `batches(items)` (splits a list by `batchSize`), `operation`, and on a write `idempotencyKey`. Pass the key on to the system when its API takes one, with a suffix per batch, so a retry after a partial failure resends only what the system has not seen.
+
+## The safe defaults
+
+- **Writes are dry runs unless the caller says otherwise.** A write without `dryRun: false` returns `{ dryRun: true, operation, wouldWrite }` from `plan` and calls nothing. Only the approval-write archetype passes `dryRun: false` (AD-15).
+- **Two kill switches.** The connector's `killSwitchEnv` and the global `APLABS_WRITES_OFF` each refuse every write, dry runs included, with `KillSwitchOn`, before credentials are read. Any non-empty value is on, even `0` or `false`: unset it to turn writes back on. Reads keep working. The env is read on every call, so a switch takes effect at once.
+- **Idempotency.** Every write needs an `idempotencyKey`. A repeated key returns the first result and calls nothing; a failed write does not use up its key. Keys live in memory for the process unless the connector is created with `idempotency: { get, set }` (a mock's outbox, or a durable store).
+- **Fail closed.** A missing credential or an auth error from the system fails the call with `ConnectorAuthFailed`; a read never returns empty or partial data instead. Any other failure is a `ConnectorFailed`.
+- **No credential in an error.** Every error is rebuilt from a redacted message: the connector's credentials, `Bearer` and `Basic` headers, `token=`-style query values and passwords in URLs are masked. The original error is not kept, so nothing on it leaks.
+
+`kit/runtime/messages` turns `KillSwitchOn` and `ConnectorFailed` into a plain message for the person; the reason goes to the log only.
+
+## The contract suite
+
+`connectorContract(connector, samples)` from `#sdk` registers the shared tests: the declaration, dry run, both kill switches, idempotency, the rate limit, batching, fail-closed reads and redacted errors. It runs the connector with fake credentials, a fake clock and a fake system failure, so it never needs the real system. `samples.read` and `samples.write` must cover every operation; `samples.bulk` (one write that takes a list) is optional and checks batching.
+
+## Connector code is trusted, not sandboxed
+
+Like a module handler, a connector is trusted, reviewed code that runs in the app's process and can reach `process.env`. Review it as engine code: never log a credential, never put one in an error, and keep every call inside `ctx.request`.

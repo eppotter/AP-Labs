@@ -6,7 +6,7 @@
 // caller then uses the generic plain error).
 
 const {
-  NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
+  NotSetUp, AccessDenied, ConfigFault, DataUnavailable, KillSwitchOn, ConnectorFailed,
 } = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
@@ -19,6 +19,8 @@ const MESSAGES = [
   [AccessDenied, ({ label, admin }) => `You don't have access to ${escapeText(label)}; ask ${admin}.`],
   [ConfigFault, ({ admin }) => `That option isn't set up correctly, so I can't open it right now. I've logged the problem; please tell ${admin}.`],
   [DataUnavailable, () => "The data isn't available right now, so I can't answer that. The app is still running; please tell your admin."],
+  [KillSwitchOn, ({ system }) => `Sending to ${escapeText(system)} is switched off right now, so nothing was sent. Please tell your admin.`],
+  [ConnectorFailed, ({ system }) => `I couldn't reach ${escapeText(system)} just now. Please try again later, or tell your admin if it keeps happening.`],
 ];
 
 // Hub wording (Story 6.4). A hub file may set its own welcome and feedback

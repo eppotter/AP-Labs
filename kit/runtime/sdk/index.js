@@ -10,9 +10,19 @@
 //   ctx.module   { id, label }      from the manifest
 //   ctx.data     run(sql, params), describe()   the read-only query runner
 //   ctx.reply    (text) => Promise  a private (ephemeral) reply
-// The SDK adds only what a handler or its test needs beyond that.
+// The SDK adds only what a handler or its test needs beyond that, plus what a
+// connector adapter and its test need (kit/templates/connector.md).
 
 const { DataUnavailableError, QueryRefusedError } = require('../data');
+const {
+  defineConnector, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed,
+} = require('../connectors/contract');
+
+// The shared connector contract suite, for a connector's own test file. It
+// registers node:test cases, so it is loaded only when a test calls it.
+function connectorContract(...args) {
+  return require('../connectors/suite').connectorContract(...args);
+}
 
 // A ctx for a module's own test: same shape as the dispatcher's, no Slack and
 // no data file. ctx.replies holds every reply; ctx.queries every run() call.
@@ -42,4 +52,7 @@ function testContext({
   };
 }
 
-module.exports = { testContext, DataUnavailableError, QueryRefusedError };
+module.exports = {
+  testContext, DataUnavailableError, QueryRefusedError,
+  defineConnector, connectorContract, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed,
+};
