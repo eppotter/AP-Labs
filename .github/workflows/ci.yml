@@ -24,6 +24,8 @@ jobs:
         run: git ls-files '*.sh' ':(exclude).agents' ':(exclude)_bmad' | xargs --no-run-if-empty shellcheck
       - name: Tests (unit, hook, acceptance)
         run: npm test
+      - name: Fixture seeds match the generator
+        run: npm run fixture:check
       - name: Verify harness
         # A client fork (governed: .aplabs/profile.yml exists) runs strict, so a
         # skipped check (missing executable), a timeout or zero checks fails CI
