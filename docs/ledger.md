@@ -44,7 +44,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #42 | 2026-10-24 | 4.1 | infra | — | Adds the four client file templates, `npm run onboard` to create and check them, and a banner line until each is signed off by its client owner. | — |
 | #44 | 2026-10-24 | 4.2 | infra | — | Each known truth in `data.md` carries a check that `npm run verify` and the end-of-turn hook run against the client's number; the banner flags truths not checked or signed off. | DEP-010 |
 | #46 | 2026-10-24 | — | fix | — | Hardens review and land: later Claude rounds also get the diff since the last reviewed head, the rubric is built from parts, Claude's flags are pinned by a test, a CLEAN verdict hiding a prose blocker fails, and repeated exempt lines refuse a merge. | — |
-| pending | 2026-10-24 | — | fix | — | Hardening: T3 plan reviews must come from the current plan, duplicate ledger tables fail, add-on stage lists can't drift, odd comma numbers are rejected, the banner flags truths that failed at last verify, and fork CI runs verify strictly. | DEP-001, DEP-002, DEP-003, DEP-006 |
+| #48 | 2026-10-24 | — | fix | — | Hardening: T3 plan reviews must come from the current plan, duplicate ledger tables fail, add-on stage lists can't drift, odd comma numbers are rejected, the banner flags truths that failed at last verify, and fork CI runs verify strictly. | DEP-001, DEP-002, DEP-003, DEP-006 |
 
 ## Deferrals (DEP)
 
