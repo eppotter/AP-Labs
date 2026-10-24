@@ -97,12 +97,12 @@ Both are installed off the shelf at pinned versions and are not modified. Our ru
 
 | Stage | Driver | BMAD | p3-stack |
 |---|---|---|---|
-| Onboarding build | Onboarder | `bmad-document-project`, `bmad-generate-project-context`, `bmad-domain-research` | `how` |
+| Onboarding build | Onboarder | `bmad-architecture` (documents an existing codebase), `bmad-deep-recon` (research), `bmad-project-context` (agent instructions) | `how` |
 | 1. Intake | Orchestrator | `bmad-product-brief` (large asks only) | |
-| 2. Spec | Orchestrator, Scribe | `bmad-prd` (new module), `bmad-spec` (small change), `bmad-validate-prd` | |
+| 2. Spec | Orchestrator, Scribe | `bmad-prd` (new module; also validates), `bmad-spec` (small change) | |
 | 3. Design | Architect | `bmad-architecture` | |
-| 4. Phases and stories | Orchestrator | `bmad-create-epics-and-stories` (epics = phases, stories = PRs), `bmad-check-implementation-readiness`, `bmad-sprint-planning` | |
-| 5. Plan review (high risk) | Architect | `bmad-review-edge-case-hunter`, `bmad-review-adversarial-general` | |
+| 4. Phases and stories | Orchestrator | `bmad-create-epics-and-stories` (epics = phases, stories = PRs), `bmad-sprint-planning` (readiness check + sprint status) | |
+| 5. Plan review (high risk) | Architect | `bmad-review` (adversarial and edge-case lenses, on the plan) | |
 | **Plan-approval gate** | **Human** | | |
 | 6. Build each story | Builder | | `p3-mode` → `feature` / `bug-fix` playbooks, `architect` (code-level design), `tdd` |
 | 7. Verify | Verifier | | prove-it-works; plus our verify harness and Stop hook |
@@ -113,9 +113,11 @@ Both are installed off the shelf at pinned versions and are not modified. Our ru
 | Scope change mid-program | Orchestrator | `bmad-correct-course` | |
 
 **Not routed to:**
-- BMAD's build, review and retro skills (`bmad-dev-story`, `bmad-quick-dev`, `bmad-code-review`, `bmad-retrospective`). p3's versions are used instead.
-- BMAD's creative-coaching set (`bmad-cis-*`, `bmad-party-mode`, `bmad-brainstorming`).
-- p3's experimental extras.
+- BMAD's build, review and retro skills (`bmad-build`, `bmad-build-auto`, `bmad-code-review`, `bmad-retrospective`). p3's versions and our cross-model review are used instead.
+- BMAD's persona agents and creative skills (`bmad-agent-*`, `bmad-party-mode`, `bmad-brainstorming`, `bmad-forge-idea`, `bmad-prfaq`).
+- p3's experimental extras (`arena`, `swarm`, `bro`).
+
+**Pinned versions:** BMAD `6.12.4` (modules `core` + `bmm`, installed for Codex into `.agents/skills/`) and p3-stack `09909eb` (vendored, see `.agents/p3-stack/README.md`). `.claude/skills` is a symlink to `.agents/skills/`, so Claude Code, Codex and T3 read one copy. BMAD writes its planning documents to `docs/planning/`.
 
 **Naming:** BMAD is MIT-licensed but its name is trademarked. Never use it in AP Labs branding.
 
@@ -155,5 +157,4 @@ Adapted from CanonCRM (`docs/agent-coordination.md` §5 and its p3 adapter).
 | Question | Options | Owner |
 |---|---|---|
 | Client file locations | e.g. `.aplabs/context/{org,data,guardrails,connectors}.md` | Claude to propose |
-| Pinned versions | Which BMAD release and p3-stack commit | Claude to propose |
 | Codex fallback check | Whether the same-model fallback is good enough in practice | Measure on the first engagement |
