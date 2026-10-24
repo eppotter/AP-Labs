@@ -185,9 +185,10 @@ function defineConnector(spec) {
   });
 
   // deps: env (default process.env), log (required: the app's
-  // kit/runtime/log logger, so every credential registers with it, AD-12;
-  // a test passes its own, for example the SDK's testLog()), now and sleep (tests inject a clock),
-  // idempotency ({ get(key), set(key, result) }), onRequest(info) (tests: runs
+  // kit/runtime/log logger, so every credential registers with it, AD-12; a
+  // test passes its own, such as the SDK's testLog()), now and sleep (tests
+  // inject a clock), idempotency ({ get(key), set(key, { input, result }) }:
+  // input is the write input's fingerprint), onRequest(info) (tests: runs
   // before each call to the system; it may throw to simulate the system
   // failing), simulate (passed to connect() as is, for an adapter's own
   // failure simulation in tests), data (a query runner, passed to connect()
