@@ -104,7 +104,7 @@ test('email: adding contacts records each with its own key, and only email, firs
   const res = await instance.write.addContacts({ listId, contacts: contacts(3), idempotencyKey: 'L', ...live });
   assert.deepEqual(res, { listId, added: 3, alreadyAdded: 0 });
   const recorded = lines().filter((l) => l.type === 'contact');
-  assert.deepEqual(recorded.map((l) => l.key), ['L:1', 'L:2', 'L:3']);
+  assert.deepEqual(recorded.map((l) => l.key), [`L:${listId}:1`, `L:${listId}:2`, `L:${listId}:3`]);
   assert.deepEqual(recorded[0].payload, { listId, external_ref: '1', email: 'p1@home.invalid', first_name: 'P1' });
 });
 
@@ -184,28 +184,95 @@ test('email: a simulated row failure records the others, reports both counts, an
     return true;
   });
   const recorded = () => lines().filter((l) => l.type === 'contact').map((l) => l.key);
-  assert.deepEqual(recorded(), ['L:1', 'L:3'], 'the failed contact recorded no key');
+  assert.deepEqual(recorded(), [`L:${listId}:1`, `L:${listId}:3`], 'the failed contact recorded no key');
   assert.equal(lines().filter((l) => l.type === 'done' && l.operation === 'addContacts').length, 0, 'the failed call did not use up its key');
 
   // A retry after a restart, with the failure cleared: only contact 2 is new.
   simulate.failContacts.clear();
   const retried = email({ file, simulate });
   assert.deepEqual(await retried.instance.write.addContacts(input), { listId, added: 1, alreadyAdded: 2 });
-  assert.deepEqual(recorded(), ['L:1', 'L:3', 'L:2']);
+  assert.deepEqual(recorded(), [`L:${listId}:1`, `L:${listId}:3`, `L:${listId}:2`]);
   // Now it is done: one more repeat adds nothing.
   const n = lines().length;
   await retried.instance.write.addContacts(input);
   assert.equal(lines().length, n);
 });
 
-test('email: a torn last line (a crash mid-write) is ignored, and the next record starts on its own line', async () => {
+// A misread outbox must never cause a duplicate send: if the file can't be
+// read, or a line in it is torn or corrupt, every write is refused and the
+// file is left as it was, until someone repairs it.
+for (const [what, damage] of [
+  ['a torn last line (a crash mid-write)', '{"type":"contact","key":"L:9"'],
+  ['a last line with no newline', '{"type":"contact","key":"L:9","payload":{}}'],
+  ['a corrupt line in the middle', 'not json\n{"type":"done","key":"x"}\n'],
+  ['a line that is JSON but not a record', '[1,2]\n'],
+]) {
+  test(`email: with ${what} in the outbox, every write is refused and nothing is appended`, async () => {
+    const { instance, file } = email();
+    const { listId } = await instance.write.createList({ name: 'l', idempotencyKey: 'L', ...live });
+    fs.appendFileSync(file, damage);
+    const before = fs.readFileSync(file, 'utf8');
+    await assert.rejects(instance.write.createList({ name: 'l2', idempotencyKey: 'L2', ...live }),
+      (err) => err instanceof ConnectorFailed && /torn or corrupt line 3/.test(err.reason) && /writes are refused/.test(err.reason));
+    await assert.rejects(instance.write.addContacts({ listId, contacts: contacts(1, 9), idempotencyKey: 'L', ...live }), /torn or corrupt line/);
+    // After a restart too.
+    await assert.rejects(email({ file }).instance.write.addContacts({ listId, contacts: contacts(1, 9), idempotencyKey: 'L', ...live }), /torn or corrupt line/);
+    assert.equal(fs.readFileSync(file, 'utf8'), before, 'the outbox is unchanged');
+  });
+}
+
+test('email: the refusal names the line, not what is in it (contacts are client data)', async () => {
+  const { instance, file } = email();
+  await instance.write.createList({ name: 'l', idempotencyKey: 'L', ...live });
+  fs.appendFileSync(file, '{"type":"contact","payload":{"email":"secret@home.invalid"');
+  await assert.rejects(instance.write.createList({ name: 'l2', idempotencyKey: 'L2', ...live }),
+    (err) => !err.reason.includes('secret@home.invalid'));
+});
+
+test('email: an outbox that cannot be read refuses every write instead of counting as empty', { skip: process.getuid && process.getuid() === 0 ? 'root reads anything' : false }, async () => {
   const { instance, file } = email();
   const { listId } = await instance.write.createList({ name: 'l', idempotencyKey: 'L', ...live });
-  fs.appendFileSync(file, '{"type":"contact","key":"L:9"');
-  const res = await instance.write.addContacts({ listId, contacts: contacts(1, 9), idempotencyKey: 'L', ...live });
-  assert.equal(res.added, 1, 'the torn record does not count as written');
-  const text = fs.readFileSync(file, 'utf8').split('\n');
-  const torn = text.indexOf('{"type":"contact","key":"L:9"');
-  assert.ok(torn > 0, 'the torn fragment stays on its own line');
-  assert.equal(JSON.parse(text[torn + 1]).key, 'L:9');
+  fs.chmodSync(file, 0o000);
+  try {
+    await assert.rejects(instance.write.createList({ name: 'l', idempotencyKey: 'L-new', ...live }), ConnectorFailed);
+    await assert.rejects(instance.write.addContacts({ listId, contacts: contacts(1), idempotencyKey: 'L', ...live }), ConnectorFailed);
+  } finally {
+    fs.chmodSync(file, 0o600);
+  }
+  assert.equal(readLines(file).filter((l) => l.type === 'contact').length, 0);
+});
+
+test('email: an outbox path that is a directory refuses every write', async () => {
+  const file = freshPath();
+  fs.mkdirSync(file, { recursive: true });
+  const { instance } = email({ file });
+  await assert.rejects(instance.write.createList({ name: 'l', idempotencyKey: 'L', ...live }), ConnectorFailed);
+});
+
+test('email: a contact\'s key carries its list, so a retry with the same key on another list adds the contacts there', async () => {
+  const simulate = { failContacts: new Set(['2']) };
+  const { instance, file, lines } = email({ simulate });
+  const a = await instance.write.createList({ name: 'a', idempotencyKey: 'A', ...live });
+  const b = await instance.write.createList({ name: 'b', idempotencyKey: 'B', ...live });
+  await assert.rejects(instance.write.addContacts({ listId: a.listId, contacts: contacts(3), idempotencyKey: 'K', ...live }), ConnectorFailed);
+  simulate.failContacts.clear();
+  const res = await email({ file }).instance.write.addContacts({ listId: b.listId, contacts: contacts(3), idempotencyKey: 'K', ...live });
+  assert.deepEqual(res, { listId: b.listId, added: 3, alreadyAdded: 0 }, 'nothing on list a counts for list b');
+  const onB = lines().filter((l) => l.type === 'contact' && l.payload.listId === b.listId);
+  assert.deepEqual(onB.map((l) => l.payload.external_ref), ['1', '2', '3']);
+  assert.deepEqual(onB.map((l) => l.key), [`K:${b.listId}:1`, `K:${b.listId}:2`, `K:${b.listId}:3`]);
+});
+
+test('email: a batch of 100 contacts reads the outbox a fixed number of times, not once per contact', async (t) => {
+  const { instance, file } = email();
+  const { listId } = await instance.write.createList({ name: 'l', idempotencyKey: 'L', ...live });
+  const reads = [];
+  const real = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', function (p, ...rest) {
+    if (p === file) reads.push(p);
+    return real.call(this, p, ...rest);
+  });
+  const res = await instance.write.addContacts({ listId, contacts: contacts(100), idempotencyKey: 'L', ...live });
+  assert.equal(res.added, 100);
+  assert.ok(reads.length <= 3, `read the outbox ${reads.length} times`);
 });
