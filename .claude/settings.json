@@ -33,6 +33,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/kit/hooks/stop-verify.sh\"; [ -f \"$f\" ] || exit 0; exec bash \"$f\"",
+            "timeout": 660
+          }
+        ]
+      }
     ]
   }
 }
