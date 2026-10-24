@@ -2,6 +2,8 @@
 
 A module is one entry on a hub's menu: a person types the hub's slash command, presses **Open** on the entry, and the module's handler replies to them privately. Adding one is a folder of files in the app dir. No engine file (`kit/**`, `profiles/_schema/**`) changes.
 
+A module never writes to an external system itself: a push is a manifest `write` block, run by the approval-write archetype (AD-15). `npm run check` fails a module that passes `dryRun` (other than `dryRun: true`), touches a connector's `.write`, or creates its own connector instance (DEP-012; see `kit/templates/connector.md`).
+
 ## Steps
 
 1. Copy the template into the app dir, naming the folder after the module's id:

@@ -212,14 +212,16 @@ function openOutbox(file, { lockWaitMs = 2000, lockStaleMs = 30_000 } = {}) {
   const find = (type, key) => records().find((r) => r.type === type && r.key === key);
 
   // deps.idempotency for the contract: { get(slot), set(slot, { input, result }) }.
-  // slot is the contract's "<operation>\u0000<key>".
+  // slot is the contract's "<connector id>\u0000<operation>\u0000<key>" (DEP-012;
+  // a 'done' record from before that, with no connector id, is never matched:
+  // delete an old var/outbox/email.jsonl rather than rely on it).
   const ledger = Object.freeze({
     get(slot) {
       const done = records().find((r) => r.type === 'done' && r.slot === slot);
       return done ? { input: done.input, result: done.result } : undefined;
     },
     set(slot, { input, result }) {
-      const [operation, ...rest] = slot.split('\u0000');
+      const [, operation, ...rest] = slot.split('\u0000');
       append({ type: 'done', operation, key: rest.join('\u0000'), slot, input, result });
     },
   });

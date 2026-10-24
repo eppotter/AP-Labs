@@ -557,3 +557,14 @@ test('two different connectors keep their own idempotency state (DEP-012)', asyn
   await defineConnector(spec({ id: 'other' })).create(opts).write.put({ idempotencyKey: 'mine', dryRun: false });
   assert.equal(calls, 2);
 });
+
+test('two connectors sharing one injected store keep their keys apart: the slot names the connector (DEP-012)', async () => {
+  const m = new Map();
+  const idempotency = { get: (k) => m.get(k), set: (k, v) => { m.set(k, v); } };
+  let calls = 0;
+  const opts = { log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, onRequest: () => { calls += 1; } };
+  await defineConnector(spec()).create(opts).write.put({ idempotencyKey: 'same', dryRun: false });
+  await defineConnector(spec({ id: 'other' })).create(opts).write.put({ idempotencyKey: 'same', dryRun: false });
+  assert.equal(calls, 2, 'the second connector wrote rather than reuse the first one\'s result');
+  assert.deepEqual([...m.keys()].sort(), ['demo\u0000put\u0000same', 'other\u0000put\u0000same']);
+});

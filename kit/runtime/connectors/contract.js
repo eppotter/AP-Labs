@@ -39,7 +39,7 @@
 //     repeat on another instance joins the first apply (DEP-012). Instances
 //     given the same deps.idempotency object share their in-flight writes too.
 //   - Only kit/runtime/archetypes/approval-write passes dryRun: false (AD-15);
-//     the write-path check (scripts/check-write-path.js, run by npm run check
+//     the write-path check (kit/verify/write-path.js, run by npm run check
 //     and npm test) fails app code that writes live outside it.
 //   - Credentials are read once through kit/lib/secrets, from env only (no
 //     Keychain fallback, unlike other AD-12 reads: see AD-12), and cached
@@ -209,8 +209,9 @@ function defineConnector(spec) {
   // deps: env (default process.env), log (required: the app's
   // kit/runtime/log logger, so every credential registers with it, AD-12; a
   // test passes its own, such as the SDK's testLog()), now and sleep (tests
-  // inject a clock), idempotency ({ get(key), set(key, { input, result }) }:
-  // input is the write input's fingerprint), onRequest(info) (tests: runs
+  // inject a clock), idempotency ({ get(slot), set(slot, { input, result }) }:
+  // slot is "<connector id>\u0000<operation>\u0000<key>", input is the write
+  // input's fingerprint), onRequest(info) (tests: runs
   // before each call to the system; it may throw to simulate the system
   // failing), simulate (passed to connect() as is, for an adapter's own
   // failure simulation in tests), data (a query runner, passed to connect()
@@ -357,16 +358,16 @@ function defineConnector(spec) {
             throw new Error(`idempotencyKey must be a non-empty string of at most ${MAX_KEY} characters`);
           }
           if (dryRun !== false) return { dryRun: true, operation: name, wouldWrite: await op.plan(rest) };
-          const slot = `${name}\u0000${key}`;
+          // "<connector id>\u0000<operation>\u0000<key>": the connector is part
+          // of the slot, so one store can serve several connectors (DEP-012).
+          const slot = `${declaration.id}\u0000${name}\u0000${key}`;
           // The in-flight slot is checked and claimed with no await between,
           // before the store is read: a slow store can't let a second call
           // with the key miss the first and apply again.
           const input = fingerprint(rest);
           const conflict = () => new IdempotencyConflict(`idempotencyKey "${key}" was already used with a different input`, details(name));
-          // Keyed by connector too: one injected store may serve several.
-          const flight = `${declaration.id}\u0000${slot}`;
-          if (inFlight.has(flight)) {
-            const other = inFlight.get(flight);
+          if (inFlight.has(slot)) {
+            const other = inFlight.get(slot);
             if (other.input !== input) throw conflict();
             return await other.run;
           }
@@ -382,8 +383,8 @@ function defineConnector(spec) {
             await ledger.set(slot, { input, result: settled });
             return settled;
           })();
-          inFlight.set(flight, { input, run });
-          try { return await run; } finally { inFlight.delete(flight); }
+          inFlight.set(slot, { input, run });
+          try { return await run; } finally { inFlight.delete(slot); }
         } catch (err) {
           return rethrow(err, name);
         }
