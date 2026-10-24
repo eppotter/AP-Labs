@@ -80,6 +80,8 @@ Agents (`.claude/agents/<name>.md`): onboarder, sqlsmith, architect, connector, 
 7. **Ship:** PR and merge (build loop below). Production is gated server-side.
 8. **Retro:** `npm run retro` at each epic boundary, after every 5 merged PRs, and when a PR exhausts its review budget. Each breach becomes a rule edit or a check.
 
+- **Add-on stages:** a profile can switch on `stages.addons` (`dev_test`, `dark_launch`, `review_queue`). The session banner shows the resolved list; add-ons slot between core stages and never remove one.
+
 Scope changes mid-program: `bmad-correct-course`. Do not route to BMAD's build, code-review or retro skills, its persona agents, or p3's experimental extras.
 
 ### Ceremony by tier

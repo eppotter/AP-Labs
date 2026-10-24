@@ -17,7 +17,8 @@ const ROUND_BUDGET = 3;
 const RUBRIC = `Review this branch's changes against origin/main (git diff origin/main...HEAD) and read AGENTS.md.
 Label a finding [P1] only if it is blocking: it loses or corrupts data, breaks auth, permissions or a safety invariant in AGENTS.md, or breaks the main path this branch delivers for today's data and usage.
 Everything else is [P2]: edge cases far beyond today's data, hardening, polish, style, missing tests for non-blocking cases.
-Report each finding as "- [P1|P2] <title> — <path>:<line>" with a short explanation. Say "No blocking findings." if there is no P1.
+Report each finding as "- [P1|P2] <title> — <path>:<line>" with a short explanation.
+End your reply with exactly one final line: "VERDICT: CLEAN" if there is no [P1], or "VERDICT: BLOCKING" if there is at least one.
 Every finding, including non-blocking ones, must be a line in exactly the "- [P1|P2] <title> — <path>:<line>" format; findings in any other form are ignored.`;
 
 function promptFor(state, { diffOnStdin = false } = {}) {
@@ -78,6 +79,13 @@ function isValidFinding(f) {
 
 // Reviewers paraphrase the rubric's "No blocking findings."; accept "no" with up
 // to two words before "issues" or "findings" ("I found no new blocking issues").
+// The machine-readable last word the rubric asks for: 'CLEAN', 'BLOCKING' or
+// null when the reviewer left it out (then the phrase heuristic below applies).
+function verdictLine(verdict) {
+  const all = [...verdict.matchAll(/^\s*VERDICT:\s*(CLEAN|BLOCKING)\s*$/gim)];
+  return all.length ? all[all.length - 1][1].toUpperCase() : null;
+}
+
 const isClean = (verdict) => /\bno\s+(?:[\w-]+\s+){0,2}(?:issues|findings)\b/i.test(verdict);
 
 // A reviewer's output is usable when every finding-like line parses and it has
@@ -87,7 +95,13 @@ function readVerdict(verdict, repoRoot = '') {
   const unparsed = unparsedFindingLines(verdict);
   if (unparsed.length) return { error: `Could not parse ${unparsed.length} finding line(s):\n${unparsed.join('\n')}` };
   const findings = parseFindings(verdict, repoRoot);
-  if (!findings.length && !isClean(verdict)) return { error: 'Could not read findings or a clean verdict' };
+  const said = verdictLine(verdict);
+  // BLOCKING with no parseable [P1] means the blocker was written in prose: a
+  // failed attempt, never a pass. CLEAN next to a [P1] line: the P1 still counts.
+  if (said === 'BLOCKING' && !findings.some((f) => f.priority === 'P1')) {
+    return { error: 'Verdict says BLOCKING but no [P1] line could be read' };
+  }
+  if (!findings.length && said !== 'CLEAN' && !isClean(verdict)) return { error: 'Could not read findings or a clean verdict' };
   return { findings };
 }
 
@@ -333,6 +347,7 @@ module.exports = {
   isValidState,
   isClean,
   readVerdict,
+  verdictLine,
   repeatedBlockingFiles,
   withRoundsLine,
   withReviewedHeadLine,
