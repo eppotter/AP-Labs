@@ -44,7 +44,10 @@
 //   - Every call to the system goes through ctx.request(fn, { size }), which
 //     spaces calls at least 1000 / perSecond ms apart (it waits, never drops)
 //     and refuses a batch larger than batchSize. ctx.batches(items) splits a
-//     list into batches of batchSize.
+//     list into batches of batchSize. A call that fails with status 429 is
+//     retried through the limiter, which holds every call for its Retry-After
+//     (up to 60 s; longer fails at once), at most 3 attempts in all; then the
+//     operation fails with ConnectorFailed.
 //   - Every error that leaves an operation is a ConnectorFailed (or
 //     ConnectorAuthFailed / KillSwitchOn) built fresh from a redacted message:
 //     the connector's own credentials, any token connect() obtained and passed
@@ -64,6 +67,10 @@ const SLUG = /^[a-z][a-z0-9-]{0,62}$/;
 const ENV_NAME = /^[A-Z][A-Z0-9_]{0,127}$/;
 const OP_NAME = /^[a-zA-Z][a-zA-Z0-9]{0,62}$/;
 const MAX_KEY = 256;
+// A 429 is retried this many times in all, waiting what Retry-After asks,
+// but never longer than MAX_RETRY_AFTER_MS: past that the call fails.
+const RATE_LIMIT_ATTEMPTS = 3;
+const MAX_RETRY_AFTER_MS = 60_000;
 const MASK = '[redacted]';
 // Credential shapes masked whether or not the connector declared them.
 const PATTERNS = [
@@ -134,19 +141,35 @@ const fingerprint = ({ idempotencyKey, ...input }) => crypto.createHash('sha256'
 const isAuthError = (err) => err instanceof ConnectorAuthFailed || (err && (err.status === 401 || err.status === 403));
 
 // Calls spaced at least interval ms apart, in arrival order. Waits, never drops.
+// hold(ms) holds every call back for ms (a system's Retry-After).
 function createLimiter(perSecond, now, sleep) {
   const interval = 1000 / perSecond;
   let last = -Infinity;
+  let heldUntil = -Infinity;
   let gate = Promise.resolve();
-  return () => {
+  const limit = () => {
     const turn = gate.then(async () => {
-      const wait = last + interval - now();
+      const wait = Math.max(last + interval, heldUntil) - now();
       if (wait > 0) await sleep(wait);
       last = now();
     });
     gate = turn.catch(() => {});
     return turn;
   };
+  limit.hold = (ms) => { heldUntil = Math.max(heldUntil, now() + ms); };
+  return limit;
+}
+
+// Retry-After from a 429, in ms: err.retryAfter (seconds) or the header,
+// as seconds or an HTTP date. 0 when absent or unreadable.
+function retryAfterMs(err) {
+  const h = err.headers;
+  const raw = err.retryAfter ?? (h && (typeof h.get === 'function' ? h.get('retry-after') : h['retry-after'] ?? h['Retry-After']));
+  if (raw === undefined || raw === null || raw === '') return 0;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(String(raw));
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
 }
 
 function defineConnector(spec) {
@@ -240,12 +263,25 @@ function defineConnector(spec) {
           if (!Number.isInteger(size) || size < 0 || size > declaration.rateLimit.batchSize) {
             throw new Error(`batch of ${size} is over the batch size of ${declaration.rateLimit.batchSize}`);
           }
-          await limit();
-          // Re-checked before every request of a write, after the wait, so a
-          // switch flipped partway through a push stops the requests still to come.
-          if (kind === 'write') refuseIfSwitchedOff();
-          if (deps.onRequest) await deps.onRequest({ connector: declaration.id, operation, kind, size, at: now() });
-          return fn();
+          for (let attempt = 1; ; attempt += 1) {
+            await limit();
+            // Re-checked before every request of a write, after the wait, so a
+            // switch flipped partway through a push stops the requests still to come.
+            if (kind === 'write') refuseIfSwitchedOff();
+            try {
+              if (deps.onRequest) await deps.onRequest({ connector: declaration.id, operation, kind, size, at: now() });
+              return await fn();
+            } catch (err) {
+              // A 429 was not processed, so retrying it is safe, writes included.
+              if (!err || err.status !== 429) throw err;
+              if (attempt >= RATE_LIMIT_ATTEMPTS) throw new Error(`still rate limited after ${RATE_LIMIT_ATTEMPTS} attempts`);
+              const wait = retryAfterMs(err);
+              if (wait > MAX_RETRY_AFTER_MS) {
+                throw new Error(`rate limited: asked to wait ${Math.ceil(wait / 1000)} s, over the ${MAX_RETRY_AFTER_MS / 1000} s limit`);
+              }
+              limit.hold(wait);
+            }
+          }
         },
       });
     }

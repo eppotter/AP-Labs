@@ -437,3 +437,34 @@ test('connect can register a token it obtains, and JSON token fields are masked 
     return true;
   });
 });
+
+test('a 429 is retried through the rate limiter, honouring Retry-After, then fails as ConnectorFailed (#82)', async () => {
+  const limited = (retryAfter) => Object.assign(new Error('HTTP 429 Too Many Requests'), { status: 429, headers: retryAfter === undefined ? {} : { 'retry-after': retryAfter } });
+  function make(answers) {
+    const clock = fakeClock();
+    const at = [];
+    const c = defineConnector(spec({ rateLimit: { perSecond: 10, batchSize: 2 } })).create({
+      env: { DEMO_TOKEN: TOKEN }, ...clock,
+      onRequest: (info) => { at.push(info.at); const a = answers.shift(); if (a) throw a; },
+    });
+    return { c, at };
+  }
+  // Two 429s (the first asks for 2 s), then an answer: the caller sees the answer.
+  const ok = make([limited('2'), limited(), null]);
+  assert.deepEqual(await ok.c.read.get(), { ok: true });
+  assert.equal(ok.at.length, 3);
+  assert.ok(ok.at[1] - ok.at[0] >= 2000, `waited ${ok.at[1] - ok.at[0]} ms of the 2 s asked`);
+  assert.ok(ok.at[2] - ok.at[1] >= 100, 'a retry still keeps to the rate limit');
+  // Still limited after the bounded attempts: a ConnectorFailed, never a result.
+  const out = make([limited(), limited(), limited(), limited()]);
+  await assert.rejects(out.c.read.get(), (e) => e instanceof ConnectorFailed && /rate limit/i.test(e.reason));
+  assert.equal(out.at.length, 3);
+  // A Retry-After past the limit fails at once instead of hanging.
+  const long = make([limited('3600'), null]);
+  await assert.rejects(long.c.read.get(), (e) => e instanceof ConnectorFailed && /3600/.test(e.reason));
+  assert.equal(long.at.length, 1);
+  // Writes retry too, and the retry re-checks the kill switch.
+  const w = make([limited('1'), null]);
+  assert.deepEqual(await w.c.write.put({ idempotencyKey: 'k', dryRun: false }), { put: true });
+  assert.equal(w.at.length, 2);
+});

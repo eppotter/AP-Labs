@@ -19,10 +19,6 @@ const { defineConnector } = require('#sdk');
 // address are never among them: they are forbidden columns in the profile too.
 const FIELDS = Object.freeze(['client_id', 'first_name', 'last_name', 'email', 'zone_id']);
 
-// Attempts per lookup when the CRM says it is rate limited (status 429). Each
-// retry goes through ctx.request, so it waits out the rate limit first.
-const ATTEMPTS = 3;
-
 // One query per key. The select list is FIELDS, or the subset the call names,
 // always in FIELDS order, so the text only ever holds allow-listed names.
 const BY = Object.freeze({
@@ -84,15 +80,9 @@ const crm = defineConnector({
     async lookupClient(input, ctx) {
       const { key, value, fields } = parse(input);
       const sql = BY[key](fields.join(', '));
-      for (let attempt = 1; ; attempt += 1) {
-        try {
-          const rows = await ctx.request(() => ctx.client.query(sql, { [key]: value }));
-          return rows.length ? Object.fromEntries(fields.map((f) => [f, rows[0][f]])) : null;
-        } catch (err) {
-          if (err.status !== 429) throw err;
-          if (attempt >= ATTEMPTS) throw new Error(`still rate limited after ${ATTEMPTS} attempts`);
-        }
-      }
+      // A 429 is retried by ctx.request (through the rate limit), then fails.
+      const rows = await ctx.request(() => ctx.client.query(sql, { [key]: value }));
+      return rows.length ? Object.fromEntries(fields.map((f) => [f, rows[0][f]])) : null;
     },
   },
 });
