@@ -884,6 +884,7 @@ So that a new fork is running before the deep dive ends.
 **When** a consultant follows it in a fresh fork
 **Then** it covers: write the client profile at `.aplabs/profile.yml` (with tier rows for the runtime paths as in Brightside's, plus the fork's own `app/connectors/**` and write modules at T3), delete `examples/brightside/` and `profiles/brightside/`, create the runtime Slack app from the generated manifest (separate from any notify webhook app), store tokens and the LLM key with a spend cap, build or connect the data source, add the first module from the template, run the onboarding build, and deploy one replica, stop-then-start
 **And** it says a fork may append dependencies to `package.json` but never edits `kit/**` or `profiles/_schema/**` (fixes go to the template)
+**And** it says a fixture check's `-- protected-columns` exception is for synthetic data only: the validator refuses it on any file `npm run fixture:build` did not write, so never point `--db` at real data to lift one (issue #77)
 **And** each human-only step (anything with a credential) is marked as such
 **And** a structural test fails when the guide names a command or file that does not exist
 

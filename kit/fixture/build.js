@@ -18,6 +18,9 @@
 // rebuild replaces the old file whole and a failed build leaves it untouched.
 // After loading, every table's row count must equal fixture_meta's
 // rows_<table>, and every seed file's header must match its table's columns.
+// The build stamps fixture_meta with a table comment (BUILD_STAMP), so the
+// validator can tell its output from any other file (issue #77): a check may
+// read a protected column only there.
 // Exit codes: 0 built, 1 build failed, 2 usage or profile error.
 
 const fs = require('node:fs');
@@ -27,6 +30,9 @@ const { governingProfilePath, loadProfile } = require('../lib/profile');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const META_TABLE = 'fixture_meta';
+// A comment, not a row or a table: the data, row counts and published tables
+// stay exactly the seeds.
+const BUILD_STAMP = 'aplabs fixture:build (synthetic seeds)';
 
 const USAGE = 'usage: node kit/fixture/build.js <fixture-dir> [--out <file>] [--name <client>]';
 
@@ -194,7 +200,21 @@ async function readRows(file, sql) {
   }
 }
 
-async function build({ fixtureDir, out }) {
+// True when `file` is a DuckDB file this build wrote (its fixture_meta carries
+// BUILD_STAMP); false for anything else, a missing or non-DuckDB file included.
+async function isFixtureBuild(file) {
+  if (!fs.existsSync(file)) return false;
+  try {
+    const rows = await readRows(file, `SELECT comment FROM duckdb_tables() WHERE schema_name = 'main' AND table_name = ${sqlString(META_TABLE)}`);
+    return rows.length === 1 && rows[0].comment === BUILD_STAMP;
+  } catch {
+    return false;
+  }
+}
+
+// stamp: false leaves BUILD_STAMP off, so a test can stand in for a file the
+// build did not write.
+async function build({ fixtureDir, out, stamp = true }) {
   const started = Date.now();
   const p = plan(fixtureDir);
   const target = path.resolve(out);
@@ -211,6 +231,7 @@ async function build({ fixtureDir, out }) {
     await load(conn, p);
     counts = await countRows(conn, p);
     await checkCounts(conn, p, counts);
+    if (stamp) await conn.run(`COMMENT ON TABLE ${ident(META_TABLE)} IS ${sqlString(BUILD_STAMP)}`);
     await conn.run('CHECKPOINT');
   } catch (err) {
     if (conn) conn.closeSync();
@@ -269,4 +290,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { build, readRows, main, parseArgs, defaultOut, governingClientId, schemaTables, FixtureBuildError, USAGE };
+module.exports = { build, readRows, isFixtureBuild, BUILD_STAMP, main, parseArgs, defaultOut, governingClientId, schemaTables, FixtureBuildError, USAGE };

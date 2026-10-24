@@ -21,7 +21,11 @@
 //
 //   -- protected-columns: clients.phone
 //
-// and only that check runs without it. Output never shows a row's values, only
+// and only that check runs without it, and only on a file `npm run
+// fixture:build` wrote (kit/fixture/build isFixtureBuild): --db can name any
+// file, real data included, and the exception is for synthetic data only
+// (issue #77). On any other file such a check fails as refused. Output never
+// shows a row's values, only
 // how many rows a check returned, and an error in such a check shows only its
 // class, so a protected value is never printed.
 //
@@ -32,7 +36,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { defaultOut } = require('./build');
+const { defaultOut, isFixtureBuild } = require('./build');
 const { governingProfilePath, loadProfile, PROFILE_REL } = require('../lib/profile');
 const { createData } = require('../runtime/data');
 const { forbiddenColumnsOf } = require('../runtime/sql');
@@ -41,6 +45,7 @@ const USAGE = 'usage: node kit/fixture/validate.js <fixture-dir> [--db <file>] [
 const PROTECTED = /^--\s*protected-columns:\s*(.*)$/i;
 // Errors that mean "no usable profile": exit 2 with the message.
 const PROFILE_ERRORS = new Set(['PROFILE_INVALID', 'PROFILE_NOT_GOVERNING']);
+const SYNTHETIC_ONLY = 'refused: protected-columns runs only on the npm run fixture:build output (the exception is for synthetic data only)';
 
 // A path relative to cwd when it is inside it, else absolute.
 function shownPath(cwd, file) {
@@ -114,6 +119,9 @@ function errorText(err, lifted) {
 // Runs each check against `db`. forbiddenColumns: the profile's list.
 // Returns [{ id, description, outcome: 'pass' | 'fail', rows?, error? }].
 async function validate({ checks, db, forbiddenColumns = [] }) {
+  const lifts = (check) => forbiddenColumns.some((c) => check.protectedColumns.includes(String(c).toLowerCase()));
+  // Asked before any source opens the file.
+  const synthetic = checks.some(lifts) && await isFixtureBuild(db);
   const sources = new Map();
   const sourceFor = (cols) => {
     const key = cols.join(',');
@@ -126,6 +134,10 @@ async function validate({ checks, db, forbiddenColumns = [] }) {
       const base = { id: check.id, description: check.description };
       const cols = forbiddenColumns.filter((c) => !check.protectedColumns.includes(String(c).toLowerCase()));
       const lifted = cols.length < forbiddenColumns.length;
+      if (lifted && !synthetic) {
+        results.push({ ...base, outcome: 'fail', error: SYNTHETIC_ONLY });
+        continue;
+      }
       try {
         const rows = await sourceFor(cols).run(check.sql);
         results.push({ ...base, outcome: rows.length === 0 ? 'pass' : 'fail', rows: rows.length });

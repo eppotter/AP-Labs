@@ -20,7 +20,7 @@ try {
   throw new Error('fixture-validate tests: @duckdb/node-api is not installed. Run npm ci in this worktree, then rerun npm test.');
 }
 
-const { build } = require('../../kit/fixture/build');
+const { build, isFixtureBuild } = require('../../kit/fixture/build');
 const { readHeader, loadChecks, validate, parseArgs } = require('../../kit/fixture/validate');
 const query = require('../../kit/fixture/query');
 
@@ -125,6 +125,31 @@ test('a check that lifted a protected column and errors shows only the error cla
   // A check that lifted nothing keeps DuckDB's first line: it can name no protected value.
   const plain = await validate({ checks: loadChecks(checksCopy(t, { 'zz-bad.sql': '-- Bad.\nSELECT nope FROM shops\n' })), db, forbiddenColumns: ['shops.postal_code'] });
   assert.match(plain.find((r) => r.id === 'zz-bad').error, /Binder Error: .*nope/);
+});
+
+// Issue #77 item 3: --db can point at any file, real data included, so a
+// check may lift a protected column only on a file fixture:build wrote. The
+// exception is for synthetic data only.
+test('a check that lifts a protected column runs only on the fixture:build output; other checks still run', async (t) => {
+  const real = path.join(tmpDir(t), 'real.duckdb');
+  await build({ fixtureDir: MINI, out: real, stamp: false });
+  assert.equal(await isFixtureBuild(real), false);
+  assert.equal(await isFixtureBuild(await builtDb(t)), true);
+  const results = await validate({ checks: loadChecks(FIXTURE), db: real, forbiddenColumns: ['shops.postal_code'] });
+  const byId = Object.fromEntries(results.map((r) => [r.id, r]));
+  assert.equal(byId['shops-postal-code-digits'].outcome, 'fail');
+  assert.equal(byId['shops-postal-code-digits'].error, 'refused: protected-columns runs only on the npm run fixture:build output (the exception is for synthetic data only)');
+  assert.equal(byId['shops-region-resolves'].outcome, 'pass');
+  // With nothing forbidden there is nothing to lift, so nothing is refused.
+  const open = await validate({ checks: loadChecks(FIXTURE), db: real, forbiddenColumns: [] });
+  assert.ok(open.every((r) => r.outcome === 'pass'), JSON.stringify(open));
+  const r = cli(VALIDATE, [FIXTURE, '--db', real], { APLABS_PROFILE: PROFILE });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /^FAIL shops-postal-code-digits: could not run: refused: protected-columns runs only on the npm run fixture:build output/m);
+  // A file that is not a DuckDB database at all is not a build either.
+  const junk = path.join(tmpDir(t), 'junk.duckdb');
+  fs.writeFileSync(junk, 'not a database');
+  assert.equal(await isFixtureBuild(junk), false);
 });
 
 test('a check that is not a read-only query fails as could not run', async (t) => {
