@@ -1,12 +1,12 @@
 'use strict';
 
 // The engine/fork boundary (AD-1, Story 6.5), as grep tests:
-//   - app code (every app dir, and the module template) imports from kit/ only
+//   - app code (every app dir, and the module and connector templates) imports from kit/ only
 //     through kit/runtime/sdk (as '#sdk' or a relative path to it);
 //   - no engine file (kit/**, profiles/_schema/**) references examples/.
 // App dirs scanned: APLABS_APP_DIR when set, <repo>/app (a fork) and
-// examples/*/app (template dev), plus kit/templates/module always, so the
-// check never passes by scanning nothing.
+// examples/*/app (template dev), plus kit/templates/module and
+// kit/templates/connector always, so the check never passes by scanning nothing.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -71,7 +71,7 @@ function engineExampleRefs(root = ROOT) {
 }
 
 function appDirs(root = ROOT, env = process.env) {
-  const dirs = [path.join(root, 'kit/templates/module'), path.join(root, 'app')];
+  const dirs = [path.join(root, 'kit/templates/module'), path.join(root, 'kit/templates/connector'), path.join(root, 'app')];
   if (env.APLABS_APP_DIR) dirs.push(env.APLABS_APP_DIR);
   const examples = path.join(root, 'examples');
   if (fs.existsSync(examples)) {
@@ -102,6 +102,7 @@ test('the identical-engine set is kit/** and profiles/_schema/** (AD-1)', () => 
 test('app code imports from kit/ only through kit/runtime/sdk', () => {
   const dirs = appDirs();
   assert.ok(dirs.some((d) => d.endsWith(path.join('kit', 'templates', 'module'))), 'the module template is always scanned');
+  assert.ok(dirs.some((d) => d.endsWith(path.join('kit', 'templates', 'connector'))), 'the connector template is always scanned');
   const problems = dirs.flatMap((d) => kitImportProblems(d));
   assert.deepEqual(problems, []);
 });
