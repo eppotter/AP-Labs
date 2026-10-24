@@ -5,7 +5,12 @@ const assert = require('node:assert/strict');
 const {
   ROUND_BUDGET,
   RUBRIC,
+  RUBRIC_BODY,
+  CODEX_DIFF_LINE,
+  STDIN_DIFF_LINE,
   promptFor,
+  claudeStdin,
+  proseBlockerLines,
   parseFindings,
   unparsedFindingLines,
   isValidState,
@@ -454,4 +459,61 @@ test('the VERDICT line decides when present; the phrase heuristic is only a fall
 test('the rubric asks for the VERDICT line', () => {
   assert.match(RUBRIC, /VERDICT: CLEAN/);
   assert.match(RUBRIC, /VERDICT: BLOCKING/);
+});
+
+test('the rubric is a diff line plus a shared body; only the first line differs between reviewers', () => {
+  assert.equal(RUBRIC, `${CODEX_DIFF_LINE}\n${RUBRIC_BODY}`);
+  const codex = promptFor({ rounds: [] });
+  const claude = promptFor({ rounds: [] }, { diffOnStdin: true });
+  assert.equal(codex.split('\n')[0], CODEX_DIFF_LINE);
+  assert.equal(claude.split('\n')[0], STDIN_DIFF_LINE);
+  assert.equal(codex.split('\n').slice(1).join('\n'), RUBRIC_BODY);
+  assert.equal(claude.split('\n').slice(1).join('\n'), RUBRIC_BODY);
+  assert.match(RUBRIC_BODY.split('\n').at(-2), /^End your reply with exactly one final line: "VERDICT: CLEAN" if there is no \[P1\], or "VERDICT: BLOCKING" if there is at least one\.$/);
+});
+
+test('later Claude rounds point at the since-head section on stdin; Codex prompts are unchanged', () => {
+  const state = { rounds: [round(SHA_A, [p1('a.js', 'drops rows')])] };
+  const claude = promptFor(state, { diffOnStdin: true });
+  assert.ok(claude.startsWith(`${STDIN_DIFF_LINE}\n${RUBRIC_BODY}`));
+  assert.ok(claude.includes(`commits after ${SHA_A} (their diff is on stdin after the line "===== Changes since ${SHA_A} (git diff ${SHA_A}..HEAD) =====")`));
+  assert.ok(promptFor(state).endsWith(`Then look at the commits after ${SHA_A} and how they interact with the rest of the diff.`));
+  assert.doesNotMatch(promptFor(state), /stdin/);
+});
+
+test('claudeStdin: the full diff alone in round 1, then a header and the diff since the last head', () => {
+  assert.equal(claudeStdin('full\n', undefined, null), 'full\n');
+  assert.equal(claudeStdin('full\n', SHA_A, 'since\n'), `full\n===== Changes since ${SHA_A} (git diff ${SHA_A}..HEAD) =====\nsince\n`);
+  assert.equal(claudeStdin('full', SHA_A, ''), `full\n===== Changes since ${SHA_A} (git diff ${SHA_A}..HEAD) =====\n`);
+  assert.match(claudeStdin('full\n', SHA_A, null), /=====\n\(unavailable: a{40} is not in this repository\)\n$/);
+});
+
+test('a CLEAN verdict with a blocking finding written as a prose bullet is a failed attempt', () => {
+  for (const line of ['- P1: drops rows in kit/a.js:3', '* Blocking: kit/lib/x.js loses data on retry', '- P1 in `index.js` line 3']) {
+    const r = readVerdict(`Looked at the diff.\n${line}\nVERDICT: CLEAN\n`);
+    assert.match(r.error, /Verdict says CLEAN but 1 line\(s\) read like an unformatted blocking finding:\n/, line);
+    assert.ok(r.error.endsWith(line), line);
+  }
+});
+
+test('the prose-finding guard ignores negations, settled P1s, formatted lines and lines without a path', () => {
+  const ok = [
+    '- No blocking issues in kit/a.js',
+    '- no new blocking issues found in kit/a.js',
+    '- non-blocking: rename in kit/b.js',
+    '- Not blocking: kit/b.js could be tidier',
+    '- The earlier P1 in kit/a.js is fixed',
+    '- R1-1 (kit/a.js) resolved by the retry guard',
+    '- Blocking issue with the gate, but no file named',
+    '- e.g. P1 vs P2',
+    'P1 mentioned in kit/a.js outside a bullet',
+  ];
+  for (const line of ok) {
+    assert.deepEqual(proseBlockerLines(line), [], line);
+    assert.deepEqual(readVerdict(`${line}\nVERDICT: CLEAN\n`), { findings: [] }, line);
+  }
+  assert.deepEqual(readVerdict('- [P2] Nit — kit/a.js:2\nVERDICT: CLEAN\n').findings.length, 1);
+  assert.deepEqual(proseBlockerLines('- P1: kit/a.js drops rows'), ['- P1: kit/a.js drops rows']);
+  const noLine = readVerdict('No blocking findings.\n- Blocking: kit/a.js drops rows\n');
+  assert.deepEqual(noLine, { findings: [] }, 'the guard applies only under a VERDICT: CLEAN line');
 });

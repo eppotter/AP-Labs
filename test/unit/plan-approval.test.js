@@ -209,6 +209,61 @@ test('gate: T3 also needs the plan-review record', () => {
   assert.match(copy, /^<!-- aplabs plan review for p4: copied from reviews\/p4\.md .* by Plan Tester \(main\) -->\n# review\nno blockers\n$/);
   assert.match(logLines(d).at(-1), /\tengage\treason=data change\tuser=Plan Tester\tbranch=main\tplan=p4\tplan_review=reviews\/p4\.md$/);
   assert.deepEqual(run({ dir: d, input: write(d, 'data/q.sql') }), SILENT);
+  const rec = JSON.parse(fs.readFileSync(path.join(common(d), 'plan-reviews/p4.json'), 'utf8'));
+  assert.deepEqual([rec.slug, rec.source, rec.user, rec.branch], ['p4', 'reviews/p4.md', 'Plan Tester', 'main']);
+  assert.equal(rec.engaged_at, rec.at);
+  assert.ok(Math.abs(Date.parse(rec.at) - Date.now()) < 60000);
+  // Re-engaging later without --plan-reviewed keeps the review: it postdates the approval.
+  engage(d, '--reason', 'data change, day two', '--plan', 'p4');
+  assert.deepEqual(run({ dir: d, input: write(d, 'data/q.sql') }), SILENT);
+});
+
+// Writes a plan-review record directly, as engage would have `ago` ms back.
+function reviewRecord(d, slug, ago, fields = {}) {
+  const dir = path.join(common(d), 'plan-reviews');
+  fs.mkdirSync(dir, { recursive: true });
+  const at = new Date(Date.now() - ago).toISOString();
+  fs.writeFileSync(path.join(dir, `${slug}.md`), '# old review\n');
+  fs.writeFileSync(path.join(dir, `${slug}.json`), JSON.stringify({ slug, at, engaged_at: at, source: 'r.md', user: 'Plan Tester', branch: 'main', ...fields }));
+}
+
+test('gate: T3 rejects a plan review from an earlier engagement of the same plan (#36)', () => {
+  const d = repo();
+  reviewRecord(d, 'p7', 3 * DAY);
+  approve(d, 'p7', DAY / 2);
+  engage(d, '--reason', 'data change', '--plan', 'p7');
+  const reason = denied(run({ dir: d, input: write(d, 'data/q.sql') }));
+  assert.match(reason, /plan review on record for p7 is not from this plan engagement/);
+  assert.match(logLines(d).at(-1), /\tdeny\tstale-plan-review\t/);
+  // T2 work on the same plan does not need the review.
+  assert.deepEqual(run({ dir: d, input: write(d, 'live/a.js') }), SILENT);
+  // A review recorded after the approval counts even though the plan was engaged earlier.
+  reviewRecord(d, 'p7', 0);
+  assert.deepEqual(run({ dir: d, input: write(d, 'data/q.sql') }), SILENT);
+});
+
+test('gate: T3 accepts a review recorded at engage time even before the approval', () => {
+  const d = repo();
+  fs.mkdirSync(path.join(d, 'reviews'));
+  fs.writeFileSync(path.join(d, 'reviews/p8.md'), '# review\n');
+  assert.equal(engage(d, '--reason', 'data', '--plan', 'p8', '--plan-reviewed', 'reviews/p8.md').code, 0);
+  approve(d, 'p8');
+  assert.deepEqual(run({ dir: d, input: write(d, 'data/q.sql') }), SILENT);
+});
+
+test('gate: T3 rejects a review record for another slug, with a bad time, or with no record', () => {
+  const d = repo();
+  approve(d, 'p9', DAY / 2);
+  engage(d, '--reason', 'data change', '--plan', 'p9');
+  reviewRecord(d, 'p9', 0, { slug: 'other' });
+  assert.match(denied(run({ dir: d, input: write(d, 'data/q.sql') })), /not from this plan engagement/);
+  reviewRecord(d, 'p9', 0, { at: 'yesterday' });
+  assert.match(denied(run({ dir: d, input: write(d, 'data/q.sql') })), /not from this plan engagement/);
+  // A legacy copy with no record (written before #36) does not count either.
+  fs.rmSync(path.join(common(d), 'plan-reviews/p9.json'));
+  assert.match(denied(run({ dir: d, input: write(d, 'data/q.sql') })), /not from this plan engagement/);
+  fs.rmSync(path.join(common(d), 'plan-reviews/p9.md'));
+  assert.match(denied(run({ dir: d, input: write(d, 'data/q.sql') })), /T3 needs a `bmad-review` pass on plan p9 first/);
 });
 
 test('gate: subagent edits go through the tier check and share the session approval', () => {

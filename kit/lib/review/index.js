@@ -14,27 +14,39 @@
 
 const ROUND_BUDGET = 3;
 
-const RUBRIC = `Review this branch's changes against origin/main (git diff origin/main...HEAD) and read AGENTS.md.
-Label a finding [P1] only if it is blocking: it loses or corrupts data, breaks auth, permissions or a safety invariant in AGENTS.md, or breaks the main path this branch delivers for today's data and usage.
+// The rubric is a first line saying where the diff comes from, then a body
+// both reviewers share. Codex runs git itself; Claude gets the diff on stdin.
+const CODEX_DIFF_LINE = "Review this branch's changes against origin/main (git diff origin/main...HEAD) and read AGENTS.md.";
+const STDIN_DIFF_LINE = 'Review the diff supplied on stdin and read AGENTS.md.';
+const RUBRIC_BODY = `Label a finding [P1] only if it is blocking: it loses or corrupts data, breaks auth, permissions or a safety invariant in AGENTS.md, or breaks the main path this branch delivers for today's data and usage.
 Everything else is [P2]: edge cases far beyond today's data, hardening, polish, style, missing tests for non-blocking cases.
 Report each finding as "- [P1|P2] <title> — <path>:<line>" with a short explanation.
 End your reply with exactly one final line: "VERDICT: CLEAN" if there is no [P1], or "VERDICT: BLOCKING" if there is at least one.
 Every finding, including non-blocking ones, must be a line in exactly the "- [P1|P2] <title> — <path>:<line>" format; findings in any other form are ignored.`;
+const RUBRIC = `${CODEX_DIFF_LINE}\n${RUBRIC_BODY}`;
+
+// Claude's stdin in rounds 2 and 3: the full diff, then this header line, then
+// the diff since the last reviewed head, so "the commits after <head>" can be read.
+const sinceHeader = (head) => `===== Changes since ${head} (git diff ${head}..HEAD) =====`;
+
+function claudeStdin(fullDiff, previousHead, sinceDiff) {
+  if (!previousHead) return fullDiff;
+  const since = sinceDiff ?? `(unavailable: ${previousHead} is not in this repository)\n`;
+  return `${fullDiff}${fullDiff.endsWith('\n') || !fullDiff ? '' : '\n'}${sinceHeader(previousHead)}\n${since}`;
+}
 
 function promptFor(state, { diffOnStdin = false } = {}) {
-  const rubric = diffOnStdin
-    ? RUBRIC.replace("Review this branch's changes against origin/main (git diff origin/main...HEAD) and read AGENTS.md.",
-      'Review the diff supplied on stdin and read AGENTS.md.')
-    : RUBRIC;
+  const rubric = `${diffOnStdin ? STDIN_DIFF_LINE : CODEX_DIFF_LINE}\n${RUBRIC_BODY}`;
   const previous = state.rounds[state.rounds.length - 1];
   if (!previous) return rubric;
   const seen = state.rounds.flatMap((r) => r.findings).map((f) => `- [${f.priority}] ${f.title} — ${f.file}`);
+  const where = diffOnStdin ? ` (their diff is on stdin after the line "${sinceHeader(previous.head)}")` : '';
   return `${rubric}
 
 This is round ${state.rounds.length + 1} of ${ROUND_BUDGET}. Report [P1] findings only; non-blocking items go to a follow-up issue.
 Earlier rounds reviewed up to ${previous.head} and reported:
 ${seen.join('\n') || '(nothing)'}
-Do not re-raise the [P2]s. For each earlier [P1], check whether it is fixed: if it is still present, report it again as a [P1] line (an earlier P1 you do not re-report counts as fixed). Then look at the commits after ${previous.head} and how they interact with the rest of the diff.`;
+Do not re-raise the [P2]s. For each earlier [P1], check whether it is fixed: if it is still present, report it again as a [P1] line (an earlier P1 you do not re-report counts as fixed). Then look at the commits after ${previous.head}${where} and how they interact with the rest of the diff.`;
 }
 
 // A finding's path is made repo-relative: an absolute repo-root prefix and any
@@ -86,6 +98,18 @@ function verdictLine(verdict) {
   return all.length ? all[all.length - 1][1].toUpperCase() : null;
 }
 
+// A bullet that reads like a blocking finding written as prose: it says P1 or
+// blocking (not "no", "non-" or "not" blocking, and not about a fixed P1) and
+// names a repo path. Under a CLEAN verdict such a line fails the attempt.
+const PROSE_BLOCKER = /(?<!\b(?:no|not|non|nothing|zero)[\s-]+(?:new\s+)?)\b(?:P1|blocking)\b/i;
+const REPO_PATH = /(?:^|[\s`(])(?:(?:[\w.-]+\/)+[\w.-]*\w\.[A-Za-z]{1,5}|[\w-]{2,}[\w.-]*\.[A-Za-z]{1,5})(?::\d+)?(?=$|[\s`),.;:])/;
+const SETTLED = /\b(?:fixed|resolved|addressed|no longer)\b/i;
+
+function proseBlockerLines(verdict) {
+  return verdict.split('\n').filter((l) => /^\s*[-*]\s/.test(l) && !/^\s*[-*]\s+\[P\d\]/.test(l) &&
+    PROSE_BLOCKER.test(l) && REPO_PATH.test(l) && !SETTLED.test(l));
+}
+
 const isClean = (verdict) => /\bno\s+(?:[\w-]+\s+){0,2}(?:issues|findings)\b/i.test(verdict);
 
 // A reviewer's output is usable when every finding-like line parses and it has
@@ -100,6 +124,10 @@ function readVerdict(verdict, repoRoot = '') {
   // failed attempt, never a pass. CLEAN next to a [P1] line: the P1 still counts.
   if (said === 'BLOCKING' && !findings.some((f) => f.priority === 'P1')) {
     return { error: 'Verdict says BLOCKING but no [P1] line could be read' };
+  }
+  if (said === 'CLEAN') {
+    const prose = proseBlockerLines(verdict);
+    if (prose.length) return { error: `Verdict says CLEAN but ${prose.length} line(s) read like an unformatted blocking finding:\n${prose.join('\n')}` };
   }
   if (!findings.length && said !== 'CLEAN' && !isClean(verdict)) return { error: 'Could not read findings or a clean verdict' };
   return { findings };
@@ -340,8 +368,13 @@ function sanitizeBranch(branch) {
 module.exports = {
   ROUND_BUDGET,
   RUBRIC,
+  RUBRIC_BODY,
+  CODEX_DIFF_LINE,
+  STDIN_DIFF_LINE,
   USAGE,
   promptFor,
+  claudeStdin,
+  proseBlockerLines,
   parseFindings,
   unparsedFindingLines,
   isValidState,

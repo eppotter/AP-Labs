@@ -94,6 +94,8 @@ test('parseBody: review lines, CRLF, malformed and repeated lines fail closed', 
   assert.deepEqual(parseBody(REVIEWED.replace(/\n/g, '\r\n')), { kind: true, exempt: false, reviewedHead: HEAD, refuter: null });
   assert.equal(parseBody('Kind: infra\nReview: exempt — docs only').exempt, true);
   assert.equal(parseBody('Kind: infra\nReview: exempt').exempt, false);
+  assert.equal(parseBody('Kind: infra\nReview: exempt — docs only\nReview: exempt — docs only').exempt, 'invalid');
+  assert.equal(parseBody('Kind: infra\nReview: exempt — docs only\nReview: exempt').exempt, 'invalid');
   assert.equal(parseBody('Kind: party').kind, false);
   assert.equal(parseBody('Reviewed head: abc123').reviewedHead, 'invalid');
   assert.equal(parseBody(`Reviewed head: ${HEAD}\nReviewed head: ${OTHER}`).reviewedHead, 'invalid');
@@ -110,6 +112,10 @@ test('prRefusals: each of conditions a-d', () => {
   assert.match(prRefusals(openPr({ body: 'Kind: fix' })).join(), /no Reviewed head line and no Review: exempt line/);
   assert.match(prRefusals(openPr({ headRefOid: OTHER })).join(), /not the PR head .*not reviewed/);
   assert.deepEqual(prRefusals(openPr({ body: 'Kind: docs\n\nReview: exempt — docs only' })), []);
+  assert.deepEqual(prRefusals(openPr({ body: 'Kind: docs\n\nReview: exempt — docs only\nReview: exempt — revert' })),
+    ['The PR body has more than one Review: exempt line.']);
+  assert.deepEqual(prRefusals(openPr({ body: `${REVIEWED}\nReview: exempt — docs only\nReview: exempt — docs only\n` })),
+    ['The PR body has more than one Review: exempt line.'], 'a repeated exempt line refuses even next to a valid reviewed head');
   const refuter = (line) => prRefusals(openPr({ body: `${REVIEWED}\n${line}\n` })).join();
   assert.equal(refuter('Refuter: 0 confirmed, 2 not reproduced, 0 escalated, 0 pending'), '');
   assert.match(refuter('Refuter: 0 confirmed, 0 not reproduced, 0 escalated, 1 pending'), /1 pending/);
@@ -219,6 +225,14 @@ test('an exempt PR lands without a Reviewed head line', async () => {
   const r = await t.land();
   assert.equal(r.code, 0, r.err);
   assert.equal(merged(t.calls()), true);
+});
+
+test('repeated exempt lines refuse the merge before checks', async () => {
+  const t = setup({ pr: openPr({ body: 'What this does: docs.\nKind: docs\n\nReview: exempt — docs only\nReview: exempt — docs only\n' }) });
+  const r = await t.land();
+  assert.equal(r.code, 1);
+  assert.match(r.err, /more than one Review: exempt line/);
+  assert.equal(merged(t.calls()), false);
 });
 
 test('a draft is readied only after every condition passes, then merged', async () => {

@@ -16,13 +16,15 @@
 //
 // Outcomes: a FAIL blocks with the failing ids and a short output tail. SKIP,
 // TIMEOUT and a spent hook budget are reported, never blocked, never a pass.
-// All PASS is one short line. Any other case prints nothing.
+// All PASS is one short line. Any other case prints nothing. A run's outcomes
+// are recorded in <git-dir>/aplabs/verify/last.json for the session banner.
 
 const { findProfilePath, loadProfile, ProfileError } = require('../profile');
 const { childEnv, tail } = require('../verify');
 const { runChecks } = require('../verify/runner');
 const { truthChecksFor } = require('../truths');
 const { git, readSessionHead } = require('../session/head');
+const { writeLastResult } = require('../verify/last');
 
 // The whole Stop run is capped here, below the 660s registered in
 // .claude/settings.json, so the hook always reports instead of being killed.
@@ -137,6 +139,7 @@ async function stopVerify(input, { startDir, env = process.env } = {}) {
 
   const budget = budgetSeconds(env);
   const { results, notRun } = await runChecks(checks, childEnv(env, envAllow), root, { budgetMs: budget * 1000 });
+  writeLastResult(root, results, 'stop-hook');
   return report(results, notRun, { budget });
 }
 

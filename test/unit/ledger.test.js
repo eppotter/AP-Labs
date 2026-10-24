@@ -60,6 +60,16 @@ test('parseLedger: malformed ledgers fail with a named problem', () => {
   assert.match(shortRow.errors.join('\n'), /needs 7 cells, found 3/);
 });
 
+test('parseLedger: a second Builds or Deferrals table fails validation (#34)', () => {
+  const extraBuilds = parseLedger(`${ledger()}\n## More builds\n\n${BUILDS}| #1 | d | — | — | — | dup | DEP-404 |\n`);
+  assert.match(extraBuilds.errors.join('\n'), /line 17: a second Builds table; keep one Builds table \(the first is at line 5\)/);
+  const extraDeps = parseLedger(`${ledger()}\n${DEPS}| DEP-001 | d | O | done | — | A | x |\n\n${DEPS}`);
+  const msg = extraDeps.errors.join('\n');
+  assert.match(msg, /line 15, 19: a second Deferrals table; keep one Deferrals table \(the first is at line 11\)/);
+  assert.doesNotMatch(msg, /Builds table/);
+  assert.deepEqual(parseLedger(ledger()).errors, []);
+});
+
 test('cells: escaped pipes stay inside a cell', () => {
   assert.deepEqual(cells('| a | b \\| c | d |'), ['a', 'b \\| c', 'd']);
 });
