@@ -107,6 +107,7 @@ Scope changes mid-program: `bmad-correct-course`. Do not route to BMAD's build, 
 3. If the branch conflicts with main, merge main in.
 4. Open a draft PR. The body starts with `**What this does:**` and has a `Kind:` line.
 5. Run `npm run review`. Send each P1 to the refuter and record each verdict with `npm run review -- --refute <id> <verdict>`. Non-blocking findings go to the follow-up issue.
+   On a T2 or T3 PR, a non-blocking finding that touches write safety, credential handling, a fail-open default or data exposure is fixed on the branch before merge (one more round), not filed for later.
 6. Merge only when review shows nothing blocking AND CI passes. Never chain a merge after a command that merely prints check status; prefer `npm run land -- <n>`.
 7. Post `npm run notify -- --kind merged "<story and what changed>"`.
 

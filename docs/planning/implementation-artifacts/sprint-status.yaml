@@ -83,15 +83,15 @@ development_status:
   7-3-the-fixture-builds-into-a-local-duckdb-offline: done
   7-4-sql-guardrails-block-writes-escapes-and-forbidden-columns: done
   7-5-one-read-only-query-runner-and-the-dataset-entry: done
-  7-6-the-fixture-validates-itself-and-carries-known-truths: in-progress
-  7-7-ely-publishes-the-fixture-to-motherduck: backlog
+  7-6-the-fixture-validates-itself-and-carries-known-truths: done
+  7-7-ely-publishes-the-fixture-to-motherduck: in-progress
   epic-7-retrospective: optional
 
-  epic-8: backlog
-  8-1-one-connector-contract-and-a-template: backlog
-  8-2-brightside-s-mock-crm-read-path: backlog
-  8-3-brightside-s-mock-email-tool-and-the-outbox: backlog
-  epic-8-retrospective: optional
+  epic-8: done
+  8-1-one-connector-contract-and-a-template: done
+  8-2-brightside-s-mock-crm-read-path: done
+  8-3-brightside-s-mock-email-tool-and-the-outbox: done
+  epic-8-retrospective: done
 
   epic-9: backlog
   9-1-an-llm-service-with-a-spend-breaker-and-kill-switch: backlog
