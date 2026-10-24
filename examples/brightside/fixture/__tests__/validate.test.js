@@ -52,7 +52,7 @@ test.after(async () => {
 test('every check in checks/ passes on the committed seeds, with Brightside\'s forbidden columns', async (t) => {
   const { out } = await builtFixture();
   const checks = loadChecks(FIXTURE_DIR);
-  assert.equal(checks.length, 13);
+  assert.equal(checks.length, 14);
   const results = await validate({ checks, db: out, forbiddenColumns: FORBIDDEN });
   assert.deepEqual(results.filter((r) => r.outcome !== 'pass'), []);
 });
@@ -199,6 +199,15 @@ const BREAKS = [
     },
   },
   {
+    // A payment made the day after as_of (issue #77 item 8).
+    check: 'integrity-no-date-after-as-of',
+    pick: (t_, take, used) => {
+      const pay = t_.payments.rows.find((p) => !used.invoices.has(p.invoice_id));
+      take('invoices', pay.invoice_id);
+      return () => { pay.paid_on = dayAfterAsOf(t_); };
+    },
+  },
+  {
     // A plan whose price is one cent off its latest change.
     check: 'integrity-plan-price',
     pick: (t_, take, used) => {
@@ -240,6 +249,11 @@ const BREAKS = [
     pick: (t_) => () => { t_.clients.rows[2].phone = '555-0200'; },
   },
 ];
+
+function dayAfterAsOf(t_) {
+  const asOf = t_.fixture_meta.rows.find((r) => r.key === 'as_of').value;
+  return new Date(Date.parse(`${asOf}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+}
 
 // A copy of the fixture with the named breaks applied (default: all), then
 // extra(t_) if given, and a schema with its foreign keys removed so an orphan
@@ -295,8 +309,23 @@ test('each break alone fails only its own check', async (t) => {
 test('with no as_of row in fixture_meta, the as_of check fails on its guard row', async (t) => {
   const results = await validateBroken(t, [], (t_) => { t_.fixture_meta.rows = t_.fixture_meta.rows.filter((r) => r.key !== 'as_of'); });
   const byId = Object.fromEntries(results.map((r) => [r.id, r]));
-  assert.deepEqual([byId['integrity-no-end-after-as-of'].outcome, byId['integrity-no-end-after-as-of'].rows], ['fail', 1]);
+  for (const id of ['integrity-no-end-after-as-of', 'integrity-no-date-after-as-of']) {
+    assert.deepEqual([byId[id].outcome, byId[id].rows], ['fail', 1], id);
+  }
 });
+
+// Issue #77 item 8: the outstanding and clients-total truths count on every
+// event date being on or before as_of. The paid_on break is in BREAKS; these
+// are the other three dates, each alone.
+for (const [what, edit] of [
+  ['an invoice issued', (t_) => { t_.invoices.rows[0].issued_on = dayAfterAsOf(t_); }],
+  ['a one-off visit', (t_) => { t_.visits.rows.find((v) => v.plan_id === '').visit_date = dayAfterAsOf(t_); }],
+  ['a client created', (t_) => { t_.clients.rows[0].created_on = dayAfterAsOf(t_); }],
+]) {
+  test(`${what} after as_of fails integrity-no-date-after-as-of only`, async (t) => {
+    assert.deepEqual(failures(await validateBroken(t, [], edit)), [['integrity-no-date-after-as-of', 1]]);
+  });
+}
 
 // Issue #77 item 6: integrity-plan-price also checks the changes themselves.
 // Each break moves one change of a plan with two or more, so the plan's
