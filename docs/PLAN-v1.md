@@ -201,7 +201,7 @@ One PR per story. From step 3 on, the Orchestrator's own process applies: BMAD p
 | Item | Owner | Blocks |
 |---|---|---|
 | IP / employment-agreement check: cleared by Ely, 2026-10-23 | **Ely** | Nothing |
-| Orchestrator design opens (stage map, ceremony by tier, file locations, pinned versions) | **Ely** / Claude | Step 2; see [`orchestrator/DESIGN.md`](orchestrator/DESIGN.md) §8 |
+| Orchestrator design opens (file locations, pinned versions) | Claude | Step 2; see [`orchestrator/DESIGN.md`](orchestrator/DESIGN.md) §8 |
 | Fixture toolchain: Python 3.12 + `uv` for `fixtures/` only, or Node throughout | **Ely** | Step 3 |
 | Demo flow: the exact Brightside pull → score → push scenario | **Ely** | Steps 5–6 |
 | MotherDuck: account email (venture, not Hometown), collaborator invited | **Ely** | Publishing the fixture |

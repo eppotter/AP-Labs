@@ -57,6 +57,40 @@ After onboarding, canon grows the Varsity way: regular builds and incidents add 
 
 File locations are open (§8). They will sit under `.aplabs/`, which always floors at T3, because every agent trusts these files.
 
+## 3a. Stages and ceremony (decided)
+
+**A simple core that every build runs, plus add-ons a client switches on.** Varsity's 0–12 map grew to fit Hometown. Client builders need something they can learn in a day.
+
+| # | Core stage | What happens |
+|---|---|---|
+| 1 | Intake | Scope, computed risk tier, reuse check |
+| 2 | Spec | BMAD PRD or spec |
+| 3 | Plan approval | BMAD phases and stories. **Human gate** (subject to the ceremony table below) |
+| 4 | Build | p3 feature or bug-fix playbook, story by story |
+| 5 | Verify | Deterministic checks and the Stop hook |
+| 6 | Review | Cross-model review and the Refuter (§5) |
+| 7 | Ship | PR and merge. **Production gate**, server-side |
+| 8 | Retro | Measured against the budgets |
+
+**Add-ons, switched on in the client's profile:**
+- a dev-environment test before production
+- a dark launch with a separate flag-flip release
+- a batch review queue
+
+Each add-on slots between two core stages and never removes one.
+
+**Ceremony by computed tier:**
+
+| Tier | Plan gate | Extra |
+|---|---|---|
+| T0 (inert docs) | Skipped: the agent decides, builds and reports | |
+| T1 (low risk, dark or new code) | Skipped: the agent decides, builds and reports | |
+| T2 (live paths) | **Required** | Architect reviews the design |
+| T3 (data, writes, guardrails, the profile) | **Required** | Architect plus BMAD plan review (edge-case hunter, adversarial) |
+| Onboarding build | **Always required**, at any tier | Client owner signs off the canon |
+
+"Decide and report" means the agent applies a sensible default on reversible calls, builds, and says what it chose and what you could tell it to do instead. Review (§5) and the production gate apply at every tier.
+
 ## 4. Tooling: BMAD plans, p3 builds (decided)
 
 Both are installed off the shelf at pinned versions and are not modified. Our rules layer decides when each is used. Where both offer a skill for the same step, the one below wins and the other is not routed to.
@@ -120,8 +154,6 @@ Adapted from CanonCRM (`docs/agent-coordination.md` §5 and its p3 adapter).
 
 | Question | Options | Owner |
 |---|---|---|
-| Stage map | A simpler core (intake, spec, plan approval, build, verify, review, ship, retro) with add-ons, or carry Varsity's 0–12 | **Ely** |
-| Ceremony by tier | Which tiers skip the plan gate ("decide and report" for reversible T0–T1 work, as CanonCRM does) | **Ely** |
 | Client file locations | e.g. `.aplabs/context/{org,data,guardrails,connectors}.md` | Claude to propose |
 | Pinned versions | Which BMAD release and p3-stack commit | Claude to propose |
 | Codex fallback check | Whether the same-model fallback is good enough in practice | Measure on the first engagement |
