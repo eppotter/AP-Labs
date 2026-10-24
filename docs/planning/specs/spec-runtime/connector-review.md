@@ -24,7 +24,7 @@ Callers: only the approval-write archetype calls `write` operations (architectur
 | Email tool | `examples/brightside/app/connectors/email/` | `write.createList({ name, idempotencyKey })`; `write.addContacts({ listId, contacts[], idempotencyKey })` | Contacts carry `email`, `first_name`, `external_ref` (= `client_id`) only. Batch size 100, 5 calls/s. Kill switch `BRIGHTSIDE_EMAIL_OFF` |
 
 - **Outbox:** each mock appends JSON lines to `var/outbox/<connector-id>.jsonl` (`APLABS_VAR_DIR`, gitignored, outside `.aplabs/`). Each line: time, operation, idempotency key, and the payload. A repeated idempotency key returns the first result and appends nothing.
-- **Idempotency key for a push:** list key = sha256 of the sorted approved `client_id`s plus the destination list name; contact key = list key plus `client_id`. A second Approve, a replay or a retry after partial failure writes nothing new for rows already written.
+- **Idempotency key for a push:** list key = sha256 of the sorted approved `client_id`s plus the destination list name, and the list name includes the run date (UTC, for example `win-back-north-2026-10-24`) so re-sending the same set on a later day makes a new list; contact key = list key plus `client_id`. A second Approve, a replay or a retry after partial failure writes nothing new for rows already written.
 - **Failure simulation:** a test-only option makes chosen rows fail or the rate limit trip, so partial failure and back-off are tested without a real system.
 
 ## Verdict

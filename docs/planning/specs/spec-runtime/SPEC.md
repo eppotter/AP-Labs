@@ -52,7 +52,7 @@ A vision to realise. The Orchestrator gives builders a governed way to build; th
   - **intent:** An approval-gated write shows a preview (count, sample, destination), pushes only after the same person approves, and reports the outcome.
   - **success:** Tests cover approve, cancel, expiry, wrong person, double click, partial failure, kill switch and suppressed repeat escalations.
 - **CAP-11**
-  - **intent:** Slack basics every module reuses: acknowledge-first handling, thread context, markdown to Slack with long-output chunking, a provenance button (parameters and SQL), first-run onboarding and help per hub, one TTL store.
+  - **intent:** Slack basics every module reuses: acknowledge-first handling, markdown to Slack with long-output chunking, a provenance button (parameters and SQL), first-run onboarding and help per hub, one TTL store. (Round 3: thread context to the LLM is deferred; rows must never reach the LLM.)
   - **success:** Unit tests per helper; the provenance button shows the exact SQL that ran.
 - **CAP-12**
   - **intent:** Scheduled jobs are declared as data (name, schedule, run, enabled), and their runs are logged.

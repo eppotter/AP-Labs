@@ -19,7 +19,7 @@ Deterministic, declared in the module's manifest, with a reason per row. Recomme
 
 ## What must hold
 
-- Rows come only from the module's static query, run through the runner with the confirmed parameters bound; the push re-derives rows server-side from the approval token, never from button payloads.
+- Rows come only from the module's static query, run through the runner with the confirmed parameters bound; at preview time the approved rows' push fields (`client_id`, `email`, `first_name`, `score`) are copied into the approval entry, and the push reads only that entry, never the run record and never button payloads.
 - Every step is private to the person who started it; files go only to their DM.
 - With the LLM switched off (kill switch or breaker), step 2 says so plainly and offers the typed form; the flow continues from step 3.
 - Query rows never reach the LLM.

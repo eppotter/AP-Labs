@@ -1,6 +1,6 @@
 # Runtime phase: summary for Ely
 
-Status: draft (round 2, after the Architect's review), awaiting approval · 2026-10-24
+Status: draft (round 3, after the Architect's re-check), awaiting approval · 2026-10-24
 
 **What it delivers:** the part of the template the client's people use. By the end, in a fresh fork set up for Brightside, you type a command in Slack, ask in plain English for lapsed clients to win back, check what the bot understood, see a scored list, approve it, and watch it land once in a mock email tool. That is PLAN-v1 done-definition 3, plus 1, 2, 5 and 6.
 
@@ -8,18 +8,20 @@ Status: draft (round 2, after the Architect's review), awaiting approval · 2026
 
 **What changed since round 1:** a written architecture; the bot's SQL is locked down harder (one read-only runner, no file or network access, the LLM never writes SQL or sees rows); the bot doesn't read MotherDuck yet; CSVs go only to your DM; the existing `aplabs-demo` workspace instead of a new one; two big stories split; known truths use the checks Story 4.2 built.
 
+**What changed in round 3:** an approved push carries its own copy of the rows, so it can't break when the "How was this made?" record expires; the SQL checker also blocks DuckDB's sneakier ways to read files or whole rows; the LLM no longer sees thread history (it could contain result rows); Brightside's profile now marks the bot's risky folders as T2/T3, so the write path, connectors and secrets get the full review; a double click says "already done"; health checks tolerate a normal reconnect; deploys are stop-then-start.
+
 ## What you will see at the end of each phase
 
 | Phase | Tier | You will see |
 |---|---|---|
-| 6. Hello from Slack (5 stories) | T1 | The bot replies in Slack. A hub command shows a menu that only lists what your profile allows. A new module is added by copying a template |
+| 6. Hello from Slack (5 stories) | T3 | The bot replies in Slack. A hub command shows a menu that only lists what your profile allows. A new module is added by copying a template |
 | 7. Brightside's data, queried safely (7) | T2 | A synthetic Brightside database built offline in under a minute, checked automatically with known figures, every query going through one locked-down reader, a Dataset entry in Slack, and your MotherDuck copy |
-| 8. Safe connections (3) | T1 | A standard connector shape, a mock CRM and mock email tool, and an Outbox entry in Slack showing what the email tool received |
-| 9. Plain English (6) | T1 | Fill a short form or ask in your own words, confirm the parameters, and get a private result with a CSV in your DM and a "How was this made?" button showing the SQL |
-| 10. Score, approve, push (4) | T1 | The full demo: scored list → preview → approve → pushed once, even if you double-click. Also runs as a CI test |
+| 8. Safe connections (3) | T3 | A standard connector shape, a mock CRM and mock email tool, and an Outbox entry in Slack showing what the email tool received |
+| 9. Plain English (6) | T2 | Fill a short form or ask in your own words, confirm the parameters, and get a private result with a CSV in your DM and a "How was this made?" button showing the SQL |
+| 10. Score, approve, push (4) | T3 | The full demo: scored list → preview → approve → pushed once, even if you double-click. Also runs as a CI test |
 | 11. Ready to fork (4) | T2 | Scheduled-job registry, a container with a health check, a test proving two forks share the engine, and a day-one fork guide |
 
-Tiers come from `node kit/lib/tier` with Brightside's profile. Phases 7 and 11 are T2 because they touch CI workflows and the Dockerfile.
+Tiers come from `node kit/lib/tier` with Brightside's profile plus the tier rows Story 6.1 adds (T3: the approval-write path, the connector contract, the secrets library; T2: the SQL checker, the query runner, the LLM service). A phase's tier is its highest story: 6 is T3 because of the secrets library (6.1), 8 because of the connector contract (8.1), 10 because of the write path (10.2, 10.3); 7, 9 and 11 are T2. It is still one plan gate for the whole phase; tiers decide how much review each story gets inside it.
 
 ## Steps only you can do
 

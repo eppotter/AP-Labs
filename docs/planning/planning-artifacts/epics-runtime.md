@@ -21,7 +21,22 @@ Epics are numbered 6–11 so they continue the Orchestrator phase's Epics 1–5 
 
 Estimates: **S** about half a day of builder time and under ~300 changed lines; **M** about a day; **L** up to two days, the most a single PR should carry. 29 stories: 8 S, 20 M, 1 L.
 
-Computed tiers (`node kit/lib/tier` against `profiles/brightside/profile.yml`): Epic 6 T1, Epic 7 T2, Epic 8 T1, Epic 9 T1, Epic 10 T1, Epic 11 T2. See the architecture's "Computed tiers".
+Computed tiers (`node kit/lib/tier` against a temp copy of `profiles/brightside/profile.yml` carrying the tier rows Story 6.1 adds; see the architecture's "Computed tiers"):
+
+| Epic | Tier | Stories at T2 or T3 |
+|---|---|---|
+| 6 | T3 | 6.1 (T3: `kit/lib/secrets/**`) |
+| 7 | T2 | 7.1 (CI workflow), 7.4, 7.5 |
+| 8 | T3 | 8.1 (T3: `kit/runtime/connectors/**`) |
+| 9 | T2 | 9.1 |
+| 10 | T3 | 10.2, 10.3 (T3: approval-write) |
+| 11 | T2 | 11.2 |
+
+All other stories compute T1. The whole phase is still behind one plan gate (`approve plan runtime-phase`); each story's tier sets its review ceremony inside it (architect review on T2/T3 stories).
+
+### Round 3 changes
+
+No renumbering; still 29 stories. Round 3 tightens: the approval entry carries its own copy of the rows to push (10.2, 10.3, 9.6); the guardrail blocks DuckDB table functions, `COLUMNS(` and whole-row structs (7.4); thread history no longer goes to the LLM (9.2); the profile gains tier rows for the runtime's risky paths (6.1); plus health grace, stop-then-start deploys, library log routing, import grep tests, double-click "already done", truth blocks stripped from LLM context.
 
 ### Round 2 renumbering
 
@@ -51,7 +66,7 @@ Computed tiers (`node kit/lib/tier` against `profiles/brightside/profile.yml`): 
 - FR8: SQL runs only through one read-only runner, and only if it is one read-only statement that avoids forbidden columns and DuckDB's file, network and env functions; unterminated input fails closed. (CAP-8)
 - FR9: One scoped-pull engine fills a module's declared parameters (typed form or plain English), confirms them, runs the bound query and delivers results privately; modules configure it, never copy it. (CAP-9)
 - FR10: An approval-gated write previews, pushes only after the same person approves, and reports the outcome, safe against expiry, wrong person, double click, partial failure and the kill switch. (CAP-10)
-- FR11: Slack basics: acknowledge-first handling, thread context, markdown to Slack with chunking, a provenance button with the exact SQL, first-run onboarding and help per hub, one TTL store. (CAP-11)
+- FR11: Slack basics: acknowledge-first handling, markdown to Slack with chunking, a provenance button with the exact SQL, first-run onboarding and help per hub, one TTL store. Thread context to the LLM is deferred (round 3). (CAP-11)
 - FR12: Scheduled jobs are declared as data and their runs logged; the template ships no jobs. (CAP-12)
 - FR13: The Brightside Tier-1 dataset is generated deterministically into versioned seed files, built offline into a local DuckDB, validated, carries known truths, and is publishable to MotherDuck by Ely. (CAP-13)
 - FR14: In a fresh Brightside fork, a person in Slack goes plain-English request → scoped pull → scoring → approval → push to the mock email tool; scoring is deterministic with a reason per row. (CAP-14)
@@ -81,6 +96,7 @@ Computed tiers (`node kit/lib/tier` against `profiles/brightside/profile.yml`): 
 - The runtime loads its profile via `APLABS_PROFILE` (absolute path) in template dev and the container. Never add `.aplabs/profile.yml` to the template repo (AD-2).
 - Slack runs in Socket Mode for dev, as a separate runtime bot app in the existing `aplabs-demo` workspace (AD-5).
 - Every story follows the Orchestrator build loop: tier computed with `node kit/lib/tier`, a ledger row, `npm run review`, `npm run land`.
+- Tests: engine tests under `test/**` read client specifics from `test/fixtures/`, never `profiles/brightside/` or `examples/brightside/`. Carve-out: example tests under `examples/brightside/**` may use Brightside's profile and data, and are deleted with the example in a fork.
 - Prior art per capability: `docs/reference/runtime-harvest-map.md`. Fixture tables and definitions: `fixture-tables.md`. Demo steps: `demo-flow.md`. Connector contract review: `connector-review.md`.
 - Orchestrator Story 4.3 (prove onboarding on Brightside, DEP-004) becomes buildable after Epic 7 and stays tracked in `epics.md`; it reuses the truth blocks Story 7.6 writes.
 - Human steps (Ely), none of which any story's CI depends on:
@@ -132,7 +148,7 @@ Any system connects one standard way, and Brightside's mock CRM and email tool a
 
 ### Epic 9: Ask for data in plain English
 A person asks for a list in a typed form or plain English, confirms what the bot understood, and gets a private, explained result, within an LLM budget.
-**FRs covered:** FR5, FR9, FR11 (formatting, thread context, provenance)
+**FRs covered:** FR5, FR9, FR11 (formatting, provenance)
 
 ### Epic 10: Score, approve, push
 The demo flow: a scored list goes to the mock email tool only after the person approves it, exactly once. Done-definition 3.
@@ -150,6 +166,7 @@ A person types a hub command in a fork's Slack app and sees a menu of the module
 
 **Implements:** FR1, FR11
 **Estimate:** M
+**Tier:** T3 (`kit/lib/secrets/**`)
 **Architecture:** AD-2, AD-5, AD-6, AD-12
 
 As a person at the client,
@@ -175,6 +192,8 @@ So that I know the platform is live.
 **Then** the person gets a plain message, and the ack was sent before any work
 **And** the env-then-Keychain read and `redact()` move from `kit/lib/notify` into a new shared `kit/lib/secrets` (notify's tests still pass unchanged); the Keychain is skipped when `APLABS_NO_KEYCHAIN=1`
 **And** `kit/runtime/log` redacts every secret loaded, with a test that logs a loaded secret and finds only the redaction
+**And** Bolt and the Slack SDK get a custom logger that routes their output through `kit/runtime/log` at INFO and above; a test sets the library to debug (which prints the Socket Mode connection URL) and asserts that URL never reaches the output
+**And** `profiles/brightside/profile.yml` gains the runtime tier rows (T3: `kit/runtime/archetypes/approval-write/**`, `kit/runtime/connectors/**`, `kit/lib/secrets/**`; T2: `kit/runtime/sql/**`, `kit/runtime/data/**`, `kit/runtime/llm/**`) as this story's first commit, and `node kit/lib/tier` on each path returns its row's tier
 **And** the repo holds a setup note for the human step: create "Brightside Bot (dev)" in `aplabs-demo` from the manifest, separate from the "AP Labs Orchestrator" webhook app; store the `xoxb-` and `xapp-` tokens; no signing secret
 **And** Slack Bolt is pinned with its reason, and tests use a fake Slack client with no network
 
@@ -277,7 +296,9 @@ So that a new tool takes minutes, not a day of wiring.
 **When** `npm test` or app startup runs
 **Then** it fails naming the module and the field
 **And** a short guide explains each manifest field
-**And** `kit/runtime/paths.js` exports the engine path list (AD-1), and a test copies the template into a temp fork's app dir and asserts it registers while every engine path is untouched
+**And** `kit/runtime/paths.js` exports the identical-engine set (`kit/**`, `profiles/_schema/**`; AD-1), and a test copies the template into a temp fork's app dir and asserts it registers while every engine path is untouched
+**And** grep tests fail if any file under the app dir (template dev: `examples/brightside/app/`) imports a `kit/` path other than `kit/runtime/sdk`, or if any engine file references `examples/`
+**And** the guide states that handler code is trusted, reviewed code, not sandboxed: it can reach `process.env`, and the protection is that the LLM has no tools and all output is redacted
 
 ## Epic 7: Brightside's data, queried safely
 
@@ -287,6 +308,7 @@ Builders and the bot work against a realistic, synthetic company that builds off
 
 **Implements:** FR13
 **Estimate:** M
+**Tier:** T2 (CI workflow)
 **Architecture:** AD-18
 
 As an AP Labs builder,
@@ -347,6 +369,7 @@ So that I can query Brightside with no network and no credentials.
 
 **Implements:** FR8
 **Estimate:** M
+**Tier:** T2
 **Architecture:** AD-9, AD-16
 
 As a client admin,
@@ -357,18 +380,20 @@ So that the bot can never change data, reach files or the network, or expose a p
 
 **Given** `sql.forbidden_columns` in the profile (new optional key, `"table.column"` strings; Brightside: `clients.phone`, `properties.street_address`, `properties.postal_code`)
 **When** a query is checked
-**Then** it is blocked if it is not a single read-only statement, names a forbidden column, or selects a wildcard while any forbidden column is configured (including inside a CTE, after `TOP n`, or as a quoted `"t".*`)
+**Then** it is blocked if it is not a single read-only statement, names a forbidden column, selects a wildcard while any forbidden column is configured (including inside a CTE, after `TOP n`, as a quoted `"t".*`, or with `EXCLUDE`/`REPLACE`), uses `COLUMNS(`, or uses a table name or alias as a value in the select list while any forbidden column is configured (`SELECT c FROM clients c` returns the whole row as a struct)
 
-**Given** a query using `ATTACH`, `SET`, `PRAGMA`, `INSTALL`, `LOAD` or `COPY`, a file, network or env table function (`read_csv`, `read_csv_auto`, `read_parquet`, `read_json`, `read_text`, `read_blob`, `glob`, `getenv`, and any quoted path or URL used as a table, such as `'https://…'` or `'s3://…'`)
+**Given** a query using `ATTACH`, `SET`, `PRAGMA`, `INSTALL`, `LOAD` or `COPY`, any table-function call not on the allowlist (V1 allowlist: empty), or a quoted path or URL used as a table (such as `'https://…'` or `'s3://…'`)
 **When** it is checked
-**Then** it is blocked naming the rule
+**Then** it is blocked naming the rule; this covers the file, network and env readers (`read_csv`, `read_csv_auto`, `read_parquet`, `read_json`, `read_text`, `read_blob`, `glob`, `getenv`) and, named explicitly, `query(`, `query_table(` and `json_execute_serialized_sql`
 **And** a comment marker inside a string literal does not hide anything, and an unterminated string or comment fails closed
-**And** tests cover every case above plus DDL, DML and stacked statements
+**And** the story notes the threat model (AD-9): V1 SQL is reviewed static templates, so the guardrail is defence in depth, not the only line
+**And** tests cover every case above, one test per bypass (`query(`, `query_table(`, `json_execute_serialized_sql`, `COLUMNS(`, whole-row struct by table name and by alias, `* EXCLUDE`), plus DDL, DML and stacked statements
 
 ### Story 7.5: One read-only query runner, and the Dataset entry
 
 **Implements:** FR8, FR13
 **Estimate:** M
+**Tier:** T2
 **Architecture:** AD-9, AD-10
 
 As a client admin,
@@ -447,6 +472,7 @@ Any system connects one standard way, and Brightside's mock CRM and email tool a
 
 **Implements:** FR6
 **Estimate:** M
+**Tier:** T3 (`kit/runtime/connectors/**`)
 **Architecture:** AD-15; `connector-review.md`
 
 As a builder in a client fork,
@@ -516,6 +542,7 @@ A person asks for a list in a typed form or plain English, confirms what the bot
 
 **Implements:** FR5
 **Estimate:** M
+**Tier:** T2
 **Architecture:** AD-11, AD-12, AD-16
 
 As a client admin,
@@ -526,18 +553,19 @@ So that every module gets good answers within budget.
 
 **Given** an API key read through `kit/lib/secrets` and the profile's `llm` keys (new, optional: `model`, `extraction_model`, `hourly_usd_limit` > 0 default 2, `max_tokens` default 1024)
 **When** a module calls the LLM service
-**Then** the system prompt holds the client name and the declared context files (`org.md`, `data.md`) from `contextDirFor(profilePath)`; `guardrails.md` and `connectors.md` are never sent; each call carries `max_tokens` and a timeout
+**Then** the system prompt holds the client name and the declared context files (`org.md`, `data.md`) from `contextDirFor(profilePath)`, with YAML frontmatter and every fenced `truth` block stripped (a test asserts no truth SQL or expected value reaches the prompt); `guardrails.md` and `connectors.md` are never sent; each call carries `max_tokens` and a timeout
 
 **Given** the kill switch `APLABS_LLM_OFF`, a person over the per-person rate limit, or estimated spend in the last hour above the limit
 **When** a call is attempted
 **Then** it is refused before any request (kill switch checked first), and the caller gets a typed error the module turns into a plain message and the typed-form fallback
+**And** the breaker reserves each call's worst-case cost (`max_tokens` × output price plus input tokens × input price) at check time and settles to the actual cost on reply, so concurrent calls can't overshoot the limit; a test fires two calls that would each fit alone and expects the second refused
 **And** the breaker is per process and resets on restart; the setup note says the console spend cap backs it
 **And** cost uses a per-model price table in code; a test fails if a configured model has no price
 **And** a registered tool must declare `effects: "none"`, so no LLM-callable tool can run SQL or a connector write; a test registers one that doesn't and expects a refusal
 **And** the Anthropic SDK is pinned exactly with its reason
 **And** tests use a stubbed client and cover prompt assembly, the context list, token cap, timeout, rate limit, breaker trip and kill switch; no test calls a model
 
-### Story 9.2: Slack formatting, chunking and thread context
+### Story 9.2: Slack formatting and chunking
 
 **Implements:** FR11
 **Estimate:** S
@@ -553,10 +581,8 @@ So that I never get a cut-off or garbled reply.
 **When** it is sent to Slack
 **Then** headings, bold, links, lists and code convert to Slack formatting, and text is split on line boundaries into sections under 2,900 characters
 
-**Given** a reply in a thread
-**When** a module needs earlier messages
-**Then** the thread's messages are fetched oldest first and converted to the LLM's message format, bot messages marked as assistant
-**And** tests cover each conversion, a long body and a thread fetch with a fake client
+**And** thread history is not converted into LLM messages in V1 (a thread can hold result rows, and rows never reach the LLM, NFR9); "thread context to the LLM" is deferred with the tool loop (architecture, Deferred)
+**And** tests cover each conversion, a long body, a body with no line break under the limit, and a code block split across sections
 
 ### Story 9.3: Declared parameters and a typed form, no LLM
 
@@ -578,11 +604,15 @@ So that I get the right list even when the LLM is off.
 **When** they fill in the typed modal form
 **Then** values are validated against the declarations, and the engine shows them privately with Confirm and Change
 
-**Given** an open session (store namespace `session`)
+**Given** an open session (store namespace `session`, keyed by a session id carried in the buttons and bound to the person, AD-7)
 **When** 30 minutes pass without activity
 **Then** it closes, and a later click is told the session expired, not silently ignored
+
+**Given** a Confirm click
+**When** it arrives
+**Then** it consumes the session's pending state synchronously before the query runs, so a double click or replay runs the query once and the second click is told it is already running or done (store `done`); a click by a different person is refused
 **And** the first consumer is the Brightside example module "Win-back list" in `examples/brightside/app/modules/win-back/`
-**And** tests cover a full form, an invalid value, Change, Confirm and expiry
+**And** tests cover a full form, an invalid value, Change, Confirm, double Confirm, a different person's click, two open sessions for one person, and expiry
 
 ### Story 9.4: Plain English fills the declared parameters
 
@@ -652,13 +682,14 @@ So that I can trust it or challenge it.
 
 **Given** any scoped-pull result
 **When** it is delivered
-**Then** it carries a "How was this made?" button, and the run record (parameters, SQL, row ids) is kept in store namespace `provenance` keyed by run id
+**Then** it carries a "How was this made?" button, and the run record is kept in store namespace `provenance` (24 h) keyed by run id, with exactly the AD-15 shape: `{ runId, person, module, parameters, sql, source, fixtureVersion, ranAt, rowIds, rows }`, where `rows` holds only the module's declared push fields and score, and only for a module with a write (Story 10.1 fills `score`)
 
 **Given** a click by the person who ran the pull
 **When** the action arrives
 **Then** they see privately the confirmed parameters, the exact SQL that ran, the data source and fixture version, and the run time
 **And** after the record expires, the button says the details are no longer available rather than failing
-**And** tests cover the shown SQL matching the SQL executed, a different person clicking, and expiry
+**And** the record serves this button and the preview (10.2) only; a push never reads it
+**And** tests cover the shown SQL matching the SQL executed, the record shape, a different person clicking, and expiry
 
 ## Epic 10: Score, approve, push
 
@@ -689,6 +720,7 @@ So that I work the best prospects first and can explain why.
 
 **Implements:** FR10
 **Estimate:** M
+**Tier:** T3 (approval-write)
 **Architecture:** AD-7, AD-15, AD-16
 
 As a client admin,
@@ -699,22 +731,28 @@ So that nothing reaches an external tool by accident.
 
 **Given** a scored result and a module with an approval-gated write
 **When** the person clicks Push
-**Then** they see privately the destination, the row count and a sample, with Approve and Cancel
+**Then** they see privately the destination list (its name includes the run date), the row count and a sample, with Approve and Cancel
 
 **Given** the preview
 **When** it is created
-**Then** an opaque CSPRNG token (at least 128 bits) bound to that person, the pull's run id, the approved row ids and the destination is stored (namespace `approval`) for 30 minutes, and the button carries only the token
+**Then** an opaque CSPRNG token (at least 128 bits) is stored (namespace `approval`, 30 minutes) with the approval entry `{ person, runId, destination, listName, rows, idempotencyKey }`, where `rows` is a **copy** of the approved rows' declared push fields (Win-back: `client_id`, `email`, `first_name`, `score`) taken from the run record; the button carries only the token
+
+**Given** the run record has already expired when Push is clicked
+**When** the preview would be built
+**Then** the person is told the results expired and to run the pull again; no token is created
 
 **Given** an Approve click
 **When** the token is expired, unknown, or belongs to someone else
 **Then** the same "this preview is no longer valid" reply is given in each case, and nothing is pushed or consumed
 **And** boot refuses an `approval-write` module whose resource is not declared `admin_grantable: false` in the profile
-**And** Cancel ends the session with a confirmation, and tests cover each case
+**And** Cancel ends the session with a confirmation
+**And** tests cover each case, including that a push still succeeds after the run record has expired (the entry carries its own rows)
 
 ### Story 10.3: Push once, report honestly, escalate quietly
 
 **Implements:** FR10
 **Estimate:** M
+**Tier:** T3 (approval-write)
 **Architecture:** AD-7, AD-14, AD-15, AD-16
 
 As a person at the client,
@@ -725,11 +763,11 @@ So that I never double-send or think a failed push worked.
 
 **Given** a valid Approve
 **When** the push runs
-**Then** the person binding is checked, then the connector and global kill switches (refusing without consuming), then the token is consumed synchronously just before the first write; rows are re-derived server-side from the token's run record, and each is written through the connector with the idempotency key from `connector-review.md`
+**Then** the person binding is checked, then the connector and global kill switches (refusing without consuming), then the token is consumed synchronously just before the first write; the push reads only the approval entry's own rows (never the run record, never the button), and each is written through the connector with the idempotency key from `connector-review.md` (list name includes the run date, so the same list re-sent on a later day is a new list)
 
 **Given** two Approve clicks in the same tick, a double click or a replayed payload
 **When** the second arrives
-**Then** exactly one push happens and the person is told it was already done
+**Then** exactly one push happens; `consume` left a `done` marker (AD-7, 10 minutes), so the second click is told "already done" with the counts (or "already running" while the first push is in flight)
 
 **Given** some rows fail, or a kill switch is on
 **When** the push finishes or is refused
@@ -737,7 +775,7 @@ So that I never double-send or think a failed push worked.
 **And** a failure posts one escalation to the profile's `slack.ops_channel` (new optional key), the one declared channel-delivery exception: it carries module, reason and counts only, never row data (a test asserts no row value appears), and repeats of the same reason within a window are suppressed (namespace `escalation`)
 **And** with no `ops_channel` set, the escalation is logged only
 **And** the setup note: create `#brightside-ops` in `aplabs-demo` and invite the bot
-**And** tests cover success, same-tick double Approve, replay, partial failure, both kill switches and suppression with the mock email tool
+**And** tests cover success, same-tick double Approve, a second click during and after the push, replay, partial failure, both kill switches, the run record expired before Approve, and suppression with the mock email tool
 
 ### Story 10.4: The demo flow, end to end
 
@@ -791,6 +829,7 @@ So that recurring reports need no new plumbing.
 
 **Implements:** FR1
 **Estimate:** S
+**Tier:** T2 (`Dockerfile`, CI workflow)
 **Architecture:** AD-8, AD-12, AD-13
 
 As an AP Labs consultant,
@@ -801,9 +840,9 @@ So that a fork can deploy on whatever host the client uses.
 
 **Given** the container definition
 **When** it is built and started with the required env
-**Then** the app boots as in 6.1, env only (`APLABS_NO_KEYCHAIN=1`), with `APLABS_PROFILE` and `APLABS_APP_DIR` set, and `GET /healthz` on `APLABS_HEALTH_PORT` returns 200 only while Socket Mode is connected
+**Then** the app boots as in 6.1, env only (`APLABS_NO_KEYCHAIN=1`), with `APLABS_PROFILE` and `APLABS_APP_DIR` set, and `GET /healthz` on `APLABS_HEALTH_PORT` returns 200 during a 90-second boot grace period and while Socket Mode is connected, and 503 only after the connection has been down for more than 60 seconds (tests with an injected clock cover boot grace, a short reconnect staying 200, and a long outage)
 **And** dependencies are installed inside the image with `npm ci` for the target platform (DuckDB is native), never copied from the host
-**And** the docs say: exactly one replica (in-memory state); no secret is baked into the image; the host choice is the fork's
+**And** the docs say: exactly one replica (in-memory state); deploys are stop-then-start, never rolling (name the host's "recreate"-style setting); no secret is baked into the image; the host choice is the fork's
 **And** CI builds the image or, where Docker is unavailable, a check validates the definition and reports skipped, never passed
 
 ### Story 11.3: Two forks differ only by profile and modules
@@ -820,7 +859,7 @@ So that a fix in the template reaches every engagement.
 
 **Given** two fixture clients, each with its own profile and app dir
 **When** the acceptance test builds two forks in temp directories
-**Then** every engine path (`kit/runtime/paths.js`) is byte-identical between them, and the only differences are each fork's profile, context and app dir
+**Then** every path in the identical-engine set (`kit/**`, `profiles/_schema/**`, from `kit/runtime/paths.js`) is byte-identical between them, and the only differences are each fork's profile, context, app dir and any dependencies a fork appended to `package.json`
 
 **Given** each fork booted with a fake Slack client
 **When** the same person id opens each fork's hub
@@ -842,6 +881,7 @@ So that a new fork is running before the deep dive ends.
 
 **Given** the guide
 **When** a consultant follows it in a fresh fork
-**Then** it covers: write the client profile at `.aplabs/profile.yml`, delete `examples/brightside/` and `profiles/brightside/`, create the runtime Slack app from the generated manifest (separate from any notify webhook app), store tokens and the LLM key with a spend cap, build or connect the data source, add the first module from the template, run the onboarding build, and deploy one replica
+**Then** it covers: write the client profile at `.aplabs/profile.yml` (with tier rows for the runtime paths as in Brightside's, plus the fork's own `app/connectors/**` and write modules at T3), delete `examples/brightside/` and `profiles/brightside/`, create the runtime Slack app from the generated manifest (separate from any notify webhook app), store tokens and the LLM key with a spend cap, build or connect the data source, add the first module from the template, run the onboarding build, and deploy one replica, stop-then-start
+**And** it says a fork may append dependencies to `package.json` but never edits `kit/**` or `profiles/_schema/**` (fixes go to the template)
 **And** each human-only step (anything with a credential) is marked as such
 **And** a structural test fails when the guide names a command or file that does not exist
