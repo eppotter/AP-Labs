@@ -103,6 +103,20 @@
       }
     },
 
+    "sql": {
+      "description": "Query guardrails (kit/runtime/sql).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "forbidden_columns": {
+          "description": "Columns no query may name, as lower-case \"table.column\". While any is set, wildcards and whole-row references are refused too. Default: none.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z_][a-z0-9_]*\\.[a-z_][a-z0-9_]*$" }
+        }
+      }
+    },
+
     "verify": {
       "type": "object",
       "additionalProperties": false,

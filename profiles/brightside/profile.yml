@@ -55,6 +55,11 @@ users:
     identities: { github: mlee-bright }
     grants: [VERIFY_SKIP]
 
+# Columns no query may name (kit/runtime/sql). While any is set, SELECT * and
+# whole-row references are refused too.
+sql:
+  forbidden_columns: [clients.phone, properties.street_address, properties.postal_code]
+
 verify:
   checks:
     - id: unit
