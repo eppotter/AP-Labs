@@ -18,9 +18,11 @@
     "land": "node kit/land/cli.js",
     "onboard": "node kit/onboard/cli.js",
     "fixture:generate": "node examples/brightside/fixture/generate.js",
-    "fixture:check": "node examples/brightside/fixture/generate.js --check"
+    "fixture:check": "node examples/brightside/fixture/generate.js --check",
+    "fixture:build": "node kit/fixture/build.js examples/brightside/fixture"
   },
   "dependencies": {
+    "@duckdb/node-api": "1.5.6-r.2",
     "@slack/bolt": "5.1.0",
     "ajv": "8.20.0",
     "yaml": "2.9.1"

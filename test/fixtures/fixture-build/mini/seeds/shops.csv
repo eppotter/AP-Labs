@@ -1,0 +1,4 @@
+shop_id,region_id,postal_code,opened_on,closed_on,revenue_cents
+1,hill,00402,2025-01-15,,9007199254740993
+2,vale,10001,2024-06-01,2025-12-31,125000
+3,vale,00013,2026-03-09,,0
