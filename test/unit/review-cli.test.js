@@ -121,11 +121,11 @@ test('round 1: read-only codex with stdin closed, verdict and summary printed, P
 });
 
 const CLAUDE_ARGV = [
-  '--print', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk',
+  '--print', '--restricted', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk',
   '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-session-persistence', '--no-chrome', '--disable-slash-commands',
 ];
 
-test('Claude reviewer argv is pinned exactly: read-only tools, dontAsk, empty strict MCP, no session, no chrome, no slash commands (reads are not confined to the repo)', () => {
+test('Claude reviewer argv is pinned exactly: read-only tools, dontAsk, empty strict MCP, no session, no chrome, no slash commands, reads confined to the repo (--restricted)', () => {
   const t = setup();
   t.openPr();
   t.commit('change\n\nAgent: codex gpt-6-luna');
@@ -170,7 +170,7 @@ test('Codex-authored commits use Claude with exact read-only flags and the three
   const r = t.review([], { FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
   assert.equal(r.code, 0, r.err);
   const args = t.claudeArgs();
-  assert.deepEqual(args.slice(0, 13), CLAUDE_ARGV);
+  assert.deepEqual(args.slice(0, CLAUDE_ARGV.length), CLAUDE_ARGV);
   assert.match(args.at(-1), /diff supplied on stdin/);
   assert.doesNotMatch(args.at(-1), /git diff origin\/main\.\.\.HEAD/);
   assert.match(fs.readFileSync(path.join(t.claude, 'stdin.txt'), 'utf8'), /const value = 1/);

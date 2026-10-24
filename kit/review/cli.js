@@ -220,12 +220,11 @@ function main(argv, env = process.env, cwd = process.cwd()) {
       return { status: 1, error };
     }
     // Read-only tools, no prompts, no MCP servers, no saved session, no browser
-    // and no slash commands; test/unit/review-cli.test.js pins this argv. Limit:
-    // Read, Glob and Grep are not confined to the repo. --add-dir only widens
-    // access, and the flag that confines file tools (--restricted) also drops
-    // user settings, so it is not used until it is tried against a live model.
+    // and no slash commands; test/unit/review-cli.test.js pins this argv.
+    // --restricted confines Read, Glob and Grep to the working directory (the
+    // repo); proved live: the repo's AGENTS.md was readable, /etc/hosts was not.
     const result = spawnSync(claudeBin, [
-      '--print', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk',
+      '--print', '--restricted', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk',
       '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-session-persistence', '--no-chrome',
       '--disable-slash-commands', promptFor(state, { diffOnStdin: true }),
     ], { cwd, env, input, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
