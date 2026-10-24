@@ -1,6 +1,6 @@
 'use strict';
 
-// Story 7.1: Brightside's reference-table generator. Example tests (AD-1
+// Stories 7.1 and 7.2: Brightside's fixture generator. Example tests (AD-1
 // carve-out): they read Brightside's own fixture and go with it in a fork.
 
 const test = require('node:test');
@@ -40,7 +40,8 @@ function schemaColumns() {
   const sql = fs.readFileSync(path.join(FIXTURE_DIR, 'schema.sql'), 'utf8');
   const tables = {};
   for (const m of sql.matchAll(/CREATE TABLE (\w+) \(\n([\s\S]*?)\n\);/g)) {
-    tables[m[1]] = m[2].split(',\n').map((line) => line.trim().split(' ')[0]);
+    // Column lines only: a table-level UNIQUE (...) line names no column.
+    tables[m[1]] = m[2].split(',\n').map((line) => line.trim()).filter((line) => !line.startsWith('UNIQUE (')).map((line) => line.split(' ')[0]);
   }
   return tables;
 }
@@ -108,7 +109,8 @@ test('the CLI: --check passes on the repo, bad flags exit 2, --out writes a smal
 
 test('schema.sql and the seed files agree on tables and columns', () => {
   const schema = schemaColumns();
-  const expected = ['zones', 'packages', 'add_ons', 'crews', 'crew_memberships', 'clients', 'properties'];
+  const expected = ['zones', 'packages', 'add_ons', 'crews', 'crew_memberships', 'clients', 'properties',
+    'plans', 'plan_price_changes', 'visits', 'invoices', 'invoice_lines', 'payments', 'fixture_meta'];
   assert.deepEqual(Object.keys(schema), expected, 'load order: referenced tables first');
   assert.deepEqual(fs.readdirSync(path.join(FIXTURE_DIR, 'seeds')).sort(), expected.map((t) => `${t}.csv`).sort());
   for (const table of expected) assert.deepEqual(committed(table).header, schema[table], table);
@@ -116,10 +118,20 @@ test('schema.sql and the seed files agree on tables and columns', () => {
   assert.deepEqual(schema.crew_memberships, ['membership_id', 'crew_id', 'staff_name', 'start_date', 'end_date']);
   assert.deepEqual(schema.clients, ['client_id', 'zone_id', 'first_name', 'last_name', 'email', 'phone', 'created_on']);
   assert.deepEqual(schema.properties, ['property_id', 'client_id', 'street_address', 'city', 'postal_code']);
+  assert.deepEqual(schema.plans, ['plan_id', 'property_id', 'package_id', 'frequency', 'start_date', 'end_date', 'status', 'start_price_cents', 'price_cents']);
+  assert.deepEqual(schema.plan_price_changes, ['change_id', 'plan_id', 'effective_date', 'old_price_cents', 'new_price_cents']);
+  assert.deepEqual(schema.visits, ['visit_id', 'property_id', 'plan_id', 'crew_id', 'package_id', 'visit_date', 'status']);
+  assert.deepEqual(schema.invoices, ['invoice_id', 'client_id', 'visit_id', 'issued_on', 'due_on', 'total_cents']);
+  assert.deepEqual(schema.invoice_lines, ['line_id', 'invoice_id', 'package_id', 'add_on_id', 'quantity', 'amount_cents']);
+  assert.deepEqual(schema.payments, ['payment_id', 'invoice_id', 'paid_on', 'amount_cents', 'method']);
+  assert.deepEqual(schema.fixture_meta, ['key', 'value']);
+  const sql = fs.readFileSync(path.join(FIXTURE_DIR, 'schema.sql'), 'utf8');
+  assert.match(sql, /UNIQUE \(plan_id, effective_date\)/);
+  assert.match(sql, /visit_id INTEGER NOT NULL UNIQUE REFERENCES visits \(visit_id\)/);
 });
 
 test('seed files are LF-only, unquoted, sorted by primary key, with stable formats', () => {
-  const formats = { _cents: /^\d+$/, _date: /^\d{4}-\d{2}-\d{2}$/, created_on: /^\d{4}-\d{2}-\d{2}$/ };
+  const formats = { _cents: /^\d+$/, _date: /^\d{4}-\d{2}-\d{2}$/, _on: /^\d{4}-\d{2}-\d{2}$/, quantity: /^\d+$/ };
   for (const [table, schemaCols] of Object.entries(schemaColumns())) {
     const { text, rows } = committed(table);
     assert.ok(text.endsWith('\n') && !text.includes('\r') && !text.includes('"'), table);
@@ -185,6 +197,8 @@ test('the rule check catches each broken rule once', () => {
   const broken = (mutate) => {
     const copy = JSON.parse(JSON.stringify(tables));
     mutate(copy);
+    // Keep the row counts true, so only the broken rule reports.
+    for (const m of copy.fixture_meta) if (m.key.startsWith('rows_')) m.value = String(copy[m.key.slice(5)].length);
     return checkRules(copy, ruleOpts);
   };
   const cases = [
@@ -237,7 +251,7 @@ test('the PRNG is seeded, bounded and rejects a bad seed', () => {
 });
 
 test('the generator reads no clock and no OS randomness', () => {
-  const sources = ['generate.js', 'lib/prng.js', 'lib/reference.js', 'lib/rules.js', 'lib/tables.js', 'lib/days.js', 'lib/words.js']
+  const sources = ['generate.js', ...fs.readdirSync(path.join(FIXTURE_DIR, 'lib')).map((f) => `lib/${f}`)]
     // Comments may name what is banned; code may not use it.
     .map((f) => fs.readFileSync(path.join(FIXTURE_DIR, f), 'utf8').replace(/^\s*\/\/.*$/gm, ''));
   for (const src of sources) {

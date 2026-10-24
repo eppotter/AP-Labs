@@ -50,3 +50,65 @@ CREATE TABLE properties (
   city VARCHAR NOT NULL,
   postal_code VARCHAR NOT NULL
 );
+
+CREATE TABLE plans (
+  plan_id INTEGER PRIMARY KEY,
+  property_id INTEGER NOT NULL REFERENCES properties (property_id),
+  package_id VARCHAR NOT NULL REFERENCES packages (package_id),
+  frequency VARCHAR NOT NULL,
+  start_date DATE NOT NULL,
+  end_date DATE,
+  status VARCHAR NOT NULL,
+  start_price_cents BIGINT NOT NULL,
+  price_cents BIGINT NOT NULL
+);
+
+CREATE TABLE plan_price_changes (
+  change_id INTEGER PRIMARY KEY,
+  plan_id INTEGER NOT NULL REFERENCES plans (plan_id),
+  effective_date DATE NOT NULL,
+  old_price_cents BIGINT NOT NULL,
+  new_price_cents BIGINT NOT NULL,
+  UNIQUE (plan_id, effective_date)
+);
+
+CREATE TABLE visits (
+  visit_id INTEGER PRIMARY KEY,
+  property_id INTEGER NOT NULL REFERENCES properties (property_id),
+  plan_id INTEGER REFERENCES plans (plan_id),
+  crew_id INTEGER NOT NULL REFERENCES crews (crew_id),
+  package_id VARCHAR NOT NULL REFERENCES packages (package_id),
+  visit_date DATE NOT NULL,
+  status VARCHAR NOT NULL
+);
+
+CREATE TABLE invoices (
+  invoice_id INTEGER PRIMARY KEY,
+  client_id INTEGER NOT NULL REFERENCES clients (client_id),
+  visit_id INTEGER NOT NULL UNIQUE REFERENCES visits (visit_id),
+  issued_on DATE NOT NULL,
+  due_on DATE NOT NULL,
+  total_cents BIGINT NOT NULL
+);
+
+CREATE TABLE invoice_lines (
+  line_id INTEGER PRIMARY KEY,
+  invoice_id INTEGER NOT NULL REFERENCES invoices (invoice_id),
+  package_id VARCHAR REFERENCES packages (package_id),
+  add_on_id VARCHAR REFERENCES add_ons (add_on_id),
+  quantity INTEGER NOT NULL,
+  amount_cents BIGINT NOT NULL
+);
+
+CREATE TABLE payments (
+  payment_id INTEGER PRIMARY KEY,
+  invoice_id INTEGER NOT NULL REFERENCES invoices (invoice_id),
+  paid_on DATE NOT NULL,
+  amount_cents BIGINT NOT NULL,
+  method VARCHAR NOT NULL
+);
+
+CREATE TABLE fixture_meta (
+  key VARCHAR PRIMARY KEY,
+  value VARCHAR NOT NULL
+);

@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 'use strict';
 
-// Brightside's fixture generator (Story 7.1, AD-18). Offline and deterministic:
-// the recorded seed (seed.json) and this code give byte-identical files.
+// Brightside's fixture generator (Stories 7.1 and 7.2, AD-18). Offline and
+// deterministic: the recorded seed (seed.json) and this code give
+// byte-identical files. With the recorded seed it also plants the known
+// truths' figures from targets.json and refuses to write if one misses.
 //
 //   npm run fixture:generate            write schema.sql and seeds/*.csv here
 //   npm run fixture:check               regenerate into a temp dir and diff
 //                                       against the committed files (CI)
 //   node generate.js --seed N --clients N --out DIR   a one-off variant
+//                                       (unplanted: targets fit the recorded seed)
 //
 // Seed files are CSV: a header row, rows in primary-key order, LF endings,
 // integers as plain digits, dates as YYYY-MM-DD, NULL as an empty field.
@@ -20,15 +23,44 @@ const { createRng } = require('./lib/prng');
 const { TABLES, schemaSql } = require('./lib/tables');
 const { buildReference, ZONES, HISTORY_START, AS_OF } = require('./lib/reference');
 const { checkRules } = require('./lib/rules');
+const { buildActivity } = require('./lib/activity');
+const { TRUTH_IDS, computeTruths } = require('./lib/truths');
+
+// Bump when a change to this code changes the output for the same seed.
+const GENERATOR_VERSION = 2;
 
 const FIXTURE_DIR = __dirname;
 const SEED_FILE = path.join(FIXTURE_DIR, 'seed.json');
+const TARGETS_FILE = path.join(FIXTURE_DIR, 'targets.json');
 const SEEDS_DIR = 'seeds';
 
 const USAGE = 'Usage: node examples/brightside/fixture/generate.js [--check] [--seed <n>] [--clients <n>] [--out <dir>]';
 
-function readSeedConfig(file = SEED_FILE) {
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
+// The recorded config: seed.json plus the planted targets.
+function readSeedConfig(file = SEED_FILE, targetsFile = TARGETS_FILE) {
+  return { ...JSON.parse(fs.readFileSync(file, 'utf8')), targets: readTargets(targetsFile) };
+}
+
+function readTargets(file = TARGETS_FILE) {
+  const { truths } = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const ids = Object.keys(truths || {}).sort();
+  if (ids.join() !== TRUTH_IDS.slice().sort().join() || !ids.every((id) => Number.isSafeInteger(truths[id]) && truths[id] >= 0)) {
+    throw new Error(`${path.basename(file)}: truths must give a whole number for exactly ${TRUTH_IDS.join(', ')}`);
+  }
+  return truths;
+}
+
+function fixtureMeta(config, tables) {
+  const rows = [
+    { key: 'as_of', value: AS_OF },
+    { key: 'generator_version', value: String(GENERATOR_VERSION) },
+    { key: 'history_start', value: HISTORY_START },
+    { key: 'seed', value: String(config.seed) },
+  ];
+  for (const table of TABLES) {
+    if (table.name !== 'fixture_meta') rows.push({ key: `rows_${table.name}`, value: String(tables[table.name].length) });
+  }
+  return rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
 function csvValue(v, where) {
@@ -50,14 +82,27 @@ function toCsv(table, rows) {
   return `${lines.join('\n')}\n`;
 }
 
-// Generate every table and file in memory. Throws if a synthetic rule fails.
-function generate({ seed, clients }) {
+// Generate every table and file in memory. With targets, plant them. Throws
+// if a rule fails or a planted figure misses its target.
+function generate(config) {
+  const { seed, clients, targets = null } = config;
   if (!Number.isSafeInteger(clients) || clients < 1) throw new RangeError(`clients must be a positive integer, got ${clients}`);
+  if (config.generator_version !== undefined && config.generator_version !== GENERATOR_VERSION) {
+    throw new Error(`seed.json records generator_version ${config.generator_version}, this generator is ${GENERATOR_VERSION}: update seed.json and regenerate`);
+  }
   const rng = createRng(seed);
+  // Reference draws first, so adding activity left the reference files unchanged.
   const tables = buildReference(rng, { clients });
+  Object.assign(tables, buildActivity(rng, tables, { asOf: AS_OF, targets }));
+  tables.fixture_meta = fixtureMeta(config, tables);
   const problems = checkRules(tables, { zones: ZONES, historyStart: HISTORY_START, asOf: AS_OF });
   if (problems.length > 0) {
     throw new Error(`generated data breaks ${problems.length} rule(s):\n  ${problems.slice(0, 20).join('\n  ')}`);
+  }
+  if (targets) {
+    const got = computeTruths(tables, { asOf: AS_OF });
+    const missed = TRUTH_IDS.filter((id) => got[id] !== targets[id]);
+    if (missed.length > 0) throw new Error(`planted figures missed: ${missed.map((id) => `${id} ${got[id]} (target ${targets[id]})`).join(', ')}`);
   }
   const files = new Map();
   files.set('schema.sql', schemaSql());
@@ -149,7 +194,8 @@ function main(argv) {
       return 0;
     }
     const recorded = readSeedConfig();
-    const config = { seed: args.seed ?? recorded.seed, clients: args.clients ?? recorded.clients };
+    const variant = args.seed !== undefined || args.clients !== undefined;
+    const config = variant ? { seed: args.seed ?? recorded.seed, clients: args.clients ?? recorded.clients } : recorded;
     const outDir = args.out || FIXTURE_DIR;
     const { tables, files } = generate(config);
     writeFiles(outDir, files);
@@ -164,4 +210,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { generate, writeFiles, checkCommitted, readSeedConfig, toCsv, main };
+module.exports = { generate, writeFiles, checkCommitted, readSeedConfig, readTargets, toCsv, main, GENERATOR_VERSION };
