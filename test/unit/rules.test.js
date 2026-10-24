@@ -19,9 +19,7 @@ const STOP_RULE = 'stop after reporting; never start another story; do not open 
 
 // Scripts the rules may name before they exist. Each entry must be removed once
 // its script lands: the test fails if a pending script is already in package.json.
-const PENDING_SCRIPTS = {
-  land: 'Story 1.5 adds npm run land (merge gated on review and CI)',
-};
+const PENDING_SCRIPTS = {};
 
 function orchestratorSection(text) {
   const start = text.indexOf(`\n${SECTION}\n`);
