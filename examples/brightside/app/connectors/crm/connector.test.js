@@ -146,3 +146,13 @@ test('crm: a rate limit that outlasts the retries fails, it never returns empty'
   await assert.rejects(instance.read.lookupClient({ clientId: 1 }), (e) => e instanceof ConnectorFailed && /rate limit/i.test(e.reason));
   assert.equal(data.queries.length, 0);
 });
+
+test('crm: a malformed email is a clean refusal, never a query (#84)', async () => {
+  const { instance, data } = crm();
+  for (const email of ['not-an-email', 'a@b', '@home.invalid', 'a@', 'a b@home.invalid', 'a@@home.invalid', 'a@home .invalid',
+    'a@home..invalid', '.a@home.invalid', `${'a'.repeat(250)}@home.invalid`]) {
+    await assert.rejects(instance.read.lookupClient({ email }), (e) => e instanceof ConnectorFailed && /email/.test(e.reason), email);
+  }
+  assert.equal(data.queries.length, 0, 'no malformed email reached the runner');
+  assert.equal((await instance.read.lookupClient({ email: 'Briar.Redley.1+x@home.invalid' })), null, 'a plus address is well formed');
+});

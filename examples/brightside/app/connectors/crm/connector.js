@@ -26,6 +26,13 @@ const BY = Object.freeze({
   email: (cols) => `SELECT ${cols} FROM clients WHERE lower(email) = $email`,
 });
 
+// A deliberately simple email shape, checked after trimming and lower-casing:
+// a local part (no spaces, no @, no leading, trailing or doubled dot, at most
+// 64 characters), one @, and a domain of dot-separated labels. At most 254
+// characters in all. It refuses what can't be an address; it doesn't try to
+// accept every address the standard allows.
+const EMAIL = /^(?!\.)(?!.*\.\.)[^\s@]{1,64}(?<!\.)@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
+
 // The lookup's input as { key, value, fields }; throws on anything else.
 function parse({ clientId, email, fields = FIELDS } = {}) {
   if (!Array.isArray(fields) || !fields.length) throw new Error('fields must be a non-empty list');
@@ -40,6 +47,7 @@ function parse({ clientId, email, fields = FIELDS } = {}) {
   }
   const normal = typeof email === 'string' ? email.trim().toLowerCase() : '';
   if (!normal) throw new Error('email must be a non-empty string');
+  if (normal.length > 254 || !EMAIL.test(normal)) throw new Error('email must look like name@example.com');
   return { key: 'email', value: normal, fields: picked };
 }
 
