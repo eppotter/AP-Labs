@@ -22,6 +22,11 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 - How we build (the Orchestrator): `docs/orchestrator/DESIGN.md`
 - Design reference: `docs/reference/03-target-build.md`
 
+## Skills
+
+- `.agents/skills/` holds BMAD (`bmad-*`, planning) and p3-stack (build → ship). `.claude/skills` links to it. Both are pinned upstream copies: never edit them; override in our docs instead.
+- Which skill runs at which stage: `docs/orchestrator/DESIGN.md` §4.
+
 ## Layout
 
 - `kit/`: the template's engine. `lib/profile`, `lib/permissions` and `lib/tier` are built; `plugin/` and `verify/` are in progress.
