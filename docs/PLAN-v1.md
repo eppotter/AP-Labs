@@ -44,7 +44,6 @@ Rewrites usually run 2–3× their estimate. Holding to this list is how V1 fini
 | FAST lane (`fast-lane.js`) | Its vocabulary is a schema design of its own. Without it, every write needs an engaged agent, which is acceptable for a prototype. | After the prototype, as its own PR |
 | Review pipeline: queue run/scout/dispatch/synopsis, author-record, codeowners, carry-forward, auto-merge | Large, and `gh`-bound. Not in the done-definition. | V2 |
 | Command index, statusline, stage tracker | Convenience, not governance | V2 |
-| The full Orchestrator (specialist roster, rule-body split, ceremony profiles) | Real design work. V1 carries the gate and verify; see §4 for where the rest sits | After the runtime blocks; see §5 |
 | Distribution: marketplace, hard version check, plugin-cache check (TA-14) | One install, one machine | First external install |
 | Windows support | Hooks are bash wrappers. Logic lives in Node so a later port is the wrapper only. | First Windows client |
 | VCS adapter, telemetry, review metrics, headless sandbox | Not in the done-definition | V2+ |
@@ -177,21 +176,23 @@ Each block gets a call: **Copy** (near-verbatim, tests included, fixtures swappe
 | G5 | Write gate + engagement marker | Copy rules; `apps/**` → `gate.exempt`; FAST lane left out |
 | G6 | Verify harness | Copy the contract; checks from profile `verify.checks` (argv, no shell, env allowlist, timeout; can't spawn = skipped) |
 | G7 | Stop-verify hook | Rewrite against fixtures |
-| G8 | Orchestrator protocol + specialists | Rewrite the invariant layer only; per-client canon comes later |
+| G8 | Orchestrator: rules layer, agents (incl. Onboarder), BMAD + p3 installed, cross-model review script | New; design in [`orchestrator/DESIGN.md`](orchestrator/DESIGN.md), decisions in ADR 0003 |
 
 ### Order
 
-1. **This docs PR:** ADR 0002, this plan, `AGENTS.md`.
-2. **R1–R4:** a forkable app that boots, with one hello-world module behind the profile. The biggest day-one saving.
-3. **Fixture Tier 1:** generator, local DuckDB build, validation. Publishing to MotherDuck is a separate step that Ely runs.
-4. **R6–R8:** connector template, mock connector, SQL guardrails.
-5. **R9, R5:** scoped-pull engine on the LLM service.
-6. **R10:** approval-gated write. Completes the demo flow (done-definition 3).
-7. **R11, R12:** UX basics and the cron registry, folded into earlier PRs where they're needed.
-8. **G4–G7:** hook lib, gate, verify, stop-verify.
-9. **G8**, then the acceptance test: two forks differ only by profile and modules.
+The Orchestrator comes first: everything after it is built through it ([ADR 0003](adr/0003-orchestrator-tooling.md)).
 
-One PR per step, or per block where a step is large. Steps 2–6 are the runtime gap. The governance blocks are partly done, and plain Claude Code is enough to build with in the meantime.
+1. **Docs:** ADR 0002 and this plan (#7). Then the Orchestrator design and ADR 0003.
+2. **The Orchestrator (G8, G4–G7):** install BMAD and p3 at pinned versions, the AP Labs rules layer, the agent definitions (including the Onboarder), the cross-model review script, the hook lib, write gate, verify harness and Stop hook. BMAD then breaks the steps below into phases and stories.
+3. **R1–R4:** a forkable app that boots, with one hello-world module behind the profile.
+4. **Fixture Tier 1:** generator, local DuckDB build, validation. Publishing to MotherDuck is a separate step that Ely runs.
+5. **R6–R8:** connector template, mock connector, SQL guardrails.
+6. **R9, R5:** scoped-pull engine on the LLM service.
+7. **R10:** approval-gated write. Completes the demo flow (done-definition 3).
+8. **R11, R12:** UX basics and the cron registry, folded into earlier PRs where they're needed.
+9. **Acceptance test:** two forks differ only by profile and modules.
+
+One PR per story. From step 3 on, the Orchestrator's own process applies: BMAD plans, the plan gate, p3 builds, cross-model review.
 
 ---
 
@@ -200,7 +201,7 @@ One PR per step, or per block where a step is large. Steps 2–6 are the runtime
 | Item | Owner | Blocks |
 |---|---|---|
 | IP / employment-agreement check: cleared by Ely, 2026-10-23 | **Ely** | Nothing |
-| Runtime before Orchestrator (§4 order): confirm | **Ely** | Step 2 |
+| Orchestrator design opens (file locations, pinned versions) | Claude | Step 2; see [`orchestrator/DESIGN.md`](orchestrator/DESIGN.md) §8 |
 | Fixture toolchain: Python 3.12 + `uv` for `fixtures/` only, or Node throughout | **Ely** | Step 3 |
 | Demo flow: the exact Brightside pull → score → push scenario | **Ely** | Steps 5–6 |
 | MotherDuck: account email (venture, not Hometown), collaborator invited | **Ely** | Publishing the fixture |

@@ -28,10 +28,11 @@ The template is a generalised version of Varsity, the AI platform built at Homet
   - **Push:** preview a list, approve it, and send it to another system
 - The basics: who can see which tool, safe database queries, onboarding, feedback buttons
 
-**2. Guardrails for whoever builds new tools** (us, then the client's builders)
-- Work is planned before code is written
-- Risky changes are noticed automatically
-- Checks actually run before work counts as done
+**2. The Orchestrator: how new tools get built** (by us, then by the client's builders)
+- A lead agent plans the work with you, then routes it to specialist agents (data, guardrails, integrations, building, docs, checks)
+- An onboarding agent learns each new client's data, systems and rules, so the specialists start out knowing them
+- Plans are written as phases and PR-sized stories, and nothing is built until you approve
+- Risky changes are noticed automatically, checks actually run, and a second AI model reviews every change
 - All of it driven by one settings file per client, so every client's setup differs only in that file
 
 **3. A fake company to build and demo on**
@@ -51,12 +52,12 @@ Adding the next tool means filling in a template, not rebuilding the plumbing.
 | | Step | Status |
 |---|---|---|
 | 🟢 | Repo skeleton, the client settings file, permissions, change-risk scoring | Done |
-| ⚪ | A bare Slack app that starts up with one "hello" tool | Next |
+| ⚪ | The Orchestrator: the build process every later step runs through ([design](docs/orchestrator/DESIGN.md)) | Next |
+| ⚪ | A bare Slack app that starts up with one "hello" tool | |
 | ⚪ | The fake company's data | |
 | ⚪ | Connecting to the pretend CRM and email tool | |
 | ⚪ | The "pull" tool | |
 | ⚪ | The "push" tool (the demo works end to end) | |
-| ⚪ | The rest of the builder guardrails | |
 
 The detailed plan, with every building block and where it comes from in Varsity, is in [`docs/PLAN-v1.md`](docs/PLAN-v1.md).
 
