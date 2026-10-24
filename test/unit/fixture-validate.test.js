@@ -112,28 +112,38 @@ test('a forbidden column is refused unless the check declares it; the declaratio
 test('a check that is not a read-only query fails as could not run', async (t) => {
   const db = await builtDb(t);
   const dir = checksCopy(t, { 'writes.sql': "-- Tries to write.\nDELETE FROM shops WHERE shop_id = 1\n" });
-  const r = cli(VALIDATE, [dir, '--db', db]);
+  const r = cli(VALIDATE, [dir, '--db', db], { APLABS_PROFILE: PROFILE });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /^FAIL writes: could not run: query refused/m);
 });
 
 test('no built fixture fails plainly, naming the fix; no checks fails too; usage is exit 2', async (t) => {
   const dir = tmpDir(t);
-  let r = cli(VALIDATE, [FIXTURE, '--db', path.join(dir, 'missing.duckdb')]);
+  let r = cli(VALIDATE, [FIXTURE, '--db', path.join(dir, 'missing.duckdb')], { APLABS_PROFILE: PROFILE });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no built fixture at .*missing\.duckdb\. Run npm run fixture:build first\./);
   // The default file is the one fixture:build writes, under APLABS_VAR_DIR.
-  r = cli(VALIDATE, [FIXTURE, '--name', 'mini'], { APLABS_VAR_DIR: dir });
+  r = cli(VALIDATE, [FIXTURE, '--name', 'mini'], { APLABS_PROFILE: PROFILE, APLABS_VAR_DIR: dir });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /fixture[/\\]mini\.duckdb\. Run npm run fixture:build first\./);
 
   const db = await builtDb(t);
   fs.mkdirSync(path.join(dir, 'empty'));
-  r = cli(VALIDATE, [path.join(dir, 'empty'), '--db', db]);
+  r = cli(VALIDATE, [path.join(dir, 'empty'), '--db', db], { APLABS_PROFILE: PROFILE });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no checks\/\*\.sql/);
 
   assert.equal(cli(VALIDATE, []).status, 2);
+});
+
+// Issue #77 item 1: no profile means no forbidden columns are known, so the
+// validator refuses to run rather than run every check unguarded.
+test('no profile fails closed with exit 2, like query, and runs no check', async (t) => {
+  const db = await builtDb(t);
+  const r = cli(VALIDATE, [FIXTURE, '--db', db], {}, tmpDir(t));
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /fixture:validate: no profile \(pass --profile, set APLABS_PROFILE or add \.aplabs\/profile\.yml\)/);
+  assert.doesNotMatch(r.stdout, /PASS|FAIL/);
 });
 
 // --- kit/fixture/query: the truth bridge ---

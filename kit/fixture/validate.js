@@ -11,9 +11,11 @@
 // passes when it returns zero rows. The default file is the one
 // `npm run fixture:build` writes (kit/fixture/build defaultOut).
 //
-// Forbidden columns come from the profile when there is one (--profile,
-// relative to cwd, else APLABS_PROFILE, else .aplabs/profile.yml above cwd). A check that must read one (a
-// synthetic-only check on phones, say) names it in its leading comment:
+// Forbidden columns come from the profile (--profile, relative to cwd, else
+// APLABS_PROFILE, else .aplabs/profile.yml above cwd). No profile is a profile
+// error: the validator never runs with no forbidden columns known (issue #77).
+// A check that must read one (a synthetic-only check on phones, say) names it
+// in its leading comment:
 //
 //   -- protected-columns: clients.phone
 //
@@ -28,7 +30,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { defaultOut } = require('./build');
-const { findProfilePath, loadProfile } = require('../lib/profile');
+const { findProfilePath, loadProfile, PROFILE_REL } = require('../lib/profile');
 const { createData } = require('../runtime/data');
 const { forbiddenColumnsOf } = require('../runtime/sql');
 
@@ -136,10 +138,14 @@ async function main(argv, { env = process.env, cwd = process.cwd() } = {}) {
     console.error(`${args.error}\n${USAGE}`);
     return 2;
   }
-  let forbiddenColumns = [];
+  let forbiddenColumns;
   try {
     const profileFile = args.profile ? path.resolve(cwd, args.profile) : findProfilePath(cwd, env);
-    if (profileFile) forbiddenColumns = forbiddenColumnsOf(loadProfile(profileFile));
+    if (!profileFile) {
+      console.error(`fixture:validate: no profile (pass --profile, set APLABS_PROFILE or add ${PROFILE_REL})`);
+      return 2;
+    }
+    forbiddenColumns = forbiddenColumnsOf(loadProfile(profileFile));
   } catch (err) {
     if (err.code !== 'PROFILE_INVALID') throw err;
     console.error(`fixture:validate: ${err.message}`);
