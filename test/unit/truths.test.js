@@ -24,6 +24,12 @@ const VERIFY = path.join(ROOT, 'kit/verify/run-all.js');
 const STOP = path.join(ROOT, 'kit/hooks/stop-verify.sh');
 const node = process.execPath;
 
+// The in-process session banner tests find the profile the way a session does,
+// and APLABS_PROFILE wins over the temp repo. Run from a shell or a verify run
+// that sets it (Brightside's profile has truths), they would read that profile
+// instead. node --test runs each file in its own process, so this stays here.
+delete process.env.APLABS_PROFILE;
+
 const tmps = [];
 test.after(() => tmps.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
 

@@ -68,3 +68,9 @@ verify:
   checks:
     - id: unit
       run: [npm, test]
+    # Story 7.6: the fixture's integrity and synthetic-only checks. The known
+    # truths in context/data.md run after these, as truth:<id>.
+    # The profile is named in the argv, not passed as APLABS_PROFILE, so it
+    # never leaks into the unit check's environment.
+    - id: fixture-validate
+      run: [node, kit/fixture/validate.js, examples/brightside/fixture, --profile, profiles/brightside/profile.yml]
