@@ -1,0 +1,19 @@
+# Access test profile (Story 6.3): Slack ids map to profile users; resources
+# cover open access, a grant, an admin-grantable key, deny beating allow and
+# deny beating open access.
+schema_version: 1
+client: { id: tiny, name: Tiny & Co }
+resources:
+  - { key: OPEN_THING, label: Open thing, open_access: true }
+  - { key: REPORTS, label: Reports }
+  - { key: PAYROLL, label: Payroll, admin_grantable: false }
+users:
+  - { id: ada, name: Ada, role: admin, identities: { slack: UADA } }
+  - id: bo
+    name: Bo
+    role: member
+    identities: { slack: UBO }
+    grants: [REPORTS, PAYROLL]
+    deny: [PAYROLL]
+  - { id: cy, name: Cy, role: member, identities: { slack: UCY }, deny: [OPEN_THING] }
+  - { id: dee, name: Dee <D>, role: admin }

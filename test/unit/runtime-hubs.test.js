@@ -62,7 +62,7 @@ test('in prod the prod-only entry shows and the dev-only one does not', async ()
   await app.dispatchCommand('/beta');
   assert.deepEqual(buttons(app.responded[0]), ['echo:open', 'prod-only:open', 'second:open']);
   assert.deepEqual(buttons(app.responded[1]), []);
-  assert.match(app.responded[1].blocks[1].text.text, /Nothing is available/);
+  assert.ok(app.responded[1].blocks.some((b) => b.type === 'section' && /Nothing is available/.test(b.text.text)));
 });
 
 test('a click is acked, runs the module handler, and the reply is private with the person and client names', async () => {
@@ -131,7 +131,8 @@ test('the access seam filters the menu and refuses at dispatch', async () => {
   await app.dispatchCommand('/alpha', { user_id: 'U2' });
   assert.deepEqual(buttons(app.responded[0]), ['second:open']);
   await app.dispatchAction('echo:open', { user: { id: 'U2' } });
-  assert.equal(app.responded[1].text, NOT_AVAILABLE);
+  // U2 is not in this profile, so the refusal says so (Story 6.3).
+  assert.match(app.responded[1].text, /^You're not set up in Tiny's bot yet/);
   await app.dispatchAction('echo:open', { user: { id: 'U3', name: 'three' } });
   assert.match(app.responded[2].text, /^echo for three/);
 });
