@@ -73,7 +73,7 @@ Start with [`AGENTS.md`](AGENTS.md); it holds the rules for people and coding ag
 - `examples/`, `test/`: the example install and the tests.
 - `docs/PLAN-v1.md`: the build plan. `docs/adr/`: decisions. `docs/reference/`: the original design and research.
 
-**Checks** (Node 20 or later; run `npm ci` once)
+**Checks** (Node 24 or later; run `npm ci` once)
 
 ```
 npm run check    # syntax: JS, shell, JSON

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Governance kit for building AI agent solutions inside client organisations.",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "start": "node kit/runtime/app",

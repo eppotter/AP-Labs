@@ -21,7 +21,7 @@ V1 is **our engagement starter template**: a generalised Varsity that we fork on
 
 Client modules are built in the client's fork, never in the template. The test for any component is whether we'd want it on day one of a new engagement.
 
-Runtime stays Node 20 and bash. The fixture's toolchain is an open item in PLAN-v1 §5.
+Runtime stays Node and bash (Node 24 LTS since ADR 0004; was Node 20). The fixture's toolchain is an open item in PLAN-v1 §5.
 
 ## Consequences
 
