@@ -8,8 +8,9 @@
 // Loads <fixture-dir>/schema.sql and every <fixture-dir>/seeds/<table>.csv
 // into a local DuckDB file, offline. The default file is
 // var/fixture/<name>.duckdb (var/ is APLABS_VAR_DIR, else the repo's
-// gitignored var/), and <name> defaults to the folder holding the fixture
-// dir (for example <client>/fixture -> <client>).
+// gitignored var/). <name> defaults to the governing profile's client id, the
+// file the runtime reads (kit/runtime/data dataPathFor), else the folder
+// holding the fixture dir (for example <client>/fixture -> <client>).
 //
 // This is the only code that opens DuckDB for writing, and the app never
 // loads it: the runtime reads the built file read-only (kit/runtime/data).
@@ -17,11 +18,12 @@
 // rebuild replaces the old file whole and a failed build leaves it untouched.
 // After loading, every table's row count must equal fixture_meta's
 // rows_<table>, and every seed file's header must match its table's columns.
-// Exit codes: 0 built, 1 build failed, 2 usage.
+// Exit codes: 0 built, 1 build failed, 2 usage or profile error.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { DuckDBInstance } = require('@duckdb/node-api');
+const { governingProfilePath, loadProfile } = require('../lib/profile');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const META_TABLE = 'fixture_meta';
@@ -57,10 +59,19 @@ function parseArgs(argv) {
   return args;
 }
 
-function defaultOut(fixtureDir, name, env = process.env) {
-  const client = name || path.basename(path.dirname(path.resolve(fixtureDir)));
+// clientId: the governing profile's client.id, so the default file is the
+// one dataPathFor names (issue #77). --name still wins.
+function defaultOut(fixtureDir, name, env = process.env, clientId = null) {
+  const client = name || clientId || path.basename(path.dirname(path.resolve(fixtureDir)));
   const varDir = env.APLABS_VAR_DIR ? path.resolve(env.APLABS_VAR_DIR) : path.join(REPO_ROOT, 'var');
   return path.join(varDir, 'fixture', `${client}.duckdb`);
+}
+
+// The governing profile's client id, or null when no profile governs. A
+// profile that can't be loaded throws its ProfileError.
+function governingClientId(cwd, env) {
+  const file = governingProfilePath(null, cwd, env);
+  return file ? loadProfile(file).client.id : null;
 }
 
 // Table names in the order schema.sql creates them, so foreign keys load
@@ -228,7 +239,17 @@ async function main(argv, { env = process.env, cwd = process.cwd() } = {}) {
     return 2;
   }
   const fixtureDir = path.resolve(cwd, args.fixtureDir);
-  const out = args.out ? path.resolve(cwd, args.out) : defaultOut(fixtureDir, args.name, env);
+  let clientId = null;
+  if (!args.out && !args.name) {
+    try {
+      clientId = governingClientId(cwd, env);
+    } catch (err) {
+      if (err.code !== 'PROFILE_INVALID') throw err;
+      console.error(`fixture:build: ${err.message}`);
+      return 2;
+    }
+  }
+  const out = args.out ? path.resolve(cwd, args.out) : defaultOut(fixtureDir, args.name, env, clientId);
   try {
     const result = await build({ fixtureDir, out });
     const total = result.tables.reduce((n, t) => n + t.rows, 0);
@@ -248,4 +269,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { build, readRows, main, parseArgs, defaultOut, schemaTables, FixtureBuildError, USAGE };
+module.exports = { build, readRows, main, parseArgs, defaultOut, governingClientId, schemaTables, FixtureBuildError, USAGE };

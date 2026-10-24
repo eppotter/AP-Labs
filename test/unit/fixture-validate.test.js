@@ -209,24 +209,68 @@ test('query: a missing fixture names the fix; no profile or bad usage is exit 2'
   assert.match(query.parseArgs(['a.sql', '--profile']).error, /--profile needs a value/);
 });
 
+// --- the governing profile (issue #77 item 4) ---
+
+// A copy of the fixture profile somewhere else: another client's, as far as
+// the commands can tell.
+function otherProfile(t) {
+  const file = path.join(tmpDir(t), 'other.yml');
+  fs.copyFileSync(PROFILE, file);
+  return file;
+}
+
+test('an explicit --profile that is not the governing profile fails with exit 2, for validate and query', async (t) => {
+  const db = await builtDb(t);
+  const other = otherProfile(t);
+  const sql = path.join(FIXTURE, 'truths', 'open-shops.sql');
+  for (const governing of [{ APLABS_GOVERNING_PROFILE: PROFILE }, { APLABS_PROFILE: PROFILE }]) {
+    let r = cli(VALIDATE, [FIXTURE, '--db', db, '--profile', other], governing, tmpDir(t));
+    assert.equal(r.status, 2, JSON.stringify(governing));
+    assert.match(r.stderr, /^fixture:validate: --profile .*other\.yml is not the governing profile \(.*profile\.yml\)/m);
+    assert.doesNotMatch(r.stdout, /PASS|FAIL/);
+    r = cli(QUERY, ['--profile', other, sql], { ...governing, APLABS_DATA_PATH: db }, tmpDir(t));
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /^query: --profile .*other\.yml is not the governing profile/m);
+    assert.equal(r.stdout, '');
+  }
+  // Naming the governing profile itself is fine, relative or not.
+  const r = cli(QUERY, ['--profile', path.relative(REPO, PROFILE), sql], { APLABS_GOVERNING_PROFILE: PROFILE, APLABS_DATA_PATH: db });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, '2\n');
+});
+
+test('with no --profile, validate and query use the governing profile verify passes; a relative one is refused', async (t) => {
+  const db = await builtDb(t);
+  const sql = path.join(FIXTURE, 'truths', 'open-shops.sql');
+  let r = cli(QUERY, [sql], { APLABS_GOVERNING_PROFILE: PROFILE, APLABS_DATA_PATH: db }, tmpDir(t));
+  assert.equal(r.status, 0, r.stderr);
+  // It wins over APLABS_PROFILE: verify's profile is the one that defines the check.
+  r = cli(QUERY, [sql], { APLABS_GOVERNING_PROFILE: PROFILE, APLABS_PROFILE: otherProfile(t), APLABS_DATA_PATH: db }, tmpDir(t));
+  assert.equal(r.status, 0, r.stderr);
+  r = cli(VALIDATE, [FIXTURE, '--db', db], { APLABS_GOVERNING_PROFILE: 'profile.yml' }, tmpDir(t));
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /APLABS_GOVERNING_PROFILE must be an absolute path/);
+});
+
 // --- npm run verify: truths through the bridge, context beside the profile ---
 
 // A profile outside any .aplabs/ folder (the template's profiles/<client>/
 // layout), with its data.md in context/ beside it, as APLABS_PROFILE selects.
-// APLABS_PROFILE never reaches a check: each argv names the profile, as
-// Brightside's do. APLABS_DATA_PATH is allowed only to point at the temp build.
+// APLABS_PROFILE never reaches a check, and no argv names a profile (as
+// Brightside's don't, issue #77): verify passes the governing profile as
+// APLABS_GOVERNING_PROFILE. APLABS_DATA_PATH is allowed only to point at the temp build.
 function profileRepo(t, db) {
   const dir = tmpDir(t);
   const profileFile = path.join(dir, 'profiles', 'mini', 'profile.yml');
   const profile = YAML.parse(fs.readFileSync(PROFILE, 'utf8'));
   profile.verify = {
-    checks: [{ id: 'fixture-validate', run: [node, VALIDATE, FIXTURE, '--db', db, '--profile', profileFile] }],
+    checks: [{ id: 'fixture-validate', run: [node, VALIDATE, FIXTURE, '--db', db] }],
     env_allow: ['APLABS_DATA_PATH'],
   };
   fs.mkdirSync(path.join(dir, 'profiles', 'mini', 'context'), { recursive: true });
   fs.writeFileSync(profileFile, YAML.stringify(profile));
   const truth = (id, file, expect) => ['```truth', `id: ${id}`, `statement: ${id}`,
-    `run: [${node}, ${QUERY}, --profile, ${profileFile}, ${path.join(FIXTURE, 'truths', file)}]`, `expect: ${expect}`, 'tolerance: 0',
+    `run: [${node}, ${QUERY}, ${path.join(FIXTURE, 'truths', file)}]`, `expect: ${expect}`, 'tolerance: 0',
     'owner: Solo', 'signed_off: pending', '```'].join('\n');
   fs.writeFileSync(path.join(dir, 'profiles', 'mini', 'context', 'data.md'),
     `# Data\n\n## Known truths\n\n${truth('open-shops', 'open-shops.sql', 2)}\n\n${truth('vale-revenue', 'revenue.sql', 125000)}\n`);

@@ -20,7 +20,7 @@
 // are recorded in <git-dir>/aplabs/verify/last.json for the session banner.
 
 const { findProfilePath, loadProfile, ProfileError } = require('../profile');
-const { childEnv, tail } = require('../verify');
+const { checkEnv, tail } = require('../verify');
 const { runChecks } = require('../verify/runner');
 const { truthChecksFor } = require('../truths');
 const { git, readSessionHead } = require('../session/head');
@@ -138,7 +138,7 @@ async function stopVerify(input, { startDir, env = process.env } = {}) {
   if (!root || !changedFiles(root, input && input.session_id)) return null;
 
   const budget = budgetSeconds(env);
-  const { results, notRun } = await runChecks(checks, childEnv(env, envAllow), root, { budgetMs: budget * 1000 });
+  const { results, notRun } = await runChecks(checks, checkEnv(env, envAllow, file), root, { budgetMs: budget * 1000 });
   writeLastResult(root, results, 'stop-hook');
   return report(results, notRun, { budget });
 }

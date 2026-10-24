@@ -19,6 +19,7 @@ const { loadProfile } = require('../../../../kit/lib/profile');
 const { truthChecksFor, loadTruths } = require('../../../../kit/lib/truths');
 const { contextDirFor } = require('../../../../kit/lib/onboard');
 const { runChecks } = require('../../../../kit/lib/verify/runner');
+const { checkEnv } = require('../../../../kit/lib/verify');
 const { TRUTH_IDS } = require('../lib/truths');
 
 const REPO = path.resolve(__dirname, '..', '..', '..', '..');
@@ -56,6 +57,11 @@ test('every check in checks/ passes on the committed seeds, with Brightside\'s f
   assert.deepEqual(results.filter((r) => r.outcome !== 'pass'), []);
 });
 
+test('the profile\'s fixture-validate check names no profile: verify passes the governing one', () => {
+  const check = PROFILE.verify.checks.find((c) => c.id === 'fixture-validate');
+  assert.deepEqual(check.run, ['node', 'kit/fixture/validate.js', 'examples/brightside/fixture']);
+});
+
 test('data.md holds one truth per planted target: owner Dana Reyes, pending sign-off, tolerance 0', () => {
   const entries = loadTruths(contextDirFor(PROFILE_FILE));
   assert.deepEqual(entries.map((e) => e.id).sort(), [...TRUTH_IDS].sort());
@@ -66,15 +72,18 @@ test('data.md holds one truth per planted target: owner Dana Reyes, pending sign
     assert.deepEqual(e.truth.tolerance, { kind: 'abs', value: 0 }, e.id);
     assert.equal(e.truth.owner, 'Dana Reyes', e.id);
     assert.equal(e.truth.signedOff, 'pending', e.id);
-    assert.deepEqual(e.truth.run, ['node', 'kit/fixture/query.js', '--profile', 'profiles/brightside/profile.yml', `examples/brightside/fixture/truths/${e.id}.sql`], e.id);
+    // No --profile: the governing profile applies, so a fork that copies the
+    // block enforces its own forbidden columns, never Brightside's (issue #77).
+    assert.deepEqual(e.truth.run, ['node', 'kit/fixture/query.js', `examples/brightside/fixture/truths/${e.id}.sql`], e.id);
   }
 });
 
 test('each truth runs through the query runner, as npm run verify runs it, and matches its target', async (t) => {
   const { out } = await builtFixture();
-  // As verify passes it: no APLABS_PROFILE (the argv names the profile). The
-  // data file is the temp build, so APLABS_DATA_PATH is set here only.
-  const env = { PATH: process.env.PATH, APLABS_DATA_PATH: out };
+  // As verify passes it: no APLABS_PROFILE, the governing profile in
+  // APLABS_GOVERNING_PROFILE. The data file is the temp build, so
+  // APLABS_DATA_PATH is set here only.
+  const env = checkEnv({ PATH: process.env.PATH, APLABS_DATA_PATH: out }, ['APLABS_DATA_PATH'], PROFILE_FILE);
   const { results } = await runChecks(truthChecksFor(PROFILE_FILE), env, REPO);
   assert.deepEqual(results.map((r) => [r.id, r.outcome, r.reason || null]), TRUTH_IDS.map((id) => [`truth:${id}`, 'pass', null]));
 });

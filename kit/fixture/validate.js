@@ -11,9 +11,11 @@
 // passes when it returns zero rows. The default file is the one
 // `npm run fixture:build` writes (kit/fixture/build defaultOut).
 //
-// Forbidden columns come from the profile (--profile, relative to cwd, else
-// APLABS_PROFILE, else .aplabs/profile.yml above cwd). No profile is a profile
-// error: the validator never runs with no forbidden columns known (issue #77).
+// Forbidden columns come from the governing profile (kit/lib/profile
+// governingProfilePath): the one `npm run verify` names, else APLABS_PROFILE,
+// else .aplabs/profile.yml above cwd. --profile (relative to cwd) must be that
+// profile when one governs. No profile is a profile error: the validator
+// never runs with no forbidden columns known (issue #77).
 // A check that must read one (a synthetic-only check on phones, say) names it
 // in its leading comment:
 //
@@ -31,12 +33,14 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { defaultOut } = require('./build');
-const { findProfilePath, loadProfile, PROFILE_REL } = require('../lib/profile');
+const { governingProfilePath, loadProfile, PROFILE_REL } = require('../lib/profile');
 const { createData } = require('../runtime/data');
 const { forbiddenColumnsOf } = require('../runtime/sql');
 
 const USAGE = 'usage: node kit/fixture/validate.js <fixture-dir> [--db <file>] [--name <client>] [--profile <file>]';
 const PROTECTED = /^--\s*protected-columns:\s*(.*)$/i;
+// Errors that mean "no usable profile": exit 2 with the message.
+const PROFILE_ERRORS = new Set(['PROFILE_INVALID', 'PROFILE_NOT_GOVERNING']);
 
 // A path relative to cwd when it is inside it, else absolute.
 function shownPath(cwd, file) {
@@ -151,21 +155,22 @@ async function main(argv, { env = process.env, cwd = process.cwd() } = {}) {
     console.error(`${args.error}\n${USAGE}`);
     return 2;
   }
-  let forbiddenColumns;
+  let profile;
   try {
-    const profileFile = args.profile ? path.resolve(cwd, args.profile) : findProfilePath(cwd, env);
+    const profileFile = governingProfilePath(args.profile, cwd, env);
     if (!profileFile) {
       console.error(`fixture:validate: no profile (pass --profile, set APLABS_PROFILE or add ${PROFILE_REL})`);
       return 2;
     }
-    forbiddenColumns = forbiddenColumnsOf(loadProfile(profileFile));
+    profile = loadProfile(profileFile);
   } catch (err) {
-    if (err.code !== 'PROFILE_INVALID') throw err;
+    if (!PROFILE_ERRORS.has(err.code)) throw err;
     console.error(`fixture:validate: ${err.message}`);
     return 2;
   }
+  const forbiddenColumns = forbiddenColumnsOf(profile);
   const fixtureDir = path.resolve(cwd, args.fixtureDir);
-  const db = args.db ? path.resolve(cwd, args.db) : defaultOut(fixtureDir, args.name, env);
+  const db = args.db ? path.resolve(cwd, args.db) : defaultOut(fixtureDir, args.name, env, profile.client.id);
   const shown = shownPath(cwd, db);
   if (!fs.existsSync(db)) {
     console.error(`fixture:validate: ${notBuilt(shown)}`);
@@ -190,4 +195,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, parseArgs, readHeader, loadChecks, validate, resultLine, notBuilt, shownPath, USAGE };
+module.exports = { main, parseArgs, readHeader, loadChecks, validate, resultLine, notBuilt, shownPath, PROFILE_ERRORS, USAGE };

@@ -20,6 +20,7 @@ try {
 }
 
 const { build, readRows, main, parseArgs, defaultOut, schemaTables, FixtureBuildError } = require('../../kit/fixture/build');
+const { dataPathFor } = require('../../kit/runtime/data');
 
 const REPO = path.join(__dirname, '..', '..');
 const MINI = path.join(__dirname, '..', 'fixtures', 'fixture-build', 'mini');
@@ -121,6 +122,11 @@ test('schemaTables lists tables in creation order', () => {
 test('the default file is var/fixture/<client>.duckdb, under APLABS_VAR_DIR when set', () => {
   assert.equal(defaultOut('/x/acme/fixture', null, {}), path.join(REPO, 'var', 'fixture', 'acme.duckdb'));
   assert.equal(defaultOut('/x/acme/fixture', 'other', { APLABS_VAR_DIR: '/v' }), path.join('/v', 'fixture', 'other.duckdb'));
+  // Issue #77: with a profile, the client id names the file, as the runtime's
+  // dataPathFor does, so build, validate, truths and publish share one file.
+  assert.equal(defaultOut('/x/app/fixture', null, {}, 'acme'), dataPathFor({ client: { id: 'acme' } }, {}).path);
+  assert.equal(defaultOut('/x/app/fixture', null, { APLABS_VAR_DIR: '/v' }, 'acme'), dataPathFor({ client: { id: 'acme' } }, { APLABS_VAR_DIR: '/v' }).path);
+  assert.equal(defaultOut('/x/app/fixture', 'other', {}, 'acme'), path.join(REPO, 'var', 'fixture', 'other.duckdb'));
 });
 
 test('var/ is gitignored, so a built file is never committed', () => {
@@ -147,6 +153,21 @@ test('the CLI builds offline and prints the file, tables and rows', (t) => {
   const r = spawnSync(process.execPath, [BUILD, MINI, '--out', path.join(dir, 'cli.duckdb')], { cwd: dir, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^fixture:build: cli\.duckdb: 3 tables, 8 rows, \d+\.\ds\n$/);
+});
+
+test('the CLI names the default file after the profile\'s client id, else the folder (issue #77)', (t) => {
+  const dir = tmpDir(t);
+  const profile = path.join(__dirname, '..', 'fixtures', 'fixture-validate', 'profile.yml');
+  const run = (env) => spawnSync(process.execPath, [BUILD, MINI], { cwd: dir, encoding: 'utf8', env: { PATH: process.env.PATH, APLABS_VAR_DIR: dir, ...env } });
+  let r = run({ APLABS_PROFILE: profile });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(dir, 'fixture', 'mini.duckdb')), r.stdout);
+  r = run({});
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(dir, 'fixture', 'fixture-build.duckdb')), r.stdout);
+  r = run({ APLABS_PROFILE: path.join(dir, 'missing.yml') });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /^fixture:build: .*cannot read profile/m);
 });
 
 test('the CLI exits 1 with the reason when the build fails', (t) => {
