@@ -9,6 +9,7 @@
 //   { at, type: 'list',    operation: 'createList',  key, payload: { listId, name } }
 //   { at, type: 'contact', operation: 'addContacts', key, payload: { listId, external_ref, email, first_name } }
 //   { at, type: 'done',    operation, key, slot, input, result }   the contract's ledger (deps.idempotency)
+//   { at, type: 'progress', operation, key, slot, input, batchSize, completed }   a write stopped partway (#89)
 // A contact's key is the write's key, its listId and its external_ref.
 //
 // The file and its directory are created on first write, owner-only: contacts
@@ -215,14 +216,24 @@ function openOutbox(file, { lockWaitMs = 2000, lockStaleMs = 30_000 } = {}) {
   // slot is the contract's "<connector id>\u0000<operation>\u0000<key>" (DEP-012;
   // a 'done' record from before that, with no connector id, is never matched:
   // delete an old var/outbox/email.jsonl rather than rely on it).
+  // A write stopped partway sets { input, partial: true, batchSize, completed }
+  // under its progress slot, once per request sent; the latest one wins (#89).
   const ledger = Object.freeze({
     get(slot) {
-      const done = records().find((r) => r.type === 'done' && r.slot === slot);
-      return done ? { input: done.input, result: done.result } : undefined;
+      const all = records();
+      const done = all.find((r) => r.type === 'done' && r.slot === slot);
+      if (done) return { input: done.input, result: done.result };
+      const progress = all.filter((r) => r.type === 'progress' && r.slot === slot).pop();
+      return progress ? { input: progress.input, partial: true, batchSize: progress.batchSize, completed: progress.completed } : undefined;
     },
-    set(slot, { input, result }) {
+    set(slot, value) {
       const [, operation, ...rest] = slot.split('\u0000');
-      append({ type: 'done', operation, key: rest.join('\u0000'), slot, input, result });
+      const key = rest.join('\u0000');
+      if (value.partial === true) {
+        append({ type: 'progress', operation, key, slot, input: value.input, batchSize: value.batchSize, completed: value.completed });
+        return;
+      }
+      append({ type: 'done', operation, key, slot, input: value.input, result: value.result });
     },
   });
 
