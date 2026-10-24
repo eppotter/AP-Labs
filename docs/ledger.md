@@ -49,6 +49,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #57 | 2026-10-24 | — | infra | — | Moves the template from Node 20 (end of life) to Node 24 LTS so Slack Bolt's dependencies run on a supported runtime (ADR 0004). | — |
 | #55 | 2026-10-24 | 6.1 | user-visible | T3 | The Brightside bot connects to Slack and answers a direct message privately; startup refuses and names any missing setting, and secrets never reach the logs. | — |
 | #59 | 2026-10-24 | 7.2 | groundwork | T1 | Adds 24 months of Brightside activity (plans, price changes, visits, invoices, lines, payments, `fixture_meta`) built to hit seven planted known-truth figures in `targets.json`, checked by the generator and its tests. | — |
+| pending | 2026-10-24 | 7.4 | groundwork | T2 | Adds the SQL guardrail every query will pass before it runs: one read-only statement only, no file, network or env access, and no way to reach a protected column (by name, wildcard or whole-row reference). Brightside's profile names its protected columns in the new `sql.forbidden_columns` key. | — |
 
 ## Deferrals (DEP)
 
