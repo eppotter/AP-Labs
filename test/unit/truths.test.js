@@ -17,6 +17,7 @@ const {
 const { TEMPLATES_DIR, initContext } = require('../../kit/lib/onboard');
 const { sessionStart } = require('../../kit/lib/session');
 const { isIsoDate } = require('../../kit/lib/dates');
+const { lastFile, readLastResult, writeLastResult, MAX_AGE_MS } = require('../../kit/lib/verify/last');
 
 const ROOT = path.resolve(__dirname, '../..');
 const VERIFY = path.join(ROOT, 'kit/verify/run-all.js');
@@ -175,9 +176,20 @@ test('tolerance: absolute number or percent; default 0', () => {
 
 test('readNumber: last non-empty line, commas allowed', () => {
   assert.deepEqual(readNumber('rows: 3\n412,300\n\n'), { value: 412300 });
+  assert.deepEqual(readNumber('1,234,567.89'), { value: 1234567.89 });
+  assert.deepEqual(readNumber('-12,345'), { value: -12345 });
   assert.deepEqual(readNumber('-1.5e3'), { value: -1500 });
   assert.match(readNumber('412300 dollars').error, /not a number: "412300 dollars"/);
   assert.match(readNumber('\n \n').error, /printed nothing/);
+});
+
+test('readNumber: commas that are not standard thousands grouping are rejected (#45)', () => {
+  for (const bad of ['1,2', '12,34,5', '1234,567', ',123', '123,', '1,,234', '1,234.5,6', '1.234,56', '0.1,234', '1,234e3']) {
+    assert.match(readNumber(bad).error, /commas that are not standard thousands grouping/, bad);
+  }
+  // A judged truth fails rather than reading 1,2 as 12.
+  const t = { expect: 12, tolerance: { kind: 'abs', value: 0 } };
+  assert.equal(judge(t, '1,2').outcome, 'fail');
 });
 
 test('judge: pass within tolerance, fail outside with expected vs actual', () => {
@@ -326,6 +338,64 @@ test('Stop hook: passing truths are one pass line', () => {
   assert.match(r.out.systemMessage, /^AP Labs verify: all 1 check passed/);
 });
 
+// --- last verify result (#45) ---
+
+const gitRepo = (opts) => {
+  const d = repo(opts);
+  git(d, 'init', '-q');
+  return d;
+};
+const readLast = (d) => JSON.parse(fs.readFileSync(lastFile(path.join(d, '.git')), 'utf8'));
+
+test('verify records each run in <git-dir>/aplabs/verify/last.json; outside git it writes nothing', () => {
+  const d = gitRepo({ checks: [PASS_CHECK], data: doc(block({ id: 'off' }, '400,000')) });
+  assert.equal(verify(d).code, 1);
+  const rec = readLast(d);
+  assert.equal(rec.source, 'verify');
+  assert.equal(rec.head, null);
+  assert.ok(Math.abs(Date.parse(rec.at) - Date.now()) < 60000);
+  assert.deepEqual(rec.results, [{ id: 'ok', outcome: 'pass' }, { id: 'truth:off', outcome: 'fail' }]);
+  const plain = repo({ checks: [PASS_CHECK] });
+  assert.equal(verify(plain).code, 0);
+  assert.equal(fs.existsSync(path.join(plain, '.git')), false);
+});
+
+test('Stop hook records its run in last.json too', () => {
+  const d = gitRepo({ data: doc(block({ id: 'off' }, '400000')) });
+  git(d, 'add', '-A');
+  git(d, 'commit', '-q', '-m', 'init');
+  fs.writeFileSync(path.join(d, 'work.txt'), 'changed\n');
+  stopHook(d);
+  const rec = readLast(d);
+  assert.equal(rec.source, 'stop-hook');
+  assert.match(rec.head, /^[0-9a-f]{40}$/);
+  assert.deepEqual(rec.results, [{ id: 'truth:off', outcome: 'fail' }]);
+});
+
+test('readLastResult: missing, malformed, future or old records read as null', () => {
+  const g = path.join(tmpDir(), '.git');
+  assert.equal(readLastResult(g), null);
+  assert.equal(readLastResult(null), null);
+  const file = lastFile(g);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  for (const text of ['not json', '[]', '{"at":"2026-10-24T00:00:00Z"}', '{"at":"soon","results":[]}']) {
+    fs.writeFileSync(file, text);
+    assert.equal(readLastResult(g), null, text);
+  }
+  const now = Date.parse('2026-10-24T12:00:00Z');
+  const rec = (at) => JSON.stringify({ at: new Date(at).toISOString(), head: null, source: 'verify', results: [{ id: 'a', outcome: 'fail' }, { id: 1, outcome: 'fail' }, { id: 'b', outcome: 'odd' }] });
+  fs.writeFileSync(file, rec(now - MAX_AGE_MS - 1000));
+  assert.equal(readLastResult(g, now), null);
+  fs.writeFileSync(file, rec(now + 5 * 60 * 1000));
+  assert.equal(readLastResult(g, now), null);
+  fs.writeFileSync(file, rec(now - 1000));
+  assert.deepEqual(readLastResult(g, now).results, [{ id: 'a', outcome: 'fail' }]);
+});
+
+test('writeLastResult never throws and writes nothing outside a git repo', () => {
+  assert.equal(writeLastResult(tmpDir(), [{ id: 'a', outcome: 'pass' }], 'verify'), null);
+});
+
 // --- session banner ---
 
 const bannerLines = (d) => sessionStart(d).systemMessage.split('\n').filter((l) => l.startsWith('Known truths'));
@@ -346,6 +416,40 @@ test('banner: one line for pending, ownerless or invalid truths; never runs them
   const context = sessionStart(d).hookSpecificOutput.additionalContext;
   assert.match(context, /^Known truths: 3 of 5 need a check or sign-off \(the truth blocks in \.aplabs\/context\/data\.md/m);
   assert.equal(fs.existsSync(marker), false, 'session start must not run truth commands');
+});
+
+test('banner: flags truths that failed or timed out at the last verify run, without running them (#45)', () => {
+  const marker = path.join(tmpDir(), 'ran');
+  const touches = [node, '-e', `require("fs").writeFileSync(${JSON.stringify(marker)}, "x")`];
+  const d = gitRepo({ data: doc(block({ id: 'a', run: touches }), block({ id: 'b', run: touches }), block({ id: 'c', run: touches }), block({ id: 'w', signed_off: 'pending', run: touches })) });
+  // No record yet: only the sign-off line.
+  assert.deepEqual(bannerLines(d), ['Known truths: 1 of 4 need a check or sign-off']);
+  const at = new Date(Date.now() - 60000).toISOString();
+  const write = (results, when = at) => {
+    fs.mkdirSync(path.dirname(lastFile(path.join(d, '.git'))), { recursive: true });
+    fs.writeFileSync(lastFile(path.join(d, '.git')), JSON.stringify({ at: when, head: null, source: 'verify', results }));
+  };
+  // A removed truth (gone) and a non-truth check (ok) are not counted.
+  write([{ id: 'ok', outcome: 'fail' }, { id: 'truth:a', outcome: 'fail' }, { id: 'truth:b', outcome: 'timeout' },
+    { id: 'truth:c', outcome: 'pass' }, { id: 'truth:gone', outcome: 'fail' }]);
+  assert.deepEqual(bannerLines(d), [`Known truths: 1 of 4 need a check or sign-off; 2 failed at last verify (${at})`]);
+  assert.match(sessionStart(d).hookSpecificOutput.additionalContext, /2 failed at last verify .*SQLsmith must not rely/);
+  // All signed off and only a failure: one line for the failure.
+  const d2 = gitRepo({ data: doc(block({ id: 'a', run: touches })) });
+  fs.mkdirSync(path.dirname(lastFile(path.join(d2, '.git'))), { recursive: true });
+  fs.writeFileSync(lastFile(path.join(d2, '.git')), JSON.stringify({ at, results: [{ id: 'truth:a', outcome: 'fail' }] }));
+  assert.deepEqual(bannerLines(d2), [`Known truths: 1 failed at last verify (${at})`]);
+  // An old record is ignored.
+  write([{ id: 'truth:a', outcome: 'fail' }], new Date(Date.now() - MAX_AGE_MS - 60000).toISOString());
+  assert.deepEqual(bannerLines(d), ['Known truths: 1 of 4 need a check or sign-off']);
+  assert.equal(fs.existsSync(marker), false, 'session start must not run truth commands');
+});
+
+test('banner: a real failing verify run shows up at the next session start', () => {
+  const d = gitRepo({ data: doc(block({ id: 'off' }, '400,000')) });
+  assert.deepEqual(bannerLines(d), []);
+  assert.equal(verify(d).code, 1);
+  assert.match(bannerLines(d)[0], /^Known truths: 1 failed at last verify \(\d{4}-\d\d-\d\dT/);
 });
 
 test('banner: silent when every truth is valid and signed off, or there are none', () => {

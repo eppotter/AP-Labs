@@ -25,7 +25,15 @@ jobs:
       - name: Tests (unit, hook, acceptance)
         run: npm test
       - name: Verify harness
-        run: npm run verify
+        # A client fork (governed: .aplabs/profile.yml exists) runs strict, so a
+        # skipped check (missing executable), a timeout or zero checks fails CI
+        # (#24). The template itself has no profile and stays a plain run.
+        run: |
+          if [ -f .aplabs/profile.yml ]; then
+            npm run verify -- --strict
+          else
+            npm run verify
+          fi
       - name: Ledger row
         if: github.event_name == 'pull_request'
         run: node scripts/ledger-check.js --base "origin/${{ github.base_ref }}"

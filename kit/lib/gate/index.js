@@ -27,7 +27,7 @@
 //      b. no plan record (worktree marker --plan, or an approval recorded in
 //         this session)                           → DENY, logged
 //      c. no approval for the plan, or a stale one → DENY, logged
-//      d. T3 and no plan-review record            → DENY, logged
+//      d. T3 and no plan-review record for this plan engagement → DENY, logged
 //      e. otherwise                               → allow, silent
 //
 // Markers live in <git-dir>/aplabs/engaged/ (inside .git, so never tracked):
@@ -42,7 +42,13 @@
 // session and the Builder runs in another worktree:
 //   approvals/<slug>.json     written by the UserPromptSubmit hook (Claude Code
 //                             only) when the human types `approve plan <slug>`
-//   plan-reviews/<slug>.md    written by `npm run engage -- --plan <slug> --plan-reviewed <path>`
+//   plan-reviews/<slug>.md    written by `npm run engage -- --plan <slug> --plan-reviewed <path>`:
+//                             the review text, under a one-line header
+//   plan-reviews/<slug>.json  the record the gate reads, written beside it:
+//                             { slug, at, engaged_at, source, user, branch }
+// A plan review counts for T3 when its record names the plan's slug and was
+// recorded at or after the plan's engage time or its approval time, so a
+// review left over from an earlier engagement of the same slug does not.
 // An approval counts when it is at most 7 days old and no older than the
 // plan's engage time minus 24 hours. A model can type the phrase into a
 // delegated child's brief (briefs arrive as user prompts): this is a
@@ -162,6 +168,7 @@ const markerDir = (gitDir) => path.join(gitDir, 'aplabs', 'engaged');
 const logFile = (gitDir) => path.join(gitDir, 'aplabs', 'gate.log');
 const approvalDir = (commonDir) => path.join(commonDir, 'aplabs', 'approvals');
 const planReviewFile = (commonDir, slug) => path.join(commonDir, 'aplabs', 'plan-reviews', `${slug}.md`);
+const planReviewRecord = (commonDir, slug) => path.join(commonDir, 'aplabs', 'plan-reviews', `${slug}.json`);
 /** Lower-cased slug, or null when it breaks the slug rule. */
 const normSlug = (s) => (typeof s === 'string' && SLUG_RE.test(s.toLowerCase()) ? s.toLowerCase() : null);
 const sessionKey = (id) => String(id).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 128);
@@ -264,6 +271,7 @@ function decide(input, startDir, now = Date.now(), opts = {}) {
     'no-approval': `${why} and plan ${slugText} has no recorded approval. ${ask}`,
     'stale-approval': `${why} and the approval for plan ${slugText} is stale (older than 7 days, or more than 24 hours before the plan was engaged). ${ask}`,
     'no-plan-review': `${why}: T3 needs a \`bmad-review\` pass on plan ${slugText} first. Run it, then \`npm run engage -- --reason "<story>" --plan ${slugText} --plan-reviewed <review file>\` and retry.`,
+    'stale-plan-review': `${why}: the plan review on record for ${slugText} is not from this plan engagement (recorded before the plan was engaged and before it was approved, or for another plan). Re-run \`bmad-review\` on the current plan, then \`npm run engage -- --reason "<story>" --plan ${slugText} --plan-reviewed <review file>\` and retry.`,
   }[r.rule];
   return deny(ctx, r.rule, `AP Labs write gate: ${msg}${files}`, input, inRepo, now);
 }
@@ -318,8 +326,23 @@ function checkPlan(common, { slug, engagedAt }, tier, now) {
   const tooOld = now - at > APPROVAL_MAX_AGE_MS || at > now + SKEW_MS;
   const beforePlan = engagedAt !== null && at < engagedAt - APPROVAL_LEAD_MS;
   if (tooOld || beforePlan) return { ok: false, rule: 'stale-approval', slug };
-  if (tier === 'T3' && !fs.existsSync(planReviewFile(common, slug))) return { ok: false, rule: 'no-plan-review', slug };
+  if (tier === 'T3') {
+    const r = reviewCheck(common, slug, engagedAt, at);
+    if (r) return { ok: false, rule: r, slug };
+  }
   return { ok: true, slug };
+}
+
+// T3 only: null when the plan-review record belongs to this plan engagement,
+// else the deny rule. A record counts when its slug is the plan's and it was
+// recorded at or after the plan's engage time (when known) or its approval.
+function reviewCheck(common, slug, engagedAt, approvedAt) {
+  const rec = readJson(planReviewRecord(common, slug));
+  if (!rec) return fs.existsSync(planReviewFile(common, slug)) ? 'stale-plan-review' : 'no-plan-review';
+  const at = timeOf(rec.at);
+  if (normSlug(rec.slug) !== slug || at === null) return 'stale-plan-review';
+  const current = at >= approvedAt || (engagedAt !== null && at >= engagedAt);
+  return current ? null : 'stale-plan-review';
 }
 
 /** SubagentStart (Claude Code): write the session-keyed marker. Returns the file or null. */
@@ -365,9 +388,13 @@ function engage(startDir, reason, now = Date.now(), opts = {}) {
   const branch = git(ctx.root, ['symbolic-ref', '-q', '--short', 'HEAD']) || 'detached';
   if (review) {
     const out = planReviewFile(ctx.commonDir, plan);
+    const at = new Date(now).toISOString();
     fs.mkdirSync(path.dirname(out), { recursive: true });
-    const header = `<!-- aplabs plan review for ${plan}: copied from ${oneLine(review.rel)} on ${new Date(now).toISOString()} by ${oneLine(user)} (${oneLine(branch)}) -->\n`;
+    const header = `<!-- aplabs plan review for ${plan}: copied from ${oneLine(review.rel)} on ${at} by ${oneLine(user)} (${oneLine(branch)}) -->\n`;
     fs.writeFileSync(out, header + fs.readFileSync(review.abs, 'utf8'));
+    // The record the gate reads. engaged_at is this engage's marker time.
+    const record = { slug: plan, at, engaged_at: at, source: review.rel, user, branch };
+    fs.writeFileSync(planReviewRecord(ctx.commonDir, plan), `${JSON.stringify(record)}\n`);
     review.file = out;
   }
   const fields = { by: 'engage', reason: why, user, branch, kind };
@@ -415,5 +442,5 @@ function recordApprovals(input, startDir, now = Date.now()) {
 
 module.exports = {
   EDIT_TOOLS, DEFAULT_TTL_MINUTES, SLUG_RE, targetPaths, decide, markSubagent, engage, EngageError,
-  approvalSlugs, recordApprovals, markerDir, logFile, approvalDir, planReviewFile,
+  approvalSlugs, recordApprovals, markerDir, logFile, approvalDir, planReviewFile, planReviewRecord,
 };

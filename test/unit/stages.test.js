@@ -76,6 +76,49 @@ test('resolveStages never removes or reorders a core stage', () => {
   assert.deepEqual(core, CORE);
 });
 
-test('resolveStages refuses an unvalidated unknown add-on rather than dropping it', () => {
-  assert.throws(() => resolveStages({ stages: { addons: ['canary'] } }), /unknown add-on stage\(s\): canary/);
+test('resolveStages refuses an unvalidated unknown add-on with a ProfileError rather than dropping it', () => {
+  assert.throws(() => resolveStages({ stages: { addons: ['canary'] } }), (err) => {
+    assert.ok(err instanceof ProfileError);
+    assert.match(err.message, /refusing to start: unknown add-on stage\(s\): canary/);
+    return true;
+  });
+});
+
+test('the schema enum for stages.addons is exactly the ADDONS ids (drift guard)', () => {
+  const schema = JSON.parse(fs.readFileSync(path.join(__dirname, '../../profiles/_schema/profile.schema.json'), 'utf8'));
+  const enumIds = schema.properties.stages.properties.addons.items.enum;
+  assert.deepEqual([...enumIds].sort(), ADDONS.map((a) => a.id).sort());
+  assert.equal(new Set(enumIds).size, enumIds.length);
+});
+
+test('every add-on slots after a real core stage, and ids are unique', () => {
+  for (const a of ADDONS) assert.ok(CORE.includes(a.after), `${a.id} slots after "${a.after}", which is not a core stage`);
+  assert.equal(new Set(ADDONS.map((a) => a.id)).size, ADDONS.length);
+  for (const a of ADDONS) assert.ok(!resolveStages({}).some((s) => s.id === a.id), `${a.id} collides with a core stage id`);
+});
+
+test('banner: an add-on the schema let through shows the invalid-profile banner, not a crash', () => {
+  const os = require('node:os');
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-stages-'));
+  try {
+    fs.mkdirSync(path.join(d, '.aplabs'));
+    fs.writeFileSync(path.join(d, '.aplabs/profile.yml'), fs.readFileSync(path.join(__dirname, '../fixtures/profiles/minimal.yml'), 'utf8'));
+    // Stand in for schema drift: a resolveStages that meets an add-on it does not know.
+    const stagesPath = require.resolve('../../kit/lib/stages');
+    const sessionPath = require.resolve('../../kit/lib/session');
+    const real = require.cache[stagesPath];
+    delete require.cache[sessionPath];
+    require.cache[stagesPath] = { ...real, exports: { ...real.exports, resolveStages: () => resolveStages({ stages: { addons: ['canary'] } }) } };
+    let out;
+    try {
+      out = require('../../kit/lib/session').sessionStart(d);
+    } finally {
+      require.cache[stagesPath] = real;
+      delete require.cache[sessionPath];
+    }
+    assert.match(out.systemMessage, /the profile is invalid and must be fixed before building.*unknown add-on stage\(s\): canary/);
+    assert.match(out.hookSpecificOutput.additionalContext, /INVALID/);
+  } finally {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
 });

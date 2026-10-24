@@ -16,8 +16,8 @@
 //   signed_off:      a real date (YYYY-MM-DD) or "pending"
 //   timeout_seconds: optional, 1 to 3600; default 300 like a verify check
 //
-// The command must print one number: the last non-empty stdout line, commas
-// allowed. `npm run verify` and the Stop hook run each truth as the check
+// The command must print one number: the last non-empty stdout line, with
+// optional standard thousands grouping (412,300 or 1,234,567.89). `npm run verify` and the Stop hook run each truth as the check
 // `truth:<id>` (truthChecks below); a malformed block is a failing check that
 // names its problem. Blocks inside HTML comments are ignored, so a template's
 // commented example never runs. File reading is the only I/O here.
@@ -34,6 +34,10 @@ const REQUIRED = ['id', 'statement', 'run', 'expect', 'owner'];
 const SLUG = /^[a-z][a-z0-9-]*$/;
 const PERCENT = /^(\d+(?:\.\d+)?)\s*%$/;
 const NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+// Commas only as thousands separators: 1 to 3 leading digits, then groups of
+// exactly 3, before any decimal point. "1,2" or "12,34,5" could be a typo or
+// another locale's decimal comma, so they are rejected, never guessed.
+const GROUPED = /^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d*)?$/;
 const DEFAULT_TIMEOUT_SECONDS = 300;
 const SHOWN_CHARS = 80;
 
@@ -166,11 +170,15 @@ function loadTruths(contextDir) {
 // in the context directory beside the profile (kit/lib/onboard).
 const truthChecksFor = (profileFile) => truthChecks(loadTruths(contextDirFor(path.resolve(profileFile))));
 
-// Reads a number from a command's stdout: the last non-empty line, commas allowed.
+// Reads a number from a command's stdout: the last non-empty line, with
+// optional standard thousands grouping.
 function readNumber(stdout) {
   const lines = String(stdout || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return { error: 'printed nothing' };
   const last = lines[lines.length - 1];
+  if (last.includes(',') && !GROUPED.test(last)) {
+    return { error: `output has commas that are not standard thousands grouping: "${oneLine(last).slice(0, SHOWN_CHARS)}"` };
+  }
   const bare = last.replace(/,/g, '');
   if (!NUMBER.test(bare)) return { error: `output is not a number: "${oneLine(last).slice(0, SHOWN_CHARS)}"` };
   return { value: Number(bare) };
@@ -204,12 +212,24 @@ function truthChecks(entries) {
 // problem, no owner, or a pending sign-off.
 const needsAttention = (e) => e.problems.length > 0 || !e.truth.owner || e.truth.signedOff === 'pending';
 
-// The session banner line, or null when there are no truths or all are valid
-// and signed off. Static only: the commands are never run at session start.
-function bannerLine(entries) {
+// Truths in `entries` whose check failed or timed out in `last` (the record
+// from kit/lib/verify/last, or null). Truths removed since are not counted.
+function failedAtLast(entries, last) {
+  if (!last) return 0;
+  const bad = new Set(last.results.filter((r) => r.outcome === 'fail' || r.outcome === 'timeout').map((r) => r.id));
+  return entries.filter((e) => bad.has(`truth:${e.id}`)).length;
+}
+
+// The session banner line, or null when there are no truths, all are valid
+// and signed off, and none failed at the last verify run (`last`, optional).
+// Static only: the commands are never run at session start.
+function bannerLine(entries, last = null) {
+  const parts = [];
   const need = entries.filter(needsAttention).length;
-  if (!need) return null;
-  return `Known truths: ${need} of ${entries.length} need a check or sign-off`;
+  if (need) parts.push(`${need} of ${entries.length} need a check or sign-off`);
+  const failed = failedAtLast(entries, last);
+  if (failed) parts.push(`${failed} failed at last verify (${last.at})`);
+  return parts.length ? `Known truths: ${parts.join('; ')}` : null;
 }
 
 module.exports = {

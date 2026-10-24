@@ -54,7 +54,7 @@ A marker is fresh for the profile's `gate.engagement_ttl_minutes` (default 60) f
 |---|---|
 | `--plan <slug>` | The approved plan this work belongs to. Slug: `[a-z0-9][a-z0-9-]{0,63}`, lower-cased first (`Story-2-5` is `story-2-5`). |
 | `--kind onboarding` | An onboarding build: approval is needed at every tier. The default kind is `build`. |
-| `--plan-reviewed <path>` | Needs `--plan`. Copies the `bmad-review` output (a file inside this repo) to `<git-common-dir>/aplabs/plan-reviews/<slug>.md`, with a header naming the source, time, user and branch. |
+| `--plan-reviewed <path>` | Needs `--plan`. Copies the `bmad-review` output (a file inside this repo) to `<git-common-dir>/aplabs/plan-reviews/<slug>.md`, with a header naming the source, time, user and branch, and writes the record the gate reads beside it, `<slug>.json`: `{ slug, at, engaged_at, source, user, branch }`. |
 
 ## Plan approval (Story 2.5)
 
@@ -62,7 +62,7 @@ Ceremony scales with the computed tier (DESIGN §3a): T0/T1 flow, T2/T3 and ever
 
 1. The Orchestrator brings the plan to the gate. The human types `approve plan <slug>` in the Orchestrator's Claude Code session.
 2. The UserPromptSubmit hook sees the phrase and writes `<git-common-dir>/aplabs/approvals/<slug>.json`: `{ slug, at, session_id, user, by }` (ISO time, the hook's session id, the git user name). It never blocks the prompt, prints only a `systemMessage` confirming the record, and does nothing in an ungoverned repo.
-3. On T3 the Orchestrator also records the `bmad-review` output with `--plan-reviewed`.
+3. On T3 the Orchestrator also records the `bmad-review` output with `--plan-reviewed`. The review counts only for this plan engagement: its record must name the plan's slug and be recorded at or after the plan's engage time or its approval time. A review left over from an earlier engagement of the same slug, or a copy with no record, is denied as stale: re-run `bmad-review` and record it again.
 4. The Builder, in its own worktree, runs `npm run engage -- --reason "<story>" --plan <slug>`. Its T2/T3 edits are allowed while the approval holds.
 
 **Where.** `<git-common-dir>` is `git rev-parse --git-common-dir`: the main checkout's `.git`, shared by every linked worktree. Approvals and plan reviews live there because the human approves in one worktree and the Builder builds in another. Engagement markers stay per worktree in `<git-dir>`.
@@ -106,6 +106,8 @@ When a turn ends, the hook runs the checks in the profile's `verify.checks` thro
 **Time budget.** The whole run is capped at 600 seconds (`APLABS_STOP_VERIFY_BUDGET_SECONDS` overrides it). Each check gets the smaller of its own `timeout_seconds` and what is left of the budget; once the budget is spent the remaining checks are reported as not run. A budget timeout is reported, never blocked. The hook is registered with a 660-second harness timeout so the hook always reports before Claude Code would kill it.
 
 **Process groups.** Every check runs in its own process group, killed as a group on timeout and when the check exits, so a check that starts children (`npm test` → node) cannot stall past its timeout or leave processes behind (issue #24). This applies to `npm run verify` too. On SIGINT, SIGTERM or SIGHUP the harness kills every running check group before exiting.
+
+**Last result.** Every run that reaches the checks, here and in `npm run verify`, writes `<git-dir>/aplabs/verify/last.json`: `{ at, head, source, results: [{ id, outcome }] }`, best effort (a write failure never changes the outcome). SessionStart reads it statically, running nothing, and adds `N failed at last verify (<time>)` to the known-truths banner line for each truth whose last check failed or timed out. A missing, malformed or week-old record adds nothing.
 
 **Codex: not registered.** No Stop event is proven for Codex here (CanonCRM's `.codex/hooks.json` registers PreToolUse only), so the Stop hook is Claude Code only. A Codex builder runs `npm run verify` itself.
 

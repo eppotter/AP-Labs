@@ -11,13 +11,16 @@
 // A governed repo whose client files (.aplabs/context/, Story 4.1) are missing
 // or awaiting sign-off gets one extra onboarding line; none once all are signed.
 // Likewise one line when a known truth (Story 4.2) is malformed, has no owner
-// or awaits sign-off. Static checks only: truth commands never run here.
+// or awaits sign-off, or failed at the last verify or Stop-hook run (read
+// from <git-dir>/aplabs/verify/last.json). Static checks only: truth commands
+// never run here.
 
 const path = require('path');
 const { loadProfile, findProfilePath, ProfileError } = require('../profile');
-const { CORE: STAGES, resolveStages } = require('../stages');
+const { resolveStages } = require('../stages');
 const { contextDirFor, contextStatus, bannerLine: onboardingLine } = require('../onboard');
 const { loadTruths, bannerLine: truthsLine } = require('../truths');
+const { gitDirOf, readLastResult } = require('../verify/last');
 
 const NAME = 'AP Labs Orchestrator';
 
@@ -91,7 +94,14 @@ function sessionStart(startDir) {
   }
   const contextDir = contextDirFor(path.resolve(file));
   const onboarding = onboardingLine(contextStatus(contextDir));
-  return bannerForProfile(profile, path.relative(startDir, file) || file, onboarding, truthsLine(loadTruths(contextDir)));
+  const truths = truthsLine(loadTruths(contextDir), readLastResult(gitDirOf(startDir)));
+  try {
+    return bannerForProfile(profile, path.relative(startDir, file) || file, onboarding, truths);
+  } catch (err) {
+    // resolveStages refuses an add-on the schema let through.
+    if (err instanceof ProfileError) return bannerForError(err);
+    throw err;
+  }
 }
 
-module.exports = { NAME, STAGES, hookOutput, bannerForProfile, bannerForError, sessionStart };
+module.exports = { NAME, hookOutput, bannerForProfile, bannerForError, sessionStart };
