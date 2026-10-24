@@ -18,8 +18,9 @@ const { createLog } = require('../../../kit/runtime/log');
 const crm = require('../app/connectors/crm/connector');
 
 const ROOT = path.join(__dirname, '../../..');
-// Not a credential: the mock checks only that the key is set.
-const ENV = Object.freeze({ BRIGHTSIDE_CRM_KEY: 'mock-crm-key-not-a-secret' });
+// The mock declares no credential (#90). An explicit empty env keeps the
+// process's own (a kill switch, say) out of the tests.
+const ENV = Object.freeze({});
 
 let dir;
 let data;

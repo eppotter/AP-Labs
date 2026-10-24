@@ -73,9 +73,9 @@ If any check fails, we stop and redesign. The lockdown is never loosened quietly
 
 | Row | Owner | What |
 |---|---|---|
-| DEP-013 | **Ely** | The MotherDuck service account and its read key (`MOTHERDUCK_READ_TOKEN`) |
-| DEP-014 | **Ely** | The new `data.source` and `data.database` profile settings |
-| DEP-015 | Orchestrator | Installing the MotherDuck add-on ahead of time changes the Story 11.2 container file |
+| DEP-014 | **Ely** | The MotherDuck service account and its read key (`MOTHERDUCK_READ_TOKEN`) |
+| DEP-015 | **Ely** | The new `data.source` and `data.database` profile settings |
+| DEP-016 | Orchestrator | Installing the MotherDuck add-on ahead of time changes the Story 11.2 container file |
 
 DEP-011 closes with Story B's PR.
 

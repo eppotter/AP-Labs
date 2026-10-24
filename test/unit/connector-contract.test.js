@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const util = require('node:util');
 const Module = require('node:module');
 const { spawnSync } = require('node:child_process');
 const { defineConnector, GLOBAL_KILL_SWITCH } = require('../../kit/runtime/connectors/contract');
@@ -62,6 +63,14 @@ function spec(over = {}) {
   };
 }
 
+// A stand-in for node:test's t: records diagnostics and in-test skips.
+function fakeT() {
+  const t = { notes: [], skipped: null };
+  t.diagnostic = (msg) => { t.notes.push(msg); };
+  t.skip = (msg) => { t.skipped = msg || true; };
+  return t;
+}
+
 // Runs the suite in process with a collecting test(), and returns the names of
 // the cases that failed.
 async function failingCases(connector, samples = SAMPLES) {
@@ -70,7 +79,7 @@ async function failingCases(connector, samples = SAMPLES) {
   const failed = [];
   for (const c of cases) {
     if (c.opts.skip) continue;
-    try { await c.fn(); } catch { failed.push(c.name.replace(/^[^:]+: /, '')); }
+    try { await c.fn(fakeT()); } catch { failed.push(c.name.replace(/^[^:]+: /, '')); }
   }
   return failed;
 }
@@ -117,7 +126,7 @@ for (const [breach, connector, expected] of [
       c.read[n] = (i) => r(i).catch((e) => { if (e instanceof ConnectorAuthFailed) return null; throw e; });
     }
     return c;
-  }), ['reads fail closed when a credential is missing', 'reads fail closed when the system rejects the credentials', 'errors never include credentials']],
+  }), ['reads fail closed when a credential is missing', 'reads fail closed when the system rejects the credentials', 'errors never include credentials', 'errors mask credential-shaped strings']],
   ['puts a credential in its errors', broken((c, deps) => {
     const leak = (fn) => (i) => fn(i).catch((e) => {
       if (e instanceof ConnectorFailed && deps.env.MY_SYSTEM_TOKEN) throw new e.constructor(`${e.reason} with ${deps.env.MY_SYSTEM_TOKEN}`, e.details);
@@ -161,7 +170,7 @@ test('a credential value given as an env name is never echoed back', () => {
 });
 
 test('the SDK exposes the contract to app code', () => {
-  for (const name of ['defineConnector', 'connectorContract', 'KillSwitchOn', 'ConnectorFailed', 'ConnectorAuthFailed', 'IdempotencyConflict']) {
+  for (const name of ['defineConnector', 'connectorContract', 'KillSwitchOn', 'ConnectorFailed', 'ConnectorAuthFailed', 'IdempotencyConflict', 'PartialFailure']) {
     assert.ok(sdk[name], name);
   }
   assert.equal(sdk.defineConnector, defineConnector);
@@ -252,7 +261,7 @@ test('the suite passes its deps option to every instance it creates, but keeps i
     test: (name, opts, fn) => cases.push({ fn: fn || opts, opts: fn ? opts : {} }),
     deps: { data, env: { MY_SYSTEM_TOKEN: 'ignored' }, onRequest: () => assert.fail('the suite\'s own onRequest is kept') },
   });
-  for (const c of cases) if (!c.opts.skip) await c.fn();
+  for (const c of cases) if (!c.opts.skip) await c.fn(fakeT());
   assert.ok(seen.length > 0);
   assert.ok(seen.every((d) => d.data === data), 'every instance gets deps.data');
   assert.ok(seen.every((d) => d.env.MY_SYSTEM_TOKEN !== 'ignored'), 'the suite\'s fake env wins');
@@ -322,7 +331,7 @@ test('the template\'s own test passes once copied into a fork', (t) => {
     cwd: f.root, env: { PATH: process.env.PATH }, encoding: 'utf8',
   });
   assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.match(r.stdout, /pass 12\n/);
+  assert.match(r.stdout, /pass 13\n/);
   assert.match(r.stdout, /fail 0\n/);
 });
 
@@ -567,4 +576,244 @@ test('two connectors sharing one injected store keep their keys apart: the slot 
   await defineConnector(spec({ id: 'other' })).create(opts).write.put({ idempotencyKey: 'same', dryRun: false });
   assert.equal(calls, 2, 'the second connector wrote rather than reuse the first one\'s result');
   assert.deepEqual([...m.keys()].sort(), ['demo\u0000put\u0000same', 'other\u0000put\u0000same']);
+});
+
+// #90: a connector that declares no credential (a mock) can pass the suite.
+test('a connector with no credential passes the suite: the declared-credential check is skipped, the shape check still runs (#90)', async () => {
+  const open = defineConnector(spec({ auth: { env: [] }, connect: () => ({}) }));
+  const cases = [];
+  connectorContract(open, { read: { get: {} }, write: { put: (idempotencyKey) => ({ idempotencyKey }) } }, {
+    test: (name, opts, fn) => cases.push({ name, fn: fn || opts, opts: fn ? opts : {} }),
+  });
+  const failed = [];
+  const skipped = new Map();
+  for (const c of cases) {
+    if (c.opts.skip) { skipped.set(c.name, []); continue; }
+    const t = fakeT();
+    try { await c.fn(t); } catch (err) { failed.push(`${c.name}: ${err.message}`); }
+    if (t.skipped) skipped.set(c.name, t.notes);
+  }
+  assert.deepEqual(failed, []);
+  assert.ok(skipped.has('demo: errors never include credentials'), [...skipped.keys()].join('\n'));
+  assert.ok(!skipped.has('demo: errors mask credential-shaped strings'), 'the shape check runs for every connector');
+  // The skip says so in the test output, not only in a skip count (round 2, item 5).
+  assert.match(skipped.get('demo: errors never include credentials').join('\n'), /declares no credentials.*skipped/i);
+});
+
+test('a bare token=<value> is masked in errors, not only after ?, & or ; (#90)', async () => {
+  let body = '';
+  const c = defineConnector(spec({ read: { get: async (i, ctx) => ctx.request(() => { throw new Error(body); }) } }))
+    .create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+  for (const shape of ['token=fake-bare-1a', 'said token=fake-bare-1a.', '(api_key=fake-bare-1a)', 'x-token=fake-bare-1a']) {
+    body = `system said: ${shape}`;
+    await assert.rejects(c.read.get(), (e) => e instanceof ConnectorFailed && !e.message.includes('fake-bare-1a') && /\[redacted\]/.test(e.reason), shape);
+  }
+  body = 'retokenize=keep-this';
+  await assert.rejects(c.read.get(), (e) => e.reason.includes('retokenize=keep-this'), 'a word ending in "token" is not a credential');
+});
+
+test('JSON secret fields, X-Api-Key style headers and any Authorization scheme are masked in errors (round 2)', async () => {
+  let body = '';
+  const c = defineConnector(spec({ read: { get: async (i, ctx) => ctx.request(() => { throw new Error(body); }) } }))
+    .create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+  const v = 'fake-shape-7Hq';
+  for (const shape of [
+    `{"api_key":"${v}"}`, `{"apiKey": "${v}"}`, `{"token":"${v}"}`, `{"secret" : "${v} with space"}`, `{"password":"${v}"}`,
+    `{"client_secret":"${v}"}`, `{"access_token":"${v}"}`, `{"refresh_token":"${v}"}`, `{"x-api-key":"${v}"}`,
+    `X-Api-Key: ${v}`, `x-api-key:${v}`, `Api-Key: ${v}`, `X-Auth-Token: ${v}`,
+    `Authorization: Token ${v}`, `Authorization: Basic ${v}`, `authorization: Bearer ${v}`, `Authorization: ${v}`,
+    `{"Authorization":"Token ${v}"}`,
+  ]) {
+    body = `system said: ${shape} and status 400`;
+    await assert.rejects(c.read.get(), (e) => {
+      assert.ok(!e.message.includes(v), `${shape} leaked: ${e.message}`);
+      assert.match(e.reason, /\[redacted\]/);
+      assert.match(e.reason, /status 400/, 'the rest of the message is kept');
+      return true;
+    });
+  }
+  body = '{"scope":"read","token_type":"bearer","expires_in":3600}';
+  await assert.rejects(c.read.get(), (e) => e.reason.includes('"scope":"read"') && e.reason.includes('"token_type":"bearer"'), 'non-secret fields are kept');
+});
+
+// #90: a batch that partly applied is a typed PartialFailure with its counts.
+function partialSpec(details, { reason = '2 of 4 added, 2 failed', perItemIdempotency } = {}) {
+  const push = {
+    plan: (i) => i,
+    async apply(input, ctx) {
+      await ctx.request(() => true, { size: 2 });
+      throw new sdk.PartialFailure(reason, details);
+    },
+  };
+  if (perItemIdempotency !== undefined) push.perItemIdempotency = perItemIdempotency;
+  return spec({ write: { push } });
+}
+
+test('a write that partly applied fails with PartialFailure carrying succeeded, failed and failedRefs (#90)', async () => {
+  const lines = [];
+  const log = createLog({ write: (l) => lines.push(l) });
+  const c = defineConnector(partialSpec({ succeeded: 2, failed: 2, failedRefs: ['c-3', 4] })).create({ log, env: { DEMO_TOKEN: TOKEN } });
+  const err = await c.write.push({ idempotencyKey: 'p1', dryRun: false }).catch((e) => e);
+  assert.ok(err instanceof sdk.PartialFailure, `got ${err && err.name}`);
+  assert.ok(err instanceof ConnectorFailed, 'a PartialFailure is a ConnectorFailed');
+  assert.equal(err.code, 'PARTIAL_FAILURE');
+  assert.deepEqual({ ...err.details }, {
+    connector: 'demo', system: 'Demo', operation: 'push', succeeded: 2, failed: 2, failedRefs: ['c-3', '4'], retrySafe: false,
+  });
+  // The refs go to the log, with the counts, never to the person.
+  const logged = lines.map((l) => JSON.parse(l)).find((l) => l.msg === 'connector write partly failed');
+  assert.ok(logged, lines.join('\n'));
+  assert.equal(logged.level, 'warn');
+  assert.deepEqual([logged.connector, logged.operation, logged.succeeded, logged.failed, logged.failed_refs], ['demo', 'push', 2, 2, ['c-3', '4']]);
+  assert.doesNotMatch(messageFor(err), /c-3/);
+});
+
+test('a PartialFailure does not use up its key: a retry with the same input applies again (#90)', async () => {
+  let applies = 0;
+  const c = defineConnector(spec({
+    write: {
+      push: {
+        plan: (i) => i,
+        async apply(input, ctx) {
+          applies += 1;
+          await ctx.request(() => true);
+          if (applies === 1) throw new sdk.PartialFailure('1 of 2', { succeeded: 1, failed: 1, failedRefs: ['b'] });
+          return { added: 1, alreadyAdded: 1 };
+        },
+      },
+    },
+  })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+  await assert.rejects(c.write.push({ idempotencyKey: 'p', dryRun: false }), sdk.PartialFailure);
+  assert.deepEqual(await c.write.push({ idempotencyKey: 'p', dryRun: false }), { added: 1, alreadyAdded: 1 });
+  assert.equal(applies, 2);
+});
+
+test('failedRefs are masked when they hold a credential or are not id-shaped (an email, a phone, a name, a sentence) (#90, round 2)', async () => {
+  const masked = [
+    TOKEN, 'person@home.invalid', 'has space', '',
+    '5550139', '555-0139', '15551234567', '555.123.4567', '2026-10-24', '20261024',
+    'Briar', 'Laurel', 'Mary-Jane', 'john.smith', 'O_Neil',
+  ];
+  const kept = ['c_123', 'CRM-00042', '123e4567-e89b-12d3-a456-426614174000', 'ok-1', '2', '42', '123456', 'list-abc:7'];
+  const refs = [...masked, ...kept];
+  const c = defineConnector(partialSpec({ succeeded: 0, failed: refs.length, failedRefs: refs })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+  const err = await c.write.push({ idempotencyKey: 'p', dryRun: false }).catch((e) => e);
+  assert.ok(err instanceof sdk.PartialFailure, `got ${err && err.name}`);
+  assert.deepEqual(err.details.failedRefs, [...masked.map(() => '[redacted]'), ...kept]);
+  const text = [JSON.stringify(err), util.inspect(err, { depth: 10 }), err.stack].join('\n');
+  for (const m of masked.filter(Boolean)) assert.ok(!text.includes(m), `${m} leaked: ${text}`);
+});
+
+test('a PartialFailure\'s text is rebuilt from its counts: an adapter can\'t leak refs or contact data through the reason (round 2)', async () => {
+  const lines = [];
+  const log = createLog({ write: (l) => lines.push(l) });
+  const leaky = 'contact person@home.invalid (555-0139, ref c_9) was refused';
+  const c = defineConnector(partialSpec({ succeeded: 3, failed: 1, failedRefs: ['c_9'] }, { reason: leaky })).create({ log, env: { DEMO_TOKEN: TOKEN } });
+  const err = await c.write.push({ idempotencyKey: 'p', dryRun: false }).catch((e) => e);
+  assert.ok(err instanceof sdk.PartialFailure);
+  assert.equal(err.reason, '3 of 4 items succeeded, 1 failed');
+  const text = [err.message, err.reason, err.stack, JSON.stringify(err), util.inspect(err, { depth: 10 }), lines.join('\n')].join('\n');
+  for (const bit of ['person@home.invalid', '555-0139']) assert.ok(!text.includes(bit), `${bit} leaked: ${text}`);
+  assert.ok(!err.message.includes('c_9') && !err.reason.includes('c_9'), 'refs stay out of the message; they are in details and the log only');
+  // An invalid PartialFailure drops the adapter's text too.
+  const bad = defineConnector(partialSpec({ succeeded: 1, failed: 2, failedRefs: ['c_9'] }, { reason: leaky })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+  const plain = await bad.write.push({ idempotencyKey: 'p', dryRun: false }).catch((e) => e);
+  assert.ok(plain instanceof ConnectorFailed && !(plain instanceof sdk.PartialFailure));
+  assert.ok(!plain.message.includes('person@home.invalid') && !plain.message.includes('555-0139'), plain.message);
+});
+
+test('a write may declare perItemIdempotency (true or false only), and a PartialFailure from it is retrySafe (round 2)', async () => {
+  for (const bad of [1, 'yes', null, {}]) {
+    assert.throws(() => defineConnector(partialSpec({}, { perItemIdempotency: bad })), (e) => e.message.includes('field "write.push.perItemIdempotency"'), String(bad));
+  }
+  assert.throws(() => defineConnector(spec({ write: { put: { plan: (i) => i, apply: async () => ({}), other: true } } })), /field "write.put"/);
+  const decl = defineConnector(partialSpec({}, { perItemIdempotency: true }));
+  assert.deepEqual([...decl.perItemIdempotency], ['push']);
+  assert.deepEqual([...defineConnector(partialSpec({}, { perItemIdempotency: false })).perItemIdempotency], []);
+  assert.deepEqual([...defineConnector(spec()).perItemIdempotency], []);
+  for (const [flag, safe] of [[true, true], [false, false], [undefined, false]]) {
+    const c = defineConnector(partialSpec({ succeeded: 1, failed: 1, failedRefs: ['c_1'] }, { perItemIdempotency: flag })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+    const err = await c.write.push({ idempotencyKey: 'p', dryRun: false }).catch((e) => e);
+    assert.equal(err.details.retrySafe, safe, `perItemIdempotency ${flag}`);
+  }
+});
+
+test('the suite requires a bulk sample for a write that declares perItemIdempotency, and retries it after a failed batch (round 2)', async () => {
+  const items = new Map();
+  const listSpec = (perItem) => spec({
+    rateLimit: { perSecond: 10, batchSize: 2 },
+    write: {
+      add: {
+        perItemIdempotency: perItem,
+        plan: (i) => ({ add: i.items.length }),
+        async apply({ items: list }, ctx) {
+          for (const batch of ctx.batches(list)) {
+            await ctx.request(() => { for (const it of batch) items.set(`${ctx.idempotencyKey}:${it}`, it); }, { size: batch.length });
+          }
+          return { added: list.length };
+        },
+      },
+    },
+  });
+  const samples = { read: { get: {} }, write: { add: (idempotencyKey) => ({ items: ['a', 'b', 'c'], idempotencyKey }) } };
+  const bulk = { operation: 'add', input: (count, idempotencyKey) => ({ items: Array.from({ length: count }, (_, i) => `i${i}`), idempotencyKey }) };
+  // Lists without a bulk sample already fail the declaration check; the flag
+  // also names the retry check, which passes for an adapter that keys items.
+  const withBulk = await failingCases(defineConnector(listSpec(true)), { ...samples, bulk });
+  assert.deepEqual(withBulk, []);
+  const noBulk = await failingCases(defineConnector(listSpec(true)), samples);
+  assert.ok(noBulk.includes('a write that declares per-item idempotency retries cleanly after a failed batch'), noBulk.join('\n'));
+  const cases = [];
+  connectorContract(defineConnector(listSpec(true)), { ...samples, bulk }, { test: (name, opts, fn) => cases.push({ name, opts: fn ? opts : {} }) });
+  const retry = cases.find((c) => /per-item idempotency/.test(c.name));
+  assert.ok(retry && !retry.opts.skip, cases.map((c) => c.name).join('\n'));
+  const none = [];
+  connectorContract(defineConnector(listSpec(false)), { ...samples, bulk }, { test: (name, opts, fn) => none.push({ name, opts: fn ? opts : {} }) });
+  assert.ok(none.find((c) => /per-item idempotency/.test(c.name)).opts.skip, 'skipped when no write declares it');
+});
+
+test('a PartialFailure with bad counts, or from a read, is a plain ConnectorFailed (#90)', async () => {
+  for (const details of [
+    { succeeded: -1, failed: 1, failedRefs: ['a'] },
+    { succeeded: 1, failed: 0, failedRefs: [] },
+    { succeeded: 1.5, failed: 1, failedRefs: ['a'] },
+    { succeeded: 1, failed: 2, failedRefs: ['a'] },
+    { succeeded: 1, failed: 1 },
+    undefined,
+  ]) {
+    const c = defineConnector(partialSpec(details)).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+    const err = await c.write.push({ idempotencyKey: 'p', dryRun: false }).catch((e) => e);
+    assert.ok(err instanceof ConnectorFailed && !(err instanceof sdk.PartialFailure), `${JSON.stringify(details)}: got ${err && err.name}`);
+    assert.match(err.reason, /partial failure/i);
+  }
+  const r = defineConnector(spec({ read: { get: async () => { throw new sdk.PartialFailure('half', { succeeded: 1, failed: 1, failedRefs: ['a'] }); } } }))
+    .create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+  const err = await r.read.get().catch((e) => e);
+  assert.ok(err instanceof ConnectorFailed && !(err instanceof sdk.PartialFailure), 'a read never returns partial data, or a partial-failure count');
+});
+
+test('a partial failure, a setup fault and an outage each get an honest message; the setup fault names the admin (AD-17, #90, #82)', () => {
+  const d = { connector: 'demo', system: 'Demo <Mail>', operation: 'push' };
+  // By default the engine can't promise a retry is safe, so it doesn't (round 2).
+  const partial = new sdk.PartialFailure('3 failed', { ...d, succeeded: 97, failed: 3, failedRefs: ['r-1', 'r-2', 'r-3'] });
+  assert.equal(messageFor(partial), 'Sent 97 of 100 to Demo &lt;Mail&gt;; 3 failed. Please tell your admin before trying again.');
+  assert.equal(messageFor(new sdk.PartialFailure('x', { ...d, succeeded: 97, failed: 3, failedRefs: ['r-1', 'r-2', 'r-3'], retrySafe: false }), { admin: '<@UADMIN>' }),
+    'Sent 97 of 100 to Demo &lt;Mail&gt;; 3 failed. Please tell <@UADMIN> before trying again.');
+  assert.doesNotMatch(messageFor(partial), /safe|twice/);
+  // Only a write that declares per-item idempotency gets the safe-retry wording.
+  const safe = new sdk.PartialFailure('3 failed', { ...d, succeeded: 97, failed: 3, failedRefs: ['r-1', 'r-2', 'r-3'], retrySafe: true });
+  assert.equal(messageFor(safe),
+    'Sent 97 of 100 to Demo &lt;Mail&gt;; 3 failed. Nothing was sent twice, so trying again is safe: it sends only the 3 that failed. If they keep failing, please tell your admin.');
+  assert.equal(messageFor(safe, { admin: '<@UADMIN>' }),
+    'Sent 97 of 100 to Demo &lt;Mail&gt;; 3 failed. Nothing was sent twice, so trying again is safe: it sends only the 3 that failed. If they keep failing, please tell <@UADMIN>.');
+  for (const ref of ['r-1', 'r-2', 'r-3']) assert.ok(!messageFor(partial).includes(ref) && !messageFor(safe).includes(ref), 'failed refs never reach the person');
+  const setup = new ConnectorAuthFailed('DEMO_TOKEN is not set', { ...d, setup: true });
+  assert.equal(messageFor(setup, { admin: '<@UADMIN>' }), "Demo &lt;Mail&gt; isn't set up correctly, so I can't reach it. I've logged the problem; please tell <@UADMIN>.");
+  assert.equal(messageFor(new ConnectorAuthFailed('401', d), { admin: '<@UADMIN>' }),
+    "Demo &lt;Mail&gt; turned down my sign-in, so I couldn't reach it. Please tell <@UADMIN>; trying again won't help until it's fixed.");
+  assert.equal(messageFor(new ConnectorFailed('HTTP 500', d), { admin: '<@UADMIN>' }),
+    "I couldn't reach Demo &lt;Mail&gt; just now. Please try again later, or tell <@UADMIN> if it keeps happening.");
+  const words = [partial, setup, new ConnectorAuthFailed('401', d), new ConnectorFailed('HTTP 500', d)].map((e) => messageFor(e));
+  assert.equal(new Set(words).size, 4, 'no two read alike');
+  assert.doesNotMatch(words[1], /try again later|just now/, 'a setup fault never reads as a passing outage');
 });
