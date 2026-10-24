@@ -248,10 +248,13 @@ function defineConnector(spec) {
           }
           if (dryRun !== false) return { dryRun: true, operation: name, wouldWrite: await op.plan(rest) };
           const slot = `${name}\u0000${key}`;
-          const done = await ledger.get(slot);
-          if (done !== undefined) return done;
+          // The in-flight slot is checked and claimed with no await between,
+          // before the store is read: a slow store can't let a second call
+          // with the key miss the first and apply again.
           if (inFlight.has(slot)) return await inFlight.get(slot);
           const run = (async () => {
+            const done = await ledger.get(slot);
+            if (done !== undefined) return done;
             const { client } = open(name);
             const result = await op.apply(rest, context(name, 'write', client, { idempotencyKey: key }));
             await ledger.set(slot, result === undefined ? null : result);

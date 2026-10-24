@@ -323,3 +323,19 @@ test('a kill switch flipped partway through a write stops the requests still to 
     assert.deepEqual(await c.write.put({ idempotencyKey: 'k', dryRun: false }), { sent: 7 }, `${name}: the stopped write did not use up its key`);
   }
 });
+
+test('with a slow idempotency store, two concurrent calls with one key still apply once (#82)', async () => {
+  const m = new Map();
+  // The second read of the store is slow: it answers after the first write has
+  // applied, recorded its key and finished, with what the store held when asked.
+  let gets = 0;
+  const idempotency = {
+    get: async (k) => { const held = m.get(k); gets += 1; if (gets > 1) await new Promise((r) => setTimeout(r, 30)); return held; },
+    set: async (k, v) => { m.set(k, v); },
+  };
+  let calls = 0;
+  const c = defineConnector(spec()).create({ env: { DEMO_TOKEN: TOKEN }, idempotency, onRequest: () => { calls += 1; } });
+  const both = await Promise.all([1, 2].map(() => c.write.put({ idempotencyKey: 'k', dryRun: false })));
+  assert.deepEqual(both, [{ put: true }, { put: true }]);
+  assert.equal(calls, 1, 'the second call joined the first instead of applying again');
+});
