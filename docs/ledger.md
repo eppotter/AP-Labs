@@ -42,7 +42,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #37 | 2026-10-24 | 3.2 | infra | — | The end-of-turn hook runs the profile's checks and blocks only on a failed one; a check's whole process group is killed on timeout (#24). | DEP-003, DEP-008 |
 | #39 | 2026-10-24 | 1.5 | infra | — | `npm run land` merges a PR only when CI passed, the reviewed head is the head being merged, and no blocker is open. | — |
 | #42 | 2026-10-24 | 4.1 | infra | — | Adds the four client file templates, `npm run onboard` to create and check them, and a banner line until each is signed off by its client owner. | — |
-| pending | 2026-10-24 | 4.2 | infra | — | Each known truth in `data.md` carries a check that `npm run verify` and the end-of-turn hook run against the client's number; the banner flags truths not checked or signed off. | DEP-010 |
+| #44 | 2026-10-24 | 4.2 | infra | — | Each known truth in `data.md` carries a check that `npm run verify` and the end-of-turn hook run against the client's number; the banner flags truths not checked or signed off. | DEP-010 |
 
 ## Deferrals (DEP)
 
