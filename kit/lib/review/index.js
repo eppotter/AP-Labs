@@ -20,7 +20,7 @@ const CODEX_DIFF_LINE = "Review this branch's changes against origin/main (git d
 const STDIN_DIFF_LINE = 'Review the diff supplied on stdin and read AGENTS.md.';
 const RUBRIC_BODY = `Label a finding [P1] only if it is blocking: it loses or corrupts data, breaks auth, permissions or a safety invariant in AGENTS.md, or breaks the main path this branch delivers for today's data and usage.
 Everything else is [P2]: edge cases far beyond today's data, hardening, polish, style, missing tests for non-blocking cases.
-Report each finding as "- [P1|P2] <title> — <path>:<line>" with a short explanation.
+Report each finding as "- [P1|P2] <title> — <path>:<line>" with a short explanation: one sentence per finding; no reasoning in the finding line.
 End your reply with exactly one final line: "VERDICT: CLEAN" if there is no [P1], or "VERDICT: BLOCKING" if there is at least one.
 Every finding, including non-blocking ones, must be a line in exactly the "- [P1|P2] <title> — <path>:<line>" format; findings in any other form are ignored.`;
 const RUBRIC = `${CODEX_DIFF_LINE}\n${RUBRIC_BODY}`;
@@ -75,6 +75,53 @@ function unparsedFindingLines(verdict) {
   return verdict.split('\n').filter((l) => /^- \[P\d\]/.test(l) && !new RegExp(FINDING.source).test(l));
 }
 
+// Issue #81: only the reviewer's final answer is read. A Codex transcript (its
+// stdout: `thinking`, `exec` and `codex` sections, then `tokens used`) keeps
+// only the last `codex` section; <thinking>/<reasoning> blocks are dropped.
+// The -o file the CLI reads is already the final message, so this is a no-op there.
+const TRANSCRIPT_MARKER = /^(?:thinking|exec|user)$/m;
+const LAST_CODEX = /^codex$/gm;
+
+function finalOutput(text) {
+  let out = text.replace(/\r\n/g, '\n').replace(/<(thinking|reasoning)>[\s\S]*?<\/\1>\n?/gi, '');
+  const codex = [...out.matchAll(LAST_CODEX)];
+  if (codex.length && TRANSCRIPT_MARKER.test(out)) {
+    const last = codex[codex.length - 1];
+    out = out.slice(last.index + last[0].length + 1);
+    const used = /^tokens used$/m.exec(out);
+    if (used) out = out.slice(0, used.index);
+  }
+  return out;
+}
+
+// The findings list is what comes before the last VERDICT line; finding-shaped
+// lines after it fail the attempt rather than being dropped.
+function splitAtVerdict(text) {
+  const all = [...text.matchAll(/^\s*VERDICT:\s*(?:CLEAN|BLOCKING)\s*$/gim)];
+  if (!all.length) return { body: text, after: '' };
+  const last = all[all.length - 1];
+  const end = last.index + last[0].length;
+  return { body: text.slice(0, end), after: text.slice(end) };
+}
+
+// A finding line that thinks aloud (PR #80: "Wait, ... No finding? ... likely
+// fine") is reasoning, not a claim. It fails the attempt; it is never filed.
+const HEDGES = [
+  /(?:^|[.;:!?]\s+|\s[—–]\s)(?:wait|hmm+|hm|oh|on second thought)\b[,.!]/i,
+  /\bnever\s?mind\b/i,
+  /\bno (?:real |actual |new )?(?:findings?|issues?)\s*\?/i,
+  /\b(?:likely|probably|seems|looks) fine\b/i,
+  /\bfinal(?: answer)?:? no (?:findings|issues)\b/i,
+  /\bneed (?:an? )?(?:actual|real) (?:issue|finding)\b/i,
+];
+
+function reasoningFindingLines(text) {
+  return text.split('\n').filter((l) => {
+    const m = new RegExp(FINDING.source).exec(l);
+    return m && (/\?\s*$/.test(m[2]) || HEDGES.some((h) => h.test(l)));
+  });
+}
+
 // The state file is untrusted input: anything but the expected shape stops the run.
 function isValidState(state) {
   return Boolean(state) && typeof state.branch === 'string' && Array.isArray(state.rounds) &&
@@ -116,10 +163,15 @@ const isClean = (verdict) => /\bno\s+(?:(?:blocking\s+or\s+non-blocking|[\w-]+)\
 
 // A reviewer's output is usable when every finding-like line parses and it has
 // findings or says it is clean. Anything else is a failed attempt.
-function readVerdict(verdict, repoRoot = '') {
-  if (!verdict.trim()) return { error: 'No verdict written' };
+function readVerdict(raw, repoRoot = '') {
+  if (!raw.trim()) return { error: 'No verdict written' };
+  const { body: verdict, after } = splitAtVerdict(finalOutput(raw));
+  const late = after.split('\n').filter((l) => /^- \[P\d\]/.test(l));
+  if (late.length) return { error: `Found ${late.length} finding line(s) after the VERDICT line:\n${late.join('\n')}` };
   const unparsed = unparsedFindingLines(verdict);
   if (unparsed.length) return { error: `Could not parse ${unparsed.length} finding line(s):\n${unparsed.join('\n')}` };
+  const reasoning = reasoningFindingLines(verdict);
+  if (reasoning.length) return { error: `${reasoning.length} finding line(s) read like reasoning, not a finding:\n${reasoning.join('\n')}` };
   const findings = parseFindings(verdict, repoRoot);
   const said = verdictLine(verdict);
   // BLOCKING with no parseable [P1] means the blocker was written in prose: a
@@ -379,6 +431,8 @@ module.exports = {
   proseBlockerLines,
   parseFindings,
   unparsedFindingLines,
+  reasoningFindingLines,
+  finalOutput,
   isValidState,
   isClean,
   readVerdict,
