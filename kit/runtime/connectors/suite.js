@@ -228,10 +228,9 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
     }
   });
 
-  test(`${label}: errors never include credentials`, async () => {
-    const sentinel = 'contract-sentinel-Kp27vN';
-    const secrets = authEnv.length ? authEnv.map(fakeSecret) : [sentinel];
-    const leaky = (s) => `token=${s} Bearer ${s} https://user:${s}@api.example.invalid/x?api_key=${s}${authEnv.length ? ` raw ${s}` : ''}`;
+  // The system's errors echo secrets back; none may leave in a ConnectorFailed.
+  // secrets: the values to look for; leaky(s): how the system echoes one.
+  async function checkErrorsHide(secrets, leaky) {
     for (const status of [undefined, 401]) {
       const { instance, state } = harness();
       state.failWith = () => Object.assign(new Error(`system said: ${secrets.map(leaky).join('; ')}`), { status, config: { headers: { Authorization: secrets[0] } } });
@@ -246,7 +245,21 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
         for (const s of secrets) assert.ok(!text.includes(s), `${n}: the error carries a credential: ${text}`);
       }
     }
-  });
+  }
+
+  // The declared credentials, echoed raw and in every shape. A connector that
+  // declares none (a mock) has nothing to leak here (#90).
+  test(`${label}: errors never include credentials`, { skip: !authEnv.length && 'declares no credentials' }, () => checkErrorsHide(
+    authEnv.map(fakeSecret),
+    (s) => `token=${s} Bearer ${s} https://user:${s}@api.example.invalid/x?api_key=${s} raw ${s}`,
+  ));
+
+  // A value the connector never saw, in credential shapes only (a token the
+  // system minted, say): masked by shape, for every connector.
+  test(`${label}: errors mask credential-shaped strings`, () => checkErrorsHide(
+    ['contract-sentinel-Kp27vN'],
+    (s) => `token=${s} Bearer ${s} https://user:${s}@api.example.invalid/x?api_key=${s} {"access_token":"${s}"}`,
+  ));
 }
 
 module.exports = { connectorContract, fakeClock };

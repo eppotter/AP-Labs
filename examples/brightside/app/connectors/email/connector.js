@@ -13,11 +13,8 @@
 // or has a torn or corrupt line, every write fails closed rather than treat it
 // as empty, and one process writes at a time (a lockfile): see ./outbox.js.
 //
-// BRIGHTSIDE_EMAIL_KEY is a stand-in "API key", as the mock CRM's is: the
-// contract reads it like any credential and fails closed when it is unset, but
-// the mock checks nothing about its value. Any non-empty value works; never put
-// a real credential in it. (With no credential at all, the shared suite's leak
-// check can't pass: see the Story 8.3 PR.)
+// A mock declares no credential (auth.env is empty, #90), as the mock CRM
+// doesn't: there is nothing to keep secret.
 //
 //   const email = connector.create({ log });   // optional: outboxPath, env
 //   const { listId } = await email.write.createList({ name, idempotencyKey: listKey, dryRun: false });
@@ -28,7 +25,9 @@
 //
 // Partial failure: when the tool refuses some contacts, the others are
 // recorded with their keys, the failed ones record nothing, and the call fails
-// with a ConnectorFailed whose reason gives both counts and the failed refs.
+// with a PartialFailure (a ConnectorFailed) carrying { succeeded, failed,
+// failedRefs }: the failed contacts' external_refs, never their email (#90).
+// The reason, for the log, says the same in words.
 // A failed call does not use up its key, so a retry with the same input sends
 // the same contacts again and the tool adds only the ones it has no key for:
 // the failed ones. A contact's key carries its list (the write's key, listId
@@ -37,7 +36,7 @@
 
 const crypto = require('node:crypto');
 const path = require('node:path');
-const { defineConnector } = require('#sdk');
+const { defineConnector, PartialFailure } = require('#sdk');
 const { openOutbox, outboxPath } = require('./outbox');
 
 const FIELDS = Object.freeze(['external_ref', 'email', 'first_name']);
@@ -113,14 +112,13 @@ function declare(outbox) {
   return defineConnector({
     id: 'email',
     system: 'Brightside email tool (mock)',
-    auth: { env: ['BRIGHTSIDE_EMAIL_KEY'] },
+    auth: { env: [] },
     // When set (to anything), every write refuses before any I/O. So does
     // APLABS_WRITES_OFF for every connector at once.
     killSwitchEnv: 'BRIGHTSIDE_EMAIL_OFF',
     rateLimit: { perSecond: 5, batchSize: 100 },
 
-    connect({ secret, simulate }) {
-      secret('BRIGHTSIDE_EMAIL_KEY');
+    connect({ simulate }) {
       if (!outbox) throw new Error('the mock email tool needs its outbox (create it with connector.create)');
       return mockEmailTool(outbox, simulate);
     },
@@ -150,9 +148,12 @@ function declare(outbox) {
             total.failed.push(...res.failed);
           }
           if (total.failed.length) {
+            const succeeded = total.added + total.alreadyAdded;
             const which = total.failed.map((f) => `external_ref ${f.external_ref}: ${f.reason}`).join('; ');
-            throw new Error(`${total.added + total.alreadyAdded} of ${checked.length} contacts added, ${total.failed.length} failed (${which}); `
-              + 'retry with the same key to send only the failed ones');
+            throw new PartialFailure(`${succeeded} of ${checked.length} contacts added, ${total.failed.length} failed (${which}); `
+              + 'retry with the same key to send only the failed ones', {
+              succeeded, failed: total.failed.length, failedRefs: total.failed.map((f) => f.external_ref),
+            });
           }
           return { listId, added: total.added, alreadyAdded: total.alreadyAdded };
         },

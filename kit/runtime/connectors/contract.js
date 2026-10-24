@@ -63,11 +63,23 @@
 //     to registerSecret, credential-shaped strings (headers, query values,
 //     URL passwords, JSON access_token / refresh_token / id_token) and the log
 //     redactor's patterns are masked, and the original error is not kept.
+//     A credential-shaped name=value pair is masked after ?, & or ; and bare
+//     (token=... in prose), so a connector with no credential passes too (#90).
+//   - A write whose batch partly applied throws PartialFailure from apply with
+//     { succeeded, failed, failedRefs } (failedRefs: the failed items'
+//     external ids, one per failed item). It leaves as a PartialFailure with
+//     the connector's details, after a warn log line with the counts and refs;
+//     a ref that is not id-shaped (an email, a sentence) or holds a credential
+//     is masked. Counts that don't add up, or a PartialFailure from a read (a
+//     read fails whole), leave as a plain ConnectorFailed. Like any failed
+//     write it does not use up its key, so a retry with the same input runs
+//     apply again: the adapter's per-item keys make that send only the failed
+//     items (#90).
 
 const crypto = require('node:crypto');
 const { readSecret, redact } = require('../../lib/secrets');
 const {
-  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
+  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 } = require('../errors');
 
 const GLOBAL_KILL_SWITCH = 'APLABS_WRITES_OFF';
@@ -83,12 +95,18 @@ const MASK = '[redacted]';
 // Credential shapes masked whether or not the connector declared them.
 const PATTERNS = [
   /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi,
-  /([?&;](?:access_token|refresh_token|token|api[_-]?key|apikey|key|secret|client_secret|password|signature|sig)=)[^&\s'"<>]+/gi,
+  // A name=value pair after ?, & or ;, or bare (token=... in prose, #90): the
+  // name must start a word, so "retokenize=" is left alone.
+  /((?:[?&;]|\b)(?:access_token|refresh_token|token|api[_-]?key|apikey|key|secret|client_secret|password|signature|sig)=)[^&\s'"<>]+/gi,
   /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/:@'"<>]+:[^\s/@'"<>]+@/gi,
   /"(?:access_token|refresh_token|id_token)"\s*:\s*"(?:[^"\\]|\\.)*"/gi,
 ];
 
 const isFn = (f) => typeof f === 'function';
+// A failed item's ref must look like an external id; anything else (an email,
+// a sentence) is masked, so a PartialFailure never carries contact data (#90).
+const REF = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const isCount = (n) => Number.isSafeInteger(n) && n >= 0;
 
 // Throws naming the field when a declaration breaks the contract.
 function checkDeclaration(spec) {
@@ -321,12 +339,35 @@ function defineConnector(spec) {
       });
     }
 
+    // A write's PartialFailure, rebuilt with checked counts and safe refs, or
+    // null when its counts don't add up (then it is a plain ConnectorFailed).
+    function partial(err, operation, reason) {
+      const { succeeded, failed, failedRefs } = err.details || {};
+      if (!isCount(succeeded) || !isCount(failed) || failed < 1 || !Array.isArray(failedRefs) || failedRefs.length !== failed) return null;
+      const refs = failedRefs.map((r) => {
+        const ref = typeof r === 'number' && Number.isFinite(r) ? String(r) : r;
+        if (typeof ref !== 'string' || !REF.test(ref)) return MASK;
+        return clean(ref) === ref ? ref : MASK;
+      });
+      log.warn('connector write partly failed', {
+        connector: declaration.id, operation, succeeded, failed, failed_refs: refs,
+      });
+      return new PartialFailure(reason, { ...details(operation), succeeded, failed, failedRefs: Object.freeze(refs) });
+    }
+
     // Every error leaving an operation is rebuilt from a redacted message.
-    function rethrow(err, operation) {
+    function rethrow(err, operation, kind) {
       if (err instanceof KillSwitchOn) throw err;
       if (err instanceof IdempotencyConflict) throw new IdempotencyConflict(clean(err.reason), details(operation));
       const raw = err instanceof ConnectorFailed ? err.reason : (err && err.message) || String(err);
       const reason = clean(raw);
+      // Only a write can partly apply: a read fails whole (fail closed).
+      if (err instanceof PartialFailure) {
+        const rebuilt = kind === 'write' ? partial(err, operation, reason) : null;
+        if (rebuilt) throw rebuilt;
+        const why = kind === 'write' ? 'counts must be whole numbers, failed at least 1, one ref per failed item' : 'a read cannot partly fail';
+        throw new ConnectorFailed(`invalid partial failure (${why}): ${reason}`, details(operation));
+      }
       if (isAuthError(err)) {
         session = null;
         // setup: a credential is not set (a setup fault), not a rejected one.
@@ -343,7 +384,7 @@ function defineConnector(spec) {
           const { client } = await open(name);
           return await op(input, context(name, 'read', client));
         } catch (err) {
-          return rethrow(err, name);
+          return rethrow(err, name, 'read');
         }
       };
     }
@@ -387,7 +428,7 @@ function defineConnector(spec) {
           inFlight.set(slot, { input, run });
           try { return await run; } finally { inFlight.delete(slot); }
         } catch (err) {
-          return rethrow(err, name);
+          return rethrow(err, name, 'write');
         }
       };
     }
@@ -409,5 +450,5 @@ function defineConnector(spec) {
 
 module.exports = {
   defineConnector, checkDeclaration, GLOBAL_KILL_SWITCH,
-  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
+  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 };

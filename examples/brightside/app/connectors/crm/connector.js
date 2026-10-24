@@ -9,9 +9,8 @@
 // app passes as deps.data, so every lookup is one bound, read-only query that
 // passes the SQL guardrail and the profile's forbidden columns.
 //
-// BRIGHTSIDE_CRM_KEY is a stand-in "API key": the contract reads it like any
-// credential and fails closed when it is unset, but the mock checks nothing
-// about its value. Any non-empty value works; never put a real credential in it.
+// A mock declares no credential (auth.env is empty, #90): there is nothing to
+// keep secret, and the shared suite skips its declared-credential check.
 
 const { defineConnector } = require('#sdk');
 
@@ -71,7 +70,7 @@ function mockCrm({ data, simulate = {} }) {
 const crm = defineConnector({
   id: 'crm',
   system: 'Brightside CRM (mock)',
-  auth: { env: ['BRIGHTSIDE_CRM_KEY'] },
+  auth: { env: [] },
   // Required by the contract; the mock has no writes for it to stop.
   killSwitchEnv: 'BRIGHTSIDE_CRM_OFF',
   // One client per lookup.

@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const util = require('node:util');
 const Module = require('node:module');
 const { spawnSync } = require('node:child_process');
 const { defineConnector, GLOBAL_KILL_SWITCH } = require('../../kit/runtime/connectors/contract');
@@ -117,7 +118,7 @@ for (const [breach, connector, expected] of [
       c.read[n] = (i) => r(i).catch((e) => { if (e instanceof ConnectorAuthFailed) return null; throw e; });
     }
     return c;
-  }), ['reads fail closed when a credential is missing', 'reads fail closed when the system rejects the credentials', 'errors never include credentials']],
+  }), ['reads fail closed when a credential is missing', 'reads fail closed when the system rejects the credentials', 'errors never include credentials', 'errors mask credential-shaped strings']],
   ['puts a credential in its errors', broken((c, deps) => {
     const leak = (fn) => (i) => fn(i).catch((e) => {
       if (e instanceof ConnectorFailed && deps.env.MY_SYSTEM_TOKEN) throw new e.constructor(`${e.reason} with ${deps.env.MY_SYSTEM_TOKEN}`, e.details);
@@ -161,7 +162,7 @@ test('a credential value given as an env name is never echoed back', () => {
 });
 
 test('the SDK exposes the contract to app code', () => {
-  for (const name of ['defineConnector', 'connectorContract', 'KillSwitchOn', 'ConnectorFailed', 'ConnectorAuthFailed', 'IdempotencyConflict']) {
+  for (const name of ['defineConnector', 'connectorContract', 'KillSwitchOn', 'ConnectorFailed', 'ConnectorAuthFailed', 'IdempotencyConflict', 'PartialFailure']) {
     assert.ok(sdk[name], name);
   }
   assert.equal(sdk.defineConnector, defineConnector);
@@ -322,7 +323,7 @@ test('the template\'s own test passes once copied into a fork', (t) => {
     cwd: f.root, env: { PATH: process.env.PATH }, encoding: 'utf8',
   });
   assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.match(r.stdout, /pass 12\n/);
+  assert.match(r.stdout, /pass 13\n/);
   assert.match(r.stdout, /fail 0\n/);
 });
 
@@ -567,4 +568,135 @@ test('two connectors sharing one injected store keep their keys apart: the slot 
   await defineConnector(spec({ id: 'other' })).create(opts).write.put({ idempotencyKey: 'same', dryRun: false });
   assert.equal(calls, 2, 'the second connector wrote rather than reuse the first one\'s result');
   assert.deepEqual([...m.keys()].sort(), ['demo\u0000put\u0000same', 'other\u0000put\u0000same']);
+});
+
+// #90: a connector that declares no credential (a mock) can pass the suite.
+test('a connector with no credential passes the suite: the declared-credential check is skipped, the shape check still runs (#90)', async () => {
+  const open = defineConnector(spec({ auth: { env: [] }, connect: () => ({}) }));
+  const cases = [];
+  connectorContract(open, { read: { get: {} }, write: { put: (idempotencyKey) => ({ idempotencyKey }) } }, {
+    test: (name, opts, fn) => cases.push({ name, fn: fn || opts, opts: fn ? opts : {} }),
+  });
+  const skipped = cases.filter((c) => c.opts.skip).map((c) => c.name);
+  assert.ok(skipped.includes('demo: errors never include credentials'), skipped.join('\n'));
+  assert.ok(!skipped.includes('demo: errors mask credential-shaped strings'), 'the shape check runs for every connector');
+  const failed = [];
+  for (const c of cases) {
+    if (c.opts.skip) continue;
+    try { await c.fn(); } catch (err) { failed.push(`${c.name}: ${err.message}`); }
+  }
+  assert.deepEqual(failed, []);
+});
+
+test('a bare token=<value> is masked in errors, not only after ?, & or ; (#90)', async () => {
+  let body = '';
+  const c = defineConnector(spec({ read: { get: async (i, ctx) => ctx.request(() => { throw new Error(body); }) } }))
+    .create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+  for (const shape of ['token=fake-bare-1a', 'said token=fake-bare-1a.', '(api_key=fake-bare-1a)', 'x-token=fake-bare-1a']) {
+    body = `system said: ${shape}`;
+    await assert.rejects(c.read.get(), (e) => e instanceof ConnectorFailed && !e.message.includes('fake-bare-1a') && /\[redacted\]/.test(e.reason), shape);
+  }
+  body = 'retokenize=keep-this';
+  await assert.rejects(c.read.get(), (e) => e.reason.includes('retokenize=keep-this'), 'a word ending in "token" is not a credential');
+});
+
+// #90: a batch that partly applied is a typed PartialFailure with its counts.
+function partialSpec(details) {
+  return spec({
+    write: {
+      push: {
+        plan: (i) => i,
+        async apply(input, ctx) {
+          await ctx.request(() => true, { size: 2 });
+          throw new sdk.PartialFailure('2 of 4 added, 2 failed', details);
+        },
+      },
+    },
+  });
+}
+
+test('a write that partly applied fails with PartialFailure carrying succeeded, failed and failedRefs (#90)', async () => {
+  const lines = [];
+  const log = createLog({ write: (l) => lines.push(l) });
+  const c = defineConnector(partialSpec({ succeeded: 2, failed: 2, failedRefs: ['c-3', 4] })).create({ log, env: { DEMO_TOKEN: TOKEN } });
+  const err = await c.write.push({ idempotencyKey: 'p1', dryRun: false }).catch((e) => e);
+  assert.ok(err instanceof sdk.PartialFailure, `got ${err && err.name}`);
+  assert.ok(err instanceof ConnectorFailed, 'a PartialFailure is a ConnectorFailed');
+  assert.equal(err.code, 'PARTIAL_FAILURE');
+  assert.deepEqual({ ...err.details }, { connector: 'demo', system: 'Demo', operation: 'push', succeeded: 2, failed: 2, failedRefs: ['c-3', '4'] });
+  // The refs go to the log, with the counts, never to the person.
+  const logged = lines.map((l) => JSON.parse(l)).find((l) => l.msg === 'connector write partly failed');
+  assert.ok(logged, lines.join('\n'));
+  assert.equal(logged.level, 'warn');
+  assert.deepEqual([logged.connector, logged.operation, logged.succeeded, logged.failed, logged.failed_refs], ['demo', 'push', 2, 2, ['c-3', '4']]);
+  assert.doesNotMatch(messageFor(err), /c-3/);
+});
+
+test('a PartialFailure does not use up its key: a retry with the same input applies again (#90)', async () => {
+  let applies = 0;
+  const c = defineConnector(spec({
+    write: {
+      push: {
+        plan: (i) => i,
+        async apply(input, ctx) {
+          applies += 1;
+          await ctx.request(() => true);
+          if (applies === 1) throw new sdk.PartialFailure('1 of 2', { succeeded: 1, failed: 1, failedRefs: ['b'] });
+          return { added: 1, alreadyAdded: 1 };
+        },
+      },
+    },
+  })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+  await assert.rejects(c.write.push({ idempotencyKey: 'p', dryRun: false }), sdk.PartialFailure);
+  assert.deepEqual(await c.write.push({ idempotencyKey: 'p', dryRun: false }), { added: 1, alreadyAdded: 1 });
+  assert.equal(applies, 2);
+});
+
+test('failedRefs are masked when they hold a credential or are not id-shaped (an email, a sentence) (#90)', async () => {
+  const refs = [TOKEN, 'person@home.invalid', 'has space', 'ok-1', ''];
+  const c = defineConnector(partialSpec({ succeeded: 0, failed: 5, failedRefs: refs })).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+  const err = await c.write.push({ idempotencyKey: 'p', dryRun: false }).catch((e) => e);
+  assert.ok(err instanceof sdk.PartialFailure, `got ${err && err.name}`);
+  assert.deepEqual(err.details.failedRefs, ['[redacted]', '[redacted]', '[redacted]', 'ok-1', '[redacted]']);
+  const text = [JSON.stringify(err), util.inspect(err, { depth: 10 }), err.stack].join('\n');
+  assert.ok(!text.includes(TOKEN) && !text.includes('person@home.invalid'), text);
+});
+
+test('a PartialFailure with bad counts, or from a read, is a plain ConnectorFailed (#90)', async () => {
+  for (const details of [
+    { succeeded: -1, failed: 1, failedRefs: ['a'] },
+    { succeeded: 1, failed: 0, failedRefs: [] },
+    { succeeded: 1.5, failed: 1, failedRefs: ['a'] },
+    { succeeded: 1, failed: 2, failedRefs: ['a'] },
+    { succeeded: 1, failed: 1 },
+    undefined,
+  ]) {
+    const c = defineConnector(partialSpec(details)).create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+    const err = await c.write.push({ idempotencyKey: 'p', dryRun: false }).catch((e) => e);
+    assert.ok(err instanceof ConnectorFailed && !(err instanceof sdk.PartialFailure), `${JSON.stringify(details)}: got ${err && err.name}`);
+    assert.match(err.reason, /partial failure/i);
+  }
+  const r = defineConnector(spec({ read: { get: async () => { throw new sdk.PartialFailure('half', { succeeded: 1, failed: 1, failedRefs: ['a'] }); } } }))
+    .create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN } });
+  const err = await r.read.get().catch((e) => e);
+  assert.ok(err instanceof ConnectorFailed && !(err instanceof sdk.PartialFailure), 'a read never returns partial data, or a partial-failure count');
+});
+
+test('a partial failure, a setup fault and an outage each get an honest message; the setup fault names the admin (AD-17, #90, #82)', () => {
+  const d = { connector: 'demo', system: 'Demo <Mail>', operation: 'push' };
+  const partial = new sdk.PartialFailure('3 failed', { ...d, succeeded: 97, failed: 3, failedRefs: ['r-1', 'r-2', 'r-3'] });
+  assert.equal(messageFor(partial),
+    'Sent 97 of 100 to Demo &lt;Mail&gt;; 3 failed. Nothing was sent twice, so trying again is safe: it sends only the 3 that failed. If they keep failing, please tell your admin.');
+  assert.equal(messageFor(partial, { admin: '<@UADMIN>' }),
+    'Sent 97 of 100 to Demo &lt;Mail&gt;; 3 failed. Nothing was sent twice, so trying again is safe: it sends only the 3 that failed. If they keep failing, please tell <@UADMIN>.');
+  for (const ref of ['r-1', 'r-2', 'r-3']) assert.ok(!messageFor(partial).includes(ref), 'failed refs never reach the person');
+  const setup = new ConnectorAuthFailed('DEMO_TOKEN is not set', { ...d, setup: true });
+  assert.equal(messageFor(setup, { admin: '<@UADMIN>' }), "Demo &lt;Mail&gt; isn't set up correctly, so I can't reach it. I've logged the problem; please tell <@UADMIN>.");
+  assert.equal(messageFor(new ConnectorAuthFailed('401', d), { admin: '<@UADMIN>' }),
+    "Demo &lt;Mail&gt; turned down my sign-in, so I couldn't reach it. Please tell <@UADMIN>; trying again won't help until it's fixed.");
+  assert.equal(messageFor(new ConnectorFailed('HTTP 500', d), { admin: '<@UADMIN>' }),
+    "I couldn't reach Demo &lt;Mail&gt; just now. Please try again later, or tell <@UADMIN> if it keeps happening.");
+  const words = [partial, setup, new ConnectorAuthFailed('401', d), new ConnectorFailed('HTTP 500', d)].map((e) => messageFor(e));
+  assert.equal(new Set(words).size, 4, 'no two read alike');
+  assert.doesNotMatch(words[1], /try again later|just now/, 'a setup fault never reads as a passing outage');
 });

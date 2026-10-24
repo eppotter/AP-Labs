@@ -18,7 +18,7 @@ const { createLog } = require('../log');
 // Slack mrkdwn escaping for anything a handler shows from data (AD-17).
 const { escapeText } = require('../messages');
 const {
-  defineConnector, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
+  defineConnector, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 } = require('../connectors/contract');
 
 // The shared connector contract suite, for a connector's own test file. It
@@ -66,4 +66,5 @@ function testLog() {
 module.exports = {
   testContext, testLog, escapeText, DataUnavailableError, QueryRefusedError,
   defineConnector, connectorContract, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
+  PartialFailure,
 };
