@@ -1,7 +1,7 @@
 'use strict';
 
-// Cross-model review (Story 1.1): the pure half. Rubric, round prompts,
-// verdict parsing, PR-body lines and argument parsing. No I/O here; the CLI in
+// Cross-model review (Stories 1.1-1.3): the pure half. Rubric, round prompts,
+// verdict parsing, PR-body lines, follow-up text, exemptions and argument parsing. No I/O here; the CLI in
 // kit/review/cli.js does git, gh, codex and the state file.
 //
 // Budget: three rounds per branch. Round 1 asks for P1 and P2; rounds 2 and 3
@@ -64,10 +64,22 @@ function unparsedFindingLines(verdict) {
 // The state file is untrusted input: anything but the expected shape stops the run.
 function isValidState(state) {
   return Boolean(state) && typeof state.branch === 'string' && Array.isArray(state.rounds) &&
-    state.rounds.every((r) => r && typeof r.head === 'string' && Array.isArray(r.findings));
+    state.rounds.every((r) => r && typeof r.head === 'string' && Array.isArray(r.findings)) &&
+    (state.followup === undefined || (Number.isInteger(state.followup) && state.followup > 0));
 }
 
 const isClean = (verdict) => /no blocking findings|no (actionable |discrete )?(issues|findings)/i.test(verdict);
+
+// A reviewer's output is usable when every finding-like line parses and it has
+// findings or says it is clean. Anything else is a failed attempt.
+function readVerdict(verdict, repoRoot = '') {
+  if (!verdict.trim()) return { error: 'No verdict written' };
+  const unparsed = unparsedFindingLines(verdict);
+  if (unparsed.length) return { error: `Could not parse ${unparsed.length} finding line(s):\n${unparsed.join('\n')}` };
+  const findings = parseFindings(verdict, repoRoot);
+  if (!findings.length && !isClean(verdict)) return { error: 'Could not read findings or a clean verdict' };
+  return { findings };
+}
 
 // Files that drew a blocking finding in each of the last two rounds: the "same class twice" stop.
 function repeatedBlockingFiles(rounds) {
@@ -80,6 +92,13 @@ function repeatedBlockingFiles(rounds) {
 const ROUNDS_LINE = /^Review rounds:.*$/m;
 const HEAD_LINE = /^Reviewed head:.*$/m;
 const FALLBACK_LINE = /^Review: same-model fallback$/m;
+const FOLLOWUP_LINE = /^Review follow-up:.*$/m;
+const STOP_LINE = /^Review stop:.*$/m;
+const EXEMPT_LINE = /^Review: exempt\b.*$/m;
+const KIND_LINE = /^Kind: (user-visible|groundwork|fix|infra|docs)$/m;
+
+// Replaces an existing line in place, otherwise appends it as its own paragraph.
+const withLine = (body, pattern, line) => (pattern.test(body) ? body.replace(pattern, () => line) : `${body.trimEnd()}\n\n${line}\n`);
 
 function pickReviewer({ trailers, codexAvailable, claudeAvailable }) {
   let codexAuthors = 0;
@@ -98,14 +117,98 @@ function pickReviewer({ trailers, codexAvailable, claudeAvailable }) {
   return { reviewer: preferred, fallback: false };
 }
 
+// Removing the line only tidies the blank lines around it: blank-line runs
+// elsewhere (code fences, say) are left alone.
 function withFallbackLine(body, fallback) {
   if (fallback) return FALLBACK_LINE.test(body) ? body : `${body.trimEnd()}\n\nReview: same-model fallback\n`;
-  return body.replace(/^Review: same-model fallback\n?/m, '').replace(/\n{3,}/g, '\n\n');
+  return body.replace(/(^|\n)(\n*)Review: same-model fallback(?:\n|$)(\n*)/,
+    (m, lead, before, after) => (lead ? `${lead}${before.length + after.length ? '\n' : ''}` : ''));
 }
 
 function withRoundsLine(body, rounds) {
-  const line = `Review rounds: ${rounds}/${ROUND_BUDGET}`;
-  return ROUNDS_LINE.test(body) ? body.replace(ROUNDS_LINE, () => line) : `${body.trimEnd()}\n\n${line}\n`;
+  return withLine(body, ROUNDS_LINE, `Review rounds: ${rounds}/${ROUND_BUDGET}`);
+}
+
+function withFollowupLine(body, issue) {
+  if (!Number.isInteger(issue) || issue <= 0) throw new Error(`not an issue number: ${issue}`);
+  return withLine(body, FOLLOWUP_LINE, `Review follow-up: #${issue}`);
+}
+
+// The follow-up issue a PR body already names, if any.
+function followupFromBody(body) {
+  const m = /^Review follow-up: #(\d+)\s*$/m.exec(body);
+  return m ? Number(m[1]) : undefined;
+}
+
+// Only written when the stop fires; an earlier stop line stays as the record.
+function withStopLine(body, files) {
+  return files.length ? withLine(body, STOP_LINE, `Review stop: same class twice — ${files.join(', ')}`) : body;
+}
+
+function withExemptLine(body, reason) {
+  return withLine(body, EXEMPT_LINE, `Review: exempt — ${reason}`);
+}
+
+// GitHub's web editor saves CRLF; a Kind line typed there still counts.
+const hasKindLine = (body) => KIND_LINE.test(body.replace(/\r\n/g, '\n'));
+
+const KIND_HELP = 'The PR body needs a Kind line before review. Add one on a line of its own, exactly one of:\n' +
+  '  Kind: user-visible\n  Kind: groundwork\n  Kind: fix\n  Kind: infra\n  Kind: docs\n' +
+  'Edit the body on GitHub, or save it to a file, add the line and run: gh pr edit <number> --body-file <file>';
+
+// Non-blocking findings parked in one follow-up issue per PR: the issue body
+// carries round 1's items, later rounds add theirs as comments.
+function followupItems({ round, head, findings }) {
+  return `Round ${round} on ${head}:\n${findings.map((f) => `- [ ] ${f.title} — ${f.file}`).join('\n')}\n`;
+}
+
+function followupIssue({ pr, branch, round, head, findings }) {
+  return {
+    title: `Review follow-ups for PR #${pr} (${branch})`,
+    body: `Non-blocking review findings parked from PR #${pr}. Tick each one when it is fixed or dropped.\n\n${followupItems({ round, head, findings })}`,
+  };
+}
+
+// `git diff --numstat -z --no-renames` output -> [{ file, added, deleted }];
+// added and deleted are null for a binary file.
+function parseNumstat(text) {
+  return text.split('\0').filter(Boolean).map((record) => {
+    const [added, deleted, ...file] = record.split('\t');
+    const count = (n) => (n === '-' ? null : Number(n));
+    return { file: file.join('\t'), added: count(added), deleted: count(deleted) };
+  });
+}
+
+// Process, security and dependency paths: never exempt as docs or config.
+const PROTECTED_DIRS = new Set(['.github', '.claude', '.codex', '.agents', '_bmad', '.aplabs']);
+const PROTECTED_FILES = new Set(['AGENTS.md', 'CLAUDE.md', 'package.json']);
+const LOCKFILE = /(^|[-.])lock(\.(json|ya?ml)|b)?$|^npm-shrinkwrap\.json$/;
+const CONFIG_EXEMPT_LINES = 10;
+
+function isProtectedPath(file) {
+  const parts = file.split('/');
+  const base = parts[parts.length - 1];
+  return parts.slice(0, -1).some((p) => PROTECTED_DIRS.has(p)) || PROTECTED_FILES.has(base) || LOCKFILE.test(base);
+}
+
+const isDocsPath = (file) => /\.mdx?$/i.test(file) || file.startsWith('docs/');
+
+function isConfigPath(file) {
+  const base = file.split('/').pop();
+  return /\.(json|ya?ml|toml)$/i.test(base) || base === '.gitignore' || base === '.editorconfig';
+}
+
+// Why a PR needs no review round, or null. subjects are the commit subjects in
+// origin/main..HEAD; changes come from parseNumstat on origin/main...HEAD.
+function exemptionFor({ subjects, changes }) {
+  if (subjects.length && subjects.every((s) => s.startsWith('Revert "'))) return 'revert';
+  if (!changes.length || changes.some((c) => isProtectedPath(c.file))) return null;
+  if (changes.every((c) => isDocsPath(c.file))) return 'docs only';
+  const lines = changes.reduce((n, c) => n + (c.added ?? Infinity) + (c.deleted ?? Infinity), 0);
+  if (changes.every((c) => isConfigPath(c.file)) && lines <= CONFIG_EXEMPT_LINES) {
+    return `config changes of ${CONFIG_EXEMPT_LINES} lines or fewer`;
+  }
+  return null;
 }
 
 // Replaces an existing line in place; otherwise goes right under the rounds
@@ -152,11 +255,23 @@ module.exports = {
   unparsedFindingLines,
   isValidState,
   isClean,
+  readVerdict,
   repeatedBlockingFiles,
   withRoundsLine,
   withReviewedHeadLine,
   pickReviewer,
   withFallbackLine,
+  withFollowupLine,
+  followupFromBody,
+  withStopLine,
+  withExemptLine,
+  hasKindLine,
+  KIND_HELP,
+  followupItems,
+  followupIssue,
+  parseNumstat,
+  isProtectedPath,
+  exemptionFor,
   parseArgs,
   sanitizeBranch,
 };
