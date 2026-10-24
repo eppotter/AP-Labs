@@ -19,6 +19,7 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 
 - Scope: `docs/adr/0002-engagement-starter-template.md`
 - Plan and order of work: `docs/PLAN-v1.md`. §4 lists every building block and its status.
+- How we build (the Orchestrator): `docs/orchestrator/DESIGN.md`
 - Design reference: `docs/reference/03-target-build.md`
 
 ## Layout
