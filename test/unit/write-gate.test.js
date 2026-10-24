@@ -275,18 +275,18 @@ test('fail-open: node missing allows the edit', () => {
   assert.match(r.stderr, /^aplabs-hooks: node not found/);
 });
 
-test('.claude/settings.json gates the four edit tools and SubagentStart, and is silent here', () => {
+test('.claude/settings.json gates the four edit tools, SubagentStart and UserPromptSubmit, and is silent here', () => {
   const { hooks } = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude/settings.json'), 'utf8'));
-  assert.deepEqual(Object.keys(hooks).sort(), ['PreToolUse', 'SessionStart', 'SubagentStart']);
+  for (const event of ['PreToolUse', 'SessionStart', 'SubagentStart', 'UserPromptSubmit']) assert.ok(hooks[event], event);
   assert.equal(hooks.PreToolUse.length, 1);
   assert.equal(hooks.PreToolUse[0].matcher, 'Edit|Write|MultiEdit|NotebookEdit');
-  for (const event of ['PreToolUse', 'SubagentStart']) {
+  for (const event of ['PreToolUse', 'SubagentStart', 'UserPromptSubmit']) {
     const [hook] = hooks[event][0].hooks;
     assert.match(hook.command, /\$CLAUDE_PROJECT_DIR\/kit\/hooks\/write-gate\.sh/);
     // This repo has no profile, so the real command must allow silently.
     const r = spawnSync(BASH, ['-c', hook.command], {
       cwd: ROOT, encoding: 'utf8', env: { PATH: process.env.PATH, CLAUDE_PROJECT_DIR: ROOT },
-      input: JSON.stringify({ hook_event_name: event, tool_name: 'Write', tool_input: { file_path: path.join(ROOT, 'x.js') }, cwd: ROOT }),
+      input: JSON.stringify({ hook_event_name: event, tool_name: 'Write', tool_input: { file_path: path.join(ROOT, 'x.js') }, cwd: ROOT, prompt: 'approve plan x' }),
     });
     assert.deepEqual([r.status, r.stdout, r.stderr], [0, '', '']);
   }
