@@ -12,8 +12,9 @@ const {
 } = require('#sdk');
 const connector = require('./connector');
 
-// Not a credential: any non-empty value stands in for the API key.
-const ENV = Object.freeze({ BRIGHTSIDE_CRM_KEY: 'mock-crm-key-not-a-secret' });
+// The mock declares no credential (#90). An explicit empty env keeps the
+// process's own (a kill switch, say) out of the tests.
+const ENV = Object.freeze({});
 
 const CLIENTS = Object.freeze([
   { client_id: 1, zone_id: 'central', first_name: 'Briar', last_name: 'Redley', email: 'briar.redley.1@home.invalid', phone: '555-0139' },
@@ -45,11 +46,11 @@ function crm({ simulate, data = fakeData(), now, sleep } = {}) {
 
 connectorContract(connector, { read: { lookupClient: { clientId: 1 } } }, { deps: { data: fakeData() } });
 
-test('crm: it is the read path only, with a stand-in API key and its own kill switch', () => {
+test('crm: it is the read path only, with no credential and its own kill switch', () => {
   const d = connector.describe ? connector.describe() : connector.declaration;
   assert.deepEqual([...d.read], ['lookupClient']);
   assert.deepEqual([...d.write], [], 'no write operations');
-  assert.deepEqual([...d.auth.env], ['BRIGHTSIDE_CRM_KEY']);
+  assert.deepEqual([...d.auth.env], [], 'a mock declares no credential (#90)');
   assert.equal(d.killSwitchEnv, 'BRIGHTSIDE_CRM_OFF');
 });
 
@@ -115,11 +116,11 @@ test('crm: without a query runner it fails with a plain reason, never a result',
   await assert.rejects(c.read.lookupClient({ clientId: 1 }), (e) => e instanceof ConnectorFailed && /query runner/.test(e.reason));
 });
 
-test('crm: a missing API key fails closed before the runner is called', async () => {
+test('crm: with no credential to read, a lookup works from an empty env', async () => {
   const data = fakeData();
   const c = connector.create({ log: testLog(), env: {}, data });
-  await assert.rejects(c.read.lookupClient({ clientId: 1 }), (e) => e instanceof ConnectorAuthFailed && /BRIGHTSIDE_CRM_KEY/.test(e.reason));
-  assert.equal(data.queries.length, 0);
+  assert.equal((await c.read.lookupClient({ clientId: 1 })).client_id, 1);
+  assert.equal(data.queries.length, 1);
 });
 
 test('crm: the simulated auth failure fails closed and never queries', async () => {

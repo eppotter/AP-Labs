@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  connectorContract, testLog, KillSwitchOn, ConnectorFailed, IdempotencyConflict,
+  connectorContract, testLog, KillSwitchOn, ConnectorFailed, IdempotencyConflict, PartialFailure,
 } = require('#sdk');
 const connector = require('./connector');
 const { openOutbox, outboxPath } = require('./outbox');
@@ -50,13 +50,12 @@ connectorContract(connector, {
   },
 });
 
-// Not a credential: the mock checks only that the key is set.
-const KEY = Object.freeze({ BRIGHTSIDE_EMAIL_KEY: 'mock-email-key-not-a-secret' });
-
-function email({ file = freshPath(), env = {}, simulate } = {}) {
+// The mock declares no credential (#90): env is only the kill switches a test
+// sets, never the process's own.
+function email({ file = freshPath(), env = {}, simulate, log = testLog() } = {}) {
   const requests = [];
-  const instance = connector.create({ log: testLog(), env: { ...KEY, ...env }, outboxPath: file, simulate, onRequest: (r) => requests.push(r) });
-  return { instance, file, requests, lines: () => readLines(file) };
+  const instance = connector.create({ log, env: { ...env }, outboxPath: file, simulate, onRequest: (r) => requests.push(r) });
+  return { instance, file, requests, log, lines: () => readLines(file) };
 }
 
 function readLines(file) {
@@ -66,13 +65,14 @@ function readLines(file) {
 
 const live = { dryRun: false };
 
-test('email: a mock with a stand-in key, its own kill switch, and two writes', () => {
+test('email: a mock with no credential, its own kill switch, and two writes', () => {
   assert.equal(connector.id, 'email');
-  assert.deepEqual([...connector.auth.env], ['BRIGHTSIDE_EMAIL_KEY']);
+  assert.deepEqual([...connector.auth.env], [], 'a mock declares no credential (#90)');
   assert.equal(connector.killSwitchEnv, 'BRIGHTSIDE_EMAIL_OFF');
   assert.deepEqual([...connector.write].sort(), ['addContacts', 'createList']);
   assert.deepEqual([...connector.read], []);
   assert.deepEqual({ ...connector.rateLimit }, { perSecond: 5, batchSize: 100 });
+  assert.deepEqual([...connector.perItemIdempotency], ['addContacts'], 'each contact is keyed, so a retry re-sends only the failed ones');
 });
 
 test('email: the outbox defaults to var/outbox/email.jsonl, under APLABS_VAR_DIR when set', () => {
@@ -174,15 +174,24 @@ for (const name of ['BRIGHTSIDE_EMAIL_OFF', 'APLABS_WRITES_OFF']) {
 
 test('email: a simulated row failure records the others, reports both counts, and a retry sends only the failed one', async () => {
   const simulate = { failContacts: new Set(['2']) };
-  const { instance, file, lines } = email({ simulate });
+  const { instance, file, lines, log } = email({ simulate });
   const { listId } = await instance.write.createList({ name: 'l', idempotencyKey: 'L', ...live });
   const input = { listId, contacts: contacts(3), idempotencyKey: 'L', ...live };
 
   await assert.rejects(instance.write.addContacts(input), (err) => {
-    assert.ok(err instanceof ConnectorFailed);
-    assert.match(err.reason, /2 of 3 contacts added, 1 failed \(external_ref 2: the email tool refused the address\)/);
+    // A typed partial failure (#90): the counts and the failed ref, never contact data.
+    assert.ok(err instanceof PartialFailure && err instanceof ConnectorFailed, `got ${err && err.name}`);
+    assert.deepEqual([err.details.succeeded, err.details.failed, [...err.details.failedRefs]], [2, 1, ['2']]);
+    // addContacts keys each contact, so the person may be told a retry is safe.
+    assert.equal(err.details.retrySafe, true);
+    // Counts only in the text (round 2): no ref, no address, no tool reason.
+    assert.equal(err.reason, '2 of 3 items succeeded, 1 failed');
+    assert.ok(!JSON.stringify(err.details).includes('@'), 'no email address in the details');
     return true;
   });
+  const warned = log.lines.map((l) => JSON.parse(l)).find((l) => l.msg === 'connector write partly failed');
+  assert.deepEqual(warned && [warned.succeeded, warned.failed, warned.failed_refs, warned.retry_safe], [2, 1, ['2'], true]);
+  assert.ok(!log.lines.join('\n').includes('@home.invalid'), 'no contact address in the log');
   const recorded = () => lines().filter((l) => l.type === 'contact').map((l) => l.key);
   assert.deepEqual(recorded(), [`L:${listId}:1`, `L:${listId}:3`], 'the failed contact recorded no key');
   assert.equal(lines().filter((l) => l.type === 'done' && l.operation === 'addContacts').length, 0, 'the failed call did not use up its key');

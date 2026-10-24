@@ -146,7 +146,7 @@ test('a person without access is refused and sees nothing from the outbox', asyn
 
 test('what the mock email tool writes is what the Outbox shows', async (t) => {
   const file = tmpFile(t);
-  const email = emailConnector.create({ log: testLog(), env: { BRIGHTSIDE_EMAIL_KEY: 'mock-email-key-not-a-secret' }, outboxPath: file });
+  const email = emailConnector.create({ log: testLog(), env: {}, outboxPath: file });
   const { listId } = await email.write.createList({ name: 'win-back-east-2026-10-24', idempotencyKey: 'L', dryRun: false });
   await email.write.addContacts({ listId, contacts: people(4), idempotencyKey: 'L', dryRun: false });
   await email.write.addContacts({ listId, contacts: people(4), idempotencyKey: 'L', dryRun: false });

@@ -3,11 +3,12 @@
 // The one place that turns a typed refusal into words (AD-17). Each message is
 // plain and names a next step. Handlers never build refusal text themselves.
 // Returns Slack mrkdwn text, or null for an error that is not a refusal (the
-// caller then uses the generic plain error).
+// caller then uses the generic plain error). context.admin, when the caller
+// knows it, is who to tell in a connector message; else "your admin".
 
 const {
   NotSetUp, AccessDenied, ConfigFault, DataUnavailable, KillSwitchOn,
-  ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
+  ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 } = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
@@ -22,11 +23,20 @@ const MESSAGES = [
   [DataUnavailable, () => "The data isn't available right now, so I can't answer that. The app is still running; please tell your admin."],
   [KillSwitchOn, ({ system }) => `Sending to ${escapeText(system)} is switched off right now, so nothing was sent. Please tell your admin.`],
   // Subclasses of ConnectorFailed come first: the first match wins.
-  [ConnectorAuthFailed, ({ system, setup }) => (setup
-    ? `${escapeText(system)} isn't set up correctly, so I can't reach it. I've logged the problem; please tell your admin.`
-    : `${escapeText(system)} turned down my sign-in, so I couldn't reach it. Please tell your admin; trying again won't help until it's fixed.`)],
-  [IdempotencyConflict, ({ system }) => `That was already sent to ${escapeText(system)} with different contents, so I didn't send it again. Please tell your admin.`],
-  [ConnectorFailed, ({ system }) => `I couldn't reach ${escapeText(system)} just now. Please try again later, or tell your admin if it keeps happening.`],
+  // A missing credential is a setup fault, worded like ConfigFault; a rejected
+  // one says so. Neither reads as a passing outage (AD-17).
+  [ConnectorAuthFailed, ({ system, setup }, { admin }) => (setup
+    ? `${escapeText(system)} isn't set up correctly, so I can't reach it. I've logged the problem; please tell ${admin}.`
+    : `${escapeText(system)} turned down my sign-in, so I couldn't reach it. Please tell ${admin}; trying again won't help until it's fixed.`)],
+  [IdempotencyConflict, ({ system }, { admin }) => `That was already sent to ${escapeText(system)} with different contents, so I didn't send it again. Please tell ${admin}.`],
+  // Counts only: the failed refs go to the log, never to the person. A retry
+  // is called safe only when the write declares per-item idempotency
+  // (details.retrySafe); otherwise the engine can't promise it, so it doesn't.
+  [PartialFailure, ({ system, succeeded, failed, retrySafe }, { admin }) => `Sent ${succeeded} of ${succeeded + failed} to ${escapeText(system)}; ${failed} failed. `
+    + (retrySafe === true
+      ? `Nothing was sent twice, so trying again is safe: it sends only the ${failed} that failed. If they keep failing, please tell ${admin}.`
+      : `Please tell ${admin} before trying again.`)],
+  [ConnectorFailed, ({ system }, { admin }) => `I couldn't reach ${escapeText(system)} just now. Please try again later, or tell ${admin} if it keeps happening.`],
 ];
 
 // Hub wording (Story 6.4). A hub file may set its own welcome and feedback
@@ -57,9 +67,9 @@ function joinWelcomeText({ client, hubs, notice, admin }) {
   return lines.join('\n');
 }
 
-function messageFor(err) {
+function messageFor(err, { admin = 'your admin' } = {}) {
   for (const [Kind, words] of MESSAGES) {
-    if (err instanceof Kind) return words(err.details);
+    if (err instanceof Kind) return words(err.details, { admin });
   }
   return null;
 }

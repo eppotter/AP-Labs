@@ -79,7 +79,22 @@ class IdempotencyConflict extends ConnectorFailed {
   }
 }
 
+// A batch write partly applied (#90). The items that succeeded were recorded
+// with their keys and the failed ones were not, so a retry with the same input
+// sends only the failed ones: nothing is sent twice. An adapter throws it from
+// a write's apply with { succeeded, failed, failedRefs }; the contract rebuilds
+// it with the connector's details, checks the counts and masks any ref that
+// is not id-shaped. failedRefs are the failed items' external ids (never
+// contact data), for the log only: the person sees the counts.
+// details: { connector, system, operation, succeeded, failed, failedRefs }
+class PartialFailure extends ConnectorFailed {
+  constructor(reason, details = {}) {
+    super(reason, details);
+    this.code = 'PARTIAL_FAILURE';
+  }
+}
+
 module.exports = {
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
-  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
+  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 };
