@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 stepsCompleted: [1, 2, 3]
 inputDocuments:
   - docs/planning/specs/spec-runtime/SPEC.md
