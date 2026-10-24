@@ -231,9 +231,10 @@ const BREAKS = [
   },
 ];
 
-// A copy of the fixture with the named breaks applied (default: all), and a
-// schema with its foreign keys removed so an orphan can load at all.
-function brokenFixture(t, only = BREAKS.map((b) => b.check)) {
+// A copy of the fixture with the named breaks applied (default: all), then
+// extra(t_) if given, and a schema with its foreign keys removed so an orphan
+// can load at all.
+function brokenFixture(t, only = BREAKS.map((b) => b.check), extra = null) {
   const dir = tmpDir(t);
   fs.cpSync(path.join(FIXTURE_DIR, 'seeds'), path.join(dir, 'seeds'), { recursive: true });
   const schema = fs.readFileSync(path.join(FIXTURE_DIR, 'schema.sql'), 'utf8').replace(/ REFERENCES \w+ \(\w+\)/g, '');
@@ -248,13 +249,14 @@ function brokenFixture(t, only = BREAKS.map((b) => b.check)) {
   };
   const edits = BREAKS.map((b) => [b.check, b.pick(t_, take, used)]);
   for (const [check, edit] of edits) if (only.includes(check)) edit();
+  if (extra) extra(t_);
   for (const [name, table] of Object.entries(t_)) writeCsv(file(name), table);
   fs.cpSync(path.join(FIXTURE_DIR, 'checks'), path.join(dir, 'checks'), { recursive: true });
   return dir;
 }
 
-async function validateBroken(t, only) {
-  const dir = brokenFixture(t, only);
+async function validateBroken(t, only, extra) {
+  const dir = brokenFixture(t, only, extra);
   const out = path.join(dir, 'broken.duckdb');
   await build({ fixtureDir: dir, out });
   return validate({ checks: loadChecks(dir), db: out, forbiddenColumns: FORBIDDEN });
@@ -276,4 +278,12 @@ test('a deliberately broken seed fails each integrity and synthetic-only check e
 test('each break alone fails only its own check', async (t) => {
   const got = await Promise.all(BREAKS.map(async (b) => [b.check, failures(await validateBroken(t, [b.check]))]));
   assert.deepEqual(got, BREAKS.map((b) => [b.check, [[b.check, 1]]]));
+});
+
+// Issue #77 item 5: with no as_of to compare against, the as_of checks would
+// return no rows and pass. Each returns one guard row instead.
+test('with no as_of row in fixture_meta, the as_of check fails on its guard row', async (t) => {
+  const results = await validateBroken(t, [], (t_) => { t_.fixture_meta.rows = t_.fixture_meta.rows.filter((r) => r.key !== 'as_of'); });
+  const byId = Object.fromEntries(results.map((r) => [r.id, r]));
+  assert.deepEqual([byId['integrity-no-end-after-as-of'].outcome, byId['integrity-no-end-after-as-of'].rows], ['fail', 1]);
 });

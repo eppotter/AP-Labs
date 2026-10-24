@@ -46,7 +46,7 @@ Story 7.1 generates the reference tables; Story 7.2 the time series, `fixture_me
 
 Each is a SQL file in `examples/brightside/fixture/checks/` that must return zero rows; `npm run fixture:validate` runs them through the query runner.
 
-- **Integrity:** every foreign key resolves; no orphans; invoice total equals the sum of its lines; payments never exceed their invoice; one invoice per completed visit and none for cancelled visits; plan visits fall inside the plan's active period; `status` agrees with `end_date`; no `end_date` after `as_of`; `price_cents` equals the latest change's new price (or `start_price_cents` with no change); crew membership periods don't overlap per staff member.
+- **Integrity:** every foreign key resolves; no orphans; invoice total equals the sum of its lines; payments never exceed their invoice; one invoice per completed visit and none for cancelled visits; plan visits fall inside the plan's active period; `status` agrees with `end_date`; no `end_date` after `as_of`, and no `as_of` row fails (added in #77); `price_cents` equals the latest change's new price (or `start_price_cents` with no change); crew membership periods don't overlap per staff member.
 - **Synthetic-only:** every email ends in `.invalid`; every phone matches 555-01xx.
 
 ## Known truths (Story 7.6, consumed by Orchestrator Story 4.3)
