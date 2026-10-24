@@ -18,6 +18,34 @@ const MESSAGES = [
   [ConfigFault, ({ admin }) => `That option isn't set up correctly, so I can't open it right now. I've logged the problem; please tell ${admin}.`],
 ];
 
+// Hub wording (Story 6.4). A hub file may set its own welcome and feedback
+// lines; these defaults keep a hub without them working.
+function welcomeText(hub) {
+  if (hub.welcome) return escapeText(hub.welcome);
+  return `Welcome to ${escapeText(hub.name)}. Each option below opens one tool. `
+    + 'Press Help at the bottom any time to see what you can use here and how to give feedback.';
+}
+
+function feedbackText(hub, admin) {
+  if (hub.feedback) return escapeText(hub.feedback);
+  return `To give feedback or ask for something new, tell ${admin}.`;
+}
+
+// The private welcome for a person who just joined the workspace. hubs: the
+// hubs with at least one entry they can use; notice: the not-set-up line, if
+// they have no profile user yet.
+function joinWelcomeText({ client, hubs, notice, admin }) {
+  const lines = [`Welcome to ${escapeText(client)}! I'm the ${escapeText(client)} bot.`];
+  if (hubs.length) {
+    const list = hubs.map((h) => `\`${h.command}\` (${escapeText(h.name)})`).join(', ');
+    lines.push(`You can use ${list}. Type a command to see its menu, and press Help there for more.`);
+  } else if (!notice) {
+    lines.push(`There's nothing here for you to use yet; ask ${admin} if you need something.`);
+  }
+  if (notice) lines.push(notice);
+  return lines.join('\n');
+}
+
 function messageFor(err) {
   for (const [Kind, words] of MESSAGES) {
     if (err instanceof Kind) return words(err.details);
@@ -25,4 +53,4 @@ function messageFor(err) {
   return null;
 }
 
-module.exports = { messageFor, escapeText };
+module.exports = { messageFor, escapeText, welcomeText, feedbackText, joinWelcomeText };

@@ -6,6 +6,9 @@
   "engines": {
     "node": ">=24"
   },
+  "imports": {
+    "#sdk": "./kit/runtime/sdk/index.js"
+  },
   "scripts": {
     "start": "node kit/runtime/app",
     "check": "bash scripts/check-syntax.sh && node scripts/check-conflict-markers.js",
@@ -21,7 +24,8 @@
     "fixture:check": "node examples/brightside/fixture/generate.js --check",
     "fixture:build": "node kit/fixture/build.js examples/brightside/fixture",
     "fixture:validate": "node kit/fixture/validate.js examples/brightside/fixture",
-    "slack:manifest": "node kit/runtime/slack/manifest.js"
+    "slack:manifest": "node kit/runtime/slack/manifest.js",
+    "clean-bones": "bash scripts/clean-bones.sh"
   },
   "dependencies": {
     "@duckdb/node-api": "1.5.6-r.2",

@@ -36,7 +36,8 @@
   "settings": {
     "event_subscriptions": {
       "bot_events": [
-        "message.im"
+        "message.im",
+        "team_join"
       ]
     },
     "interactivity": {

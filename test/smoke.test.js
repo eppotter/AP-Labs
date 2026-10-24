@@ -21,7 +21,6 @@ test('scaffold layout exists', () => {
     'kit/lib/tier/index.js',
     'kit/verify/run-all.js',
     'profiles/_schema/profile.schema.json',
-    'profiles/brightside/profile.yml',
     'examples/brightside-install',
     'test/acceptance',
     'docs/adr',

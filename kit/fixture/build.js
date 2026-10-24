@@ -9,7 +9,7 @@
 // into a local DuckDB file, offline. The default file is
 // var/fixture/<name>.duckdb (var/ is APLABS_VAR_DIR, else the repo's
 // gitignored var/), and <name> defaults to the folder holding the fixture
-// dir (examples/brightside/fixture -> brightside).
+// dir (for example <client>/fixture -> <client>).
 //
 // This is the only code that opens DuckDB for writing, and the app never
 // loads it: the runtime reads the built file read-only (kit/runtime/data).
