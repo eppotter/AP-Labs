@@ -477,3 +477,20 @@ test('create() needs the app logger, so every credential registers with it (AD-1
   }
   assert.doesNotThrow(() => c.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, log: createLog({ write: () => {} }) }));
 });
+
+test('the suite needs a bulk sample for every write that takes a list, so 500 items in one unsized call fails it (#82)', async () => {
+  const DECLARES = 'declares the contract (auth env names, operations, kill switch, rate limit)';
+  const BULK = 'a bulk write goes in batches no larger than batchSize';
+  // Sends every item in one call and never says how many.
+  const unsized = defineConnector(spec({
+    write: { addAll: { plan: (i) => i, apply: async (i, ctx) => ctx.request(() => ({ sent: i.items.length })) } },
+  }));
+  const write = { addAll: (idempotencyKey) => ({ items: items(500), idempotencyKey }) };
+  const read = { get: {} };
+  assert.ok((await failingCases(unsized, { read, write })).includes(DECLARES), 'no bulk sample for a list write fails the declaration');
+  const bulk = { operation: 'addAll', input: (count, idempotencyKey) => ({ items: items(count), idempotencyKey }) };
+  assert.ok((await failingCases(unsized, { read, write, bulk })).includes(BULK));
+  assert.ok((await failingCases(unsized, { read, write, bulk: [bulk] })).includes(BULK), 'bulk may list several writes');
+  // A connector whose writes take no list needs no bulk sample.
+  assert.deepEqual(await failingCases(defineConnector(spec()), { read, write: { put: (idempotencyKey) => ({ v: 1, idempotencyKey }) } }), []);
+});
