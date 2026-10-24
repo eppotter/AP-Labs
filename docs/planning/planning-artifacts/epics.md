@@ -78,7 +78,32 @@ None. The Orchestrator has no UI beyond session messages.
 Every PR gets a bounded review from the other model (Codex by default, Claude as fallback), with the P1/P2 rubric, a 3-round budget, the same-cause stop, and the Refuter reproducing each P1 before it blocks. Built first, so every later Orchestrator PR uses it.
 **FRs covered:** FR7, FR8
 
-### Epic 2: Guided, governed build
+#### Story 1.5: npm run land merges only what is verified
+
+**Implements:** FR7
+
+As the Orchestrator,
+I want one command that merges a PR only when it is verified,
+So that a red CI, an unreviewed head or an open blocker can never be merged by mistake.
+
+**Acceptance Criteria:**
+
+**Given** a PR number
+**When** I run `npm run land -- <pr-number> [--notify "<message>"] [--timeout-min N]`
+**Then** it refuses with a plain reason and no merge unless the PR is open against `main`, its body has a valid `Kind:` line, `Reviewed head:` equals the PR head (or the body says `Review: exempt — …`), and any `Refuter:` line shows 0 confirmed, 0 escalated and 0 pending
+**And** usage errors exit 2, refusals exit 1
+
+**Given** CI checks on the PR head
+**When** land runs
+**Then** it waits for them to finish up to `--timeout-min` (default 15) and refuses on a timeout, on no checks, or on any check that is not passed or skipped
+
+**Given** every condition holds
+**When** land merges
+**Then** a draft is marked ready first, the PR is merged with a merge commit pinned to the checked head (never `--admin`, `--auto`, `--squash` or `--rebase`), the `MERGED` state is confirmed with gh, and the remote head branch is deleted (already gone is fine)
+**And** with `--notify` a `merged` Slack update is posted only after the confirmed merge; a failed post warns but does not change the exit code
+**And** tests cover every refusal, the exempt and draft paths, an unconfirmed merge and the notify order with a stub gh
+
+## Epic 2: Guided, governed build
 A builder opens a fork and gets the Orchestrator: a session banner and profile check, intake, BMAD planning, the write gate, plan approval by tier, the nine agents, and profile-enabled add-on stages.
 **FRs covered:** FR1, FR2, FR3, FR4, FR5, FR10
 

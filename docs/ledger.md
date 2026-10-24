@@ -40,6 +40,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #33 | 2026-10-24 | 5.1 | infra | — | Adds this ledger and a CI check that every PR adds a ledger row unless it is docs-only. | DEP-004 |
 | #35 | 2026-10-24 | 2.5 | infra | — | Risky (T2/T3) and onboarding work waits for the human to type `approve plan <slug>`; a hook records it for every worktree. | DEP-007 |
 | #37 | 2026-10-24 | 3.2 | infra | — | The end-of-turn hook runs the profile's checks and blocks only on a failed one; a check's whole process group is killed on timeout (#24). | DEP-003, DEP-008 |
+| #39 | 2026-10-24 | 1.5 | infra | — | `npm run land` merges a PR only when CI passed, the reviewed head is the head being merged, and no blocker is open. | — |
 
 ## Deferrals (DEP)
 
