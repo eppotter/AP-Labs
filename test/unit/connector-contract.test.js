@@ -494,6 +494,53 @@ test('a 429 is retried through the rate limiter, honouring Retry-After, then fai
   assert.equal(w.at.length, 2);
 });
 
+test('an HTTP-date Retry-After is read against the injected clock, capped, and a write re-checks the kill switch after the wait (#89)', async () => {
+  const T0 = Date.parse('2026-10-24T12:00:00Z');
+  const limited = (retryAfter) => Object.assign(new Error('HTTP 429 Too Many Requests'), { status: 429, headers: { 'retry-after': retryAfter } });
+  const httpDate = (ms) => new Date(ms).toUTCString();
+  function make(answers, { onSleep } = {}) {
+    let t = T0;
+    const at = [];
+    const slept = [];
+    const env = { DEMO_TOKEN: TOKEN };
+    const c = defineConnector(spec()).create({
+      log: quietLog(), env,
+      now: () => t,
+      sleep: async (ms) => { slept.push(ms); t += ms; if (onSleep) onSleep(env); },
+      onRequest: (info) => { at.push(info.at); const a = answers.shift(); if (a) throw a(t); },
+    });
+    return { c, at, slept };
+  }
+  // The date is 5 s after the injected now (not the wall clock): the retry waits 5 s.
+  const ok = make([(t) => limited(httpDate(t + 5000)), null]);
+  assert.deepEqual(await ok.c.read.get(), { ok: true });
+  assert.equal(ok.at.length, 2);
+  assert.equal(ok.at[1] - ok.at[0], 5000, `waited ${ok.at[1] - ok.at[0]} ms, not the 5 s the date asked`);
+  // A date already past retries without waiting beyond the rate limit.
+  const past = make([(t) => limited(httpDate(t - 60_000)), null]);
+  assert.deepEqual(await past.c.read.get(), { ok: true });
+  assert.ok(past.at[1] - past.at[0] < 1000, `waited ${past.at[1] - past.at[0]} ms for a past date`);
+  // A date past the cap fails at once with ConnectorFailed, and nothing sleeps that long.
+  const far = make([(t) => limited(httpDate(t + 2 * 3600_000)), null]);
+  await assert.rejects(far.c.read.get(), (e) => e instanceof ConnectorFailed && /over the 60 s limit/.test(e.reason));
+  assert.equal(far.at.length, 1);
+  assert.ok(far.slept.every((ms) => ms <= 60_000), `slept ${far.slept}`);
+  // A huge seconds value is capped the same way.
+  const huge = make([() => limited('1e12'), null]);
+  await assert.rejects(huge.c.read.get(), (e) => e instanceof ConnectorFailed && /over the 60 s limit/.test(e.reason));
+  assert.equal(huge.at.length, 1);
+  const endless = make([() => limited('Infinity'), null]);
+  await assert.rejects(endless.c.read.get(), (e) => e instanceof ConnectorFailed && /without limit, over the 60 s limit/.test(e.reason));
+  assert.equal(endless.at.length, 1);
+  // A kill switch flipped during the Retry-After wait stops the write's retry.
+  const w = make([(t) => limited(httpDate(t + 3000)), null], { onSleep: (env) => { env.DEMO_OFF = '1'; } });
+  await assert.rejects(w.c.write.put({ idempotencyKey: 'k89', dryRun: false }), KillSwitchOn);
+  assert.equal(w.at.length, 1, 'the retry was not sent');
+  // A read keeps working through the same switch.
+  const r = make([(t) => limited(httpDate(t + 3000)), null], { onSleep: (env) => { env.DEMO_OFF = '1'; } });
+  assert.deepEqual(await r.c.read.get(), { ok: true });
+});
+
 test('create() needs the app logger, so every credential registers with it (AD-12, #82)', () => {
   const c = defineConnector(spec());
   for (const log of [undefined, null, {}, { registerSecret() {} }]) {

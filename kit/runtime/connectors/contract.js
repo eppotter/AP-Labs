@@ -55,8 +55,10 @@
 //     and refuses a batch larger than batchSize. ctx.batches(items) splits a
 //     list into batches of batchSize. A call that fails with status 429 is
 //     retried through the limiter, which holds every call for its Retry-After
-//     (up to 60 s; longer fails at once), at most 3 attempts in all; then the
-//     operation fails with ConnectorFailed.
+//     (seconds or an HTTP date, read against deps.now; up to 60 s, and longer
+//     fails at once), at most 3 attempts in all; then the operation fails
+//     with ConnectorFailed. A write re-checks its kill switch after the wait,
+//     before the retry is sent (#89).
 //   - Every error that leaves an operation is a ConnectorFailed (or
 //     ConnectorAuthFailed / KillSwitchOn) built fresh from a redacted message:
 //     the connector's own credentials, any token connect() obtained and passed
@@ -215,15 +217,18 @@ function createLimiter(perSecond, now, sleep) {
 }
 
 // Retry-After from a 429, in ms: err.retryAfter (seconds) or the header,
-// as seconds or an HTTP date. 0 when absent or unreadable.
-function retryAfterMs(err) {
+// as seconds or an HTTP date. An HTTP date is read against the connector's
+// clock (deps.now), not the wall clock, so an injected clock governs it (#89).
+// 0 when absent, unreadable or in the past; a number too large to be finite
+// ("Infinity", "1e400") is Infinity, so the caller's cap refuses it.
+function retryAfterMs(err, now) {
   const h = err.headers;
   const raw = err.retryAfter ?? (h && (typeof h.get === 'function' ? h.get('retry-after') : h['retry-after'] ?? h['Retry-After']));
-  if (raw === undefined || raw === null || raw === '') return 0;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return 0;
   const seconds = Number(raw);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  if (!Number.isNaN(seconds)) return Math.max(0, seconds * 1000);
   const date = Date.parse(String(raw));
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
+  return Number.isFinite(date) ? Math.max(0, date - now()) : 0;
 }
 
 // In-flight writes per idempotency store, so instances sharing a store also
@@ -360,9 +365,10 @@ function defineConnector(spec) {
               // A 429 was not processed, so retrying it is safe, writes included.
               if (!err || err.status !== 429) throw err;
               if (attempt >= RATE_LIMIT_ATTEMPTS) throw new Error(`still rate limited after ${RATE_LIMIT_ATTEMPTS} attempts`);
-              const wait = retryAfterMs(err);
-              if (wait > MAX_RETRY_AFTER_MS) {
-                throw new Error(`rate limited: asked to wait ${Math.ceil(wait / 1000)} s, over the ${MAX_RETRY_AFTER_MS / 1000} s limit`);
+              const wait = retryAfterMs(err, now);
+              if (!(wait <= MAX_RETRY_AFTER_MS)) {
+                const asked = Number.isFinite(wait) ? `${Math.ceil(wait / 1000)} s` : 'without limit';
+                throw new Error(`rate limited: asked to wait ${asked}, over the ${MAX_RETRY_AFTER_MS / 1000} s limit`);
               }
               limit.hold(wait);
             }
