@@ -102,6 +102,25 @@ test('wrapper: valid profile prints banner JSON with the client and all 8 stages
   assert.ok(out.hookSpecificOutput.additionalContext.split('\n').length <= 8);
 });
 
+test('wrapper: a profile with add-ons shows the resolved stage list', () => {
+  const text = `${fs.readFileSync(fixture('minimal'), 'utf8')}stages:\n  addons: [dark_launch, dev_test, review_queue]\n`;
+  const r = runWrapper({ env: { CLAUDE_PROJECT_DIR: repo({ text }) } });
+  assert.equal(r.code, 0);
+  assert.equal(r.stderr, '');
+  const out = parsed(r.stdout);
+  const line = '1 Intake → 2 Spec → 3 Plan approval → 4 Build → 5 Verify → 6 Review → 7 Batch review queue'
+    + ' → 8 Dev environment test → 9 Ship → 10 Dark launch + flag flip → 11 Retro';
+  assert.equal(out.systemMessage, `AP Labs Orchestrator on deck for Tiny. Stages: ${line}`);
+  assert.match(out.hookSpecificOutput.additionalContext, new RegExp(`add-on stages in order: ${line.replace(/\+/g, '\\+')}\\.$`));
+});
+
+test('sessionStart: a core-only profile shows exactly the 8 core stages', () => {
+  const out = sessionStart(repo({ from: 'minimal' }));
+  assert.equal(out.systemMessage,
+    'AP Labs Orchestrator on deck for Tiny. Stages: 1 Intake → 2 Spec → 3 Plan approval → 4 Build → 5 Verify → 6 Review → 7 Ship → 8 Retro');
+  assert.match(out.hookSpecificOutput.additionalContext, /Every build runs the core stages in order: 1 Intake .* 8 Retro\.$/);
+});
+
 test('wrapper: Codex form finds the repo from the cwd in the hook input', () => {
   const dir = repo({ from: 'minimal' });
   const sub = path.join(dir, 'src');

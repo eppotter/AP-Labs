@@ -10,13 +10,12 @@
 
 const path = require('path');
 const { loadProfile, findProfilePath, ProfileError } = require('../profile');
+const { CORE: STAGES, resolveStages } = require('../stages');
 
 const NAME = 'AP Labs Orchestrator';
 
-// The 8 core stages, in order (docs/orchestrator/DESIGN.md §3a).
-const STAGES = Object.freeze(['Intake', 'Spec', 'Plan approval', 'Build', 'Verify', 'Review', 'Ship', 'Retro']);
-
-const stageLine = () => STAGES.map((s, i) => `${i + 1} ${s}`).join(' → ');
+// The profile's resolved stages: the 8 core stages plus any add-ons it switches on.
+const stageLine = (stages) => stages.map((s, i) => `${i + 1} ${s.name}`).join(' → ');
 
 // Profile text is untrusted: keep it on one line so it cannot add lines to the banner.
 const oneLine = (s) => String(s).replace(/\s+/g, ' ').trim();
@@ -32,12 +31,15 @@ function hookOutput(message, context) {
 
 function bannerForProfile(profile, file) {
   const client = oneLine(profile.client.name);
+  const resolved = resolveStages(profile);
+  const stages = stageLine(resolved);
+  const which = resolved.some((s) => !s.core) ? 'the core stages and its add-on stages' : 'the core stages';
   return hookOutput(
-    `${NAME} on deck for ${client}. Stages: ${stageLine()}`,
+    `${NAME} on deck for ${client}. Stages: ${stages}`,
     [
       `${NAME} is active for ${client} (profile: ${file}).`,
       'You are the Orchestrator for this session: scope the ask, route work to specialists, bring one plan to the gate, and do not write production code yourself.',
-      `Every build runs the core stages in order: ${stageLine()}.`,
+      `Every build runs ${which} in order: ${stages}.`,
     ].join('\n'),
   );
 }
