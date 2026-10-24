@@ -102,6 +102,25 @@ test('wrapper: valid profile prints banner JSON with the client and all 8 stages
   assert.ok(out.hookSpecificOutput.additionalContext.split('\n').length <= 8);
 });
 
+test('wrapper: a profile with add-ons shows the resolved stage list', () => {
+  const text = `${fs.readFileSync(fixture('minimal'), 'utf8')}stages:\n  addons: [dark_launch, dev_test, review_queue]\n`;
+  const r = runWrapper({ env: { CLAUDE_PROJECT_DIR: repo({ text }) } });
+  assert.equal(r.code, 0);
+  assert.equal(r.stderr, '');
+  const out = parsed(r.stdout);
+  const line = '1 Intake → 2 Spec → 3 Plan approval → 4 Build → 5 Verify → 6 Review → 7 Batch review queue'
+    + ' → 8 Dev environment test → 9 Ship → 10 Dark launch + flag flip → 11 Retro';
+  assert.equal(out.systemMessage, `AP Labs Orchestrator on deck for Tiny. Stages: ${line}`);
+  assert.match(out.hookSpecificOutput.additionalContext, new RegExp(`add-on stages in order: ${line.replace(/\+/g, '\\+')}\\.$`));
+});
+
+test('sessionStart: a core-only profile shows exactly the 8 core stages', () => {
+  const out = sessionStart(repo({ from: 'minimal' }));
+  assert.equal(out.systemMessage,
+    'AP Labs Orchestrator on deck for Tiny. Stages: 1 Intake → 2 Spec → 3 Plan approval → 4 Build → 5 Verify → 6 Review → 7 Ship → 8 Retro');
+  assert.match(out.hookSpecificOutput.additionalContext, /Every build runs the core stages in order: 1 Intake .* 8 Retro\.$/);
+});
+
 test('wrapper: Codex form finds the repo from the cwd in the hook input', () => {
   const dir = repo({ from: 'minimal' });
   const sub = path.join(dir, 'src');
@@ -162,10 +181,10 @@ test('wrapper: fails open when node is not on PATH', () => {
   assert.match(r.stderr, /^aplabs-hooks: node not found/);
 });
 
-test('.claude/settings.json holds only the SessionStart hook, and is silent here', () => {
+test('.claude/settings.json holds the SessionStart hook, and is silent here', () => {
   const settings = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude/settings.json'), 'utf8'));
   assert.deepEqual(Object.keys(settings), ['hooks']);
-  assert.deepEqual(Object.keys(settings.hooks), ['SessionStart']);
+  assert.equal(settings.hooks.SessionStart.length, 1);
   const [hook] = settings.hooks.SessionStart[0].hooks;
   assert.match(hook.command, /\$CLAUDE_PROJECT_DIR\/kit\/hooks\/session-start\.sh/);
   // This repo has no profile, so the real command must print nothing.
@@ -177,7 +196,7 @@ test('.claude/settings.json holds only the SessionStart hook, and is silent here
 
 test('.codex/hooks.json runs the same wrapper on SessionStart, and is silent here', () => {
   const hooks = JSON.parse(fs.readFileSync(path.join(ROOT, '.codex/hooks.json'), 'utf8'));
-  assert.deepEqual(Object.keys(hooks.hooks), ['SessionStart']);
+  assert.equal(hooks.hooks.SessionStart.length, 1);
   const [hook] = hooks.hooks.SessionStart[0].hooks;
   assert.equal(hook.type, 'command');
   assert.match(hook.command, /kit\/hooks\/session-start\.sh/);
