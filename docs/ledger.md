@@ -38,7 +38,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #30 | 2026-10-24 | 2.6 | infra | — | Client profiles can switch on add-on stages that slot between the 8 core stages. | DEP-006 |
 | #32 | 2026-10-24 | — | fix | — | Reviewers end with a `VERDICT:` line the parser trusts first, so Codex paraphrases no longer force fallbacks. | — |
 | #33 | 2026-10-24 | 5.1 | infra | — | Adds this ledger and a CI check that every PR adds a ledger row unless it is docs-only. | DEP-004 |
-| pending | 2026-10-24 | 2.5 | infra | — | Risky (T2/T3) and onboarding work waits for the human to type `approve plan <slug>`; a hook records it for every worktree. | DEP-007 |
+| #35 | 2026-10-24 | 2.5 | infra | — | Risky (T2/T3) and onboarding work waits for the human to type `approve plan <slug>`; a hook records it for every worktree. | DEP-007 |
 
 ## Deferrals (DEP)
 
