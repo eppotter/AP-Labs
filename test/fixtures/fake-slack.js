@@ -10,9 +10,11 @@
 //       command, with ack and respond.
 //   dispatchAction(action_id, { user })          every action listener whose
 //       pattern matches, with ack and respond.
+//   dispatchEvent(type, event, { body })         every listener for that event
+//       type (no ack). body carries event_id for de-duplication tests.
 //
-// Replies land in this.said (say and postEphemeral) and this.responded
-// (respond); this.acks counts acks. users.info answers from this.users.
+// Replies land in this.said (say and postEphemeral), this.responded
+// (respond) and this.posted (chat.postMessage); this.acks counts acks. users.info answers from this.users.
 
 class FakeSlackApp {
   constructor(options) {
@@ -20,15 +22,18 @@ class FakeSlackApp {
     this.messageListeners = [];
     this.commandListeners = new Map();
     this.actionListeners = [];
+    this.eventListeners = new Map();
     this.errorHandler = null;
     this.started = false;
     this.said = [];
     this.responded = [];
+    this.posted = [];
     this.acks = 0;
     this.users = {};
     this.client = {
       chat: {
         postEphemeral: async (args) => { this.said.push({ ephemeral: true, ...args }); return { ok: true }; },
+        postMessage: async (args) => { this.posted.push(args); return { ok: true }; },
       },
       users: {
         info: async ({ user }) => {
@@ -44,6 +49,11 @@ class FakeSlackApp {
   command(name, fn) { this.commandListeners.set(name, fn); }
 
   action(pattern, fn) { this.actionListeners.push({ pattern, fn }); }
+
+  event(type, fn) {
+    if (!this.eventListeners.has(type)) this.eventListeners.set(type, []);
+    this.eventListeners.get(type).push(fn);
+  }
 
   error(fn) { this.errorHandler = fn; }
 
@@ -84,6 +94,14 @@ class FakeSlackApp {
       await fn({ action, body, ack: this.ack(), respond: this.respond(), client: this.client });
     }
     return matching.length;
+  }
+
+  // Returns how many listeners ran.
+  async dispatchEvent(type, event, { body = {} } = {}) {
+    const fns = this.eventListeners.get(type) || [];
+    const ev = { type, ...event };
+    for (const fn of fns) await fn({ event: ev, body: { type: 'event_callback', event: ev, ...body }, client: this.client });
+    return fns.length;
   }
 }
 

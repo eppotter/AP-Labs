@@ -37,10 +37,13 @@ test('/brightside shows a private menu with the hello-world entry', async () => 
   await app.dispatchCommand('/brightside', { user_id: 'U1' });
   const [menu] = app.responded;
   assert.equal(menu.response_type, 'ephemeral');
-  const entries = menu.blocks.filter((b) => b.accessory);
+  const entries = menu.blocks.filter((b) => b.accessory && /^entry:/.test(b.block_id));
   assert.equal(entries.length, 1);
   assert.equal(entries[0].accessory.action_id, 'hello-world:open');
   assert.match(entries[0].text.text, /\*Say hello\*\nCheck the bot knows who you are/);
+  // First visit: Brightside's welcome from its hub file; the menu ends with Help.
+  assert.match(menu.blocks.find((b) => b.block_id === 'welcome').text.text, /^Welcome to the Brightside bot\./);
+  assert.equal(menu.blocks.at(-1).accessory.action_id, 'brightside:help');
 });
 
 test('Say hello replies privately with the person\'s name and the client\'s name', async () => {

@@ -47,7 +47,9 @@ function setup() {
   return { app, log, ran };
 }
 
-const buttons = (msg) => msg.blocks.filter((b) => b.accessory).map((b) => b.accessory.action_id.replace(/:open$/, ''));
+// The Open buttons' module ids, in menu order (Help is tested in runtime-welcome).
+const buttons = (msg) => msg.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id))
+  .map((b) => b.accessory.action_id.replace(/:open$/, ''));
 const notice = (msg) => msg.blocks.find((b) => b.type === 'context');
 
 async function menuFor(slackId) {
@@ -112,7 +114,7 @@ test('deny beats allow: a granted key the user also denies is hidden and refused
 test('deny beats open access for a known person', async () => {
   const { app, menu, ran } = await menuFor('UCY');
   assert.deepEqual(buttons(menu), []);
-  assert.match(menu.blocks[1].text.text, /Nothing is available/);
+  assert.ok(menu.blocks.some((b) => b.type === 'section' && /Nothing is available/.test(b.text.text)));
   await app.dispatchAction('open:open', { user: { id: 'UCY' } });
   assert.deepEqual(ran, []);
   assert.equal(app.responded[1].text, `You don't have access to Open; ask ${ADMIN}.`);

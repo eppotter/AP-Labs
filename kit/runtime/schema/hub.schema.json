@@ -15,7 +15,9 @@
     },
     "name": { "description": "Shown as the menu heading.", "type": "string", "$ref": "#/$defs/text", "maxLength": 80 },
     "description": { "description": "The slash command's description in Slack.", "type": "string", "$ref": "#/$defs/text", "maxLength": 100 },
-    "usage_hint": { "description": "Optional hint shown after the command in Slack.", "type": "string", "$ref": "#/$defs/text", "maxLength": 100 }
+    "usage_hint": { "description": "Optional hint shown after the command in Slack.", "type": "string", "$ref": "#/$defs/text", "maxLength": 100 },
+    "welcome": { "description": "Optional one-paragraph welcome shown above the menu the first time a person opens the hub. Default: a generic welcome naming the hub.", "type": "string", "$ref": "#/$defs/text", "maxLength": 600, "pattern": "^[^\\n]*$" },
+    "feedback": { "description": "Optional line in the hub's Help saying how to give feedback. Default: tell the profile's admins.", "type": "string", "$ref": "#/$defs/text", "maxLength": 300 }
   },
   "$defs": {
     "slug": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 },
