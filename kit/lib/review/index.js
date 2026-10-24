@@ -33,7 +33,7 @@ function promptFor(state, { diffOnStdin = false } = {}) {
 This is round ${state.rounds.length + 1} of ${ROUND_BUDGET}. Report [P1] findings only; non-blocking items go to a follow-up issue.
 Earlier rounds reviewed up to ${previous.head} and reported:
 ${seen.join('\n') || '(nothing)'}
-Do not re-raise those. Check that the P1s were fixed, then look at the commits after ${previous.head} and how they interact with the rest of the diff.`;
+Do not re-raise the [P2]s. For each earlier [P1], check whether it is fixed: if it is still present, report it again as a [P1] line (an earlier P1 you do not re-report counts as fixed). Then look at the commits after ${previous.head} and how they interact with the rest of the diff.`;
 }
 
 // A finding's path is made repo-relative: an absolute repo-root prefix and any

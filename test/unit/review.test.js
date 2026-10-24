@@ -94,7 +94,8 @@ test('later rounds ask for P1 only, list earlier findings and point past the las
   assert.match(prompt, /Report \[P1\] findings only/);
   assert.match(prompt, /- \[P1\] drops rows — a\.js/);
   assert.match(prompt, /- \[P2\] naming — b\.js/);
-  assert.match(prompt, /Do not re-raise those/);
+  assert.match(prompt, /Do not re-raise the \[P2\]s/);
+  assert.match(prompt, /if it is still present, report it again as a \[P1\] line/);
   assert.match(prompt, new RegExp(`commits after ${SHA_B}`));
 });
 

@@ -233,7 +233,7 @@ test('rounds 2 and 3 ask for P1 only, list earlier findings, update the body in 
   assert.match(prompt2, /round 2 of 3\. Report \[P1\] findings only/);
   assert.match(prompt2, /- \[P1\] Loses rows on retry — kit\/a\.js/);
   assert.match(prompt2, /- \[P2\] Rename var — kit\/b\.js/);
-  assert.match(prompt2, /Do not re-raise those/);
+  assert.match(prompt2, /Do not re-raise the \[P2\]s/);
   assert.match(prompt2, new RegExp(`commits after ${h1}`));
   assert.match(r2.out, /Same class twice: kit\/a\.js/);
   assert.equal(t.body(), `What this does: tests.\nKind: infra\n\nReview rounds: 2/3\nReviewed head: ${h2}\n\nReview follow-up: #42\n\n` +
