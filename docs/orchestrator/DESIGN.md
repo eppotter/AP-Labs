@@ -38,6 +38,8 @@ Scope and order of work: [ADR 0002](../adr/0002-engagement-starter-template.md),
 
 **Removed:** Varsity's Leadership Panel (seven business-unit personas). It was rarely used.
 
+**Roster:** each agent above except the Orchestrator is a file in [`.claude/agents/`](../../.claude/agents/). `test/unit/agents.test.js` pins the roster and every agent's tool list, so changing either is a design change.
+
 ## 3. Two kinds of build (decided)
 
 **Regular build:** a feature, fix or change. The Onboarder is not involved. The specialists load the client's files.
