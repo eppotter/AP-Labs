@@ -10,6 +10,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+
+// A fresh worktree has no node_modules, and the bare module-not-found error
+// from kit/fixture/build hides the fix. Fail loudly with it; never skip.
+try {
+  require.resolve('@duckdb/node-api');
+} catch {
+  throw new Error('fixture-build tests: @duckdb/node-api is not installed. Run npm ci in this worktree, then rerun npm test.');
+}
+
 const { build, readRows, main, parseArgs, defaultOut, schemaTables, FixtureBuildError } = require('../../kit/fixture/build');
 
 const REPO = path.join(__dirname, '..', '..');
