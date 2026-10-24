@@ -276,3 +276,24 @@ test('email: a batch of 100 contacts reads the outbox a fixed number of times, n
   assert.equal(res.added, 100);
   assert.ok(reads.length <= 3, `read the outbox ${reads.length} times`);
 });
+
+test('email: instances on one outbox share in-flight writes, so a concurrent reused key with another input is refused (DEP-012)', async () => {
+  const file = freshPath();
+  const a = email({ file });
+  const b = email({ file });
+  const results = await Promise.allSettled([
+    a.instance.write.createList({ name: 'one', idempotencyKey: 'same', ...live }),
+    b.instance.write.createList({ name: 'two', idempotencyKey: 'same', ...live }),
+  ]);
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1, 'one write applied');
+  const refused = results.find((r) => r.status === 'rejected');
+  assert.ok(refused && refused.reason instanceof IdempotencyConflict, `the other is an IdempotencyConflict, got ${refused && refused.reason}`);
+  assert.equal(a.lines().filter((l) => l.type === 'list').length, 1, 'one list in the outbox');
+});
+
+test('email: the outbox records the contract slot with the connector id (DEP-012)', async () => {
+  const { instance, lines } = email();
+  await instance.write.createList({ name: 'l', idempotencyKey: 'K', ...live });
+  const done = lines().find((l) => l.type === 'done');
+  assert.deepEqual({ slot: done.slot, operation: done.operation, key: done.key }, { slot: 'email\u0000createList\u0000K', operation: 'createList', key: 'K' });
+});

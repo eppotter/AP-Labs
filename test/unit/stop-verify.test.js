@@ -50,6 +50,9 @@ function repo({ verify, governed = true, text } = {}) {
   fs.writeFileSync(path.join(dir, 'README.md'), 'fixture\n');
   if (governed) {
     fs.mkdirSync(path.join(dir, '.aplabs'));
+    // A governed repo has an app dir, or the built-in write-path check fails.
+    fs.mkdirSync(path.join(dir, 'app'));
+    fs.writeFileSync(path.join(dir, 'app', '.keep'), '');
     const profile = { schema_version: 1, client: { id: 'tiny', name: 'Tiny' }, users: [{ id: 'solo', name: 'Solo', role: 'admin' }] };
     if (verify) profile.verify = verify;
     fs.writeFileSync(path.join(dir, '.aplabs/profile.yml'), text ?? YAML.stringify(profile));
@@ -149,6 +152,19 @@ test('wrapper: invalid profile or zero checks is silent', () => {
   silent(runWrapper(none));
 });
 
+test('wrapper: the built-in engine:write-path check runs even with zero checks, and blocks a live write (DEP-012)', () => {
+  for (const checks of [[], [PASS]]) {
+    const dir = repo({ verify: { checks } });
+    fs.mkdirSync(path.join(dir, 'app/modules/m'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'app/modules/m/handler.js'), "await crm.write.put({ idempotencyKey: 'k', dryRun: false });\n");
+    const r = runWrapper(dir);
+    assert.equal(r.code, 0);
+    assert.equal(r.out.decision, 'block', `checks: ${checks.length}`);
+    assert.match(r.out.reason, /^Verify failed: engine:write-path\./);
+    assert.match(r.out.reason, /app\/modules\/m\/handler\.js:1: passes dryRun other than true/);
+  }
+});
+
 test('wrapper: clean tree is silent', () => {
   silent(runWrapper(repo({ verify: { checks: [FAIL] } })));
 });
@@ -160,7 +176,7 @@ test('wrapper: dirty tree + passing check prints one pass line', () => {
   assert.equal(r.code, 0);
   assert.equal(r.stderr, '');
   assert.deepEqual(Object.keys(r.out), ['systemMessage']);
-  assert.match(r.out.systemMessage, /^AP Labs verify: all 1 check passed \(\d+\.\ds\)\.$/);
+  assert.match(r.out.systemMessage, /^AP Labs verify: all 2 checks passed \(\d+\.\ds\)\.$/, 'the check and the built-in engine:write-path');
 });
 
 test('wrapper: a failing check blocks with its id and output tail', () => {
@@ -182,7 +198,7 @@ test('wrapper: skip and timeout are reported, never blocked', () => {
   const r = runWrapper(dir);
   assert.equal(r.code, 0);
   assert.equal(r.out.decision, undefined);
-  assert.match(r.out.systemMessage, /1 of 3 checks passed; SKIP gone \(spawn ENOENT\); TIMEOUT slow after 1s\. Not a pass, not blocked\./);
+  assert.match(r.out.systemMessage, /2 of 4 checks passed; SKIP gone \(spawn ENOENT\); TIMEOUT slow after 1s\. Not a pass, not blocked\./);
 });
 
 test('wrapper: a spent hook budget is reported, never blocked', () => {
@@ -218,7 +234,7 @@ test('wrapper: a commit since session start counts as a change; no commit does n
   fs.writeFileSync(path.join(dir, 'y'), 'y');
   git(dir, 'add', 'y');
   git(dir, 'commit', '-q', '-m', 'y');
-  assert.match(runWrapper(dir).out.systemMessage, /all 1 check passed/);
+  assert.match(runWrapper(dir).out.systemMessage, /all 2 checks passed/);
   // A different session, with no record, falls back to "ahead of origin/main":
   // there is no origin/main here, so a clean tree is silent.
   silent(runWrapper(dir, { input: { session_id: 'other' } }));
@@ -231,7 +247,7 @@ test('wrapper: without a session record, commits not on origin/main count', () =
   fs.writeFileSync(path.join(dir, 'z'), 'z');
   git(dir, 'add', 'z');
   git(dir, 'commit', '-q', '-m', 'z');
-  assert.match(runWrapper(dir, { input: { session_id: 'none' } }).out.systemMessage, /all 1 check passed/);
+  assert.match(runWrapper(dir, { input: { session_id: 'none' } }).out.systemMessage, /all 2 checks passed/);
 });
 
 test('wrapper: fails open when the Node entry throws, even after partial output', () => {

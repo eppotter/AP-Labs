@@ -16,6 +16,14 @@
 // outcomes are recorded in <git-dir>/aplabs/verify/last.json for the session
 // banner (kit/lib/verify/last).
 //
+// After the profile's checks and truths, the engine's built-in checks
+// (kit/verify/builtins.js) run in process, whatever the profile says (a
+// profile can neither drop nor replace them): engine:write-path (kit/verify/write-path.js, DEP-012), which fails
+// app code that writes live outside the approval-write archetype, scanning
+// from the repo root (cwd) with APLABS_APP_DIR from this process's env. They
+// report like any check. A profile with no checks of its own still prints
+// SKIPPED (0 checks) and is never ok, even when the built-ins pass.
+//
 // No profile is a SKIP (exit 0, 1 under --strict) so an ungoverned repo's CI
 // stays green. Exit codes: 0 no check failed, 1 a check failed, 2 usage or
 // profile error.
@@ -25,6 +33,7 @@ const { USAGE, parseArgs, checkEnv, tail, checkLine, summarize, exitCode } = req
 const { runChecks, installSignalCleanup } = require('../lib/verify/runner');
 const { truthChecksFor } = require('../lib/truths');
 const { writeLastResult } = require('../lib/verify/last');
+const { runBuiltins } = require('./builtins');
 
 const emit = (summary) => console.log(JSON.stringify(summary));
 
@@ -64,21 +73,26 @@ async function main(argv, env = process.env, cwd = process.cwd()) {
   const envAllow = profile.verify.env_allow;
   if (!checks.length) console.log('verify: SKIPPED (0 checks)');
   installSignalCleanup();
-  const { results } = await runChecks(checks, checkEnv(env, envAllow, profileFile), cwd, {
-    onResult: (result) => {
-      console.log(checkLine(result));
-      if (result.outcome === 'fail' || result.outcome === 'timeout') {
-        for (const [name, text] of [['stdout', result.stdout], ['stderr', result.stderr]]) {
-          const t = tail(text);
-          if (t) console.error(`--- ${result.id} ${name} (last lines) ---\n${t}`);
-        }
+  const onResult = (result) => {
+    console.log(checkLine(result));
+    if (result.outcome === 'fail' || result.outcome === 'timeout') {
+      for (const [name, text] of [['stdout', result.stdout], ['stderr', result.stderr]]) {
+        const t = tail(text);
+        if (t) console.error(`--- ${result.id} ${name} (last lines) ---\n${t}`);
       }
-    },
-  });
+    }
+  };
+  const { results } = await runChecks(checks, checkEnv(env, envAllow, profileFile), cwd, { onResult });
+  for (const result of runBuiltins(cwd, env)) {
+    onResult(result);
+    results.push(result);
+  }
 
   // For the session banner (issue #45): best effort, never fails the run.
-  if (checks.length) writeLastResult(cwd, results, 'verify');
+  writeLastResult(cwd, results, 'verify');
   const summary = summarize(results);
+  // Zero checks of the profile's own is never a pass (the built-ins alone are not verification).
+  if (!checks.length) summary.ok = false;
   emit(summary);
   return exitCode(summary, args);
 }

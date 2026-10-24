@@ -509,3 +509,62 @@ test('the suite needs a bulk sample for every write that takes a list, so 500 it
   // A connector whose writes take no list needs no bulk sample.
   assert.deepEqual(await failingCases(defineConnector(spec()), { read, write: { put: (idempotencyKey) => ({ v: 1, idempotencyKey }) } }), []);
 });
+
+// DEP-012: a handler that creates its own instance must not get a fresh
+// idempotency ledger, so every create() of one connector in a process shares one.
+test('two instances of one connector share idempotency state: a repeat key from the second calls nothing (DEP-012)', async () => {
+  let calls = 0;
+  const connector = defineConnector(spec());
+  const make = () => connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } });
+  const [a, b] = [make(), make()];
+  assert.deepEqual(await a.write.put({ idempotencyKey: 'shared', v: 1, dryRun: false }), { put: true });
+  assert.deepEqual(await b.write.put({ idempotencyKey: 'shared', v: 1, dryRun: false }), { put: true });
+  assert.equal(calls, 1, 'the second instance saw the first instance\'s key');
+  await assert.rejects(b.write.put({ idempotencyKey: 'shared', v: 2, dryRun: false }), IdempotencyConflict, 'the input fingerprint is shared too');
+  assert.equal(calls, 1);
+  await b.write.put({ idempotencyKey: 'other', v: 1, dryRun: false });
+  assert.equal(calls, 2, 'a new key still writes');
+});
+
+test('two instances of one connector apply a concurrent repeat key once, with the default or an injected store (DEP-012)', async () => {
+  for (const injected of [false, true]) {
+    let calls = 0;
+    const m = new Map();
+    const idempotency = injected ? { get: async (k) => m.get(k), set: async (k, v) => { m.set(k, v); } } : undefined;
+    const connector = defineConnector(spec({
+      write: { put: { plan: (i) => i, apply: async (i, ctx) => ctx.request(async () => { await new Promise((r) => setTimeout(r, 10)); return { put: true }; }) } },
+    }));
+    const make = () => connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, onRequest: () => { calls += 1; } });
+    const both = await Promise.all([make(), make()].map((c) => c.write.put({ idempotencyKey: 'race', dryRun: false })));
+    assert.deepEqual(both, [{ put: true }, { put: true }]);
+    assert.equal(calls, 1, `injected store ${injected}: the second instance joined the first`);
+  }
+});
+
+test('a dry run on one instance does not use up the key for another (DEP-012)', async () => {
+  let calls = 0;
+  const connector = defineConnector(spec());
+  const make = () => connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } });
+  await make().write.put({ idempotencyKey: 'dry-then-live' });
+  await make().write.put({ idempotencyKey: 'dry-then-live', dryRun: false });
+  assert.equal(calls, 1);
+});
+
+test('two different connectors keep their own idempotency state (DEP-012)', async () => {
+  let calls = 0;
+  const opts = { log: quietLog(), env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } };
+  await defineConnector(spec()).create(opts).write.put({ idempotencyKey: 'mine', dryRun: false });
+  await defineConnector(spec({ id: 'other' })).create(opts).write.put({ idempotencyKey: 'mine', dryRun: false });
+  assert.equal(calls, 2);
+});
+
+test('two connectors sharing one injected store keep their keys apart: the slot names the connector (DEP-012)', async () => {
+  const m = new Map();
+  const idempotency = { get: (k) => m.get(k), set: (k, v) => { m.set(k, v); } };
+  let calls = 0;
+  const opts = { log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, onRequest: () => { calls += 1; } };
+  await defineConnector(spec()).create(opts).write.put({ idempotencyKey: 'same', dryRun: false });
+  await defineConnector(spec({ id: 'other' })).create(opts).write.put({ idempotencyKey: 'same', dryRun: false });
+  assert.equal(calls, 2, 'the second connector wrote rather than reuse the first one\'s result');
+  assert.deepEqual([...m.keys()].sort(), ['demo\u0000put\u0000same', 'other\u0000put\u0000same']);
+});

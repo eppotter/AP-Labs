@@ -27,6 +27,8 @@ function repo(verify) {
   tmps.push(dir);
   if (verify !== undefined) {
     fs.mkdirSync(path.join(dir, '.aplabs'));
+    // A governed repo has an app dir, or the built-in write-path check fails.
+    fs.mkdirSync(path.join(dir, 'app'));
     const profile = { schema_version: 1, client: { id: 'tiny', name: 'Tiny' }, users: [{ id: 'solo', name: 'Solo', role: 'admin' }] };
     if (verify) profile.verify = verify;
     fs.writeFileSync(path.join(dir, '.aplabs', 'profile.yml'), YAML.stringify(profile));
@@ -136,8 +138,9 @@ test('cli: runs every check in order and reports each outcome', () => {
   assert.match(r.lines[2], /^SKIP gone \d+\.\d\ds \(spawn ENOENT\)$/);
   assert.match(r.lines[3], /^TIMEOUT slow \d+\.\d\ds$/);
   assert.match(r.stderr, /--- bad stdout \(last lines\) ---\nboom/);
-  assert.deepEqual(r.summary.results.map((x) => x.outcome), ['pass', 'fail', 'skip', 'timeout']);
-  assert.deepEqual([r.summary.ok, r.summary.passed, r.summary.failed, r.summary.skipped, r.summary.timed_out], [false, 1, 1, 1, 1]);
+  assert.deepEqual(r.summary.results.map((x) => x.outcome), ['pass', 'fail', 'skip', 'timeout', 'pass']);
+  assert.match(r.lines[4], /^PASS engine:write-path \d+\.\d\ds$/, 'the built-in runs last');
+  assert.deepEqual([r.summary.ok, r.summary.passed, r.summary.failed, r.summary.skipped, r.summary.timed_out], [false, 2, 1, 1, 1]);
   assert.equal(r.summary.results[2].reason, 'spawn ENOENT');
   assert.ok(r.summary.results[3].seconds < 3, 'timeout killed the check promptly');
 });
@@ -146,7 +149,7 @@ test('cli: all checks passing is ok, exit 0', () => {
   const r = run(repo({ checks: [PASS, { ...PASS, id: 'ok-too' }] }), ['--strict']);
   assert.equal(r.code, 0);
   assert.equal(r.summary.ok, true);
-  assert.equal(r.summary.passed, 2);
+  assert.equal(r.summary.passed, 3, 'two checks plus the built-in engine:write-path');
 });
 
 test('cli: skip and timeout never pass; strict turns them into exit 1', () => {
@@ -248,4 +251,50 @@ test('CI: the Verify step runs --strict in a governed fork, plain in the templat
   };
   assert.equal(runStep(repo({ checks: [PASS] })), 'npm run verify -- --strict');
   assert.equal(runStep(repo()), 'npm run verify');
+});
+
+// DEP-012: the engine's built-in write-path check runs in every verify,
+// whatever the profile says, and reports like any check.
+const LIVE_WRITE = "await crm.write.put({ idempotencyKey: 'k', dryRun: false });\n";
+
+test('cli: the built-in engine:write-path check fails a live write in app code, naming the file', () => {
+  const dir = repo({ checks: [PASS] });
+  fs.mkdirSync(path.join(dir, 'app/modules/m'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'app/modules/m/handler.js'), LIVE_WRITE);
+  const r = run(dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stdout, /^FAIL engine:write-path \d+\.\d\ds \(\d+ problem\(s\); live writes are allowed only in /m);
+  assert.match(r.stderr, /--- engine:write-path stderr \(last lines\) ---\napp\/modules\/m\/handler\.js:1: passes dryRun other than true/);
+  assert.deepEqual(r.summary.results.map((x) => [x.id, x.outcome]), [['ok', 'pass'], ['engine:write-path', 'fail']]);
+});
+
+test('cli: the built-in runs even when the profile declares no checks, and fails a governed repo with no app dir', () => {
+  const dir = repo({ checks: [] });
+  const fine = run(dir);
+  assert.match(fine.stdout, /^verify: SKIPPED \(0 checks\)$/m);
+  assert.deepEqual(fine.summary.results.map((x) => [x.id, x.outcome]), [['engine:write-path', 'pass']]);
+  assert.equal(fine.summary.ok, false, 'the built-in alone is not a pass');
+  fs.rmSync(path.join(dir, 'app'), { recursive: true });
+  const r = run(dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /no app dir found/);
+  const missing = run(repo({ checks: [PASS] }), [], { APLABS_APP_DIR: path.join(dir, 'nope') });
+  assert.equal(missing.code, 1);
+  assert.match(missing.stderr, /APLABS_APP_DIR .* is not a directory/);
+});
+
+test('cli: in the template layout the built-in scans the app dirs package.json lists', () => {
+  const dir = repo();
+  const profileFile = path.join(dir, 'profiles/acme/profile.yml');
+  fs.mkdirSync(path.dirname(profileFile), { recursive: true });
+  fs.writeFileSync(profileFile, YAML.stringify({ schema_version: 1, client: { id: 'acme', name: 'Acme' }, users: [{ id: 'solo', name: 'Solo', role: 'admin' }], verify: { checks: [PASS] } }));
+  fs.mkdirSync(path.join(dir, 'clients/acme/app/modules/m'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'clients/acme/app/modules/m/handler.js'), LIVE_WRITE);
+  assert.equal(run(dir, [], { APLABS_PROFILE: profileFile }).code, 0, 'not listed: not scanned');
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', aplabs: { appDirs: ['clients/*/app'] } }));
+  const r = run(dir, [], { APLABS_PROFILE: profileFile });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /clients\/acme\/app\/modules\/m\/handler\.js:1/);
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', aplabs: { appDirs: ['../outside'] } }));
+  assert.match(run(dir, [], { APLABS_PROFILE: profileFile }).stderr, /aplabs\.appDirs has "\.\.\/outside"/, 'a malformed list fails closed');
 });

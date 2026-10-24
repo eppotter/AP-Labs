@@ -36,6 +36,7 @@
 // rather than count them as done. A call that succeeds returns { listId, added, alreadyAdded }.
 
 const crypto = require('node:crypto');
+const path = require('node:path');
 const { defineConnector } = require('#sdk');
 const { openOutbox, outboxPath } = require('./outbox');
 
@@ -162,11 +163,25 @@ function declare(outbox) {
 
 const email = declare(null);
 
+// One outbox and one declared connector per outbox file, for the process: every
+// create() on a file shares its idempotency store object, and with it the
+// contract's in-flight writes, so two instances racing one key apply once and
+// a reused key with another input is refused (DEP-012).
+const BY_FILE = new Map();
+function forFile(file) {
+  const resolved = path.resolve(file);
+  if (!BY_FILE.has(resolved)) {
+    const outbox = openOutbox(resolved);
+    BY_FILE.set(resolved, { outbox, connector: declare(outbox) });
+  }
+  return BY_FILE.get(resolved);
+}
+
 // deps as the contract's create(deps), plus outboxPath (default outboxPath(env)).
 // The outbox is the idempotency store unless deps.idempotency is given.
 function create(deps = {}) {
-  const outbox = openOutbox(deps.outboxPath || outboxPath(deps.env || process.env));
-  return declare(outbox).create({ ...deps, idempotency: deps.idempotency || outbox.ledger });
+  const { outbox, connector } = forFile(deps.outboxPath || outboxPath(deps.env || process.env));
+  return connector.create({ ...deps, idempotency: deps.idempotency || outbox.ledger });
 }
 
 module.exports = Object.freeze({ ...email, create, FIELDS });

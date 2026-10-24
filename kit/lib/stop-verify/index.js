@@ -8,8 +8,11 @@
 //   - APLABS_STOP_VERIFY is not "0" (per-person opt-out)
 //   - the hook input does not say stop_hook_active (never loop)
 //   - the repo is governed and its profile is valid
-//   - there is at least one check: the profile's verify checks plus the known
-//     truths in .aplabs/context/data.md (Story 4.2)
+//   - (always) the engine's built-in checks (kit/verify/builtins.js, such as
+//     engine:write-path) run after the profile's verify checks and the known
+//     truths in .aplabs/context/data.md (Story 4.2). With no check of the
+//     profile's own, only a failing built-in is reported (it blocks); a
+//     passing one alone prints nothing
 //   - the session changed files: the tree is dirty, or HEAD moved since the
 //     session started (recorded by SessionStart), or, when nothing was
 //     recorded, HEAD has commits not on origin/main
@@ -25,6 +28,7 @@ const { runChecks } = require('../verify/runner');
 const { truthChecksFor } = require('../truths');
 const { git, readSessionHead } = require('../session/head');
 const { writeLastResult } = require('../verify/last');
+const { runBuiltins } = require('../../verify/builtins');
 
 // The whole Stop run is capped here, below the 660s registered in
 // .claude/settings.json, so the hook always reports instead of being killed.
@@ -132,14 +136,18 @@ async function stopVerify(input, { startDir, env = process.env } = {}) {
   // The same checks as `npm run verify`: the profile's, then the known truths.
   const checks = [...profile.verify.checks, ...truthChecksFor(file)];
   const envAllow = profile.verify.env_allow;
-  if (!checks.length) return null;
 
   const root = git(startDir, ['rev-parse', '--show-toplevel']);
   if (!root || !changedFiles(root, input && input.session_id)) return null;
 
   const budget = budgetSeconds(env);
-  const { results, notRun } = await runChecks(checks, checkEnv(env, envAllow, file), root, { budgetMs: budget * 1000 });
+  const { results, notRun } = checks.length
+    ? await runChecks(checks, checkEnv(env, envAllow, file), root, { budgetMs: budget * 1000 })
+    : { results: [], notRun: [] };
+  // The built-ins run even when the budget is spent: they are quick and in process.
+  results.push(...runBuiltins(root, env));
   writeLastResult(root, results, 'stop-hook');
+  if (!checks.length && results.every((r) => r.outcome === 'pass')) return null;
   return report(results, notRun, { budget });
 }
 
