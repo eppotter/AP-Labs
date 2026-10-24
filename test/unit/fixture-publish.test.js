@@ -252,6 +252,45 @@ test('publish: refuses with no build, no checks, or a stale build', async (t) =>
   assert.match(noChecks.stderr, /no checks/);
 });
 
+// Issue #85: no profile means no forbidden columns are known, so publish
+// refuses with exit 2, exactly like validate and query, before any check runs.
+test('publish: no profile fails closed with exit 2, before any check, token read or connection', async (t) => {
+  const f = await fixture(t);
+  let keychainReads = 0;
+  const r = await runMain(publish, [f.dir, '--db', f.db], {
+    env: withToken, cwd: f.root, readKeychain: () => { keychainReads += 1; return null; },
+  });
+  assert.equal(r.code, 2, r.all);
+  assert.match(r.stderr, /fixture:publish: no profile \(pass --profile, set APLABS_PROFILE or add \.aplabs\/profile\.yml\); nothing was published/);
+  assert.doesNotMatch(r.all, /PASS|FAIL/);
+  assert.equal(keychainReads, 0);
+});
+
+// Issue #87: --db can name any file. Publish uploads only a build of these
+// seeds: a file whose stamp is genuine for other data, or that has no valid
+// stamp, is refused before the token is read.
+test('publish: refuses a file that is not the build of these seeds, even when validly stamped (issue #87)', async (t) => {
+  const f = await fixture(t);
+  const other = path.join(f.root, 'other', 'fixture');
+  fs.cpSync(f.dir, other, { recursive: true });
+  const shops = path.join(other, 'seeds', 'shops.csv');
+  fs.writeFileSync(shops, fs.readFileSync(shops, 'utf8').replace('00402', '98101'));
+  const foreign = path.join(f.root, 'other.duckdb');
+  await build({ fixtureDir: other, out: foreign });
+  let keychainReads = 0;
+  const opts = { env: withToken, readKeychain: () => { keychainReads += 1; return null; } };
+  const r = await pub({ ...f, db: foreign }, [], opts);
+  assert.equal(r.code, 1, r.all);
+  assert.match(r.stderr, /is not the npm run fixture:build output of these seeds.*nothing was published/s);
+
+  const unstamped = path.join(f.root, 'unstamped.duckdb');
+  await build({ fixtureDir: f.dir, out: unstamped, stamp: false });
+  const u = await pub({ ...f, db: unstamped }, [], opts);
+  assert.equal(u.code, 1, u.all);
+  assert.match(u.stderr, /has no valid fixture:build stamp.*nothing was published/s);
+  assert.equal(keychainReads, 0);
+});
+
 test('publish: a missing token exits 1 with how to configure it, after the Keychain is consulted', async (t) => {
   const f = await fixture(t);
   const asked = [];
@@ -304,19 +343,56 @@ test('publish: uploads to a staging database, records the version, checks it, th
   assert.match(r.stdout, new RegExp(`published acme_fixture: version ${snap.version.replace('+', '\\+')}, 3 tables, 9 rows`));
 });
 
-test('publish: replaces an existing shared database whole', async (t) => {
+// A database this tool published: its tables plus fixture_publish.
+const published = (tables) => ({
+  tables: new Map([...tables, ['fixture_publish', 1]]), publish: new Map([['fixture_version', 'old']]),
+});
+
+test('publish: replaces a database it published before, whole', async (t) => {
   const f = await fixture(t);
   const md = fakeMotherDuck();
-  md.dbs.set('acme_fixture', { tables: new Map([['old_table', 99]]), publish: null });
+  md.dbs.set('acme_fixture', published([['old_table', 99]]));
+  // A staging copy left by an earlier failed drop is cleared first.
+  md.dbs.set('acme_fixture__publishing', { tables: new Map([['stale', 1]]), publish: null });
   const r = await pub(f, [], { env: withToken, connect: md.connect });
   assert.equal(r.code, 0, r.all);
+  assert.deepEqual([...md.dbs.keys()], ['acme_fixture']);
   assert.deepEqual([...md.dbs.get('acme_fixture').tables.keys()].sort(), ['fixture_meta', 'fixture_publish', 'regions', 'shops']);
+});
+
+test('publish: a target that does not exist yet is created (first publish)', async (t) => {
+  const f = await fixture(t);
+  const md = fakeMotherDuck();
+  const r = await pub(f, ['--database', 'brand_new'], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 0, r.all);
+  assert.deepEqual([...md.dbs.keys()], ['brand_new']);
+  assert.ok(md.dbs.get('brand_new').publish.has('fixture_version'));
+});
+
+// --database can name any MotherDuck database. Publish replaces only one it
+// published (it has a fixture_publish table); anything else is refused with
+// no write sent at all, a leftover staging copy included.
+test('publish: refuses to replace an existing database it did not publish, and sends no write', async (t) => {
+  const f = await fixture(t);
+  const md = fakeMotherDuck();
+  const prod = { tables: new Map([['customers', 5000]]), publish: null };
+  const leftover = published([['shops', 3]]);
+  md.dbs.set('prod_crm', prod);
+  md.dbs.set('prod_crm__publishing', leftover);
+  const r = await pub(f, ['--database', 'prod_crm'], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 1, r.all);
+  assert.match(r.stderr, /prod_crm already exists and was not published by fixture:publish \(it has no fixture_publish table\)/);
+  assert.match(r.stderr, /the shared database prod_crm was not changed/);
+  assert.equal(md.dbs.get('prod_crm'), prod);
+  assert.equal(md.dbs.get('prod_crm__publishing'), leftover);
+  assert.deepEqual(md.statements.filter((s) => !/^SELECT /.test(s)), [], 'only reads were sent');
+  assert.equal(md.closed.length, 1);
 });
 
 test('publish: a failure before the swap leaves the shared database untouched and removes staging', async (t) => {
   const f = await fixture(t);
   const md = fakeMotherDuck({ fail: { '^INSERT INTO': 'quota exceeded' } });
-  const before = { tables: new Map([['old_table', 99]]), publish: new Map([['fixture_version', 'old']]) };
+  const before = published([['old_table', 99]]);
   md.dbs.set('acme_fixture', before);
   const r = await pub(f, [], { env: withToken, connect: md.connect });
   assert.equal(r.code, 1);

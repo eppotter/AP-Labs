@@ -18,12 +18,18 @@
 // rebuild replaces the old file whole and a failed build leaves it untouched.
 // After loading, every table's row count must equal fixture_meta's
 // rows_<table>, and every seed file's header must match its table's columns.
-// The build stamps fixture_meta with a table comment (BUILD_STAMP), so the
-// validator can tell its output from any other file (issue #77): a check may
-// read a protected column only there.
+// The build stamps fixture_meta with a table comment, so the validator can
+// tell its output from any other file (issue #77): a check may read a
+// protected column only there. The stamp names a sha256 of the file's whole
+// content (contentDigest: every table's columns and rows, every view and
+// macro), and isFixtureBuild recomputes it, so a stamp written by hand, or
+// copied from a build onto other rows, is not a build (issue #87). Publish
+// goes further (isBuildOf): the file must equal a fresh build of the seeds.
 // Exit codes: 0 built, 1 build failed, 2 usage or profile error.
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { DuckDBInstance } = require('@duckdb/node-api');
 const { governingProfilePath, loadProfile } = require('../lib/profile');
@@ -31,8 +37,10 @@ const { governingProfilePath, loadProfile } = require('../lib/profile');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const META_TABLE = 'fixture_meta';
 // A comment, not a row or a table: the data, row counts and published tables
-// stay exactly the seeds.
-const BUILD_STAMP = 'aplabs fixture:build (synthetic seeds)';
+// stay exactly the seeds. The stamp is STAMP_PREFIX plus the content digest.
+const STAMP_PREFIX = 'aplabs fixture:build (synthetic seeds)';
+const STAMP = /^aplabs fixture:build \(synthetic seeds\) content-sha256:([0-9a-f]{64})$/;
+const stampFor = (digest) => `${STAMP_PREFIX} content-sha256:${digest}`;
 
 const USAGE = 'usage: node kit/fixture/build.js <fixture-dir> [--out <file>] [--name <client>]';
 
@@ -183,15 +191,14 @@ async function checkCounts(conn, p, counts) {
   if (problems.length) throw new FixtureBuildError(`row counts do not match ${META_TABLE}:\n  ${problems.join('\n  ')}`);
 }
 
-// Reads a built file read-only, as rows of JSON-safe values (BIGINT as a
-// string). Tests use this rather than importing @duckdb/node-api themselves,
-// so the only importers stay kit/runtime/data and this file (AD-9).
-async function readRows(file, sql) {
+// Opens a file read-only and passes fn a runner (sql -> rows of JSON-safe
+// values, BIGINT as a string).
+async function withReadOnly(file, fn) {
   const instance = await DuckDBInstance.create(file, { access_mode: 'READ_ONLY' });
   try {
     const conn = await instance.connect();
     try {
-      return (await conn.runAndReadAll(sql)).getRowObjectsJson();
+      return await fn(async (sql) => (await conn.runAndReadAll(sql)).getRowObjectsJson());
     } finally {
       conn.closeSync();
     }
@@ -200,20 +207,84 @@ async function readRows(file, sql) {
   }
 }
 
-// True when `file` is a DuckDB file this build wrote (its fixture_meta carries
-// BUILD_STAMP); false for anything else, a missing or non-DuckDB file included.
+// Reads a built file read-only. Tests use this rather than importing
+// @duckdb/node-api themselves, so the only importers stay kit/runtime/data
+// and this file (AD-9).
+async function readRows(file, sql) {
+  return withReadOnly(file, (run) => run(sql));
+}
+
+// sha256 over everything a file holds that publish would upload: every table
+// in every schema (its name, column names and types, row count and an
+// order-independent digest of its rows as JSON), then every view and macro.
+// Table comments are not content, so stamping does not change it.
+async function contentDigest(run) {
+  const h = crypto.createHash('sha256');
+  const add = (part) => h.update(`${JSON.stringify(part)}\n`);
+  const here = 'database_name = current_database()';
+  const tables = await run(`SELECT schema_name, table_name FROM duckdb_tables() WHERE ${here} ORDER BY schema_name, table_name`);
+  for (const { schema_name: schema, table_name: table } of tables) {
+    const columns = (await run(
+      `SELECT column_name, data_type FROM duckdb_columns() WHERE ${here} AND schema_name = ${sqlString(schema)} AND table_name = ${sqlString(table)} ORDER BY column_index`,
+    )).map((c) => [c.column_name, c.data_type]);
+    const [rows] = await run(
+      `SELECT count(*)::VARCHAR AS n, coalesce(sha256(string_agg(h, ',' ORDER BY h)), '') AS d FROM (SELECT md5(to_json(x)::VARCHAR) AS h FROM ${ident(schema)}.${ident(table)} AS x)`,
+    );
+    add(['table', schema, table, columns, rows.n, rows.d]);
+  }
+  for (const v of await run(`SELECT schema_name, view_name, sql FROM duckdb_views() WHERE ${here} AND NOT internal ORDER BY schema_name, view_name`)) {
+    add(['view', v.schema_name, v.view_name, v.sql]);
+  }
+  for (const m of await run(`SELECT schema_name, function_name, function_type, coalesce(macro_definition, '') AS def FROM duckdb_functions() WHERE ${here} AND NOT internal ORDER BY ALL`)) {
+    add(['function', m.schema_name, m.function_name, m.function_type, m.def]);
+  }
+  return h.digest('hex');
+}
+
+// True when `file` carries a build stamp naming its own content digest: a
+// file this build wrote and nothing has changed since. False for anything
+// else, a missing or non-DuckDB file, a fixed stamp, or a stamp carried onto
+// other data included (issues #77, #87).
 async function isFixtureBuild(file) {
   if (!fs.existsSync(file)) return false;
   try {
-    const rows = await readRows(file, `SELECT comment FROM duckdb_tables() WHERE schema_name = 'main' AND table_name = ${sqlString(META_TABLE)}`);
-    return rows.length === 1 && rows[0].comment === BUILD_STAMP;
+    return await withReadOnly(file, async (run) => {
+      const rows = await run(`SELECT comment FROM duckdb_tables() WHERE database_name = current_database() AND schema_name = 'main' AND table_name = ${sqlString(META_TABLE)}`);
+      const m = rows.length === 1 && STAMP.exec(rows[0].comment || '');
+      return Boolean(m) && m[1] === await contentDigest(run);
+    });
   } catch {
     return false;
   }
 }
 
-// stamp: false leaves BUILD_STAMP off, so a test can stand in for a file the
-// build did not write.
+// True when `file` holds exactly what building `fixtureDir` holds now: it
+// rebuilds the seeds into a temporary directory and compares content
+// digests. No stamp can stand in for this, so publish uses it to upload only
+// the synthetic seeds (issue #87). A fixture that won't build throws its
+// FixtureBuildError; an unreadable file is false.
+async function isBuildOf(file, fixtureDir) {
+  if (!fs.existsSync(file)) return false;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-fixture-rebuild-'));
+  try {
+    const fresh = path.join(dir, 'fresh.duckdb');
+    await build({ fixtureDir, out: fresh, stamp: false });
+    const want = await withReadOnly(fresh, contentDigest);
+    let got;
+    try {
+      got = await withReadOnly(file, contentDigest);
+    } catch {
+      return false;
+    }
+    return got === want;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// stamp: false leaves the stamp off, so a test can stand in for a file the
+// build did not write; a string writes that comment instead, so a test can
+// stand in for a forged or carried stamp.
 async function build({ fixtureDir, out, stamp = true }) {
   const started = Date.now();
   const p = plan(fixtureDir);
@@ -231,7 +302,12 @@ async function build({ fixtureDir, out, stamp = true }) {
     await load(conn, p);
     counts = await countRows(conn, p);
     await checkCounts(conn, p, counts);
-    if (stamp) await conn.run(`COMMENT ON TABLE ${ident(META_TABLE)} IS ${sqlString(BUILD_STAMP)}`);
+    if (stamp) {
+      const comment = typeof stamp === 'string'
+        ? stamp
+        : stampFor(await contentDigest(async (sql) => (await conn.runAndReadAll(sql)).getRowObjectsJson()));
+      await conn.run(`COMMENT ON TABLE ${ident(META_TABLE)} IS ${sqlString(comment)}`);
+    }
     await conn.run('CHECKPOINT');
   } catch (err) {
     if (conn) conn.closeSync();
@@ -290,4 +366,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { build, readRows, isFixtureBuild, BUILD_STAMP, main, parseArgs, defaultOut, governingClientId, schemaTables, FixtureBuildError, USAGE };
+module.exports = { build, readRows, isFixtureBuild, isBuildOf, STAMP_PREFIX, main, parseArgs, defaultOut, governingClientId, schemaTables, FixtureBuildError, USAGE };

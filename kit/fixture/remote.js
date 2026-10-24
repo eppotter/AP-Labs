@@ -121,9 +121,10 @@ async function localSnapshot({ fixtureDir, db }) {
   }
 }
 
-// A database on the connection: null when it doesn't exist. version and the
-// other recorded values are null when it has no fixture_publish table (not
-// published by this tool). counts never include fixture_publish.
+// A database on the connection: null when it doesn't exist. published says
+// whether it has a fixture_publish table (this tool published it); version
+// and the other recorded values are null when it has none. counts never
+// include fixture_publish.
 async function remoteSnapshot(conn, database) {
   const exists = await conn.run(`SELECT count(*)::VARCHAR AS n FROM duckdb_databases() WHERE database_name = ${sqlString(database)}`);
   if (exists[0].n === '0') return null;
@@ -139,6 +140,7 @@ async function remoteSnapshot(conn, database) {
     ? new Map((await conn.run(`SELECT key, value FROM ${ident(database)}.main.${PUBLISH_TABLE}`)).map((r) => [r.key, r.value]))
     : new Map();
   return {
+    published: tables.includes(PUBLISH_TABLE),
     version: recorded.get('fixture_version') || null,
     generatorVersion: recorded.get('generator_version') || null,
     seedsSha256: recorded.get('seeds_sha256') || null,
