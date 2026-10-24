@@ -11,9 +11,9 @@
 // problem is collected and returned at once, each naming the file (relative
 // to the app dir) and the field, so boot can refuse listing all of them.
 //
-// Until access wiring lands (Story 6.3), a module can only be registered on a
-// resource the profile declares open_access. A resource the profile does not
-// declare is a configuration fault, never a denial.
+// A module's resource must be declared in the profile: an undeclared key is a
+// configuration fault, never a denial. Who may use it is decided per person at
+// runtime (kit/runtime/access, Story 6.3).
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -143,7 +143,7 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
   const problems = [];
   const modules = [];
   const hubIds = new Set(hubs.map((h) => h.id));
-  const resources = new Map(((profile && profile.resources) || []).map((r) => [r.key, r]));
+  const resources = new Set(((profile && profile.resources) || []).map((r) => r.key));
   const folders = listSorted(path.join(appDir, 'modules'), (d) => d.isDirectory());
   for (const folder of folders) {
     const file = `modules/${folder}/manifest.json`;
@@ -163,11 +163,8 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
     if (m.id !== folder) problems.push(`${file}: field "id" must equal the folder name ("${folder}")`);
     if (failedHubs.has(m.hub)) problems.push(`${file}: field "hub" names hubs/${m.hub}.json, which did not load (see above)`);
     else if (!hubIds.has(m.hub)) problems.push(`${file}: field "hub" names no hub ("${m.hub}" has no hubs/${m.hub}.json)`);
-    const resource = resources.get(m.resource);
-    if (!resource) {
+    if (!resources.has(m.resource)) {
       problems.push(`${file}: field "resource" ${m.resource} is not declared in the profile (configuration fault)`);
-    } else if (!resource.open_access) {
-      problems.push(`${file}: field "resource" ${m.resource} is not open_access; until access wiring lands only open-access modules can be registered`);
     }
     if (!BUILT_ARCHETYPES.has(m.archetype)) {
       problems.push(`${file}: field "archetype" "${m.archetype}" is not available yet`);

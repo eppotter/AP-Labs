@@ -116,10 +116,10 @@ test('a resource the profile does not declare is a configuration fault', () => {
   assert.deepEqual(problems, ['modules/echo/manifest.json: field "resource" TYPO_THING is not declared in the profile (configuration fault)']);
 });
 
-test('until access wiring lands, only open_access modules can be registered', () => {
-  const { problems } = loadEdited((d) => editJson(d, 'modules/echo/manifest.json', (m) => { m.resource = 'CLOSED_THING'; }));
-  assert.equal(problems.length, 1);
-  assert.match(problems[0], /field "resource" CLOSED_THING is not open_access/);
+test('a module on a declared resource that is not open_access registers (access is decided per person)', () => {
+  const { registry, problems } = loadEdited((d) => editJson(d, 'modules/echo/manifest.json', (m) => { m.resource = 'CLOSED_THING'; }));
+  assert.deepEqual(problems, []);
+  assert.equal(registry.module('echo').resource, 'CLOSED_THING');
 });
 
 test('an archetype whose engine is not built yet is refused', () => {

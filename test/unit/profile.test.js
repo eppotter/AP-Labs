@@ -113,6 +113,17 @@ test('rejects duplicates', () => {
   rejects(p, /duplicate resource key "OWNER_ONLY".*duplicate user id "ada".*duplicate verify check id "unit"/);
 });
 
+test('rejects two users with the same Slack id; distinct or absent ids are fine', () => {
+  const p = parsed('full');
+  p.users[0].identities = { slack: 'U0SAME' };
+  p.users[1].identities = { slack: 'U0SAME' };
+  rejects(p, /users ada, \S+ share identities.slack "U0SAME"/);
+  p.users[1].identities = { slack: 'U0OTHER' };
+  assert.equal(validateProfile(p).users[1].identities.slack, 'U0OTHER');
+  delete p.users[1].identities;
+  assert.doesNotThrow(() => validateProfile(p));
+});
+
 test('requires at least one admin', () => {
   rejects({ ...parsed('minimal'), users: [{ id: 'a', name: 'A', role: 'member' }] }, /at least one admin/);
 });

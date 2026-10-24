@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node kit/runtime/app",
-    "check": "bash scripts/check-syntax.sh",
+    "check": "bash scripts/check-syntax.sh && node scripts/check-conflict-markers.js",
     "test": "node --test",
     "review": "node kit/review/cli.js",
     "retro": "node kit/retro/cli.js",

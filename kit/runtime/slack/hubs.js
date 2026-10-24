@@ -5,20 +5,29 @@
 // the module's handler. Both go through handle(), so the ack comes first and
 // any failure becomes a plain private message.
 //
-// A click is re-checked at dispatch: an unknown module, an entry hidden in
-// this environment, or one the person may not use is refused (a replayed or
-// stale payload never runs a handler the menu would not show).
+// Access (Story 6.3): the Slack id is mapped to a profile user
+// (kit/runtime/access) and each entry's resource key is decided by
+// kit/lib/permissions. The menu shows only what the person may use; an unknown
+// person sees only open-access entries and is told who to ask. A click is
+// re-checked at dispatch: an unknown module or one hidden in this environment
+// gets the generic "not available"; a module the person may not use is refused
+// by kit/runtime/messages (not set up, or no access to <label>); a resource
+// key the profile does not declare is logged and reported as a configuration
+// fault, never as a denial. A replayed or stale payload never runs a handler
+// the menu would not show.
 //
-// Access seam: canUse(person, module) decides both the menu and dispatch. The
-// default asks kit/lib/permissions with no profile user (every registered
-// module is open_access until Story 6.3 maps Slack ids to profile users).
+// Seam: canUse(person, module) returns 'allowed' | 'denied' | 'error' (true
+// and false are read as allowed and denied); person is { id, user } with user
+// the profile user or null. Tests may inject their own.
 //
 // Data (Story 7.5): a handler gets ctx.data.run(sql, params), the query runner
 // (kit/runtime/data) with the manifest's declared parameter names, so a
 // parameter the manifest does not declare is refused. When the data is
 // unavailable the person is told so plainly and the app keeps running.
 
-const { hasAccess } = require('../../lib/permissions');
+const access = require('../access');
+const { NotSetUp, AccessDenied, ConfigFault } = require('../errors');
+const { messageFor } = require('../messages');
 const { handle } = require('./handle');
 const { buildMenu, moduleIdFromAction, OPEN_ACTION } = require('../registry/menu');
 const { isVisible } = require('../registry');
@@ -27,7 +36,13 @@ const { DATA_UNAVAILABLE, DataUnavailableError } = require('../data');
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 
 function defaultCanUse(profile) {
-  return (_person, mod) => hasAccess(profile, undefined, mod.resource);
+  return (person, mod) => access.decide(profile, person.user, mod.resource);
+}
+
+function asDecision(v) {
+  if (v === true || v === 'allowed') return 'allowed';
+  if (v === false || v === 'denied') return 'denied';
+  return 'error';
 }
 
 // The person's display name from users.info (users:read), else the name Slack
@@ -63,32 +78,49 @@ function moduleData(data, mod) {
 }
 
 function registerHubs(app, { registry, profile, env, log, store, data = null, canUse = defaultCanUse(profile) }) {
+  const admin = access.adminContact(profile);
+  const personOf = (slackId) => ({ id: slackId, user: access.personFor(profile, slackId) });
+  const decide = (person, mod) => {
+    const d = asDecision(canUse(person, mod));
+    if (d === 'error') log.error('access configuration fault', { module: mod.id, resource: mod.resource });
+    return d;
+  };
   const visibleEntries = (hubId, person) => registry.entries(hubId)
-    .filter((m) => isVisible(m, env) && canUse(person, m));
+    .filter((m) => isVisible(m, env) && decide(person, m) === 'allowed');
 
   for (const hub of registry.hubs) {
     app.command(hub.command, handle(`hub:${hub.id}`, async ({ command, respond }) => {
-      const person = { id: command.user_id };
-      await respond(ephemeral(buildMenu(hub, visibleEntries(hub.id, person))));
+      const person = personOf(command.user_id);
+      const notice = person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin }));
+      await respond(ephemeral(buildMenu(hub, visibleEntries(hub.id, person), { notice })));
     }, { log, store }));
   }
 
   app.action(OPEN_ACTION, handle('hub:dispatch', async ({ action, body, respond, client }) => {
     const user = body.user || {};
-    const id = moduleIdFromAction(action && action.action_id);
-    const mod = registry.module(id);
-    const person = { id: user.id };
-    if (!mod || !isVisible(mod, env) || !canUse(person, mod)) {
-      const reason = !mod ? 'unknown module' : !isVisible(mod, env) ? 'hidden in this environment' : 'not allowed';
-      log.warn('hub action refused', { action_id: action && action.action_id, reason, env });
+    const actionId = action && action.action_id;
+    const mod = registry.module(moduleIdFromAction(actionId));
+    if (!mod || !isVisible(mod, env)) {
+      log.warn('hub action refused', { action_id: actionId, reason: !mod ? 'unknown module' : 'hidden in this environment', env });
       await respond(ephemeral(NOT_AVAILABLE));
       return;
     }
-    person.name = await personName(client, user, log);
+    const person = personOf(user.id);
+    const decision = decide(person, mod);
+    if (decision !== 'allowed') {
+      let refusal;
+      if (decision === 'error') refusal = new ConfigFault({ admin });
+      else if (!person.user) refusal = new NotSetUp({ client: profile.client.name, admin });
+      else refusal = new AccessDenied({ label: mod.label, admin });
+      log.warn('hub action refused', { action_id: actionId, reason: refusal.name, user: person.user ? person.user.id : null, env });
+      await respond(ephemeral(messageFor(refusal)));
+      return;
+    }
+    const name = await personName(client, user, log);
     log.info('module dispatched', { module: mod.id, hub: mod.hub });
     try {
       await mod.run({
-        person,
+        person: { id: user.id, name },
         client: { id: profile.client.id, name: profile.client.name },
         module: { id: mod.id, label: mod.label },
         data: moduleData(data, mod),
