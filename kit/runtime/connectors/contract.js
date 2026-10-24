@@ -13,7 +13,7 @@
 //     write: { addContacts: { plan: (input) => preview, apply: async (input, ctx) => result } },
 //   });
 //
-//   const crm = connector.create({ env, log });  // log is required; one instance per process
+//   const crm = connector.create({ env, log });  // log is required; instances share idempotency state
 //   await crm.read.lookupClient({ clientId, fields: ['email'] });
 //   await crm.write.addContacts({ ...input, idempotencyKey, dryRun: false });
 //
@@ -33,7 +33,14 @@
 //     under its key, so a reused key with a different input is refused with
 //     IdempotencyConflict and calls nothing. Keys are kept in
 //     deps.idempotency ({ get, set }, holding { input, result }) or, by
-//     default, in memory for the instance's life.
+//     default, in memory for the process's life, in one store per connector
+//     (per defineConnector) that every instance it creates shares: a second
+//     create() in the process sees the first one's keys, and a concurrent
+//     repeat on another instance joins the first apply (DEP-012). Instances
+//     given the same deps.idempotency object share their in-flight writes too.
+//   - Only kit/runtime/archetypes/approval-write passes dryRun: false (AD-15);
+//     the write-path check (scripts/check-write-path.js, run by npm run check
+//     and npm test) fails app code that writes live outside it.
 //   - Credentials are read once through kit/lib/secrets, from env only (no
 //     Keychain fallback, unlike other AD-12 reads: see AD-12), and cached
 //     with the client connect() returns (or resolves to: connect may be async,
@@ -172,8 +179,23 @@ function retryAfterMs(err) {
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
 }
 
+// In-flight writes per idempotency store, so instances sharing a store also
+// share the writes still running under it: a concurrent repeat key joins the
+// first apply instead of missing it and applying again (DEP-012).
+const IN_FLIGHT = new WeakMap();
+function inFlightFor(store) {
+  if (!IN_FLIGHT.has(store)) IN_FLIGHT.set(store, new Map());
+  return IN_FLIGHT.get(store);
+}
+
+const memoryLedger = () => { const m = new Map(); return Object.freeze({ get: (k) => m.get(k), set: (k, v) => { m.set(k, v); } }); };
+
 function defineConnector(spec) {
   checkDeclaration(spec);
+  // The default idempotency store: one per connector for the process's life,
+  // shared by every instance create() makes, so a second instance (a handler
+  // that created its own) sees the keys the first applied (DEP-012).
+  const sharedLedger = memoryLedger();
   const declaration = Object.freeze({
     id: spec.id,
     system: spec.system,
@@ -204,9 +226,13 @@ function defineConnector(spec) {
     const env = deps.env || process.env;
     const now = deps.now || Date.now;
     const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
-    const ledger = deps.idempotency || (() => { const m = new Map(); return { get: (k) => m.get(k), set: (k, v) => { m.set(k, v); } }; })();
+    const store = deps.idempotency;
+    if (store !== undefined && !(store && isFn(store.get) && isFn(store.set))) {
+      throw new Error(`connector "${declaration.id}": deps.idempotency must be { get(key), set(key, value) }`);
+    }
+    const ledger = store || sharedLedger;
+    const inFlight = inFlightFor(ledger);
     const limit = createLimiter(declaration.rateLimit.perSecond, now, sleep);
-    const inFlight = new Map();
     const seen = [];
     let session = null;
 
@@ -337,8 +363,10 @@ function defineConnector(spec) {
           // with the key miss the first and apply again.
           const input = fingerprint(rest);
           const conflict = () => new IdempotencyConflict(`idempotencyKey "${key}" was already used with a different input`, details(name));
-          if (inFlight.has(slot)) {
-            const other = inFlight.get(slot);
+          // Keyed by connector too: one injected store may serve several.
+          const flight = `${declaration.id}\u0000${slot}`;
+          if (inFlight.has(flight)) {
+            const other = inFlight.get(flight);
             if (other.input !== input) throw conflict();
             return await other.run;
           }
@@ -354,8 +382,8 @@ function defineConnector(spec) {
             await ledger.set(slot, { input, result: settled });
             return settled;
           })();
-          inFlight.set(slot, { input, run });
-          try { return await run; } finally { inFlight.delete(slot); }
+          inFlight.set(flight, { input, run });
+          try { return await run; } finally { inFlight.delete(flight); }
         } catch (err) {
           return rethrow(err, name);
         }

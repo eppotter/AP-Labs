@@ -40,6 +40,9 @@ function fakeClock() {
   return { now: () => t, sleep: async (ms) => { t += ms; } };
 }
 
+// Counts harnesses across every run of the suite in the process.
+let harnesses = 0;
+
 function connectorContract(connector, samples = {}, { test = require('node:test'), deps = {} } = {}) {
   const decl = connector && connector.declaration;
   const label = decl && decl.id ? decl.id : 'connector';
@@ -65,7 +68,14 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
         if (state.failWith) throw state.failWith();
       },
     });
-    return { instance, requests, state, clock, env: liveEnv };
+    // Instances of one connector share its idempotency state for the process
+    // (DEP-012), so each harness suffixes its keys: a check never sees the
+    // keys another check, or another run of the suite, already used.
+    const run = `~h${(harnesses += 1)}`;
+    const write = Object.fromEntries(Object.entries(instance.write).map(([n, w]) => [n, (input = {}) => w(
+      typeof input.idempotencyKey === 'string' && input.idempotencyKey ? { ...input, idempotencyKey: `${input.idempotencyKey}${run}` } : input,
+    )]));
+    return { instance: { ...instance, write }, requests, state, clock, env: liveEnv };
   }
 
   const writeInput = (name, key, extra = {}) => ({ ...samples.write[name](key), ...extra });
