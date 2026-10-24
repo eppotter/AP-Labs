@@ -15,6 +15,8 @@
 
 const { DataUnavailableError, QueryRefusedError } = require('../data');
 const { createLog } = require('../log');
+// Slack mrkdwn escaping for anything a handler shows from data (AD-17).
+const { escapeText } = require('../messages');
 const {
   defineConnector, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 } = require('../connectors/contract');
@@ -62,6 +64,6 @@ function testLog() {
 }
 
 module.exports = {
-  testContext, testLog, DataUnavailableError, QueryRefusedError,
+  testContext, testLog, escapeText, DataUnavailableError, QueryRefusedError,
   defineConnector, connectorContract, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
 };

@@ -1,0 +1,10 @@
+{
+  "id": "outbox",
+  "hub": "brightside",
+  "label": "Outbox",
+  "description": "See what was sent to the email tool: the latest lists, their contact counts and a sample.",
+  "resource": "OUTBOX",
+  "archetype": "handler",
+  "environments": ["dev", "prod"],
+  "handler": "handler.js"
+}
