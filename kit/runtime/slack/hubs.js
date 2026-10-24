@@ -31,17 +31,19 @@
 // Data (Story 7.5): a handler gets ctx.data.run(sql, params), the query runner
 // (kit/runtime/data) with the manifest's declared parameter names, so a
 // parameter the manifest does not declare is refused. When the data is
-// unavailable the person is told so plainly and the app keeps running.
+// unavailable (a DataUnavailable error) the person is told so plainly, worded
+// by kit/runtime/messages, and the app keeps running.
 
 const access = require('../access');
-const { NotSetUp, AccessDenied, ConfigFault } = require('../errors');
+const {
+  NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
+} = require('../errors');
 const { messageFor, welcomeText, feedbackText, joinWelcomeText } = require('../messages');
 const { handle } = require('./handle');
 const {
   buildMenu, buildHelp, moduleIdFromAction, hubIdFromHelpAction, OPEN_ACTION, HELP_ACTION,
 } = require('../registry/menu');
 const { isVisible } = require('../registry');
-const { DATA_UNAVAILABLE, DataUnavailableError } = require('../data');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 
@@ -97,7 +99,7 @@ function moduleData(data, mod) {
   const declared = (mod.parameters || []).map((p) => p.name);
   return Object.freeze({
     run: (sql, params) => {
-      if (!data) return Promise.reject(new DataUnavailableError('no data source'));
+      if (!data) return Promise.reject(new DataUnavailable('no data source'));
       return data.run(sql, params, { declared });
     },
     describe: () => (data ? data.describe() : { available: false }),
@@ -181,9 +183,9 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
         reply: (message) => respond(ephemeral(message)),
       });
     } catch (err) {
-      if (!err || err.code !== 'DATA_UNAVAILABLE') throw err;
-      log.warn('data unavailable', { module: mod.id, reason: err.reason || err.message });
-      await respond(ephemeral(DATA_UNAVAILABLE));
+      if (!(err instanceof DataUnavailable)) throw err;
+      log.warn('data unavailable', { module: mod.id, reason: err.reason });
+      await respond(ephemeral(messageFor(err)));
     }
   }, { log, store }));
 }

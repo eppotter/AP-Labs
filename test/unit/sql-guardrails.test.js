@@ -254,8 +254,22 @@ test('unterminated strings, identifiers and comments fail closed', () => {
   blocks(RULES.UNTERMINATED, "SELECT first_name FROM people WHERE x = 'it''s", open);
 });
 
+test('block comments nest, as in DuckDB: a comment ends only at its matching */', () => {
+  // The `/* /* */ ... */` trick: an inner /* means the first */ does not close.
+  allows('SELECT first_name FROM people /* outer /* inner */ , phone */');
+  allows('SELECT first_name /* a /* b /* c */ d */ e */ FROM people');
+  allows('SELECT first_name /*/ */ FROM people');
+  allows('SELECT first_name /* /*/ */ */ FROM people');
+  // Code after the matching */ is still checked.
+  blocks(RULES.FORBIDDEN_COLUMN, 'SELECT first_name /* outer /* inner */ */ , phone FROM people');
+  blocks(RULES.WILDCARD, 'SELECT 1 /* /* */ x */ , * FROM people');
+  blocks(RULES.BLOCKED_STATEMENT, 'SELECT 1 /* /**/ */ ATTACH', open);
+  // One */ too few fails closed.
+  blocks(RULES.UNTERMINATED, 'SELECT 1 /* outer /* inner */', open);
+  blocks(RULES.UNTERMINATED, 'SELECT 1 /* /* /* */ */', open);
+});
+
 test('syntax this check does not mirror fails closed', () => {
-  blocks(RULES.UNSUPPORTED_SYNTAX, 'SELECT 1 /* outer /* inner */ * FROM people */', open);
   blocks(RULES.UNSUPPORTED_SYNTAX, "SELECT E'a\\'', * FROM people", open);
   blocks(RULES.UNSUPPORTED_SYNTAX, 'SELECT U&"\\0070hone" FROM people', open);
   blocks(RULES.UNSUPPORTED_SYNTAX, 'SELECT $$ x $$', open);

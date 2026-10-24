@@ -6,9 +6,10 @@
 // already ignores the bot's own).
 
 const { handle } = require('./handle');
+const { escapeText } = require('../messages');
 
 function greetingText(profile, userId) {
-  return `Hi <@${userId}>, I'm the ${profile.client.name} bot. I'm up and running.`;
+  return `Hi <@${userId}>, I'm the ${escapeText(profile.client.name)} bot. I'm up and running.`;
 }
 
 function isPersonDm(message) {

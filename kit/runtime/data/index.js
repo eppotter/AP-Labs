@@ -20,12 +20,14 @@
 // V1 reads the local fixture file only (APLABS_DATA_PATH, else
 // <var>/fixture/<client id>.duckdb). Reading MotherDuck is deferred (DEP-011).
 // A missing or unreadable file never stops the app: open() and run() reject
-// with a DataUnavailableError, and the next run() tries to open it again.
+// with a DataUnavailableError (kit/runtime/errors DataUnavailable; the words
+// are in kit/runtime/messages), and the next run() tries to open it again.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { DuckDBInstance } = require('@duckdb/node-api');
 const sqlGuard = require('../sql');
+const { DataUnavailable: DataUnavailableError } = require('../errors');
 
 const REPO = path.resolve(__dirname, '../../..');
 const SOURCE = 'local fixture';
@@ -38,18 +40,6 @@ const LOCKDOWN = Object.freeze({
   autoinstall_known_extensions: 'false',
   autoload_known_extensions: 'false',
 });
-
-const DATA_UNAVAILABLE = "The data isn't available right now, so I can't answer that. "
-  + 'The app is still running; please tell your admin.';
-
-class DataUnavailableError extends Error {
-  constructor(reason) {
-    super(`data unavailable: ${reason}`);
-    this.name = 'DataUnavailableError';
-    this.code = 'DATA_UNAVAILABLE';
-    this.reason = reason;
-  }
-}
 
 // A query the runner refused before it reached DuckDB. rule is a guardrail
 // rule (kit/runtime/sql RULES) or one of the parameter rules below.
@@ -97,12 +87,23 @@ async function openLocked(file) {
     return instance;
   } catch (err) {
     if (instance) instance.closeSync();
-    throw new DataUnavailableError(`the data file could not be opened (${firstLine(err.message)})`);
+    throw new DataUnavailableError(`the data file could not be opened (${withoutPaths(firstLine(err.message), file)})`);
   }
 }
 
 function firstLine(s) {
   return String(s).split('\n')[0];
+}
+
+// DuckDB's error names the file by its full (often resolved) path. Keep only
+// file names: first every spelling of this file's directory, then any other
+// absolute path left (a WAL file, another directory).
+function withoutPaths(text, file) {
+  const dirs = new Set([path.dirname(file), path.dirname(path.resolve(file))]);
+  try { dirs.add(path.dirname(fs.realpathSync(file))); } catch { /* gone: the spellings above remain */ }
+  let out = text;
+  for (const dir of [...dirs].sort((a, b) => b.length - a.length)) out = out.split(dir + path.sep).join('');
+  return out.replace(/(?:[A-Za-z]:)?[\\/](?:[^\s"'\\/]+[\\/])+([^\s"'\\/]+)/g, '$1');
 }
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
@@ -195,6 +196,5 @@ module.exports = {
   QueryRefusedError,
   PARAM_RULES,
   LOCKDOWN,
-  DATA_UNAVAILABLE,
   SOURCE,
 };

@@ -2,7 +2,7 @@
 
 // Typed errors the engine raises when it refuses (AD-17). Each carries only
 // what its message needs; kit/runtime/messages.js turns it into words. More
-// kinds land with their stories (GuardrailBlocked, DataUnavailable, ...).
+// kinds land with their stories (GuardrailBlocked, ...).
 
 class RuntimeRefusal extends Error {
   constructor(message, details = {}) {
@@ -28,4 +28,15 @@ class ConfigFault extends RuntimeRefusal {
   constructor(details) { super('configuration fault', details); }
 }
 
-module.exports = { RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault };
+// The data source is missing or cannot be opened (Story 7.5). reason is for
+// the log, never shown to the person. kit/runtime/data raises it (and exports
+// it as DataUnavailableError); code stays 'DATA_UNAVAILABLE'.
+class DataUnavailable extends RuntimeRefusal {
+  constructor(reason) {
+    super(`data unavailable: ${reason}`, { reason });
+    this.code = 'DATA_UNAVAILABLE';
+    this.reason = reason;
+  }
+}
+
+module.exports = { RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable };

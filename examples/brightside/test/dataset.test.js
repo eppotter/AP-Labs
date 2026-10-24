@@ -12,8 +12,12 @@ const os = require('node:os');
 const path = require('node:path');
 const { main } = require('../../../kit/runtime/app');
 const { build } = require('../../../kit/fixture/build');
-const { DATA_UNAVAILABLE } = require('../../../kit/runtime/data');
+const { DataUnavailable } = require('../../../kit/runtime/errors');
+const { messageFor } = require('../../../kit/runtime/messages');
 const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
+
+// The reply a person sees when the data is unavailable.
+const DATA_UNAVAILABLE = messageFor(new DataUnavailable('test'));
 
 const ROOT = path.join(__dirname, '../../..');
 
