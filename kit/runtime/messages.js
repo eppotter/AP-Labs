@@ -5,7 +5,9 @@
 // Returns Slack mrkdwn text, or null for an error that is not a refusal (the
 // caller then uses the generic plain error).
 
-const { NotSetUp, AccessDenied, ConfigFault } = require('./errors');
+const {
+  NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
+} = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
 function escapeText(s) {
@@ -16,6 +18,7 @@ const MESSAGES = [
   [NotSetUp, ({ client, admin }) => `You're not set up in ${escapeText(client)}'s bot yet, so you only see what's open to everyone. Ask ${admin} to add you.`],
   [AccessDenied, ({ label, admin }) => `You don't have access to ${escapeText(label)}; ask ${admin}.`],
   [ConfigFault, ({ admin }) => `That option isn't set up correctly, so I can't open it right now. I've logged the problem; please tell ${admin}.`],
+  [DataUnavailable, () => "The data isn't available right now, so I can't answer that. The app is still running; please tell your admin."],
 ];
 
 // Hub wording (Story 6.4). A hub file may set its own welcome and feedback

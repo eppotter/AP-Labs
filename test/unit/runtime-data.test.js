@@ -192,16 +192,62 @@ test('queries the guardrail accepts actually run on DuckDB', async (t) => {
   assert.deepEqual(c, { c: '--', d: 3 }, "'--' in a string and // are not comments");
 });
 
-test('DuckDB agrees with the guardrail\'s lexing refusals: nested comments, E-strings and dollar quoting are real syntax', async (t) => {
+test('DuckDB agrees with the guardrail\'s lexing refusals: E-strings and dollar quoting are real syntax', async (t) => {
   const { one } = await rawLocked(t);
   // Each is refused by the guardrail; each means something different to DuckDB
   // than a naive reader would think, which is why it is refused.
-  assert.deepEqual(await one('SELECT 1 /* a /* b */ c */ AS n'), [{ n: 1 }], 'block comments nest');
   assert.deepEqual(await one("SELECT E'a\\'b' AS s"), [{ s: "a'b" }], 'E-strings escape with a backslash');
   assert.deepEqual(await one('SELECT $$x$$ AS s'), [{ s: 'x' }], 'dollar quoting is a string');
-  for (const sql of ['SELECT 1 /* a /* b */ c */ AS n', "SELECT E'a\\'b' AS s", 'SELECT $$x$$ AS s']) {
+  for (const sql of ["SELECT E'a\\'b' AS s", 'SELECT $$x$$ AS s']) {
     assert.equal(sqlGuard.checkSql(sql).ok, false, sql);
   }
+});
+
+test('the guardrail and DuckDB agree on where a nested block comment ends', async (t) => {
+  const { one } = await rawLocked(t);
+  // The `/* /* */ ... */` trick: whatever sits between the first */ and the
+  // matching one is comment to both, and code after the matching one is code
+  // to both.
+  const cases = [
+    ['SELECT 1 AS n /* /* */ , 2 AS m */', [{ n: 1 }]],
+    ['SELECT 1 AS n /* /* */ */ , 2 AS m', [{ n: 1, m: 2 }]],
+    ['SELECT 1 AS n /* a /* b */ c */', [{ n: 1 }]],
+    ['SELECT 1 AS n /*/ */ , 2 AS m', [{ n: 1, m: 2 }]],
+    ['SELECT 1 AS n /* /*/ */ */ , 2 AS m', [{ n: 1, m: 2 }]],
+    ['SELECT 1 AS n /* /**/ */ , 2 AS m', [{ n: 1, m: 2 }]],
+    ['SELECT 1 AS n /* **/ , 2 AS m', [{ n: 1, m: 2 }]],
+  ];
+  for (const [sql, rows] of cases) {
+    assert.equal(sqlGuard.checkSql(sql).ok, true, `guardrail accepts: ${sql}`);
+    assert.deepEqual(await one(sql), rows, sql);
+  }
+  for (const sql of ['SELECT 1 AS n /* /* */', 'SELECT 1 AS n /* /* /* */ */']) {
+    assert.equal(sqlGuard.checkSql(sql).rule, sqlGuard.RULES.UNTERMINATED, sql);
+    await assert.rejects(one(sql), /unterminated \/\* comment/, sql);
+  }
+
+  // Random comment bodies (seeded, so a failure reproduces): where the
+  // guardrail says the comment ends, DuckDB must too. Appending `, 2 AS m`
+  // there runs only if DuckDB closed the comment at exactly that point; a body
+  // the guardrail calls unterminated must not run at all.
+  const pieces = ['/', '*', '/*', '*/', ' ', '\n', 'a', '-', "'"];
+  let seed = 7;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const prefix = 'SELECT 1 AS n ';
+  let closed = 0;
+  for (let k = 0; k < 2000; k += 1) {
+    let text = `${prefix}/*`;
+    for (let j = 1 + rnd(14); j > 0; j -= 1) text += pieces[rnd(pieces.length)];
+    const end = sqlGuard.blockCommentEnd(text, prefix.length);
+    if (end === -1) {
+      await assert.rejects(one(`${text}\n`), /unterminated|syntax error/, `guardrail: unterminated, DuckDB ran: ${JSON.stringify(text)}`);
+      continue;
+    }
+    closed += 1;
+    const sql = `${text.slice(0, end)} , 2 AS m`;
+    assert.deepEqual(await one(sql), [{ n: 1, m: 2 }], `comment end disagrees: ${JSON.stringify(sql)}`);
+  }
+  assert.ok(closed > 500, `enough closed comments exercised (${closed})`);
 });
 
 // --- AC4: missing or unreadable data -----------------------------------------
@@ -224,6 +270,38 @@ test('a file DuckDB cannot open is unavailable, not a crash', async (t) => {
   fs.writeFileSync(file, 'this is not a database\n'.repeat(500));
   const data = createData({ file, profile: PROFILE });
   await assert.rejects(data.run('SELECT 1 AS n'), (err) => err instanceof DataUnavailableError && /could not be opened/.test(err.reason));
+});
+
+test('describe().problem never shows the data file\'s full path, even when DuckDB\'s error does', async (t) => {
+  const dir = path.join(tmpDir(t), 'a dir with spaces');
+  fs.mkdirSync(dir);
+  const file = path.join(dir, 'garbage.duckdb');
+  fs.writeFileSync(file, 'this is not a database\n'.repeat(500));
+  const data = createData({ file, profile: PROFILE });
+  await assert.rejects(data.run('SELECT 1 AS n'), (err) => {
+    assert.ok(!err.reason.includes(dir) && !err.message.includes(dir), err.reason);
+    return true;
+  });
+  const { problem } = data.describe();
+  assert.match(problem, /could not be opened/);
+  assert.match(problem, /garbage\.duckdb/, 'the file name is kept');
+  assert.ok(!problem.includes(dir), `no directory in: ${problem}`);
+  assert.ok(!problem.includes(os.tmpdir()) && !problem.includes(fs.realpathSync(os.tmpdir())), `no temp dir in: ${problem}`);
+});
+
+test('data unavailable is a typed refusal (AD-17), worded only by kit/runtime/messages', () => {
+  const errors = require('../../kit/runtime/errors');
+  const { messageFor } = require('../../kit/runtime/messages');
+  const sdk = require('../../kit/runtime/sdk');
+  assert.equal(DataUnavailableError, errors.DataUnavailable, 'kit/runtime/data re-exports the one class');
+  assert.equal(sdk.DataUnavailableError, errors.DataUnavailable, 'the SDK export still works');
+  const err = new errors.DataUnavailable('the data file does not exist');
+  assert.ok(err instanceof errors.RuntimeRefusal);
+  assert.equal(err.code, 'DATA_UNAVAILABLE');
+  assert.equal(err.reason, 'the data file does not exist');
+  assert.match(messageFor(err), /^The data isn't available right now, so I can't answer that\. The app is still running; please tell your admin\.$/);
+  assert.ok(!messageFor(err).includes(err.reason), 'the reason is logged, never shown');
+  assert.equal(require('../../kit/runtime/data').DATA_UNAVAILABLE, undefined, 'no reply text in kit/runtime/data');
 });
 
 test('the data path: APLABS_DATA_PATH (absolute), else the built fixture under the var dir', () => {

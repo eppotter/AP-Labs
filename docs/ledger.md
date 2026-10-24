@@ -61,6 +61,7 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #75 | 2026-10-24 | — | docs | T1 | Epic 6 retro (7 PRs, no breaches), sprint tracker brought up to date, and a build-loop rule: two stories that edit the same engine file don't run in parallel unless the later builder resolves the merge. | — |
 | #76 | 2026-10-24 | 7.6 | groundwork | T3 | `npm run fixture:validate` runs 12 integrity and synthetic-only SQL checks on the built Brightside fixture through the query runner (also a verify check and a CI step), and Brightside's `context/data.md` carries the 7 known truths, each run through the runner by `npm run verify` against its planted target (owner Dana Reyes, sign-off pending). | — |
 | #78 | 2026-10-24 | 7.7 | groundwork | T1 | `npm run fixture:publish` (Ely only) replaces the shared MotherDuck copy of the fixture with the validated local build through a checked staging copy and records its version; `npm run fixture:status` shows the local version and row counts offline, and `-- --remote` says whether the shared copy matches. The token comes from env or the Keychain and is masked in all output. | — |
+| #79 | 2026-10-24 | — | fix | T3 | Hardening (#66, #71, #73): the SQL guardrail now skips nested block comments exactly as DuckDB does (checked against DuckDB), data-unavailable is a typed error worded in `kit/runtime/messages`, the data runner never shows a full file path, and the DM greeting escapes the client name. | — |
 
 ## Deferrals (DEP)
 
