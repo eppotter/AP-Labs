@@ -573,7 +573,7 @@ test('a batched write stopped partway (kill switch or failure) records its progr
     const c = connector.create({ log: quietLog(), env, ...fakeClock(), onRequest: () => { requests += 1; if (requests === 1) env.DEMO_OFF = '1'; } });
     const stopped = await settle(c.write.push(input('ks')));
     assert.ok(stopped.error instanceof KillSwitchOn, `got ${stopped.error ? stopped.error.name : 'a result'}`);
-    assert.deepEqual(stopped.error.details.sent, { batches: 1, items: 2 });
+    assert.deepEqual(stopped.error.details.sent, { batches: 1, items: 2, recorded: true });
     assert.deepEqual(system.sent, ['p0', 'p1']);
     const words = messageFor(stopped.error, { admin: 'Dana' });
     assert.match(words, /partway/);
@@ -593,7 +593,7 @@ test('a batched write stopped partway (kill switch or failure) records its progr
     const c = connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, ...fakeClock(), onRequest: () => { requests += 1; if (requests === 2) throw Object.assign(new Error('HTTP 503'), { status: 503 }); } });
     const failed = await settle(c.write.push(input('outage')));
     assert.ok(failed.error instanceof ConnectorFailed && !(failed.error instanceof PartialFailure), `got ${failed.error && failed.error.name}`);
-    assert.deepEqual(failed.error.details.sent, { batches: 1, items: 2 });
+    assert.deepEqual(failed.error.details.sent, { batches: 1, items: 2, recorded: true });
     assert.match(messageFor(failed.error), /couldn't finish sending to Demo: 2 items were sent/);
     assert.deepEqual(await c.write.push(input('outage')), { pushed: 5 });
     assert.deepEqual(system.sent, ['p0', 'p1', 'p2', 'p3', 'p4']);
@@ -641,6 +641,93 @@ test('resuming a stopped write needs the same input and batch size, else Idempot
   await assert.rejects(cl.write.push(input(5)), ConnectorFailed);
   await assert.rejects(cl.write.push(input(5)), (e) => e instanceof ConnectorFailed && /progress record/.test(e.reason));
   assert.deepEqual(third.system.sent, ['p0', 'p1']);
+});
+
+// A write whose system answers each batch with `answer(batch)`, stopped by an
+// outage on the second request. Returns what the store holds and what was sent.
+async function stoppedWith(answer, { idempotency } = {}) {
+  const store = new Map();
+  const ledger = idempotency || { get: (k) => store.get(k), set: (k, v) => { store.set(k, v); } };
+  const sent = [];
+  const connector = defineConnector(spec({
+    write: {
+      push: {
+        plan: (i) => i,
+        apply: async (input, ctx) => {
+          const out = [];
+          for (const batch of ctx.batches(input.items)) {
+            out.push(await ctx.request(() => { sent.push(...batch.map((x) => x.id)); return answer(batch); }, { size: batch.length }));
+          }
+          return { batches: out.length };
+        },
+      },
+    },
+  }));
+  const lines = [];
+  let n = 0;
+  const c = connector.create({
+    log: createLog({ write: (line) => lines.push(JSON.parse(line)) }), env: { DEMO_TOKEN: TOKEN }, idempotency: ledger, ...fakeClock(),
+    onRequest: () => { n += 1; if (n === 2) throw new Error('HTTP 503'); },
+  });
+  const input = { items: items(5), idempotencyKey: 'k', dryRun: false };
+  const first = await settle(c.write.push(input));
+  return { c, input, first, store, sent, lines };
+}
+
+test('a progress record never holds an answer with contact data: such a write fails closed on retry, and sends nothing more (#89 round 3)', async () => {
+  const { c, input, first, store, sent } = await stoppedWith((batch) => ({ count: batch.length, id: 'c_123', contacts: batch.map((x) => ({ email: x.email })) }));
+  assert.ok(first.error instanceof ConnectorFailed);
+  const held = JSON.stringify([...store.values()]);
+  assert.doesNotMatch(held, /example\.invalid/, `the store holds contact data: ${held}`);
+  assert.deepEqual(first.error.details.sent, { batches: 1, items: 2, recorded: true });
+  const retry = await settle(c.write.push(input));
+  assert.ok(retry.error instanceof ConnectorFailed && /could not be kept/.test(retry.error.reason), `got ${retry.error && retry.error.reason}`);
+  assert.deepEqual(sent, ['p0', 'p1'], 'nothing was sent again');
+});
+
+test('a progress record keeps counts and id-shaped refs, so a write answered with them resumes (#89 round 3)', async () => {
+  const answers = [];
+  const { c, input, store, sent } = await stoppedWith((batch) => {
+    const a = { count: batch.length, ok: true, ids: batch.map((x, i) => `c_${answers.length}${i}`) };
+    answers.push(a);
+    return a;
+  });
+  const held = [...store.values()][0];
+  assert.deepEqual(held.completed, [{ size: 2, result: answers[0] }]);
+  assert.deepEqual(await c.write.push(input), { batches: 3 });
+  assert.deepEqual(sent, ['p0', 'p1', 'p2', 'p3', 'p4']);
+});
+
+test('a progress record that could not be saved is marked unrecorded, logged as an error, and never called safe to retry (#89 round 3)', async () => {
+  const store = new Map();
+  const idempotency = { get: (k) => store.get(k), set: (k, v) => { if (k.includes('\u0001progress')) throw new Error('disk full'); store.set(k, v); } };
+  const { first, lines } = await stoppedWith(() => 1, { idempotency });
+  assert.ok(first.error instanceof ConnectorFailed);
+  assert.deepEqual(first.error.details.sent, { batches: 1, items: 2, recorded: false });
+  assert.ok(lines.some((l) => l.level === 'error' && /progress could not be recorded/.test(l.msg)), JSON.stringify(lines));
+  const words = messageFor(first.error, { admin: 'Dana' });
+  assert.match(words, /Dana should check what arrived before anyone tries again/);
+  assert.doesNotMatch(words, /safe/i);
+  const ks = new KillSwitchOn({ connector: 'demo', system: 'Demo', env: 'DEMO_OFF', sent: { batches: 1, items: 2, recorded: false } });
+  assert.match(messageFor(ks, { admin: 'Dana' }), /Dana should check what arrived before anyone tries again/);
+  const auth = new ConnectorAuthFailed('HTTP 401', { connector: 'demo', system: 'Demo', operation: 'push', sent: { batches: 1, items: 2, recorded: false } });
+  assert.match(messageFor(auth, { admin: 'Dana' }), /Dana should check what arrived before anyone tries again/);
+});
+
+test('a per-item PartialFailure whose stale progress could not be cleared is not called safe to retry (#89 round 3)', async () => {
+  const store = new Map();
+  let broken = false;
+  const idempotency = { get: (k) => store.get(k), set: (k, v) => { if (broken && k.includes('\u0001progress')) throw new Error('disk full'); store.set(k, v); } };
+  const { connector } = batchedPush({ perItemIdempotency: true, partlyFails: true });
+  let n = 0;
+  const c = connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, ...fakeClock(), onRequest: () => { n += 1; if (n === 2) throw new Error('HTTP 503'); } });
+  const input = { items: items(4), idempotencyKey: 'k', dryRun: false };
+  await assert.rejects(c.write.push(input), ConnectorFailed);
+  broken = true;
+  const partly = await settle(c.write.push(input));
+  assert.ok(partly.error instanceof PartialFailure);
+  assert.equal(partly.error.details.retrySafe, false);
+  assert.doesNotMatch(messageFor(partly.error), /safe/);
 });
 
 test('a resumed write whose requests changed since the first try fails closed (#89 round 2)', async () => {

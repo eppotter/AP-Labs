@@ -34,7 +34,17 @@
 //     { input, partial: true, batchSize, completed: [{ size, result }] }
 //     (a write that completes stores nothing extra; a process that dies
 //     mid-write records nothing). A store must keep that value whole and
-//     return the latest one set (a mangled one fails closed). A retry with the same key and input
+//     return the latest one set (a mangled one fails closed). A request's
+//     answer is kept only when it is nothing but counts, flags and id-shaped
+//     refs; any other answer (contact data, free text) is never stored, the
+//     request is marked opaque, and a retry that reaches it fails closed with
+//     ConnectorFailed, sending nothing more. If the record can't be saved,
+//     details.sent.recorded is false, an error line is logged, and the
+//     person is told the admin should check what arrived before anyone
+//     retries (never that a retry is safe). Only a request that answered is
+//     recorded: one that timed out after the system had already processed
+//     it can't be, so a retry may send it again; adapters should pass the
+//     system's own dedupe keys (ctx.idempotencyKey per item) where it has them. A retry with the same key and input
 //     re-runs apply, answers those requests from the record without calling
 //     the system, and sends only the rest (#89). The record is bound to the
 //     input fingerprint and the batch size: other input, or the same input
@@ -153,6 +163,10 @@ function isIdShaped(ref) {
   if (/^[0-9._:-]+$/.test(ref) && ref.replace(/[^0-9]/g, '').length >= 7) return false;
   return true;
 }
+// A field name a progress record may keep: a plain identifier, never one
+// named like a credential or contact data.
+const SAFE_FIELD = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const SECRET_FIELD = /token|secret|password|passwd|api_?key|apikey|auth|email|phone|name|address/i;
 const isCount = (n) => Number.isSafeInteger(n) && n >= 0;
 
 // Throws naming the field when a declaration breaks the contract.
@@ -389,6 +403,24 @@ function defineConnector(spec) {
       return { client: spec.connect ? await spec.connect({ secret, registerSecret, simulate: deps.simulate, data: deps.data }) : null };
     }
 
+    // What a progress record keeps of a request: its size and, only when it
+    // is nothing but counts, flags and id-shaped refs, its answer. Any other
+    // answer (contact data, free text) is never stored: the request is marked
+    // opaque, and a retry that reaches it fails closed (#89).
+    function keepable(value, depth = 0) {
+      if (value === null || typeof value === 'boolean') return true;
+      if (typeof value === 'number') return Number.isFinite(value);
+      if (typeof value === 'string') return isIdShaped(value) && clean(value) === value;
+      if (depth >= 4 || typeof value !== 'object') return false;
+      if (Array.isArray(value)) return value.every((v) => keepable(v, depth + 1));
+      if (Object.getPrototypeOf(value) !== Object.prototype) return false;
+      return Object.entries(value).every(([k, v]) => SAFE_FIELD.test(k) && !SECRET_FIELD.test(k) && keepable(v, depth + 1));
+    }
+    function note(size, result) {
+      if (result === undefined) return { size };
+      return keepable(result) ? { size, result } : { size, opaque: true };
+    }
+
     // progress (a live write only): the write's batch-level record, so a
     // retry with the same key and input resumes after the requests already
     // sent. Request i that completed on an earlier try is answered from the
@@ -438,10 +470,13 @@ function defineConnector(spec) {
             // The adapter must ask the same requests in the same order on a
             // retry; one that changed means the record can't be trusted.
             if (done.size !== size) throw new Error(`request ${index + 1} of this write changed since the first try (size ${done.size}, now ${size}), so it was stopped before sending`);
+            if (done.opaque === true) {
+              throw new Error(`request ${index + 1}'s answer could not be kept (it held more than counts and ids), so this write can't resume; nothing more was sent`);
+            }
             return done.result;
           }
           const result = await send(fn, size);
-          progress.completed[index] = { size, result };
+          progress.completed[index] = note(size, result);
           return result;
         },
       });
@@ -450,7 +485,7 @@ function defineConnector(spec) {
     // A write's PartialFailure, rebuilt from its counts alone (the adapter's
     // text is dropped: it may name refs or contact data) with id-shaped refs,
     // or null when its counts don't add up (then it is a plain ConnectorFailed).
-    function partial(err, operation) {
+    function partial(err, operation, sent = null) {
       const { succeeded, failed, failedRefs } = err.details || {};
       if (!isCount(succeeded) || !isCount(failed) || failed < 1 || !Array.isArray(failedRefs) || failedRefs.length !== failed) return null;
       const refs = failedRefs.map((r) => {
@@ -458,7 +493,9 @@ function defineConnector(spec) {
         if (typeof ref !== 'string' || !isIdShaped(ref)) return MASK;
         return clean(ref) === ref ? ref : MASK;
       });
-      const retrySafe = declaration.perItemIdempotency.includes(operation);
+      // Not safe when the write's progress could not be updated: a stale
+      // record could make the retry skip what failed (#89).
+      const retrySafe = declaration.perItemIdempotency.includes(operation) && !(sent && sent.recorded === false);
       log.warn('connector write partly failed', {
         connector: declaration.id, operation, succeeded, failed, failed_refs: refs, retry_safe: retrySafe,
       });
@@ -476,7 +513,7 @@ function defineConnector(spec) {
       // Only a write can partly apply: a read fails whole (fail closed). The
       // adapter's text never leaves with a PartialFailure, valid or not.
       if (err instanceof PartialFailure) {
-        const rebuilt = kind === 'write' ? partial(err, operation) : null;
+        const rebuilt = kind === 'write' ? partial(err, operation, sent) : null;
         if (rebuilt) throw rebuilt;
         const why = kind === 'write' ? 'counts must be whole numbers, failed at least 1, one ref per failed item' : 'a read cannot partly fail';
         throw new ConnectorFailed(`invalid partial failure (${why})`, details(operation));
@@ -570,18 +607,23 @@ function defineConnector(spec) {
               // system again: drop the record. Any other write keeps it, so
               // nothing it sent is sent twice.
               const resend = err instanceof PartialFailure && declaration.perItemIdempotency.includes(name);
-              const sent = sentAny ? sentSoFar(progress.completed) : null;
+              const counts = sentAny ? sentSoFar(progress.completed) : null;
               if (resend) progress.completed = [];
+              let recorded = true;
               if ((sentAny && !resend) || (resend && saved !== undefined)) {
                 try {
                   await progress.save();
                 } catch (_) {
-                  // Unrecorded: a retry would send it all again. The person is
-                  // told what went and to check with the admin before retrying.
-                  log.warn('connector write progress could not be recorded', { connector: declaration.id, operation: name });
+                  // Unrecorded: a retry would send it all again. The error
+                  // says so (sent.recorded false) and the person is told the
+                  // admin should check what arrived before anyone retries.
+                  recorded = false;
+                  log.error('connector write progress could not be recorded: a retry may send again', {
+                    connector: declaration.id, operation: name, sent_batches: counts ? counts.batches : 0,
+                  });
                 }
               }
-              throw new Stopped(err, sent);
+              throw new Stopped(err, counts ? Object.freeze({ ...counts, recorded }) : null);
             }
           })();
           inFlight.set(slot, { input, run });
