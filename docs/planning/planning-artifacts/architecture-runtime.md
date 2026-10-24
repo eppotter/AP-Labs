@@ -230,7 +230,7 @@ Dependency rule: arrows point inward only. Engine code never `require`s or names
 | ajv | 8.20.0 (existing pin) |
 | yaml | 2.9.1 (existing pin) |
 | @slack/bolt | 5.1.0 (Story 6.1: current release on 2026-10-24; Socket Mode app framework, brings `@slack/socket-mode` and `@slack/web-api`) |
-| @duckdb/node-api | exact pin chosen and verified current in Story 7.3 |
+| @duckdb/node-api | 1.5.6-r.2 (Story 7.3: newest 1.x release on 2026-10-24; official DuckDB client with prebuilt platform packages, so no native build. 2.0.0-r.1 (2026-10-21) is a new major: adopt it once Story 7.7 confirms MotherDuck accepts DuckDB 2.0 files) |
 | @anthropic-ai/sdk | exact pin chosen and verified current in Story 9.1 |
 
 Planning ran with no network, so new versions are not pinned here; each story verifies the current release and pins it exactly.
