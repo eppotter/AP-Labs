@@ -1,6 +1,6 @@
 # Runtime phase: summary for Ely
 
-Status: draft (round 3, after the Architect's re-check), awaiting approval · 2026-10-24
+Status: approved by Ely 2026-10-24 (recommended decisions: Node fixture, Claude API with breaker, no MotherDuck read in V1, win-back demo, schema as drafted)
 
 **What it delivers:** the part of the template the client's people use. By the end, in a fresh fork set up for Brightside, you type a command in Slack, ask in plain English for lapsed clients to win back, check what the bot understood, see a scored list, approve it, and watch it land once in a mock email tool. That is PLAN-v1 done-definition 3, plus 1, 2, 5 and 6.
 
