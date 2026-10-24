@@ -100,6 +100,11 @@ function validateProfile(profile, file) {
   for (const d of duplicates(p.resources.map((r) => r.key))) problems.push(`duplicate resource key "${d}"`);
   for (const d of duplicates(p.users.map((u) => u.id))) problems.push(`duplicate user id "${d}"`);
   for (const d of duplicates(p.verify.checks.map((c) => c.id))) problems.push(`duplicate verify check id "${d}"`);
+  // The runtime maps a Slack id to exactly one person (Story 6.3).
+  for (const d of duplicates(p.users.map((u) => u.identities.slack).filter((s) => s !== undefined))) {
+    const ids = p.users.filter((u) => u.identities.slack === d).map((u) => u.id).join(', ');
+    problems.push(`users ${ids} share identities.slack "${d}"`);
+  }
   p.users.forEach((u, i) => {
     for (const field of ['grants', 'deny']) {
       for (const k of u[field]) {

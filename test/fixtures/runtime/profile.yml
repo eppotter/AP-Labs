@@ -1,5 +1,5 @@
 # Runtime test profile: one open-access resource the fixture modules use, and
-# one that is not open (a module on it must be refused until Story 6.3).
+# one that is not open (granted per person, Story 6.3).
 schema_version: 1
 client: { id: tiny, name: Tiny }
 resources:

@@ -23,10 +23,12 @@ function escapeText(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// hub: a hub file; entries: the modules this person may see, in menu order.
-// Returns { text, blocks } for an ephemeral reply.
-function buildMenu(hub, entries) {
+// hub: a hub file; entries: the modules this person may see, in menu order;
+// notice (optional): mrkdwn shown under the header, for example "you're not
+// set up yet". Returns { text, blocks } for an ephemeral reply.
+function buildMenu(hub, entries, { notice } = {}) {
   const blocks = [{ type: 'header', text: { type: 'plain_text', text: hub.name, emoji: false } }];
+  if (notice) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: notice }] });
   if (!entries.length) {
     blocks.push({ type: 'section', text: { type: 'mrkdwn', text: 'Nothing is available to you here yet.' } });
   }
@@ -46,7 +48,7 @@ function buildMenu(hub, entries) {
   const text = entries.length
     ? `${hub.name}: ${entries.map((e) => e.label).join(', ')}`
     : `${hub.name}: nothing is available to you here yet.`;
-  return { text, blocks };
+  return { text: notice ? `${text}\n${notice}` : text, blocks };
 }
 
 module.exports = { buildMenu, openActionId, moduleIdFromAction, OPEN_ACTION };
