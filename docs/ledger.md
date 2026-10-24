@@ -33,6 +33,10 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | #25 | 2026-10-24 | — | docs | — | Updates the sprint tracker and records the Epic 1 retro. | — |
 | #26 | 2026-10-24 | 2.2 | infra | — | Adds the agent roster, each agent limited to the tools its job needs. | — |
 | #27 | 2026-10-24 | 2.1 | infra | — | A session banner names the Orchestrator and client, and lists every profile error. | DEP-005 |
+| #28 | 2026-10-24 | 2.3 | infra | — | AGENTS.md gains the Orchestrator's rules: the 8 stages routed to installed skills and agents, the build loop, merge authority. | — |
+| #29 | 2026-10-24 | 2.4 | infra | — | The write gate: no edits in a client fork until work is routed to a specialist or logged with `npm run engage`. | DEP-005 |
+| #30 | 2026-10-24 | 2.6 | infra | — | Client profiles can switch on add-on stages that slot between the 8 core stages. | DEP-006 |
+| #32 | 2026-10-24 | — | fix | — | Reviewers end with a `VERDICT:` line the parser trusts first, so Codex paraphrases no longer force fallbacks. | — |
 | pending | 2026-10-24 | 5.1 | infra | — | Adds this ledger and a CI check that every PR adds a ledger row unless it is docs-only. | DEP-004 |
 
 ## Deferrals (DEP)
@@ -44,3 +48,4 @@ One row per build, and one `DEP` row for anything a build defers or is blocked o
 | DEP-003 | 2026-10-24 | Orchestrator | open | — | Non-blocking review follow-ups from PR #23 (Story 3.1). | [#24](https://github.com/eppotter/AP-Labs/issues/24) |
 | DEP-004 | 2026-10-24 | Orchestrator | open | Story 4.3 | Story 4.3 (prove onboarding on Brightside) is deferred to the fixture phase: it needs the Brightside dataset. | `docs/planning/planning-artifacts/epics.md` (Story 4.3) |
 | DEP-005 | 2026-10-24 | Orchestrator | open | — | The Codex SessionStart and gate output formats are unproven against a live, trusted Codex session. | [#27](https://github.com/eppotter/AP-Labs/pull/27) |
+| DEP-006 | 2026-10-24 | Orchestrator | open | — | Small hardening follow-ups from Story 2.6's review (add-on lists in sync, error type, unused export). | https://github.com/eppotter/AP-Labs/issues/31 |
