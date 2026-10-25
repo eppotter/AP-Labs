@@ -2,8 +2,8 @@
 
 // The demo flow, end to end (Story 10.4, CAP-14): every step of
 // docs/planning/specs/spec-runtime/demo-flow.md, driven through fake Slack
-// with the template configured the way the live demo is: the Brightside
-// profile (APLABS_PROFILE), the example app dir (APLABS_APP_DIR), a
+// with the template configured the way the live demo is: a fixture copy of
+// the Brightside profile (APLABS_PROFILE), the example app dir (APLABS_APP_DIR), a
 // temporary APLABS_VAR_DIR (so var/outbox/email.jsonl starts empty) and a
 // temporary build of the local fixture (APLABS_DATA_PATH), with every kill
 // switch cleared. No copy of the repo is made. Offline: fake Slack, a
@@ -34,8 +34,8 @@
 // the query or sending the CSV again (docs/runtime/demo-script.md).
 //
 // An example test (architecture carve-out, plan epic-10 Q7): it reads
-// Brightside's profile, app dir and fixture, and is deleted with the example
-// in a fork.
+// Brightside's app dir and fixture, and a copy of its profile in
+// fixtures/demo-profile.yml, and is deleted with the example in a fork.
 
 const test = require('node:test');
 const { before, after } = require('node:test');
@@ -49,9 +49,11 @@ const { loadProfile } = require('../../../kit/lib/profile');
 const { loadRegistry } = require('../../../kit/runtime/registry');
 const { escapeText } = require('../../../kit/runtime/messages');
 const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
+const { checkRequest } = require('../../../test/fixtures/fake-anthropic');
 
 const ROOT = path.join(__dirname, '../../..');
-const PROFILE_PATH = path.join(ROOT, 'profiles/brightside/profile.yml');
+// A fixture copy of the demo profile (fake Slack ids), never profiles/brightside (#161).
+const PROFILE_PATH = path.join(__dirname, 'fixtures/demo-profile.yml');
 const APP_DIR = path.join(ROOT, 'examples/brightside/app');
 const profile = loadProfile(PROFILE_PATH);
 const { registry } = loadRegistry({ appDir: APP_DIR, profile });
@@ -95,7 +97,8 @@ class ViewsSlackApp extends FakeSlackApp {
 }
 
 // A stand-in model that fills the form from the request (Story 9.4),
-// recording every request it is sent.
+// recording every request it is sent. Like the real API, it refuses a
+// tool_choice of type "tool" or "any" (checkRequest).
 function standInModel() {
   const calls = [];
   const reply = {
@@ -103,7 +106,7 @@ function standInModel() {
     stop_reason: 'tool_use',
     usage: { input_tokens: 400, output_tokens: 30 },
   };
-  return { calls, created: 0, client: { messages: { create: async (params) => { calls.push(params); return reply; } } } };
+  return { calls, created: 0, client: { messages: { create: async (params) => { calls.push(params); checkRequest(params); return reply; } } } };
 }
 
 let seq = 0;

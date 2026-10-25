@@ -38,3 +38,7 @@ Start the bot as in `slack-app-setup.md`. The startup line's `ai` field says `on
 ## What the AI sees
 
 The client's name, and `org.md` and `data.md` from the profile's context folder with their header block, every `truth` block and every HTML comment removed. Never `guardrails.md` or `connectors.md`, never data rows, and at most 500 characters of what the person typed. Requests and replies are never logged, but they do reach Anthropic.
+
+## How the AI answers
+
+The bot sends one tool, `fill_parameters`, and tells the model to answer only by calling it. The tool is offered, not forced (`tool_choice` is `auto`, one call at most): Claude Sonnet 5.5, Opus 5.5 and Fable 5.1 refuse a forced tool choice with a 400. A reply that does not call the tool counts as a failed read, and the person gets the form with "I couldn't read your request".

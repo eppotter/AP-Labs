@@ -257,8 +257,56 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     }
   }
 
+  // A throw while setting up the data, the store or the AI helper still
+  // propagates (the crash handler logs it), but closes the listener first so
+  // a failed boot never leaves /healthz open (#168).
+  let setup;
+  try {
+    setup = await setUp({ cfg, deps, log, env });
+  } catch (err) {
+    if (healthCheck) await healthCheck.close();
+    throw err;
+  }
+  const { remote, data, connecting, store, ai, aiStatus } = setup;
+
   // createApp inside the try: a throw while building the app (it may carry a
   // token) still goes through the redacting logger.
+  let app;
+  try {
+    app = createApp({ ...cfg, store, data, log, App: deps.App, llm: ai, connectors });
+    // Before start(): Bolt's start() resolves on the first connected event.
+    if (healthState && !health.watchConnection(app, healthState)) {
+      log.warn('health: no Socket Mode client to watch, so /healthz reports down after the grace period');
+    }
+    await app.start();
+  } catch (err) {
+    log.error('could not connect to Slack', { err });
+    if (healthCheck) await healthCheck.close();
+    return { code: 1, app };
+  }
+  const client = cfg.profile.client.name;
+  log.info(`${client} bot started (single instance: run exactly one process)`, {
+    client,
+    profile: cfg.profilePath,
+    env: cfg.env,
+    hubs: cfg.registry.hubs.map((h) => h.command),
+    modules: cfg.registry.modules.length,
+    data: dataState(data, remote),
+    ai: aiStatus.on ? 'on' : `off (${AI_OFF_WORDS[aiStatus.reason]})`,
+    jobs: jobs.jobsWords(cfg.jobsState, cfg.jobs),
+    health: healthCheck ? `on (port ${healthCheck.port})` : 'off',
+    instance: 'single instance',
+  });
+  // Read-only jobs (Q3): the logger, the query runner and the clock; nothing else.
+  const scheduler = jobs.createScheduler({
+    jobs: cfg.jobsState.on ? cfg.jobs : [], log, data, now: clockOf(deps), ...(deps.timers ? { timers: deps.timers } : {}),
+  });
+  scheduler.start();
+  return { code: 0, app, log, data, connecting, llm: ai, jobs: scheduler, health: healthCheck, connectors };
+}
+
+// The data, the store and the AI helper, set up after the health listener.
+async function setUp({ cfg, deps, log, env }) {
   // The data never blocks boot: a failed open is logged, and retried on use.
   // A local file is opened before Slack starts; MotherDuck connects alongside
   // it (up to its 10s limit) and is reported when the attempt settles.
@@ -300,39 +348,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   });
   const aiStatus = ai.status();
   if (aiStatus.reason === 'config') log.error('AI helper off: configuration fault', { problem: aiStatus.problem });
-
-  let app;
-  try {
-    app = createApp({ ...cfg, store, data, log, App: deps.App, llm: ai, connectors });
-    // Before start(): Bolt's start() resolves on the first connected event.
-    if (healthState && !health.watchConnection(app, healthState)) {
-      log.warn('health: no Socket Mode client to watch, so /healthz reports down after the grace period');
-    }
-    await app.start();
-  } catch (err) {
-    log.error('could not connect to Slack', { err });
-    if (healthCheck) await healthCheck.close();
-    return { code: 1, app };
-  }
-  const client = cfg.profile.client.name;
-  log.info(`${client} bot started (single instance: run exactly one process)`, {
-    client,
-    profile: cfg.profilePath,
-    env: cfg.env,
-    hubs: cfg.registry.hubs.map((h) => h.command),
-    modules: cfg.registry.modules.length,
-    data: dataState(data, remote),
-    ai: aiStatus.on ? 'on' : `off (${AI_OFF_WORDS[aiStatus.reason]})`,
-    jobs: jobs.jobsWords(cfg.jobsState, cfg.jobs),
-    health: healthCheck ? `on (port ${healthCheck.port})` : 'off',
-    instance: 'single instance',
-  });
-  // Read-only jobs (Q3): the logger, the query runner and the clock; nothing else.
-  const scheduler = jobs.createScheduler({
-    jobs: cfg.jobsState.on ? cfg.jobs : [], log, data, now: clockOf(deps), ...(deps.timers ? { timers: deps.timers } : {}),
-  });
-  scheduler.start();
-  return { code: 0, app, log, data, connecting, llm: ai, jobs: scheduler, health: healthCheck, connectors };
+  return { remote, data, connecting, store, ai, aiStatus };
 }
 
 // Anything that escapes main() is logged through the same redacting logger

@@ -540,6 +540,30 @@ test('the prose-finding guard ignores negations, settled P1s, formatted lines an
     'after the reminder, a prose blocker with no VERDICT line is still never a pass');
 });
 
+test('#47: a settled clause does not settle a blocking clause in the same bullet', () => {
+  const blockers = [
+    '- earlier P1 is fixed, but kit/lib/gate/index.js still drops the approval and is blocking',
+    '- The earlier P1 in kit/a.js is fixed; P1: kit/b.js loses rows on retry',
+    '- R1-1 resolved. Blocking: kit/lib/x.js writes without approval',
+    '- kit/a.js no longer throws, however the retry in kit/b.js is a P1',
+    '- P1: kit/a.js drops rows; the earlier one is fixed',
+  ];
+  for (const line of blockers) {
+    assert.deepEqual(proseBlockerLines(line), [line], line);
+    assert.match(readVerdict(`${line}\nVERDICT: CLEAN\n`).error, /Verdict says CLEAN but 1 line\(s\) read like an unformatted blocking finding/, line);
+  }
+  const settled = [
+    '- The earlier P1 in kit/a.js is fixed',
+    '- The earlier P1 in kit/a.js is fixed; no blocking issues remain',
+    '- P1 in kit/a.js is resolved, and the blocking retry in kit/b.js is addressed',
+    '- R1-1 (kit/a.js) was blocking but is now fixed',
+  ];
+  for (const line of settled) {
+    assert.deepEqual(proseBlockerLines(line), [], line);
+    assert.deepEqual(readVerdict(`${line}\nVERDICT: CLEAN\n`), { findings: [] }, line);
+  }
+});
+
 test('isClean accepts "defects", "problems" and "bugs" paraphrases (Codex on #57)', () => {
   for (const v of ['No blocking or non-blocking defects were found in the diff.', 'No problems found.', 'I found no bugs.']) assert.ok(isClean(v), v);
 });

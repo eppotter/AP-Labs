@@ -63,6 +63,17 @@ test('circular fields do not throw', () => {
   assert.equal(JSON.parse(lines[0]).a.self, '[circular]');
 });
 
+test('#56: two secret-shaped keys keep both fields under unique redacted keys', () => {
+  const { log, lines, text } = capture();
+  const secret = log.registerSecret('plain-secret-value-9876');
+  log.info('keys', { [BOT]: 'first', [APP]: 'second', nested: { [secret]: 1, [`${secret}-2`]: 2, '[redacted]': 3 } });
+  assert.ok(!text().includes(BOT) && !text().includes(APP) && !text().includes(secret));
+  const entry = JSON.parse(lines[0]);
+  assert.equal(entry['[redacted]'], 'first');
+  assert.equal(entry['[redacted]#2'], 'second');
+  assert.deepEqual(entry.nested, { '[redacted]': 1, '[redacted]-2': 2, '[redacted]#2': 3 });
+});
+
 test('slackLogger drops debug even when the library asks for it', () => {
   const { log, lines } = capture();
   const sl = slackLogger(log, 'bolt');

@@ -15,13 +15,14 @@ const { createLog } = require('../../kit/runtime/log');
 const { LlmUnavailable, AccessDenied, ConfigFault, LLM_REASONS } = require('../../kit/runtime/errors');
 const { messageFor } = require('../../kit/runtime/messages');
 const {
-  createLlm, readKey, isSwitchedOff, modelProblems, clientOptions, worstCaseCost, actualCost,
+  createLlm, readKey, isSwitchedOff, modelProblems, clientOptions, worstCaseCost, actualCost, REQUEST_RULE, TOOL_CHOICE,
   KEY_ENV, KEY_KEYCHAIN, TIMEOUT_MS, MAX_REQUEST_CHARS, CALLS_PER_PERSON_PER_HOUR, CHARS_PER_TOKEN, TOOL_OVERHEAD_TOKENS,
 } = require('../../kit/runtime/llm');
 const {
   loadContext, stripContext, systemPrompt, cleanName, escapeData, INSTRUCTIONS, CONTEXT_FILES, MAX_CONTEXT_CHARS, MAX_NAME_CHARS,
 } = require('../../kit/runtime/llm/context');
 const { PRICES, priceOf, costUsd } = require('../../kit/runtime/llm/prices');
+const { checkRequest, UNSUPPORTED_TOOL_CHOICE } = require('../fixtures/fake-anthropic');
 
 const PROFILE_PATH = path.join(__dirname, '../fixtures/llm/profile.yml');
 const profile = loadProfile(PROFILE_PATH);
@@ -40,7 +41,8 @@ const withLlm = (settings) => validateProfile({
 
 // A stand-in for the Anthropic client. reply: an object, or a function of
 // (params, n) returning one; hold: true keeps each call pending until
-// release(i) or releaseAll().
+// release(i) or releaseAll(). Like the real API, it refuses a tool_choice of
+// type "tool" or "any" with a 400 (checkRequest).
 function fakeClient({ reply = okReply(), hold = false, fail = null } = {}) {
   const calls = [];
   const pending = [];
@@ -50,6 +52,7 @@ function fakeClient({ reply = okReply(), hold = false, fail = null } = {}) {
     messages: {
       create(params, opts) {
         calls.push({ params, opts });
+        try { checkRequest(params); } catch (err) { return Promise.reject(err); }
         if (fail) return Promise.reject(fail);
         const value = typeof reply === 'function' ? reply(params, calls.length) : reply;
         if (!hold) return Promise.resolve(value);
@@ -134,7 +137,7 @@ test('costs: tokens ÷ 1e6 × price; worst case is characters ÷ 3 plus a full r
   const chars = JSON.stringify({ system: params.system, messages: params.messages }).length;
   assert.equal(CHARS_PER_TOKEN, 3);
   assert.equal(worstCaseCost(params, price), costUsd(price, { input: Math.ceil(chars / 3), output: 1024 }));
-  const withTool = { ...params, tools: [{ name: 't', input_schema: {} }], tool_choice: { type: 'tool', name: 't' } };
+  const withTool = { ...params, tools: [{ name: 't', input_schema: {} }], tool_choice: { type: 'auto', disable_parallel_tool_use: true } };
   const toolChars = JSON.stringify({ system: params.system, messages: params.messages, tools: withTool.tools, tool_choice: withTool.tool_choice }).length;
   assert.equal(worstCaseCost(withTool, price), costUsd(price, { input: Math.ceil(toolChars / 3) + TOOL_OVERHEAD_TOKENS, output: 1024 }));
 });
@@ -482,7 +485,7 @@ test('a tool must declare effects: "none", or it is refused', () => {
   assert.throws(() => llm.registerTool({ name: 'nos', effects: 'none' }), /input_schema/);
 });
 
-test('a forced tool uses the extraction model and tool_choice; effects is not sent', async () => {
+test('a tool uses the extraction model and an auto tool_choice; effects is not sent', async () => {
   const p = withLlm({ model: 'claude-opus-5-5', extraction_model: 'claude-sonnet-5-5' });
   const reply = { content: [{ type: 'tool_use', name: 'fill_parameters', input: { zone: 'North' } }], usage: { input_tokens: 10, output_tokens: 5 } };
   const { llm, client } = make({ p, client: fakeClient({ reply }) });
@@ -491,12 +494,47 @@ test('a forced tool uses the extraction model and tool_choice; effects is not se
   assert.deepEqual(res.toolInput, { zone: 'North' });
   const { params } = client.calls[0];
   assert.equal(params.model, 'claude-sonnet-5-5');
-  assert.deepEqual(params.tool_choice, { type: 'tool', name: 'fill_parameters' });
+  assert.deepEqual(params.tool_choice, { type: 'auto', disable_parallel_tool_use: true });
   assert.deepEqual(params.tools, [{ name: TOOL.name, description: TOOL.description, input_schema: TOOL.input_schema }]);
   await llm.ask({ person: 'U0BOSS', resource: 'ASK', request: 'plain' });
   assert.equal(client.calls[1].params.model, 'claude-opus-5-5');
   assert.equal(client.calls[1].params.tools, undefined);
   await assert.rejects(llm.ask({ person: 'U0BOSS', resource: 'ASK', request: 'x', tool: 'unknown' }), /not registered/);
+});
+
+// The models we use refuse a forced tool (type "tool" or "any") with a 400.
+test('a call never sends tool_choice of type "tool" or "any": ask with a tool, ask without one, and structured', async () => {
+  const toolReply = { content: [{ type: 'tool_use', name: 'fill_parameters', input: { zone: 'North' } }], stop_reason: 'tool_use', usage: { input_tokens: 10, output_tokens: 5 } };
+  const { llm, client } = make({ client: fakeClient({ reply: toolReply }) });
+  llm.registerTool({ ...TOOL, effects: 'none' });
+  await llm.ask({ person: 'U0BOSS', resource: 'ASK', request: 'north', tool: 'fill_parameters' });
+  await llm.ask({ person: 'U0BOSS', resource: 'ASK', request: 'plain' });
+  const res = await llm.structured({ person: 'U0BOSS', resource: 'ASK', request: 'north', tool: { ...TOOL, effects: 'none' } });
+  assert.deepEqual(res.toolInput, { zone: 'North' });
+  assert.equal(client.calls.length, 3);
+  for (const { params } of client.calls) {
+    assert.ok(!params.tool_choice || !UNSUPPORTED_TOOL_CHOICE.has(params.tool_choice.type), JSON.stringify(params.tool_choice));
+  }
+  assert.equal(client.calls[1].params.tool_choice, undefined, 'no tool, no tool_choice');
+  assert.deepEqual(client.calls[2].params.tool_choice, TOOL_CHOICE);
+  assert.equal(client.calls[2].params.tools.length, 1, 'the tool is the only one sent');
+  assert.ok(client.calls[2].params.system.includes(REQUEST_RULE), 'the model is told to answer only by calling the tool');
+  assert.match(REQUEST_RULE, /Answer only by calling the one tool you are given/);
+});
+
+test('the stand-in client refuses a forced tool with a 400, as the real API does', async () => {
+  const { client } = make();
+  for (const type of ['tool', 'any']) {
+    await assert.rejects(client.messages.create({ tool_choice: { type, name: 't' } }), (err) => err.name === 'BadRequestError' && err.status === 400 && /not supported for this model/.test(err.message));
+  }
+  await client.messages.create({ tool_choice: { type: 'auto', disable_parallel_tool_use: true } });
+});
+
+test('a structured reply with text only and no tool call returns toolInput null', async () => {
+  const { llm } = make({ client: fakeClient({ reply: okReply({ text: 'Sure, North.' }) }) });
+  const res = await llm.structured({ person: 'U0BOSS', resource: 'ASK', request: 'north', tool: { ...TOOL, effects: 'none' } });
+  assert.equal(res.toolInput, null);
+  assert.equal(res.stopReason, 'end_turn');
 });
 
 // --- Messages --------------------------------------------------------------

@@ -366,8 +366,16 @@ async function build({ fixtureDir, out, stamp = true }) {
   conn.closeSync();
   instance.closeSync();
 
-  removeDb(target);
-  fs.renameSync(tmp, target);
+  // The old file stays until the rename replaces it (atomically), so a failed
+  // rename leaves the previous build, never no database (#61). Only its stale
+  // .wal goes first: it belongs to the old file and must not replay onto the new.
+  fs.rmSync(`${target}.wal`, { force: true });
+  try {
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    removeDb(tmp);
+    throw err;
+  }
   fs.rmSync(`${tmp}.wal`, { force: true });
   return { out: target, tables: p.tables.map((t) => ({ name: t.name, rows: counts[t.name] })), ms: Date.now() - started };
 }

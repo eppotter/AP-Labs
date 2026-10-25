@@ -10,8 +10,10 @@
 //   const read = createReader({ llm, log });
 //   const { values, problems, dropped } = await read({ mod, person, request });
 //
-// One structured call (llm.structured): one forced tool, fill_parameters,
-// declared effects: "none", whose schema is built from the declarations. The
+// One structured call (llm.structured): one tool, fill_parameters, offered
+// as the only tool (the model is told to answer only by calling it; it is
+// not forced, as the models we use refuse a forced choice), declared
+// effects: "none", whose schema is built from the declarations. The
 // tool has no required fields, so the AI leaves out what the request does not
 // say rather than guessing. Its reply is then checked here exactly as the
 // typed form is checked (params.checkValues): anything not declared is
