@@ -13,6 +13,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { generate, readSeedConfig } = require('../generate');
 const { TABLES } = require('../lib/tables');
 const { createRng, deriveSeed } = require('../lib/prng');
@@ -28,11 +29,17 @@ const SMALL = { seed: 7, clients: 60 };
 const ruleOpts = { zones: ZONES, historyStart: HISTORY_START, asOf: AS_OF };
 const NEW_TABLES = ['staff', 'pay_rates', 'timesheets'];
 
+// A committed seed's CSV text: seeds/<table>.csv.gz unzipped, else seeds/<table>.csv.
+function seedText(name) {
+  const gz = path.join(SEEDS, `${name}.csv.gz`);
+  return fs.existsSync(gz) ? zlib.gunzipSync(fs.readFileSync(gz)).toString('utf8') : fs.readFileSync(path.join(SEEDS, `${name}.csv`), 'utf8');
+}
+
 // Committed CSVs, typed from lib/tables.js (they never quote: a plain split is a full parse).
 function loadCommitted() {
   const tables = {};
   for (const table of TABLES) {
-    const lines = fs.readFileSync(path.join(SEEDS, `${table.name}.csv`), 'utf8').slice(0, -1).split('\n');
+    const lines = seedText(table.name).slice(0, -1).split('\n');
     const header = lines[0].split(',');
     const numeric = new Set(table.columns.filter((c) => c.type === 'INTEGER' || c.type === 'BIGINT').map((c) => c.name));
     tables[table.name] = lines.slice(1).map((line) => {

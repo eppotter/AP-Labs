@@ -8,7 +8,8 @@
 //
 // Local: the build's fixture version (kit/fixture/remote), as_of and row
 // count per table, and whether the build is older than the seeds. Never reads
-// a token or opens a connection.
+// a token or opens a connection. Seeds may be .csv or .csv.gz (kit/fixture/build
+// listSeeds); a seed in both forms, or one that won't unzip, exits 1.
 //
 // --remote: reads the MotherDuck token (kit/lib/secrets), then compares the
 // shared database's recorded version and row counts with the local build and
@@ -19,7 +20,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { defaultOut, governingClientId } = require('./build');
+const { defaultOut, governingClientId, FixtureBuildError } = require('./build');
 const { notBuilt, shownPath } = require('./validate');
 const { parseArgs: parsePublishArgs } = require('./publish');
 const remote = require('./remote');
@@ -64,7 +65,16 @@ async function main(argv, deps = {}) {
     err(`fixture:status: ${notBuilt(shownPath(cwd, db))}`);
     return 1;
   }
-  const local = await remote.localSnapshot({ fixtureDir, db });
+  // Seeds the version can't be read from (a table in both .csv and .csv.gz,
+  // a broken .gz) are reported, never a raw stack.
+  let local;
+  try {
+    local = await remote.localSnapshot({ fixtureDir, db });
+  } catch (e) {
+    if (!(e instanceof FixtureBuildError)) throw e;
+    err(`fixture:status: ${e.message}`);
+    return 1;
+  }
   out(`fixture:status: ${shownPath(cwd, db)}: local fixture version ${local.version}, as of ${local.asOf || 'unknown'}`);
   for (const [t, n] of Object.entries(local.counts)) out(`  ${t.padEnd(24)} ${n}`);
   if (local.stale.length) out(`  the build is older than the seeds (run npm run fixture:build):\n    ${local.stale.join('\n    ')}`);

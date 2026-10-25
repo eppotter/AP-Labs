@@ -8,8 +8,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { spawnSync } = require('node:child_process');
-const { generate, checkCommitted, readSeedConfig } = require('../generate');
+const { generate, checkCommitted, readSeedConfig, writeFiles, storedName, gzipSeed, gzipHeaderProblem } = require('../generate');
 const { createRng } = require('../lib/prng');
 const { checkRules } = require('../lib/rules');
 const { ZONES, HISTORY_START, AS_OF } = require('../lib/reference');
@@ -20,9 +21,12 @@ const GENERATE = path.join(FIXTURE_DIR, 'generate.js');
 const SMALL = { seed: 7, clients: 60 };
 const ruleOpts = { zones: ZONES, historyStart: HISTORY_START, asOf: AS_OF };
 
+// A seed file's text: unzipped for a .csv.gz.
+const seedText = (file) => (file.endsWith('.gz') ? zlib.gunzipSync(fs.readFileSync(file)).toString('utf8') : fs.readFileSync(file, 'utf8'));
+
 // The seed files never quote (asserted below), so a plain split is a full parse.
 function readCsv(file) {
-  const text = fs.readFileSync(file, 'utf8');
+  const text = seedText(file);
   const lines = text.slice(0, -1).split('\n');
   const header = lines[0].split(',');
   const rows = lines.slice(1).map((line) => {
@@ -33,7 +37,7 @@ function readCsv(file) {
 }
 
 function committed(table) {
-  return readCsv(path.join(FIXTURE_DIR, 'seeds', `${table}.csv`));
+  return readCsv(path.join(FIXTURE_DIR, storedName(`seeds/${table}.csv`)));
 }
 
 function schemaColumns() {
@@ -70,24 +74,107 @@ test('the check names a changed, a missing and an extra seed file', (t) => {
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const config = readSeedConfig();
   const { files } = generate(SMALL);
-  // Lay down a small-seed copy, then break it three ways.
-  for (const [rel, content] of files) {
-    fs.mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true });
-    fs.writeFileSync(path.join(tmp, rel), content);
-  }
+  // Lay down a small-seed copy, then break it four ways.
+  writeFiles(tmp, files);
   assert.deepEqual(checkCommitted(tmp, SMALL), []);
-  fs.appendFileSync(path.join(tmp, 'seeds/zones.csv'), 'moon,Moon\n');
-  fs.rmSync(path.join(tmp, 'seeds/crews.csv'));
+  fs.writeFileSync(path.join(tmp, 'seeds/zones.csv.gz'), gzipSeed(`${files.get('seeds/zones.csv')}moon,Moon\n`));
+  fs.rmSync(path.join(tmp, 'seeds/crews.csv.gz'));
   fs.writeFileSync(path.join(tmp, 'seeds/stray.csv'), 'x\n');
+  // A plain copy left beside its .gz is a stale file, not a seed.
+  fs.writeFileSync(path.join(tmp, 'seeds/packages.csv'), files.get('seeds/packages.csv'));
   assert.deepEqual(checkCommitted(tmp, SMALL), [
-    'seeds/zones.csv: differs from a fresh generate',
-    'seeds/crews.csv: missing (run npm run fixture:generate)',
+    'seeds/zones.csv.gz: differs from a fresh generate',
+    'seeds/crews.csv.gz: missing (run npm run fixture:generate)',
+    'seeds/packages.csv: not written by the generator',
     'seeds/stray.csv: not written by the generator',
   ]);
   // CRLF line endings are a difference too.
-  const crlf = fs.readFileSync(path.join(FIXTURE_DIR, 'seeds/zones.csv'), 'utf8').replace(/\n/g, '\r\n');
-  fs.writeFileSync(path.join(tmp, 'seeds/zones.csv'), crlf);
-  assert.ok(checkCommitted(tmp, config).includes('seeds/zones.csv: differs from a fresh generate'));
+  const crlf = seedText(path.join(FIXTURE_DIR, 'seeds/zones.csv.gz')).replace(/\n/g, '\r\n');
+  fs.writeFileSync(path.join(tmp, 'seeds/zones.csv.gz'), gzipSeed(crlf));
+  assert.ok(checkCommitted(tmp, config).includes('seeds/zones.csv.gz: differs from a fresh generate'));
+  // So is the plain fixture_meta.csv, byte for byte.
+  fs.appendFileSync(path.join(tmp, 'seeds/fixture_meta.csv'), 'extra,1\n');
+  assert.ok(checkCommitted(tmp, SMALL).includes('seeds/fixture_meta.csv: differs from a fresh generate'));
+});
+
+test('every seed but fixture_meta.csv is stored as a deterministic gzip', () => {
+  assert.equal(storedName('seeds/visits.csv'), 'seeds/visits.csv.gz');
+  assert.equal(storedName('seeds/fixture_meta.csv'), 'seeds/fixture_meta.csv');
+  assert.equal(storedName('schema.sql'), 'schema.sql');
+  const gz = gzipSeed('a,b\n1,2\n');
+  // Magic, deflate, no flags (no name or comment), time 0, OS byte 255.
+  assert.deepEqual([...gz.subarray(0, 8)], [0x1f, 0x8b, 8, 0, 0, 0, 0, 0]);
+  assert.equal(gz[9], 255);
+  assert.ok(gz.equals(gzipSeed('a,b\n1,2\n')));
+  assert.equal(zlib.gunzipSync(gz).toString('utf8'), 'a,b\n1,2\n');
+  assert.equal(gzipHeaderProblem(gz), null);
+});
+
+test('the check compares unzipped content and the gzip header, never the deflate bytes', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fixture-gzip-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const { files } = generate(SMALL);
+  writeFiles(tmp, files);
+  const zones = path.join(tmp, 'seeds/zones.csv.gz');
+  const content = Buffer.from(files.get('seeds/zones.csv'));
+  // Other deflate bytes for the same content (as another zlib build gives) pass.
+  const other = zlib.gzipSync(content, { level: 1 });
+  other[9] = 255;
+  assert.ok(!other.equals(fs.readFileSync(zones)), 'a different deflate stream');
+  fs.writeFileSync(zones, other);
+  assert.deepEqual(checkCommitted(tmp, SMALL), []);
+  // A header that stores a time, a name or the OS, or no gzip at all, does not.
+  const withTime = Buffer.from(other);
+  withTime.writeUInt32LE(1_700_000_000, 4);
+  const withOs = Buffer.from(other);
+  withOs[9] = 3;
+  const cases = [
+    [withTime, 'its gzip header stores a time'],
+    [withOs, 'its gzip header has OS byte 3, not 255'],
+    [Buffer.concat([Buffer.from([0x1f, 0x8b, 8, 8, 0, 0, 0, 0, 0, 255]), Buffer.from('zones.csv\0'), other.subarray(10)]), 'its gzip header stores a name, comment or extra field'],
+    [content, 'not a gzip file'],
+  ];
+  for (const [bytes, problem] of cases) {
+    fs.writeFileSync(zones, bytes);
+    assert.deepEqual(checkCommitted(tmp, SMALL), [`seeds/zones.csv.gz: ${problem}`], problem);
+  }
+  // A valid header on a broken stream is reported, not thrown.
+  fs.writeFileSync(zones, Buffer.concat([other.subarray(0, 12), Buffer.alloc(40, 0xff)]));
+  assert.match(checkCommitted(tmp, SMALL)[0], /^seeds\/zones\.csv\.gz: does not unzip: /);
+});
+
+test('writing leaves a matching .gz alone, rewrites a wrong one and deletes the stale .csv', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fixture-write-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const { files } = generate(SMALL);
+  const seeds = path.join(tmp, 'seeds');
+  // An older, uncompressed layout: every seed as plain .csv.
+  fs.mkdirSync(seeds, { recursive: true });
+  for (const [rel, content] of files) fs.writeFileSync(path.join(tmp, rel), content);
+  writeFiles(tmp, files);
+  const want = [...files.keys()].filter((rel) => rel.startsWith('seeds/')).map((rel) => path.basename(storedName(rel))).sort();
+  assert.deepEqual(fs.readdirSync(seeds).sort(), want);
+  assert.ok(want.includes('fixture_meta.csv') && want.includes('visits.csv.gz'));
+  assert.deepEqual(checkCommitted(tmp, SMALL), []);
+
+  // Same content, other deflate bytes: left alone. Changed content or a bad
+  // header: rewritten.
+  const visits = path.join(seeds, 'visits.csv.gz');
+  const kept = zlib.gzipSync(Buffer.from(files.get('seeds/visits.csv')), { level: 1 });
+  kept[9] = 255;
+  fs.writeFileSync(visits, kept);
+  const plans = path.join(seeds, 'plans.csv.gz');
+  fs.writeFileSync(plans, gzipSeed('plan_id\n'));
+  const zones = path.join(seeds, 'zones.csv.gz');
+  fs.writeFileSync(zones, zlib.gzipSync(Buffer.from(files.get('seeds/zones.csv'))));
+  // A .gz beside the plain fixture_meta.csv is the stale form there.
+  fs.writeFileSync(path.join(seeds, 'fixture_meta.csv.gz'), gzipSeed(files.get('seeds/fixture_meta.csv')));
+  writeFiles(tmp, files);
+  assert.ok(fs.readFileSync(visits).equals(kept), 'a .gz with matching content is not rewritten');
+  assert.ok(fs.readFileSync(plans).equals(gzipSeed(files.get('seeds/plans.csv'))));
+  assert.ok(fs.readFileSync(zones).equals(gzipSeed(files.get('seeds/zones.csv'))));
+  assert.deepEqual(fs.readdirSync(seeds).sort(), want);
+  assert.deepEqual(checkCommitted(tmp, SMALL), []);
 });
 
 test('the CLI: --check passes on the repo, bad flags exit 2, --out writes a small seed', (t) => {
@@ -104,7 +191,8 @@ test('the CLI: --check passes on the repo, bad flags exit 2, --out writes a smal
   t.after(() => fs.rmSync(out, { recursive: true, force: true }));
   const r = spawnSync(process.execPath, [GENERATE, '--seed', '7', '--clients', '60', '--out', out], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(fs.readFileSync(path.join(out, 'seeds/clients.csv'), 'utf8'), generate(SMALL).files.get('seeds/clients.csv'));
+  assert.equal(seedText(path.join(out, 'seeds/clients.csv.gz')), generate(SMALL).files.get('seeds/clients.csv'));
+  assert.ok(!fs.existsSync(path.join(out, 'seeds/clients.csv')));
 });
 
 test('schema.sql and the seed files agree on tables and columns', () => {
@@ -112,7 +200,7 @@ test('schema.sql and the seed files agree on tables and columns', () => {
   const expected = ['zones', 'packages', 'add_ons', 'crews', 'staff', 'pay_rates', 'crew_memberships', 'clients', 'properties',
     'plans', 'plan_price_changes', 'visits', 'invoices', 'invoice_lines', 'payments', 'timesheets', 'fixture_meta'];
   assert.deepEqual(Object.keys(schema), expected, 'load order: referenced tables first');
-  assert.deepEqual(fs.readdirSync(path.join(FIXTURE_DIR, 'seeds')).sort(), expected.map((t) => `${t}.csv`).sort());
+  assert.deepEqual(fs.readdirSync(path.join(FIXTURE_DIR, 'seeds')).sort(), expected.map((t) => (t === 'fixture_meta' ? `${t}.csv` : `${t}.csv.gz`)).sort());
   for (const table of expected) assert.deepEqual(committed(table).header, schema[table], table);
   // The columns fixture-tables.md names. Appended columns come after the
   // original ones, which keep their order.
