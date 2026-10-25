@@ -58,6 +58,12 @@ function handle(dir) {
     HOME: path.join(dir, 'home'),
     GIT_CONFIG_NOSYSTEM: '1',
     GIT_CONFIG_GLOBAL: '/dev/null',
+    // No background `gc --auto`: a copy of the repo leaves enough loose
+    // objects to start one, and it races makeUpdateRepos' own `git gc`
+    // ("could not find pack .tmp-…", seen in clean-bones on #173).
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'gc.auto',
+    GIT_CONFIG_VALUE_0: '0',
     GIT_AUTHOR_NAME: 'temp-git',
     GIT_AUTHOR_EMAIL: 'temp-git@example.invalid',
     GIT_COMMITTER_NAME: 'temp-git',
