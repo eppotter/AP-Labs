@@ -15,7 +15,7 @@ const { loadRegistry } = require('../../kit/runtime/registry');
 const { buildMenu, moduleIdFromAction, hubIdFromHelpAction } = require('../../kit/runtime/registry/menu');
 const { registerHubs, NOT_AVAILABLE } = require('../../kit/runtime/slack/hubs');
 const {
-  modalTitle, limitBlocks, splitText, LOADING,
+  modalTitle, limitBlocks, LOADING,
 } = require('../../kit/runtime/slack/modal');
 const { createRegistry } = require('../../kit/runtime/registry');
 const { PLAIN_ERROR } = require('../../kit/runtime/slack/handle');
@@ -345,8 +345,6 @@ test('modal helpers: titles, block limits and long text', () => {
   assert.equal(cut[98].block_id, 'b98');
   assert.match(cut[99].elements[0].text, /more… 51 more/);
   assert.equal(limitBlocks(blocks.slice(0, 100)).length, 100);
-  assert.deepEqual(splitText(`${'a'.repeat(2998)}&amp;tail`), ['a'.repeat(2998), '&amp;tail']);
-  assert.ok(splitText('word '.repeat(1000)).every((p) => p.length <= 3000));
 });
 
 test('a long text reply is split into sections Slack accepts, and replies beyond 100 blocks get a note', async () => {
@@ -361,4 +359,24 @@ test('a long text reply is split into sections Slack accepts, and replies beyond
   assert.ok(first.view.blocks.every((b) => b.text.text.length <= 3000));
   assert.equal(second.view.blocks.length, 100);
   assert.match(second.view.blocks.at(-1).elements[0].text, /more…/);
+});
+
+test('a long ephemeral text reply arrives whole, as sections Slack accepts, 50 blocks per message', async () => {
+  const body = Array.from({ length: 12000 }, (_, i) => `line ${i} of the answer`).join('\n');
+  const chatty = handlerModule('chatty', async ({ reply }) => {
+    await reply('short and plain');
+    await reply(body);
+  });
+  const { app } = setup({ reg: createRegistry({ hubs: registry.hubs, modules: [chatty] }), canUse: () => true });
+  await app.dispatchAction('chatty:open');
+  const [plain, ...long] = app.responded;
+  assert.deepEqual(plain, { response_type: 'ephemeral', replace_original: false, text: 'short and plain' });
+  assert.ok(long.length > 1);
+  for (const m of long) {
+    assert.equal(m.response_type, 'ephemeral');
+    assert.ok(m.blocks.length <= 50);
+    assert.ok(m.blocks.every((b) => b.type === 'section' && b.text.text.length <= 2900));
+    assert.equal(m.text, m.blocks[0].text.text);
+  }
+  assert.equal(long.flatMap((m) => m.blocks.map((b) => b.text.text)).join('\n'), body);
 });
