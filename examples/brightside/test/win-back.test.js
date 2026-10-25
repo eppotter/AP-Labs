@@ -11,7 +11,11 @@
 // the 38 known candidates), summarised in the view with the CSV in the
 // admin's DM, and the AI service (a stand-in client) is never called. Story
 // 9.4: a typed request fills the form from a stand-in AI reply, and the rows
-// never reach the AI.
+// never reach the AI. Story 10.1: the list is scored in the engine from five
+// declared inputs and ranked best first, ties by client_id; the SQL returns
+// every candidate (ORDER BY ..., client_id LIMIT 5001) and never names the
+// limit, which the engine applies after scoring. North over 90 days gives the
+// exact top five below, the same on every run.
 //
 // An example test (architecture carve-out): it reads Brightside's app dir and
 // fixture data, and is deleted with the example in a fork. Its profile and
@@ -29,6 +33,7 @@ const { build } = require('../../../kit/fixture/build');
 const { loadProfile } = require('../../../kit/lib/profile');
 const { loadRegistry } = require('../../../kit/runtime/registry');
 const { createData, QueryRefusedError } = require('../../../kit/runtime/data');
+const { runQuery } = require('../../../kit/runtime/archetypes/scoped-pull/run');
 const { checkSql, forbiddenColumnsOf } = require('../../../kit/runtime/sql');
 const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
 
@@ -39,6 +44,22 @@ const profile = loadProfile(PROFILE_PATH);
 const { registry, problems } = loadRegistry({ appDir: APP_DIR, profile });
 const winBack = registry && registry.module('win-back');
 const declared = winBack ? winBack.parameters.map((p) => p.name) : [];
+// The inputs the SQL binds: every declared one but the limit (Story 10.1).
+const bound = declared.filter((n) => n !== 'limit');
+const SCORE_COLUMNS = ['months_as_client', 'paid_dollars', 'days_since_visit', 'plan_price_dollars', 'price_rise'];
+// North over 90 days, best first: [score, client_id, reason]. Worked out by
+// hand from the pinned formula for the first (730: months 23 of 0-24, paid
+// $21,093 clipped to 12,500, 79 of 0-120 days, $255 of 100-450, a rise:
+// S = 1.917 + 3 - 0.658 + 0.443 + 2 = 6.701 of 8, floor -1,
+// 100 x 7.701 / 9 = 86). 1351 and 1611 tie at 69; 1351 comes first by id.
+const NORTH_TOP_5 = [
+  [86, 730, 'Lifetime paid spend ($): 21,093; Price rise before lapse'],
+  [74, 931, 'Price rise before lapse; Lifetime paid spend ($): 8,056'],
+  [74, 1222, 'Lifetime paid spend ($): 10,072; Price rise before lapse'],
+  [74, 1956, 'Lifetime paid spend ($): 9,850; Price rise before lapse'],
+  [69, 1351, 'Price rise before lapse; Months as a client: 22'],
+];
+const quiet = { debug() {}, info() {}, warn() {}, error() {} };
 
 // One temporary build of the fixture, shared by the tests in this file.
 let tmp;
@@ -65,36 +86,97 @@ test('Win-back loads as a scoped pull with three bounded inputs and its SQL', ()
     ['limit', [1, 500], 50],
   ]);
   assert.match(winBack.sql, /^WITH meta AS/m);
+  // Story 10.1: scored on the five demo-flow inputs, ties by client_id, the
+  // person's number kept after scoring.
+  assert.equal(winBack.row_id, 'client_id');
+  assert.deepEqual(winBack.scoring.inputs.map((i) => [i.name, i.label, i.weight, i.min, i.max]), [
+    ['months_as_client', 'Months as a client', 2, 0, 24],
+    ['paid_dollars', 'Lifetime paid spend ($)', 3, 0, 12500],
+    ['days_since_visit', 'Days since last completed visit', -1, 0, 120],
+    ['plan_price_dollars', 'Lapsed plan price ($)', 1, 100, 450],
+    ['price_rise', 'Price rise before lapse', 2, 0, 1],
+  ]);
+  assert.equal(winBack.scoring.limit_parameter, 'limit');
 });
 
-test('the Win-back SQL is fixed: no ${, it names exactly the declared inputs, and it passes the guardrail', () => {
+test('the Win-back SQL is fixed: no ${, it names exactly the declared inputs but the limit, ends with ORDER BY ..., client_id LIMIT 5001, and passes the guardrail', () => {
   assert.ok(!winBack.sql.includes('${'));
   const code = winBack.sql.replace(/--[^\n]*/g, '');
   const named = [...new Set([...code.matchAll(/\$([a-z][a-z0-9_]*)/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(named, [...declared].sort());
+  assert.deepEqual(named, [...bound].sort());
+  assert.match(code.trimEnd(), /ORDER BY l\.lapsed_on DESC, c\.client_id\nLIMIT 5001$/);
   assert.deepEqual(checkSql(winBack.sql, { forbiddenColumns: forbiddenColumnsOf(profile) }), { ok: true });
 });
 
-test('on the fixture, only the declared inputs bind and North over 90 days gives the 38 known candidates', async (t) => {
+test('on the fixture, only the declared inputs but the limit bind and North over 90 days gives the 38 known candidates with their scoring columns', async (t) => {
   const data = createData({ file: FIXTURE, profile });
   t.after(() => data.close());
-  const all = await data.run(winBack.sql, { zone: 'north', lapsed_days: 90, limit: 500 }, { declared });
+  const all = await data.run(winBack.sql, { zone: 'north', lapsed_days: 90 }, { declared: bound });
   assert.equal(all.length, 38);
-  assert.deepEqual(Object.keys(all[0]), ['client_id', 'first_name', 'last_name', 'email', 'lapsed_on']);
+  // One row per client (the grain): 38 distinct clients.
+  assert.equal(new Set(all.map((r) => r.client_id)).size, 38);
+  // Whole numbers only: no floating-point dollars or months.
+  for (const c of ['months_as_client', 'paid_dollars', 'days_since_visit', 'plan_price_dollars']) {
+    assert.ok(all.every((r) => /^\d+$/.test(String(r[c]))), c);
+  }
+  assert.deepEqual(Object.keys(all[0]), ['client_id', 'first_name', 'last_name', 'email', 'lapsed_on', ...SCORE_COLUMNS]);
   assert.ok(all.every((r) => r.email.endsWith('.invalid')));
-  const sorted = [...all].sort((a, b) => (a.lapsed_on === b.lapsed_on ? String(a.client_id).localeCompare(String(b.client_id), 'en', { numeric: true }) : (a.lapsed_on < b.lapsed_on ? 1 : -1)));
+  // The SQL's own order (which rows a cap would keep): latest lapse first, then client_id.
+  const sorted = [...all].sort((a, b) => (a.lapsed_on === b.lapsed_on ? a.client_id - b.client_id : (a.lapsed_on < b.lapsed_on ? 1 : -1)));
   assert.deepEqual(all.map((r) => r.client_id), sorted.map((r) => r.client_id));
-  // The default limit (50) shows all 38.
-  const byDefault = await data.run(winBack.sql, { zone: 'north', lapsed_days: 90, limit: 50 }, { declared });
-  assert.deepEqual(byDefault, all);
-  const top = await data.run(winBack.sql, { zone: 'north', lapsed_days: 90, limit: 25 }, { declared });
-  assert.deepEqual(top, all.slice(0, 25));
-  const shorter = await data.run(winBack.sql, { zone: 'north', lapsed_days: 30, limit: 500 }, { declared });
+  // No scoring column is ever null (a null would stop the run).
+  for (const c of SCORE_COLUMNS) assert.ok(all.every((r) => r[c] !== null), c);
+  // The price-rise flag agrees with the known truth winback-north-90d-price-rise (17).
+  assert.equal(all.filter((r) => r.price_rise === true).length, 17);
+  const shorter = await data.run(winBack.sql, { zone: 'north', lapsed_days: 30 }, { declared: bound });
   assert.ok(shorter.length < all.length);
+  // The limit is never a placeholder, so binding it is refused, as is any other name.
+  await assert.rejects(data.run(winBack.sql, { zone: 'north', lapsed_days: 90, limit: 25 }, { declared }), QueryRefusedError);
   await assert.rejects(
-    data.run(winBack.sql, { zone: 'north', lapsed_days: 90, limit: 25, extra: 1 }, { declared }),
+    data.run(winBack.sql, { zone: 'north', lapsed_days: 90, extra: 1 }, { declared: [...bound, 'extra'] }),
     QueryRefusedError,
   );
+});
+
+test('lifetime paid spend does not fan out: all payments up to as_of minus the per-client sums the Win-back SQL uses is 0', async (t) => {
+  const data = createData({ file: FIXTURE, profile });
+  t.after(() => data.close());
+  // The per-client sum is the Win-back SQL's own "spend" step (payments joined
+  // to invoices, one invoice per payment), taken from the module's SQL text.
+  const spend = /spend AS \(\n([\s\S]*?)\n\),\nlast_visit AS/.exec(winBack.sql);
+  assert.ok(spend, 'the Win-back SQL has a spend step');
+  const sql = [
+    "WITH meta AS (SELECT CAST(value AS DATE) AS as_of FROM fixture_meta WHERE key = 'as_of'),",
+    `spend AS (\n${spend[1]}\n)`,
+    'SELECT (SELECT SUM(pay.amount_cents) FROM payments pay CROSS JOIN meta WHERE pay.paid_on <= meta.as_of)',
+    '  - (SELECT SUM(paid_cents) FROM spend) AS gap, (SELECT COUNT(*) FROM spend) AS clients',
+  ].join('\n');
+  const [row] = await data.run(sql, {}, { declared: [] });
+  assert.equal(Number(row.gap), 0);
+  assert.ok(Number(row.clients) > 0);
+});
+
+test('North over 90 days, top 25: exact scores, reasons and order for the top five, ranked from all 38 and the same on every run', async (t) => {
+  const data = createData({ file: FIXTURE, profile });
+  t.after(() => data.close());
+  const values = { zone: 'north', lapsed_days: 90, limit: 25 };
+  const first = await runQuery({ data, mod: winBack, values, log: quiet });
+  assert.equal(first.kind, 'rows');
+  assert.equal(first.total, 38);
+  assert.equal(first.capped, false);
+  assert.equal(first.rows.length, 25);
+  assert.deepEqual(first.rows.slice(0, 5).map((r) => [r.score, r.client_id, r.reason]), NORTH_TOP_5);
+  // Best first; equal scores by client_id.
+  for (let i = 1; i < first.rows.length; i += 1) {
+    const [a, b] = [first.rows[i - 1], first.rows[i]];
+    assert.ok(a.score > b.score || (a.score === b.score && a.client_id < b.client_id), `rows ${i - 1} and ${i}`);
+  }
+  // The top 25 by score, not the 25 latest lapses.
+  const all = await runQuery({ data, mod: winBack, values: { ...values, limit: 500 }, log: quiet });
+  assert.equal(all.rows.length, 38);
+  assert.deepEqual(all.rows.slice(0, 25), first.rows);
+  const again = await runQuery({ data, mod: winBack, values, log: quiet });
+  assert.deepEqual(again.rows, first.rows);
 });
 
 // The fake Slack app with a views client, as the runtime builds it.
@@ -176,23 +258,30 @@ test('the Win-back list end to end: the admin checks North with the defaults, co
   await app.dispatchAction('scoped-pull:confirm', { user: { id: ADMIN }, view: shown('hs1'), value: session });
   // The view: the count (the known truth), the values, the first 10 rows.
   const result = last(app);
-  assert.equal(result.blocks[0].text.text, '*Win-back list: 38 rows.*');
+  assert.equal(result.blocks[0].text.text, '*Win-back list: 38 rows, ranked by score.*');
   assert.deepEqual(result.blocks.filter((b) => b.fields).map((b) => b.fields[1].text), ['north', '90', '50']);
-  const table = result.blocks.find((b) => b.text && b.text.text.startsWith('*The first 10:*')).text.text;
-  assert.match(table.split('\n')[2], /^client_id +first_name +last_name +email +lapsed_on$/);
-  assert.equal(table.split('\n').length, 2 + 1 + 10 + 1);
-  assert.match(result.blocks.at(-1).elements[0].text, /^The full list \(38 rows\) is a CSV in your DM with me\. <https:\/\/fake\.slack\.test\/files\/F1\|Open the CSV>$/);
-  // The CSV: all 38, in the admin's DM, the same rows the runner gives.
+  // The view: score, the identifying columns and the reason, best first.
+  const table = result.blocks.find((b) => b.text && b.text.text.startsWith('*The top 10:*')).text.text;
+  const tableLines = table.split('\n');
+  assert.match(tableLines[2], /^score +client_id +first_name +last_name +email +lapsed_on +reason$/);
+  assert.equal(tableLines.length, 2 + 1 + 10 + 1);
+  NORTH_TOP_5.forEach(([score, id, reason], i) => {
+    assert.match(tableLines[3 + i], new RegExp(`^${score} +${id} +.* ${reason.replace(/[()$]/g, '\\$&')}$`));
+  });
+  assert.match(result.blocks.at(-1).elements[0].text, /^The ranked list \(38 rows\) is a CSV in your DM with me\. <https:\/\/fake\.slack\.test\/files\/F1\|Open the CSV>$/);
+  // The CSV: all 38, ranked, in the admin's DM, with score first and reason last.
   assert.deepEqual(app.dms, [{ user: ADMIN, channel: `D${ADMIN.slice(1)}` }]);
   assert.equal(app.uploads.length, 1);
   assert.equal(app.uploads[0].channel_id, `D${ADMIN.slice(1)}`);
   const lines = app.uploads[0].content.replace(/^\ufeff/, '').trimEnd().split('\r\n');
-  assert.equal(lines[0], 'client_id,first_name,last_name,email,lapsed_on');
+  assert.equal(lines[0], `score,client_id,first_name,last_name,email,lapsed_on,${SCORE_COLUMNS.join(',')},reason`);
   assert.equal(lines.length, 1 + 38);
+  assert.deepEqual(lines.slice(1, 6).map((l) => l.split(',').slice(0, 2).map(Number)), NORTH_TOP_5.map(([score, id]) => [score, id]));
+  assert.ok(lines[1].endsWith(`,"${NORTH_TOP_5[0][2]}"`));
   const data = createData({ file: FIXTURE, profile });
   t.after(() => data.close());
-  const expected = await data.run(winBack.sql, { zone: 'north', lapsed_days: 90, limit: 50 }, { declared });
-  assert.deepEqual(lines.slice(1), expected.map((r) => [r.client_id, r.first_name, r.last_name, r.email, r.lapsed_on].join(',')));
+  const expected = await data.run(winBack.sql, { zone: 'north', lapsed_days: 90 }, { declared: bound });
+  assert.deepEqual(lines.slice(1).map((l) => Number(l.split(',')[1])).sort((a, b) => a - b), expected.map((r) => r.client_id).sort((a, b) => a - b));
   assert.deepEqual(app.posted, []);
   // A replay runs nothing more.
   await app.dispatchAction('scoped-pull:confirm', { user: { id: ADMIN }, view: shown(`h${app.viewSeq}`), value: session });
@@ -230,7 +319,7 @@ test('a member without WIN_BACK, or someone not set up, never sees Win-back and 
   }
 });
 
-test('Story 9.4: "North zone, lapsed in the last 90 days, top 25" fills zone north, 90 days, limit 25 from a stand-in reply, and Confirm gives the first 25', async (t) => {
+test('Story 9.4: "North zone, lapsed in the last 90 days, top 25" fills zone north, 90 days, limit 25 from a stand-in reply, and Confirm gives the top 25 by score', async (t) => {
   const ai = fillingAi({ zone: 'north', lapsed_days: 90, limit: 25 });
   const app = await boot(t, { ai });
   await app.dispatchAction('win-back:open', { user: { id: ADMIN }, view: MENU });
@@ -260,11 +349,16 @@ test('Story 9.4: "North zone, lapsed in the last 90 days, top 25" fills zone nor
   await app.dispatchAction('scoped-pull:confirm', {
     user: { id: ADMIN }, view: { id: formId, hash: `h${app.viewSeq}`, title: confirm.title, private_metadata: confirm.private_metadata, state: { values: {} } }, value: session,
   });
-  assert.equal(last(app).blocks[0].text.text, '*Win-back list: 25 rows.*');
+  assert.equal(last(app).blocks[0].text.text, '*Win-back list: the top 25 of 38 rows, by score.*');
   assert.equal(app.uploads.length, 1);
   // The rows went to the DM, never to the AI.
   assert.equal(ai.calls.length, 1);
   const sentToAi = JSON.stringify(ai.calls);
   const rows = app.uploads[0].content.replace(/^\ufeff/, '').trimEnd().split('\r\n').slice(1);
-  for (const row of rows) assert.ok(!sentToAi.includes(row.split(',')[3]), 'an email from the rows reached the AI');
+  assert.equal(rows.length, 25);
+  for (const row of rows) {
+    const email = row.split(',')[4];
+    assert.ok(email.endsWith('.invalid'));
+    assert.ok(!sentToAi.includes(email), 'an email from the rows reached the AI');
+  }
 });

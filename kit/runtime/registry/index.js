@@ -27,12 +27,19 @@
 // checker with the profile's forbidden columns, no "${", and every $name in
 // the SQL matched to a declared input both ways. A problem stops startup,
 // naming the module file.
+//
+// Story 10.1: a module's scoring declaration is checked
+// (kit/runtime/scoring checkScoring: each range min < max, not every weight
+// 0, the limit input declared), and a scored module's SQL must name its
+// inputs and row id, never its limit input, and end with ORDER BY ...,
+// <row id> LIMIT 5001 (checkQuery).
 
 const fs = require('node:fs');
 const path = require('node:path');
 const Ajv2020 = require('ajv/dist/2020');
 const { checkDeclarations } = require('../archetypes/scoped-pull/params');
 const { checkQuery } = require('../archetypes/scoped-pull/run');
+const { checkScoring } = require('../scoring');
 const { forbiddenColumnsOf } = require('../sql');
 
 const SCHEMA_DIR = path.join(__dirname, '../schema');
@@ -76,6 +83,8 @@ function schemaProblems(validate, data, file) {
       const note = inputNote(e.instancePath, data);
       if (e.keyword === 'additionalProperties') return `${file}: unknown field "${fieldName(e.instancePath, e.params.additionalProperty)}"${note}`;
       if (e.keyword === 'required') return `${file}: field "${fieldName(e.instancePath, e.params.missingProperty)}" is required${note}`;
+      // The only false schema: a write block outside approval-write (AD-15).
+      if (e.keyword === 'false schema' && e.instancePath === '/write') return `${file}: field "write" is used only by an approval-write module (writes go through that archetype)`;
       const field = fieldName(e.instancePath);
       return field ? `${file}: field "${field}"${note} ${e.message}` : `${file}: ${e.message}`;
     });
@@ -208,6 +217,7 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
       problems.push(`${file}: field "archetype" "${m.archetype}" is not available yet`);
     }
     for (const p of checkDeclarations(m.parameters)) problems.push(`${file}: ${p}`);
+    for (const p of checkScoring(m)) problems.push(`${file}: ${p}`);
     if (m.archetype === 'scoped-pull' && m.handler !== undefined) {
       problems.push(`${file}: field "handler" is not used by a scoped-pull module (the engine runs its form)`);
     }
@@ -215,7 +225,7 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
     if (m.archetype === 'scoped-pull') {
       const sql = loadQuery(path.join(appDir, 'modules', folder, m.query), file, problems);
       if (sql === undefined) continue;
-      const sqlProblems = checkQuery(sql, m.parameters || [], { forbiddenColumns });
+      const sqlProblems = checkQuery(sql, m.parameters || [], { forbiddenColumns, scoring: m.scoring || null, rowId: m.row_id || null });
       if (sqlProblems.length) {
         problems.push(...sqlProblems.map((p) => `${file}: field "query" (${m.query}) ${p}`));
         continue;

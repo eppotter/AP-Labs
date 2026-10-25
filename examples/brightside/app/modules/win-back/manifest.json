@@ -2,7 +2,7 @@
   "id": "win-back",
   "hub": "brightside",
   "label": "Win-back list",
-  "description": "Clients in one zone whose plan lapsed recently and who have no plan now: a list to win back.",
+  "description": "Clients in one zone whose plan lapsed recently and who have no plan now, best win-back prospects first.",
   "resource": "WIN_BACK",
   "archetype": "scoped-pull",
   "environments": ["dev", "prod"],
@@ -29,12 +29,23 @@
       "name": "limit",
       "label": "How many clients",
       "type": "integer",
-      "description": "The most recent lapses come first.",
+      "description": "The highest scores come first.",
       "min": 1,
       "max": 500,
       "default": 50,
       "required": true
     }
   ],
-  "query": "win-back.sql"
+  "query": "win-back.sql",
+  "row_id": "client_id",
+  "scoring": {
+    "inputs": [
+      { "name": "months_as_client", "label": "Months as a client", "weight": 2, "min": 0, "max": 24 },
+      { "name": "paid_dollars", "label": "Lifetime paid spend ($)", "weight": 3, "min": 0, "max": 12500 },
+      { "name": "days_since_visit", "label": "Days since last completed visit", "weight": -1, "min": 0, "max": 120 },
+      { "name": "plan_price_dollars", "label": "Lapsed plan price ($)", "weight": 1, "min": 100, "max": 450 },
+      { "name": "price_rise", "label": "Price rise before lapse", "weight": 2, "min": 0, "max": 1 }
+    ],
+    "limit_parameter": "limit"
+  }
 }

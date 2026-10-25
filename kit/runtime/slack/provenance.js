@@ -9,8 +9,10 @@
 //   { runId, person, module, parameters, sql, source, fixtureVersion, ranAt,
 //     rowIds, rows }
 //
-//   parameters      the values bound into the query, one per declared input
-//                   (null for an optional input left empty)
+//   parameters      the confirmed values, one per declared input (null for
+//                   an optional input left empty): exactly what was bound
+//                   into the query, plus a scored module's limit input, which
+//                   is never bound (the scoring line says so)
 //   sql             the module's SQL, exactly the text the runner was given
 //   source          the data source and its label from the runner's
 //                   describe() ("MotherDuck (brightside)"), nothing more:
@@ -18,8 +20,10 @@
 //   fixtureVersion  the data version read from fixture_meta through the
 //                   runner ("3, as of 2026-09-30"), or null when unreadable
 //   ranAt           when the query started (ISO 8601, UTC)
-//   rowIds, rows    null for a module that pushes nowhere. Epic 10 fills them
-//                   (rows holds only the declared push fields and the score)
+//   rowIds, rows    null for a module that pushes nowhere. For a module with
+//                   a write (Story 10.1): the row ids and the declared push
+//                   fields (plus the score, when scored) of only the rows the
+//                   person saw, after a scored module's cut, in rank order
 //
 // The record serves this button and the Epic 10 preview only; a push never
 // reads it. A click shows the details by updating the module view the button
@@ -29,13 +33,16 @@
 // a replayed click just shows the same details again.
 //
 // Everything that reaches Slack is escaped (kit/runtime/messages escapeText),
-// and the SQL sits in code blocks a backtick in it can't close. To add a line
-// to the details (Story 10.1's scoring line), pass it in `extra` to
-// detailsMessage: each entry is a block, placed before the SQL.
+// and the SQL sits in code blocks a backtick in it can't close. A scored
+// module's details carry its scoring line (Story 10.1, kit/runtime/scoring
+// scoringBlocks: the inputs, weights and ranges, the tie rule and the limit
+// kept). More lines can be passed in `extra` to detailsMessage: each entry is
+// a block, placed before the SQL.
 
 const crypto = require('node:crypto');
 const { escapeText, messageFor } = require('../messages');
 const { ProvenanceGone, ProvenanceNotYours } = require('../errors');
+const { scoringBlocks } = require('../scoring');
 
 const NS = 'provenance';
 const ACTION = 'provenance:show';
@@ -174,7 +181,8 @@ function timeText(iso) {
   return `<!date^${Math.floor(t / 1000)}^{date_short_pretty} at {time}|${utc}>`;
 }
 
-// The details view. extra: blocks to add before the SQL (Story 10.1).
+// The details view: a scored module's scoring line, then extra (blocks to
+// add), both before the SQL.
 function detailsMessage(record, { mod, extra = [] } = {}) {
   const label = escapeText((mod && mod.label) || record.module);
   const params = paramBlocks(mod, record.parameters || {});
@@ -187,6 +195,7 @@ function detailsMessage(record, { mod, extra = [] } = {}) {
       `*Data version:* ${record.fixtureVersion ? escapeText(record.fixtureVersion) : 'unknown'}`,
       `*Ran:* ${timeText(record.ranAt)}`,
     ].join('\n')),
+    ...scoringBlocks(mod, record),
     ...extra,
     ...sqlBlocks(record.sql),
   ];

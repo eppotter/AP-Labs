@@ -43,13 +43,31 @@
       }
     },
     "query": { "description": "The SQL template file in the module's folder.", "type": "string", "$ref": "#/$defs/file", "pattern": "^[a-z0-9][a-z0-9._-]*\\.sql$" },
+    "row_id": { "description": "The column the query returns that tells rows apart (Win-back: client_id). Required with scoring: ties in score are broken by it.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64 },
     "scoring": {
+      "description": "A deterministic score from 0 to 100 per row, with a reason (Story 10.1, kit/runtime/scoring). The SQL ends with ORDER BY ..., <row_id> LIMIT 5001.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["inputs", "weights"],
+      "required": ["inputs"],
       "properties": {
-        "inputs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" } },
-        "weights": { "type": "object", "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" }, "additionalProperties": { "type": "number" } }
+        "inputs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "label", "weight", "min", "max"],
+            "properties": {
+              "name": { "description": "A column the query returns.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64 },
+              "label": { "description": "The input in plain words, used in each row's reason.", "type": "string", "$ref": "#/$defs/text", "maxLength": 60 },
+              "weight": { "description": "How much it counts; negative means lower is better.", "type": "number" },
+              "min": { "description": "The fixed range the value is clipped to and scaled over (min < max).", "type": "number" },
+              "max": { "type": "number" }
+            }
+          }
+        },
+        "limit_parameter": { "description": "The declared integer input saying how many rows to keep. The engine keeps the top N after scoring; it is never bound into the SQL.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64 }
       }
     },
     "write": {
@@ -64,10 +82,12 @@
       }
     }
   },
+  "dependentRequired": { "scoring": ["row_id"] },
   "allOf": [
     { "if": { "properties": { "archetype": { "const": "handler" } } }, "then": { "required": ["handler"] } },
     { "if": { "properties": { "archetype": { "const": "scoped-pull" } } }, "then": { "required": ["parameters", "query"] } },
-    { "if": { "properties": { "archetype": { "const": "approval-write" } } }, "then": { "required": ["parameters", "query", "write"] } }
+    { "if": { "properties": { "archetype": { "const": "approval-write" } } }, "then": { "required": ["parameters", "query", "write"] } },
+    { "if": { "properties": { "archetype": { "not": { "const": "approval-write" } } } }, "then": { "properties": { "write": false } } }
   ],
   "$defs": {
     "slug": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 },
