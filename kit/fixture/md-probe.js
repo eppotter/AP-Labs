@@ -165,7 +165,10 @@ const LOOSEN = Object.freeze([
 // not exist" or a Permission Error proves the database is out of reach (a
 // missing-table error means it is reachable). write: run
 // inside a transaction that is always rolled back. http: the local listener
-// must also have had no request. detach: an ATTACH that ran is detached
+// must also have had no request. permissionOnly: a local-file operation on a
+// file that exists (prepareScratch makes them), so only a Permission Error
+// (file system operations disabled) is a refusal; "not found" or any other
+// error proves nothing and is a FAIL. detach: an ATTACH that ran is detached
 // again at once. accepted: that ATTACH running is the accepted exception
 // (MY_DB_EXCEPTION), reported ACCEPTED rather than FAIL. kind 'attached':
 // passes when only <db> and ALSO_ATTACHED are attached; it runs first, before
@@ -180,11 +183,11 @@ function forbiddenOps({ database, tmp, url }) {
       sql: 'SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY 1',
       kind: 'attached',
     },
-    { label: 'ATTACH a local database file', sql: `ATTACH ${file('probe-attach.duckdb')} AS aplabs_probe_attach`, detach: 'aplabs_probe_attach', localCheck: true },
+    { label: 'ATTACH a local database file', sql: `ATTACH ${file(ATTACH_FILE)} AS aplabs_probe_attach`, detach: 'aplabs_probe_attach', permissionOnly: true, localCheck: true },
     { label: 'ATTACH the MotherDuck database sample_data', sql: "ATTACH 'md:sample_data' AS aplabs_probe_md", detach: 'aplabs_probe_md' },
     { label: "ATTACH the reader's own MotherDuck database my_db", sql: "ATTACH 'md:my_db' AS aplabs_probe_my_db", detach: 'aplabs_probe_my_db', accepted: MY_DB_EXCEPTION },
-    { label: 'COPY to a local file', sql: `COPY (SELECT 1 AS n) TO ${file('probe-copy.csv')}`, localCheck: true },
-    { label: 'read_csv on a local file', sql: `SELECT count(*)::VARCHAR AS n FROM read_csv(${file(READ_FILE)})`, localCheck: true },
+    { label: 'COPY to a local file', sql: `COPY (SELECT 1 AS n) TO ${file('probe-copy.csv')}`, permissionOnly: true, localCheck: true },
+    { label: 'read_csv on a local file', sql: `SELECT count(*)::VARCHAR AS n FROM read_csv(${file(READ_FILE)})`, permissionOnly: true, localCheck: true },
     { label: 'read_csv on an http URL', sql: `SELECT count(*)::VARCHAR AS n FROM read_csv(${remote.sqlString(url)})`, http: true },
     { label: 'INSTALL httpfs', sql: 'INSTALL httpfs' },
     { label: 'LOAD httpfs', sql: 'LOAD httpfs' },
@@ -197,6 +200,8 @@ function forbiddenOps({ database, tmp, url }) {
 
 // The file read_csv is pointed at: it exists, so only the lockdown can refuse it.
 const READ_FILE = 'probe-read.csv';
+// The DuckDB file ATTACH is pointed at: it exists too (prepareScratch).
+const ATTACH_FILE = 'probe-attach.duckdb';
 
 const firstLine = remote.firstLine;
 const errText = (e) => firstLine(e?.message ?? e);
@@ -239,6 +244,7 @@ async function attempt(conn, op, { database, listener } = {}) {
   } catch (e) {
     const msg = errText(e);
     if (/^Parser Error/i.test(msg)) outcome = { ok: false, evidence: `the statement did not parse, so nothing was proved: ${msg}` };
+    else if (op.permissionOnly && !/^Permission Error/i.test(msg)) outcome = { ok: false, evidence: `not shown to be refused by the lockdown (only a Permission Error is): ${msg}` };
     else if (op.needsCatalog && /^Catalog Error/i.test(msg)) outcome = { ok: false, evidence: `inconclusive, the table was not found: ${msg}` };
     else if (op.absentDb && !msg.includes(`Catalog "${op.absentDb}" does not exist`) && !/^Permission Error/i.test(msg)) outcome = { ok: false, evidence: `not shown to be out of reach: ${msg}` };
     else outcome = { ok: true, evidence: msg };
@@ -312,7 +318,7 @@ function ago(publishedAt, now) {
 //   openPathForm({ database, token }) -> a connection, or rejects (check 3).
 //   inspectLocal() -> the motherduck row of a plain local DuckDB, or null.
 //   readLocal() -> the local build's snapshot (kit/fixture/remote), or null.
-//   tmp: a scratch dir holding READ_FILE; listener: { url, hits() }.
+//   tmp: a scratch dir prepareScratch filled; listener: { url, hits() }.
 //   say(line): a redacting printer.
 // Returns [{ id, status, text }], printing each line as it is decided.
 async function runProbe({
@@ -544,6 +550,24 @@ async function openLocked({ steps = [], use = null, options = {} } = {}) {
 
 const openReader = ({ database, token }) => openLocked({ steps: readerSteps(database, token), use: useStatement(database) });
 
+// Fills the scratch dir before the reader opens: READ_FILE, and ATTACH_FILE
+// as a real DuckDB file with one table, made on its own local instance and
+// closed again, so a refusal can't be a "not found".
+async function prepareScratch(tmp) {
+  fs.writeFileSync(path.join(tmp, READ_FILE), 'n\n1\n');
+  const instance = await DuckDBInstance.create(path.join(tmp, ATTACH_FILE), {});
+  try {
+    const c = await instance.connect();
+    try {
+      await c.run('CREATE TABLE probe AS SELECT 1 AS n');
+    } finally {
+      c.closeSync();
+    }
+  } finally {
+    instance.closeSync();
+  }
+}
+
 async function openPathForm({ database, token }) {
   const instance = await DuckDBInstance.create(pathForm(database), pathFormOptions(token));
   instance.closeSync();
@@ -671,7 +695,7 @@ async function main(argv, deps = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-md-probe-'));
   let listener;
   try {
-    fs.writeFileSync(path.join(tmp, READ_FILE), 'n\n1\n');
+    await prepareScratch(tmp);
     listener = await listen();
     say(`fixture:probe: probing md:${database} as the reader (token from ${from})`);
     let results;
@@ -749,6 +773,8 @@ module.exports = {
   DEFAULT_DATABASE,
   REQUIRED,
   READ_FILE,
+  ATTACH_FILE,
+  prepareScratch,
   SLOW_SQL,
   USAGE,
 };

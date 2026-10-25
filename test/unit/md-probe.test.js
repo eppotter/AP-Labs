@@ -191,6 +191,39 @@ test('the SQL checker, the barrier for the accepted exception, refuses ATTACH of
   assert.equal(checkSql(op.sql, { forbiddenColumns: [] }).ok, false);
 });
 
+test('a local-file refusal counts only as a Permission Error: "does not exist" or an IO error is a FAIL', async () => {
+  const md = fakeMotherDuck({
+    over: [
+      [(s) => s.startsWith('ATTACH') && s.includes(probe.ATTACH_FILE), (s) => { throw new Error(`IO Error: Cannot open database "${probe.ATTACH_FILE}": database does not exist`); }],
+      [(s) => s.startsWith('COPY'), () => { throw new Error('IO Error: Cannot open file "probe-copy.csv": No such file or directory'); }],
+      [(s) => s.includes(`read_csv('`) && s.includes(probe.READ_FILE) && !s.includes('http:'), () => { throw new Error('IO Error: No files found that match the pattern "probe-read.csv"'); }],
+    ],
+  });
+  const { code, all } = await runMain(undefined, { md });
+  assert.equal(code, 1);
+  const fails = lineFor(all, 'FAIL', 5).join('\n');
+  assert.match(fails, /ATTACH a local database file \(not shown to be refused by the lockdown \(only a Permission Error is\): IO Error: Cannot open database "probe-attach\.duckdb": database does not exist\)/);
+  assert.match(fails, /COPY to a local file \(not shown to be refused .*No such file or directory\)/);
+  assert.match(fails, /read_csv on a local file \(not shown to be refused .*No files found/);
+  assert.equal(lineFor(all, 'FAIL', 5).length, 3);
+});
+
+test('the local files the probe points at exist before the reader opens, and are removed after', async () => {
+  const seen = {};
+  const md = fakeMotherDuck({
+    over: [[(s) => s.startsWith('ATTACH') && s.includes(probe.ATTACH_FILE), (s) => {
+      const file = s.match(/^ATTACH '([^']+)'/)[1];
+      seen.attach = file;
+      seen.existed = fs.existsSync(file) && fs.existsSync(path.join(path.dirname(file), probe.READ_FILE));
+      throw new Error('Permission Error: file system operations are disabled by configuration');
+    }]],
+  });
+  const { code, all } = await runMain(undefined, { md });
+  assert.equal(code, 0, all);
+  assert.equal(seen.existed, true);
+  assert.ok(!fs.existsSync(seen.attach), 'the scratch dir is removed');
+});
+
 test('a parser error or a missing table is not counted as a refusal', async () => {
   const md = fakeMotherDuck({
     over: [
@@ -416,7 +449,7 @@ async function localTarget(t) {
   const rw = await probe.openLocked({ steps: [{ label: 'attach', sql: `ATTACH '${file}' AS t` }] });
   await rw.run("CREATE TABLE t.main.fixture_publish (key VARCHAR, value VARCHAR); INSERT INTO t.main.fixture_publish VALUES ('fixture_version', '1')");
   rw.close();
-  fs.writeFileSync(path.join(dir, probe.READ_FILE), 'n\n1\n');
+  await probe.prepareScratch(dir);
   return { dir, file };
 }
 
@@ -447,7 +480,7 @@ test('locally, the reader lockdown refuses every forbidden operation, with no ht
   }
   assert.equal(listener.hits(), 0);
   assert.ok(!fs.existsSync(path.join(dir, 'probe-copy.csv')));
-  assert.ok(!fs.existsSync(path.join(dir, 'probe-attach.duckdb')));
+  assert.ok(fs.existsSync(path.join(dir, probe.ATTACH_FILE)), 'the ATTACH target exists, so the refusal is the lockdown');
 
   const second = await conn.connect();
   const seen = await probe.seesTables(second);
