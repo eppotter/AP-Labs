@@ -234,7 +234,8 @@ function scoredOutcome(mod, values, rows) {
   const capped = rows.length > ROW_CAP;
   const candidates = capped ? rows.slice(0, ROW_CAP) : rows;
   const limitName = mod.scoring.limit_parameter;
-  const limit = limitName && Number.isInteger(values[limitName]) ? values[limitName] : null;
+  // Only null or undefined keeps every row; rank() refuses any other non-integer.
+  const limit = limitName ? values[limitName] : null;
   const kept = scoring.rank(candidates, mod, { limit }).map(({ row, score, reason }) => ({ ...row, score, reason }));
   const queryColumns = Object.keys(rows[0]);
   const inputs = new Set(mod.scoring.inputs.map((i) => i.name));
@@ -289,12 +290,15 @@ async function runQuery({ data, mod, values, log }) {
 // The run record's rowIds and rows (AD-15): only for a module with a write,
 // and only the rows the person saw (after a scored module's cut), in rank
 // order. rows holds the declared push fields, plus the score when scored.
-function pushRowsOf(mod, outcome) {
+// A run whose CSV did not reach the person keeps neither (delivered false),
+// so nothing they didn't fully receive can be pushed later.
+// 10.2 moves push-field picking into approval-write/ and removes this alias.
+function pushRowsOf(mod, outcome, { delivered = true } = {}) {
   // The manifest's write block, read for its push field names only. It is
   // not a connector (this file imports none); the push itself belongs to the
   // approval-write archetype (kit/verify/write-path).
   const block = mod.write;
-  if (!block || !mod.row_id || !outcome.rows) return { rowIds: null, rows: null };
+  if (!block || !mod.row_id || !outcome.rows || !delivered) return { rowIds: null, rows: null };
   const { fields } = block;
   return {
     rowIds: outcome.rows.map((r) => r[mod.row_id]),
@@ -310,12 +314,14 @@ function pushRowsOf(mod, outcome) {
 // SQL and parameters are exactly what runQuery gave the runner. A record
 // that can't be kept never costs the person the result: it goes without the
 // button.
-async function keepRecord({ store, data, log, mod, values, person, ranAt, outcome, message }) {
+async function keepRecord({
+  store, data, log, mod, values, person, ranAt, outcome, message, delivered = true,
+}) {
   try {
     // The confirmed values: what was bound, plus a scored module's limit
     // (which the scoring line in the details explains).
     const parameters = bindValues(mod.parameters || [], values);
-    const { rowIds, rows } = pushRowsOf(mod, outcome);
+    const { rowIds, rows } = pushRowsOf(mod, outcome, { delivered });
     const record = provenance.buildRecord({
       person, module: mod.id, parameters, sql: mod.sql, source: provenance.sourceOf(data), fixtureVersion: await provenance.readVersion(data, log), ranAt, rowIds, rows,
     });
@@ -338,8 +344,8 @@ function createRunner({
   return async function run(mod, values, person, { client } = {}) {
     const ranAt = now();
     const outcome = await runQuery({ data, mod, values, log });
-    const recorded = (message) => (store && (outcome.kind === 'rows' || outcome.kind === 'empty')
-      ? keepRecord({ store, data, log, mod, values, person, ranAt, outcome, message })
+    const recorded = (message, { delivered = true } = {}) => (store && (outcome.kind === 'rows' || outcome.kind === 'empty')
+      ? keepRecord({ store, data, log, mod, values, person, ranAt, outcome, message, delivered })
       : message);
     if (outcome.kind !== 'rows') {
       log.info('list ran', { module: mod.id, outcome: outcome.kind });
@@ -360,7 +366,10 @@ function createRunner({
       delivery = { failed: true };
     }
     log.info('list ran', { module: mod.id, outcome: delivery.failed ? 'not delivered' : 'rows', rows: outcome.rows.length, total: outcome.total });
-    return { message: await recorded(resultMessage(mod, values, outcome, delivery, { admin })), failed: Boolean(delivery.failed) };
+    return {
+      message: await recorded(resultMessage(mod, values, outcome, delivery, { admin }), { delivered: !delivery.failed }),
+      failed: Boolean(delivery.failed),
+    };
   };
 }
 

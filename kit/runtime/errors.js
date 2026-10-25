@@ -145,11 +145,13 @@ class CsvNotDelivered extends RuntimeRefusal {
 
 // A scored list's rows could not be scored (Story 10.1): a declared input
 // missing from the rows, a null or non-numeric value, no row id column, or a
-// column named like one the engine adds (score, reason). The run stops; no
+// column named like one the engine adds (score, reason), two rows with the
+// same row id, or a limit that is set but not a whole number of rows (a
+// setup fault: the limit input is declared integer). The run stops; no
 // row is ever scored as 0 in place of an error. The value itself is never
 // carried. details: { module, input, label, problem } with problem one of
 // SCORING_PROBLEMS.
-const SCORING_PROBLEMS = Object.freeze(['missing', 'null', 'not_number', 'no_row_id', 'column_taken']);
+const SCORING_PROBLEMS = Object.freeze(['missing', 'null', 'not_number', 'no_row_id', 'column_taken', 'duplicate_row_id', 'bad_limit']);
 class ScoringFault extends RuntimeRefusal {
   constructor(details) {
     if (!SCORING_PROBLEMS.includes(details.problem)) throw new TypeError(`unknown ScoringFault problem "${details.problem}"`);

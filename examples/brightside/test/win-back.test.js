@@ -48,14 +48,16 @@ const declared = winBack ? winBack.parameters.map((p) => p.name) : [];
 const bound = declared.filter((n) => n !== 'limit');
 const SCORE_COLUMNS = ['months_as_client', 'paid_dollars', 'days_since_visit', 'plan_price_dollars', 'price_rise'];
 // North over 90 days, best first: [score, client_id, reason]. Worked out by
-// hand from the pinned formula for the first (730: months 23, paid $21,093,
-// 79 days, $255, a rise: S = 7.033 of 8, floor -1, 100 x 8.033 / 9 = 89).
+// hand from the pinned formula for the first (730: months 23 of 0-24, paid
+// $21,093 clipped to 12,500, 79 of 0-120 days, $255 of 100-450, a rise:
+// S = 1.917 + 3 - 0.658 + 0.443 + 2 = 6.701 of 8, floor -1,
+// 100 x 7.701 / 9 = 86). 1351 and 1611 tie at 69; 1351 comes first by id.
 const NORTH_TOP_5 = [
-  [89, 730, 'Lifetime paid spend ($): 21,093; Price rise before lapse'],
-  [83, 1222, 'Lifetime paid spend ($): 10,072; Price rise before lapse'],
-  [83, 1956, 'Lifetime paid spend ($): 9,850; Price rise before lapse'],
-  [81, 931, 'Lifetime paid spend ($): 8,056; Price rise before lapse'],
-  [75, 1611, 'Lifetime paid spend ($): 8,362; Price rise before lapse'],
+  [86, 730, 'Lifetime paid spend ($): 21,093; Price rise before lapse'],
+  [74, 931, 'Price rise before lapse; Lifetime paid spend ($): 8,056'],
+  [74, 1222, 'Lifetime paid spend ($): 10,072; Price rise before lapse'],
+  [74, 1956, 'Lifetime paid spend ($): 9,850; Price rise before lapse'],
+  [69, 1351, 'Price rise before lapse; Months as a client: 22'],
 ];
 const quiet = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -89,9 +91,9 @@ test('Win-back loads as a scoped pull with three bounded inputs and its SQL', ()
   assert.equal(winBack.row_id, 'client_id');
   assert.deepEqual(winBack.scoring.inputs.map((i) => [i.name, i.label, i.weight, i.min, i.max]), [
     ['months_as_client', 'Months as a client', 2, 0, 24],
-    ['paid_dollars', 'Lifetime paid spend ($)', 3, 0, 10000],
+    ['paid_dollars', 'Lifetime paid spend ($)', 3, 0, 12500],
     ['days_since_visit', 'Days since last completed visit', -1, 0, 120],
-    ['plan_price_dollars', 'Lapsed plan price ($)', 1, 100, 300],
+    ['plan_price_dollars', 'Lapsed plan price ($)', 1, 100, 450],
     ['price_rise', 'Price rise before lapse', 2, 0, 1],
   ]);
   assert.equal(winBack.scoring.limit_parameter, 'limit');
@@ -111,6 +113,12 @@ test('on the fixture, only the declared inputs but the limit bind and North over
   t.after(() => data.close());
   const all = await data.run(winBack.sql, { zone: 'north', lapsed_days: 90 }, { declared: bound });
   assert.equal(all.length, 38);
+  // One row per client (the grain): 38 distinct clients.
+  assert.equal(new Set(all.map((r) => r.client_id)).size, 38);
+  // Whole numbers only: no floating-point dollars or months.
+  for (const c of ['months_as_client', 'paid_dollars', 'days_since_visit', 'plan_price_dollars']) {
+    assert.ok(all.every((r) => /^\d+$/.test(String(r[c]))), c);
+  }
   assert.deepEqual(Object.keys(all[0]), ['client_id', 'first_name', 'last_name', 'email', 'lapsed_on', ...SCORE_COLUMNS]);
   assert.ok(all.every((r) => r.email.endsWith('.invalid')));
   // The SQL's own order (which rows a cap would keep): latest lapse first, then client_id.
@@ -128,6 +136,24 @@ test('on the fixture, only the declared inputs but the limit bind and North over
     data.run(winBack.sql, { zone: 'north', lapsed_days: 90, extra: 1 }, { declared: [...bound, 'extra'] }),
     QueryRefusedError,
   );
+});
+
+test('lifetime paid spend does not fan out: all payments up to as_of minus the per-client sums the Win-back SQL uses is 0', async (t) => {
+  const data = createData({ file: FIXTURE, profile });
+  t.after(() => data.close());
+  // The per-client sum is the Win-back SQL's own "spend" step (payments joined
+  // to invoices, one invoice per payment), taken from the module's SQL text.
+  const spend = /spend AS \(\n([\s\S]*?)\n\),\nlast_visit AS/.exec(winBack.sql);
+  assert.ok(spend, 'the Win-back SQL has a spend step');
+  const sql = [
+    "WITH meta AS (SELECT CAST(value AS DATE) AS as_of FROM fixture_meta WHERE key = 'as_of'),",
+    `spend AS (\n${spend[1]}\n)`,
+    'SELECT (SELECT SUM(pay.amount_cents) FROM payments pay CROSS JOIN meta WHERE pay.paid_on <= meta.as_of)',
+    '  - (SELECT SUM(paid_cents) FROM spend) AS gap, (SELECT COUNT(*) FROM spend) AS clients',
+  ].join('\n');
+  const [row] = await data.run(sql, {}, { declared: [] });
+  assert.equal(Number(row.gap), 0);
+  assert.ok(Number(row.clients) > 0);
 });
 
 test('North over 90 days, top 25: exact scores, reasons and order for the top five, ranked from all 38 and the same on every run', async (t) => {

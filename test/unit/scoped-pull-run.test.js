@@ -20,7 +20,7 @@ const { registerHubs } = require('../../kit/runtime/slack/hubs');
 const { ACTIONS, FORM_CALLBACK, ROW_CAP } = require('../../kit/runtime/archetypes/scoped-pull');
 const { INPUT_BLOCK, VALUE_ACTION } = require('../../kit/runtime/archetypes/scoped-pull/form');
 const {
-  checkQuery, placeholders, bindValues, boundNames, pushRowsOf, createRunner, SCORED_LIMIT,
+  checkQuery, placeholders, bindValues, boundNames, pushRowsOf, createRunner, runQuery, SCORED_LIMIT,
 } = require('../../kit/runtime/archetypes/scoped-pull/run');
 const { toCsv, BOM } = require('../../kit/runtime/archetypes/scoped-pull/csv');
 const { deliverCsv, permalinkOf } = require('../../kit/runtime/archetypes/scoped-pull/deliver');
@@ -551,7 +551,9 @@ test('the run record keeps only the rows after the cut, in rank order, with the 
   const data = fakeData(() => RANKED_ROWS);
   const run = createRunner({ data, log: quietLog(), store });
   const withWrite = { ...RANKED, write: { connector: 'email', operation: 'pushList', destination: 'A list', fields: ['person_id', 'name'] } };
-  const res = await run(withWrite, { zone: 'north', limit: 3 }, 'U1', {});
+  const { client } = new FakeSlackApp({ views: true });
+  const res = await run(withWrite, { zone: 'north', limit: 3 }, 'U1', { client });
+  assert.equal(res.failed, false);
   const runId = res.message.blocks[0].accessory.value;
   const record = store.get('provenance', runId);
   assert.deepEqual(record.rowIds, [1, 2, 10]);
@@ -562,11 +564,60 @@ test('the run record keeps only the rows after the cut, in rank order, with the 
   ]);
   // The confirmed values, with the limit the scoring line explains.
   assert.deepEqual(record.parameters, { zone: 'north', limit: 3 });
-  const plain = await run(RANKED, { zone: 'north', limit: 3 }, 'U1', {});
+  const plain = await run(RANKED, { zone: 'north', limit: 3 }, 'U1', { client });
   const r2 = store.get('provenance', plain.message.blocks[0].accessory.value);
   assert.equal(r2.rowIds, null);
   assert.equal(r2.rows, null);
   assert.deepEqual(pushRowsOf(withWrite, { rows: [{ person_id: 4, name: 'Di' }] }), { rowIds: [4], rows: [{ person_id: 4, name: 'Di' }] });
+});
+
+test('a run whose CSV did not reach the DM keeps no push rows in its record: nothing the person didn\'t fully receive can be pushed', async () => {
+  const store = createStore();
+  const run = createRunner({ data: fakeData(() => RANKED_ROWS), log: quietLog(), store });
+  const withWrite = { ...RANKED, write: { connector: 'email', operation: 'pushList', destination: 'A list', fields: ['person_id', 'name'] } };
+  // No Slack client, and a Slack that refuses the upload: both are not delivered.
+  const failing = new FakeSlackApp({ views: true });
+  failing.filesFail = new Error('upload refused');
+  for (const opts of [{}, { client: failing.client }]) {
+    const res = await run(withWrite, { zone: 'north', limit: 3 }, 'U1', opts);
+    assert.equal(res.failed, true);
+    assert.match(JSON.stringify(res.message), /The CSV didn't arrive/);
+    const record = store.get('provenance', res.message.blocks[0].accessory.value);
+    assert.equal(record.rowIds, null);
+    assert.equal(record.rows, null);
+  }
+  assert.deepEqual(pushRowsOf(withWrite, { rows: [{ person_id: 4, name: 'Di' }] }, { delivered: false }), { rowIds: null, rows: null });
+});
+
+test('a scored list\'s limit: only null or undefined keeps every row; any other non-integer stops the run as a setup fault', async () => {
+  for (const limit of [null, undefined]) {
+    const out = await runQuery({ data: fakeData(() => RANKED_ROWS), mod: RANKED, values: { zone: 'north', limit }, log: quietLog() });
+    assert.equal(out.kind, 'rows');
+    assert.equal(out.rows.length, 5);
+  }
+  for (const limit of ['3', 2.5, -1, NaN, true, {}]) {
+    const log = quietLog();
+    const out = await runQuery({ data: fakeData(() => RANKED_ROWS), mod: RANKED, values: { zone: 'north', limit }, log });
+    assert.equal(out.kind, 'scoring', `limit ${String(limit)}`);
+    assert.ok(out.error instanceof ScoringFault);
+    assert.deepEqual(out.error.details, { module: 'ranked', input: 'limit', label: 'How many', problem: 'bad_limit' });
+    assert.deepEqual(log.lines.find((l) => l.msg === 'list scoring failed').fields, { module: 'ranked', input: 'limit', problem: 'bad_limit' });
+  }
+});
+
+test('two rows with the same row id stop a scored run with a duplicate_row_id fault; nothing is sent', async () => {
+  const rows = [...RANKED_ROWS, { ...RANKED_ROWS[1], name: 'Bo again' }];
+  const ctx = setupRanked({ data: fakeData(() => rows) });
+  const { view } = await confirmRanked(ctx);
+  const fault = new ScoringFault({ module: 'ranked', input: 'person_id', label: 'person_id', problem: 'duplicate_row_id' });
+  assert.equal(view.blocks[0].text.text, messageFor(fault, { admin: ADMIN }));
+  assert.match(view.blocks[0].text.text, /two rows have the same "person_id"/);
+  assert.deepEqual(ctx.app.uploads, []);
+  assert.deepEqual(ctx.log.lines.find((l) => l.msg === 'list scoring failed').fields, { module: 'ranked', input: 'person_id', problem: 'duplicate_row_id' });
+  // The same id as a number and as text is the same row.
+  const mixed = setupRanked({ data: fakeData(() => [...RANKED_ROWS, { ...RANKED_ROWS[0], person_id: '1' }]) });
+  await confirmRanked(mixed);
+  assert.equal(mixed.log.lines.find((l) => l.msg === 'list scoring failed').fields.problem, 'duplicate_row_id');
 });
 
 test('the preview stays under Slack\'s section limit: rows are dropped from the end, never cut mid-table', () => {

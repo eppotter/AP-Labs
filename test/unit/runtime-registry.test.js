@@ -225,3 +225,22 @@ test('scoring needs a row id, and the old inputs-and-weights shape is refused by
   assert.ok(old.problems.includes(`${RANKED_FILE}: unknown field "scoring.weights"`), old.problems.join('\n'));
   assert.ok(old.problems.some((p) => p.startsWith(`${RANKED_FILE}: field "scoring.inputs[0]" must be object`)), old.problems.join('\n'));
 });
+
+test('a write block is refused on any archetype but approval-write', () => {
+  const write = { connector: 'crm', operation: 'push', destination: 'A list', fields: ['client_id'] };
+  const refusal = (file) => `${file}: field "write" is used only by an approval-write module (writes go through that archetype)`;
+  const onHandler = loadEdited((d) => editJson(d, 'modules/echo/manifest.json', (m) => { m.write = write; }));
+  assert.equal(onHandler.registry, null);
+  assert.deepEqual(onHandler.problems, [refusal('modules/echo/manifest.json')]);
+  const onPull = editRanked((m) => { m.write = write; });
+  assert.equal(onPull.registry, null);
+  assert.deepEqual(onPull.problems, [refusal(RANKED_FILE)]);
+  // approval-write may carry one (refused only because its engine isn't built yet).
+  const onWrite = loadEdited((d) => editJson(d, 'modules/echo/manifest.json', (m) => {
+    m.archetype = 'approval-write';
+    m.parameters = [{ name: 'zone', type: 'string', enum: ['north'] }];
+    m.query = 'query.sql';
+    m.write = write;
+  }));
+  assert.deepEqual(onWrite.problems, ['modules/echo/manifest.json: field "archetype" "approval-write" is not available yet']);
+});

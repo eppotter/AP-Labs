@@ -90,7 +90,7 @@ The score is `round-half-up(100 × (S − Σneg) / (Σpos − Σneg))`, where S 
 - ends with `ORDER BY …, <row_id>` and then exactly `LIMIT 5001` (the 5,000-row cap plus one). The engine ranks the first 5,000 rows; if 5,001 come back, the person is told the ranking covers only the first 5,000 and to narrow the values;
 - `COALESCE`s every input that can be null, to a number that means "worst" or "none" (`COALESCE(SUM(p.amount_cents), 0)`). A null, a missing column or a value that is not a number stops the run with a plain message naming the module and the input; it is never scored as 0. Numbers, numeric text (BIGINT, HUGEINT and DECIMAL columns arrive as text) and true/false (1/0) are accepted.
 
-Startup also stops on a range with `min` at or above `max`, on every weight 0, and on a `limit_parameter` that is not a declared integer input.
+Two rows with the same `row_id` also stop the run, so the SQL must return one row per `row_id`. Startup also stops on a range with `min` at or above `max`, on every weight 0, and on a `limit_parameter` that is not a declared integer input.
 
 ### Declaring inputs
 

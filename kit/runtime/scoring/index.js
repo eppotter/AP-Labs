@@ -128,13 +128,18 @@ function compareIds(a, b) {
 
 // Scores every row and ranks them. Returns [{ row, score, reason }], best
 // first; the rows are the query's own objects, never changed. Throws a
-// ScoringFault for the first bad row.
+// ScoringFault for the first bad row, and for two rows with the same row id
+// (compared as text, so 7 and "7" are the same row).
 function scoreRows(rows, mod) {
+  const ids = new Set();
   const { inputs } = mod.scoring;
   const pos = inputs.reduce((sum, i) => sum + (i.weight > 0 ? i.weight : 0), 0);
   const neg = inputs.reduce((sum, i) => sum + (i.weight < 0 ? i.weight : 0), 0);
   const scored = rows.map((row) => {
     checkColumns(row, mod);
+    const id = String(row[mod.row_id]);
+    if (ids.has(id)) throw fault(mod, mod.row_id, mod.row_id, 'duplicate_row_id');
+    ids.add(id);
     let s = 0;
     const lifts = [];
     inputs.forEach((input, order) => {
@@ -157,10 +162,17 @@ function scoreRows(rows, mod) {
   return scored.sort((a, b) => b.score - a.score || compareIds(a.row[mod.row_id], b.row[mod.row_id]));
 }
 
-// Scores, ranks, then keeps the top `limit` (every row when limit is null).
+// Scores, ranks, then keeps the top `limit`. Only a limit that is null or
+// undefined keeps every row; any other value that is not a whole number of
+// rows (0 or more) is a setup fault, never "keep everything".
 function rank(rows, mod, { limit = null } = {}) {
+  const name = mod.scoring.limit_parameter || 'limit';
+  if (limit !== null && limit !== undefined && !(Number.isInteger(limit) && limit >= 0)) {
+    const p = (mod.parameters || []).find((x) => x.name === name);
+    throw fault(mod, name, (p && p.label) || name, 'bad_limit');
+  }
   const ranked = scoreRows(rows, mod);
-  return Number.isInteger(limit) && limit >= 0 ? ranked.slice(0, limit) : ranked;
+  return limit === null || limit === undefined ? ranked : ranked.slice(0, limit);
 }
 
 // The scoring line for "How was this made?" (Story 9.6's extra blocks).

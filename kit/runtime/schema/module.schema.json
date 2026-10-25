@@ -86,7 +86,8 @@
   "allOf": [
     { "if": { "properties": { "archetype": { "const": "handler" } } }, "then": { "required": ["handler"] } },
     { "if": { "properties": { "archetype": { "const": "scoped-pull" } } }, "then": { "required": ["parameters", "query"] } },
-    { "if": { "properties": { "archetype": { "const": "approval-write" } } }, "then": { "required": ["parameters", "query", "write"] } }
+    { "if": { "properties": { "archetype": { "const": "approval-write" } } }, "then": { "required": ["parameters", "query", "write"] } },
+    { "if": { "properties": { "archetype": { "not": { "const": "approval-write" } } } }, "then": { "properties": { "write": false } } }
   ],
   "$defs": {
     "slug": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 },

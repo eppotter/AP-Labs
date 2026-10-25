@@ -5,15 +5,17 @@
 -- days" and "Win-back candidate in zone Z" (as_of - N < end_date <= as_of;
 -- one row per client, lapse date = the latest such end_date), "Lifetime paid
 -- spend per client" and "Price change before lapse".
---   months_as_client    whole months from clients.created_on to as_of
+--   months_as_client    complete months from clients.created_on to as_of
+--                       (date_sub, so a month counts only once it has passed)
 --   paid_dollars        lifetime paid spend up to as_of, in whole dollars
---                       (0 for a client who never paid)
+--                       (0 for a client who never paid); integer cents
+--                       rounded half up, never floating point
 --   days_since_visit    days from the last completed visit to as_of (365 for
 --                       a client with no completed visit: as far back as the
 --                       score's range reaches)
 --   plan_price_dollars  the lapsed plan's price_cents (the plan that ended
 --                       on the lapse date; the highest if two did), in whole
---                       dollars
+--                       dollars, rounded the same way
 --   price_rise          a plan lapsed in the window had a price rise effective
 --                       in the 60 days up to its end
 -- Every scoring column is COALESCEd or never null: a null stops the run.
@@ -69,10 +71,10 @@ last_visit AS (
   GROUP BY p.client_id
 )
 SELECT c.client_id, c.first_name, c.last_name, c.email, l.lapsed_on,
-  date_diff('month', c.created_on, meta.as_of) AS months_as_client,
-  CAST(ROUND(COALESCE(s.paid_cents, 0) / 100.0) AS BIGINT) AS paid_dollars,
+  date_sub('month', c.created_on, meta.as_of) AS months_as_client,
+  CAST((COALESCE(s.paid_cents, 0) + 50) // 100 AS BIGINT) AS paid_dollars,
   COALESCE(meta.as_of - lv.last_on, 365) AS days_since_visit,
-  CAST(ROUND(lp.price_cents / 100.0) AS BIGINT) AS plan_price_dollars,
+  CAST((lp.price_cents + 50) // 100 AS BIGINT) AS plan_price_dollars,
   l.price_rise
 FROM clients c
 JOIN lapsed l ON l.client_id = c.client_id

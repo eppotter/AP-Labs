@@ -83,6 +83,8 @@ function schemaProblems(validate, data, file) {
       const note = inputNote(e.instancePath, data);
       if (e.keyword === 'additionalProperties') return `${file}: unknown field "${fieldName(e.instancePath, e.params.additionalProperty)}"${note}`;
       if (e.keyword === 'required') return `${file}: field "${fieldName(e.instancePath, e.params.missingProperty)}" is required${note}`;
+      // The only false schema: a write block outside approval-write (AD-15).
+      if (e.keyword === 'false schema' && e.instancePath === '/write') return `${file}: field "write" is used only by an approval-write module (writes go through that archetype)`;
       const field = fieldName(e.instancePath);
       return field ? `${file}: field "${field}"${note} ${e.message}` : `${file}: ${e.message}`;
     });

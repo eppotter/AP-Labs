@@ -41,9 +41,9 @@
   "scoring": {
     "inputs": [
       { "name": "months_as_client", "label": "Months as a client", "weight": 2, "min": 0, "max": 24 },
-      { "name": "paid_dollars", "label": "Lifetime paid spend ($)", "weight": 3, "min": 0, "max": 10000 },
+      { "name": "paid_dollars", "label": "Lifetime paid spend ($)", "weight": 3, "min": 0, "max": 12500 },
       { "name": "days_since_visit", "label": "Days since last completed visit", "weight": -1, "min": 0, "max": 120 },
-      { "name": "plan_price_dollars", "label": "Lapsed plan price ($)", "weight": 1, "min": 100, "max": 300 },
+      { "name": "plan_price_dollars", "label": "Lapsed plan price ($)", "weight": 1, "min": 100, "max": 450 },
       { "name": "price_rise", "label": "Price rise before lapse", "weight": 2, "min": 0, "max": 1 }
     ],
     "limit_parameter": "limit"

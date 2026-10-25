@@ -33,6 +33,8 @@ const SCORING_WORDS = Object.freeze({
   not_number: (label) => `"${label}" is not a number for at least one row`,
   no_row_id: (label) => `the results have no "${label}" column to tell the rows apart`,
   column_taken: (label) => `the results already have a column named "${label}", which the scores need`,
+  duplicate_row_id: (label) => `two rows have the same "${label}", so they can't be told apart`,
+  bad_limit: (label) => `"${label}" is not a whole number of rows`,
 });
 
 // The AI service's refusals (Story 9.1). Each points to the typed form, which
