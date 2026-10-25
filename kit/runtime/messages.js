@@ -37,6 +37,18 @@ const LLM_WORDS = Object.freeze({
   failed: () => "I couldn't read your request just now. Please use the form instead, or try again in a moment.",
 });
 
+// "Read my request" (Story 9.4). Written by the bot, never by the AI: a label
+// comes from the reviewed manifest. Each is plain text (shown as plain_text,
+// so nothing in it formats or links), except the notices, which are mrkdwn
+// and escape what they insert.
+const READ_WORDS = Object.freeze({
+  reading: () => 'Reading your request…',
+  empty: () => 'Type what you want in the box first, then press *Read my request*. Or fill in the form and press *Check values*.',
+  missing: (label) => `I couldn't find ${label} in your request.`,
+  question: (label) => `What should ${label} be?`,
+  secondMiss: () => "I still couldn't fill in every value, so here is the form. Fill in the rest and press *Check values*.",
+});
+
 const MESSAGES = [
   [NotSetUp, ({ client, admin }) => `You're not set up in ${escapeText(client)}'s bot yet, so you only see what's open to everyone. Ask ${admin} to add you.`],
   [AccessDenied, ({ label, admin }) => `You don't have access to ${escapeText(label)}; ask ${admin}.`],
@@ -122,4 +134,4 @@ function messageFor(err, { admin = 'your admin' } = {}) {
   return null;
 }
 
-module.exports = { messageFor, escapeText, welcomeText, feedbackText, joinWelcomeText };
+module.exports = { messageFor, escapeText, welcomeText, feedbackText, joinWelcomeText, READ_WORDS };
