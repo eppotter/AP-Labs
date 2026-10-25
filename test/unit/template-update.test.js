@@ -16,12 +16,16 @@ const path = require('node:path');
 const { makeUpdateRepos, FORK_LEDGER_LINE } = require('../fixtures/temp-git');
 const { main: update, parseArgs } = require('../../kit/release/update');
 const lib = require('../../kit/lib/template');
+const { slowSkip } = require('../fixtures/slow');
 
 const BRANCH = 'template/v1.1.0';
 
+// Every test on the temp repos takes 5 s or more, so each is gated by
+// slowSkip() and runs only under `npm run test:slow` (plan ci-split). The
+// repos are made only when those tests run.
 let base;
 test.before(() => {
-  base = makeUpdateRepos();
+  if (!slowSkip()) base = makeUpdateRepos();
 });
 test.after(() => base && base.cleanup());
 
@@ -113,7 +117,7 @@ test('parseArgs takes one version', () => {
   assert.match(parseArgs(['--force']).error, /unknown argument/);
 });
 
-test('a clean update: a branch, a merge commit, the record updated and a PR', (t) => {
+test('a clean update: a branch, a merge commit, the record updated and a PR', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   const before = snapshot(r);
   const tagSha = r.release('v1.1.0', (w) => {
@@ -151,7 +155,7 @@ test('a clean update: a branch, a merge commit, the record updated and a PR', (t
   assert.match(body, /Deleted on purpose by this fork since v1\.0\.0 \(derived from what it deleted\): `examples(\/demo)?`, `profiles\/demo`\./);
 });
 
-test('a fork that edited a kit/ file is refused, naming it', (t) => {
+test('a fork that edited a kit/ file is refused, naming it', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   editFile(r.fork, 'kit/lib/fork/index.js', (s) => `${s}// a fork's edit\n`);
   r.forkCommit('fork: edit the engine');
@@ -165,7 +169,7 @@ test('a fork that edited a kit/ file is refused, naming it', (t) => {
   assert.equal(res.calls.checks, 0);
 });
 
-test('a deleted example file changed upstream stays deleted (a conflict, resolved)', (t) => {
+test('a deleted example file changed upstream stays deleted (a conflict, resolved)', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   r.release('v1.1.0', (w) => editFile(w, 'examples/demo/README.md', (s) => `${s}Changed upstream.\n`));
   const res = run(r);
@@ -176,7 +180,7 @@ test('a deleted example file changed upstream stays deleted (a conflict, resolve
   assert.match(body, /Removed again[^]*- `examples\/demo\/README\.md`/);
 });
 
-test('a new upstream file under the deleted example stays absent', (t) => {
+test('a new upstream file under the deleted example stays absent', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   r.release('v1.1.0', (w) => r.write(w, 'examples/demo/app/hubs/new.json', '{ "id": "new" }\n'));
   const res = run(r);
@@ -185,7 +189,7 @@ test('a new upstream file under the deleted example stays absent', (t) => {
   assert.match(prBody(r), /Removed again[^]*- `examples\/demo\/app\/hubs\/new\.json`/);
 });
 
-test('the fork\'s ledger is kept on a conflict', (t) => {
+test('the fork\'s ledger is kept on a conflict', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   r.release('v1.1.0', (w) => editFile(w, 'docs/ledger.md', (s) => `<!-- upstream's line -->\n${s}`));
   const res = run(r);
@@ -195,7 +199,7 @@ test('the fork\'s ledger is kept on a conflict', (t) => {
   assert.match(prBody(r), /`docs\/ledger\.md`: kept the fork's version \(fork-owned\)/);
 });
 
-test('a clean upstream edit to the ledger or planning docs is not applied', (t) => {
+test('a clean upstream edit to the ledger or planning docs is not applied', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   const planning = r.git(r.work, ['ls-files', 'docs/planning']).split('\n')[0];
   r.release('v1.1.0', (w) => {
@@ -214,7 +218,7 @@ test('a clean upstream edit to the ledger or planning docs is not applied', (t) 
   assert.match(body, /- `docs\/planning\/new-upstream-plan\.md`/);
 });
 
-test('an upstream file under .aplabs/ or the app dir aborts with the fork unchanged', (t) => {
+test('an upstream file under .aplabs/ or the app dir aborts with the fork unchanged', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   r.release('v1.1.0', (w) => {
     r.write(w, '.aplabs/extra.yml', 'x: 1\n');
@@ -230,7 +234,7 @@ test('an upstream file under .aplabs/ or the app dir aborts with the fork unchan
   assert.equal(res.calls.checks, 0);
 });
 
-test('an upstream file under APLABS_APP_DIR aborts too', (t) => {
+test('an upstream file under APLABS_APP_DIR aborts too', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   r.release('v1.1.0', (w) => r.write(w, 'client-app/hubs/upstream.json', '{ "id": "upstream" }\n'));
   const before = snapshot(r);
@@ -243,7 +247,7 @@ test('an upstream file under APLABS_APP_DIR aborts too', (t) => {
   assertUnchanged(r, before);
 });
 
-test('a fork that changed package.json beyond appending is refused when the release changes it', (t) => {
+test('a fork that changed package.json beyond appending is refused when the release changes it', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   const pkg = readJson(r.fork, 'package.json');
   pkg.scripts.start = 'node my-own-start.js';
@@ -261,7 +265,7 @@ test('a fork that changed package.json beyond appending is refused when the rele
   assertUnchanged(r, before);
 });
 
-test('a fork-appended dependency survives an upstream bump of another', (t) => {
+test('a fork-appended dependency survives an upstream bump of another', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   forkAppends(r);
   r.release('v1.1.0', (w) => {
@@ -288,7 +292,7 @@ test('a fork-appended dependency survives an upstream bump of another', (t) => {
   assert.match(body, /`package-lock\.json`: the template's, regenerated with `npm install --package-lock-only --ignore-scripts`/);
 });
 
-test('a fork-appended dependency the template now ships aborts with nothing changed', (t) => {
+test('a fork-appended dependency the template now ships aborts with nothing changed', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   forkAppends(r);
   r.release('v1.1.0', (w) => {
@@ -304,7 +308,7 @@ test('a fork-appended dependency the template now ships aborts with nothing chan
   assert.deepEqual(res.calls, { checks: 0, ci: 0, regen: 0 });
 });
 
-test('any other conflict aborts, restores main and leaves the fork as it was', (t) => {
+test('any other conflict aborts, restores main and leaves the fork as it was', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   editFile(r.fork, 'README.md', (s) => `Fork's first line.\n${s}`);
   r.forkCommit('fork: edit the README');
@@ -317,7 +321,7 @@ test('any other conflict aborts, restores main and leaves the fork as it was', (
   assertUnchanged(r, before);
 });
 
-test('failing checks: the branch is kept, nothing pushed, no PR', (t) => {
+test('failing checks: the branch is kept, nothing pushed, no PR', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   r.release('v1.1.0', (w) => editFile(w, 'README.md', (s) => `${s}\nmore\n`));
   const before = snapshot(r);
@@ -332,7 +336,7 @@ test('failing checks: the branch is kept, nothing pushed, no PR', (t) => {
   assert.ok(!r.ghCalls().some((c) => c.startsWith('pr create')));
 });
 
-test('an injected 1-to-2 migration upgrades the profile, keeping its comments', (t) => {
+test('an injected 1-to-2 migration upgrades the profile, keeping its comments', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   r.release('v1.1.0', (w) => {
     const schema = readJson(w, 'profiles/_schema/profile.schema.json');
@@ -353,7 +357,7 @@ test('an injected 1-to-2 migration upgrades the profile, keeping its comments', 
   assert.match(body, /```diff[^]*-schema_version: 1[^]*\+schema_version: 2[^]*```/);
 });
 
-test('a migration whose result fails the new schema aborts with the fork unchanged', (t) => {
+test('a migration whose result fails the new schema aborts with the fork unchanged', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   r.release('v1.1.0', (w) => {
     const schema = readJson(w, 'profiles/_schema/profile.schema.json');
@@ -367,7 +371,7 @@ test('a migration whose result fails the new schema aborts with the fork unchang
   assertUnchanged(r, before);
 });
 
-test('a fork whose profile schema_version is newer than the template\'s is refused', (t) => {
+test('a fork whose profile schema_version is newer than the template\'s is refused', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   editFile(r.fork, '.aplabs/profile.yml', (s) => s.replace('schema_version: 1', 'schema_version: 2'));
   r.forkCommit('fork: a newer schema version');
@@ -379,7 +383,7 @@ test('a fork whose profile schema_version is newer than the template\'s is refus
   assertUnchanged(r, before);
 });
 
-test('refusals before anything changes: no upstream, dirty, off main, behind origin, not newer', async (t) => {
+test('refusals before anything changes: no upstream, dirty, off main, behind origin, not newer', { skip: slowSkip() }, async (t) => {
   await t.test('no upstream remote', (t2) => {
     const r = setup(t2);
     r.release('v1.1.0');

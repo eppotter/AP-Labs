@@ -7,7 +7,8 @@
 // needs no network, the way GitHub runs it (bash -eo pipefail), and each must
 // pass. The steps it can't run here are listed by name with the reason, and
 // the list is checked against ci.yml so it can't go stale. Any new step is
-// run by default.
+// run by default. The fork-copy test is slow and runs only under
+// `npm run test:slow` (plan ci-split); the shape checks run in `npm test`.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,6 +17,7 @@ const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
 const YAML = require('yaml');
 const { makeCopyFork, REPO } = require('../fixtures/temp-fork');
+const { slowSkip } = require('../fixtures/slow');
 
 const CI = path.join(REPO, '.github/workflows/ci.yml');
 const GUARD = 'if [ -f .aplabs/profile.yml ] && [ ! -d examples/brightside ]; then echo "skipped: no example client in this fork"; exit 0; fi';
@@ -29,7 +31,8 @@ const ENGINE_STEP = 'test/Engine untouched (forks only)';
 // Steps not run here, and why. Every other run step is.
 const NOT_RUN = Object.freeze({
   'test/Install': 'npm ci downloads packages (network)',
-  'test/Tests (unit, hook, acceptance)': 'the full suite, which this test is part of (the clean-bones job runs it in a copy)',
+  'test/Tests (unit, hook, acceptance)': 'the fast suite; CI runs it, not this copy',
+  'test/Slow tests (fork copy, template update)': 'runs the ci-fork test itself (and the template-update test); CI runs it',
   'test/Ledger row': 'pull requests only; compares with the base branch fetched from origin',
   'clean-bones/Install': 'npm ci downloads packages (network)',
   'clean-bones/Clean bones': 'runs the full suite in a copy, which this test is part of',
@@ -106,7 +109,8 @@ test('the fork guard skips only in a fork without the example; the template alwa
   assert.equal(at(true, true), 'ran', 'a fork that kept the example');
 });
 
-test('a clean-bones-style fork copy passes every ci.yml run step that needs no network', { timeout: 600000 }, (t) => {
+// Slow (about 30 s): runs only under `npm run test:slow` (plan ci-split).
+test('a clean-bones-style fork copy passes every ci.yml run step that needs no network', { skip: slowSkip(), timeout: 600000 }, (t) => {
   const fork = makeCopyFork('fork');
   t.after(fork.cleanup);
   const { root } = fork;

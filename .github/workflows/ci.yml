@@ -24,6 +24,11 @@ jobs:
         run: git ls-files '*.sh' ':(exclude).agents' ':(exclude)_bmad' | xargs --no-run-if-empty shellcheck
       - name: Tests (unit, hook, acceptance)
         run: npm test
+      # The long tests (the ci-fork fork copy, the template-update repos) skip
+      # in `npm test` and run here (plan ci-split). No condition: the template
+      # and every fork run it. The runner fails on any skip or zero passes.
+      - name: Slow tests (fork copy, template update)
+        run: npm run test:slow
       # The three fixture steps skip only in a fork whose example client was
       # deleted (Story 11.5, review B10); the template always runs them.
       - name: Fixture seeds match the generator

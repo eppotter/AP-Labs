@@ -3,7 +3,8 @@
 # client. Copies the repo (tracked and untracked, not ignored, files) into a
 # temp dir, deletes examples/brightside/ and profiles/brightside/, makes the
 # copy a git repo (the checks list files with git), then runs npm run check,
-# npm test and the boot smoke test against a minimal stub profile. Any failure
+# npm test, npm run test:slow and the boot smoke test against a minimal stub
+# profile. Any failure
 # fails the script. node_modules is a symlink to this repo's (run npm ci first).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,5 +29,7 @@ ln -s "$ROOT/node_modules" node_modules
 echo "clean-bones: copy at $WORK without examples/brightside and profiles/brightside"
 npm run --silent check
 npm test
+# The slow tests skip in npm test; run them here too (plan ci-split).
+npm run test:slow
 node scripts/boot-smoke.js
 echo "clean-bones: ok (the template stands alone without the example client)"
