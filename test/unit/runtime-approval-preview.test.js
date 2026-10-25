@@ -189,7 +189,9 @@ test('the approval entry: the person, the run, the list, its own copy of the row
   assert.deepEqual(Object.keys(stored).sort(), [...entry.ENTRY_KEYS].sort());
   const record = ctx.store.get('provenance', run.push.value);
   const listName = `leads-north-${record.ranAt.slice(0, 10)}`;
-  assert.deepEqual({ ...stored, rows: [...stored.rows], skipped: [...stored.skipped] }, {
+  assert.deepEqual({
+    ...stored, rows: [...stored.rows], skipped: [...stored.skipped], skippedIds: [...stored.skippedIds],
+  }, {
     person: OWNER.id,
     module: 'leads',
     runId: run.push.value,
@@ -197,6 +199,7 @@ test('the approval entry: the person, the run, the list, its own copy of the row
     listName,
     rows: record.rows,
     skipped: ['no address'],
+    skippedIds: ['2'],
     idempotencyKey: crypto.createHash('sha256').update(JSON.stringify([listName, ['1', '10', '2', '3', '4', '5', '6']])).digest('hex'),
   });
   assert.notEqual(stored.rows, record.rows, 'a copy, not the record\'s array');

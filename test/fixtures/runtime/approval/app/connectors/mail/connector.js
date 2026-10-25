@@ -14,6 +14,12 @@
 //   beforeSend   async ({ batch, index }) => {}, run inside each request before
 //                the system applies it: a test can hold a push in flight, flip
 //                a kill switch partway, or throw (an outage, or { status: 401 })
+//   trusting     true: apply sends every contact it is given, re-checking
+//                nothing (a fork connector that relies on the archetype to
+//                leave out the skipped rows, review R1-1)
+//   received     every contact apply was given
+//   skipRef      a function (contact) => ref the plan reports for a skipped
+//                contact (default its ref): a test can make it unmatched
 
 const { defineConnector, PartialFailure } = require('#sdk');
 
@@ -25,7 +31,7 @@ function freshLedger() {
 }
 
 const state = {
-  created: 0, sent: [], deps: null, delivered: new Set(), failRefs: new Set(), beforeSend: null, ledger: freshLedger(), requests: 0,
+  created: 0, sent: [], deps: null, delivered: new Set(), failRefs: new Set(), beforeSend: null, ledger: freshLedger(), requests: 0, trusting: false, received: [], skipRef: null,
 };
 
 function reset() {
@@ -35,6 +41,9 @@ function reset() {
   state.beforeSend = null;
   state.ledger = freshLedger();
   state.requests = 0;
+  state.trusting = false;
+  state.received = [];
+  state.skipRef = null;
 }
 
 const mail = defineConnector({
@@ -65,10 +74,11 @@ const mail = defineConnector({
       plan: ({ name, contacts }) => ({
         name,
         add: contacts.filter(ok).length,
-        skipped: contacts.filter((c) => !ok(c)).map((c) => ({ ref: String(c.ref), reason: 'no address' })),
+        skipped: contacts.filter((c) => !ok(c)).map((c) => ({ ref: state.skipRef ? state.skipRef(c) : String(c.ref), reason: 'no address' })),
       }),
       async apply({ contacts }, ctx) {
-        const send = contacts.filter(ok);
+        state.received.push(...contacts);
+        const send = state.trusting ? contacts : contacts.filter(ok);
         const total = { added: 0, alreadyAdded: 0, failedRefs: [] };
         let index = 0;
         for (const batch of ctx.batches(send)) {

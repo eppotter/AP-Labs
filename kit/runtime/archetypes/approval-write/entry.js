@@ -5,7 +5,7 @@
 // opaque token: 128 bits from the CSPRNG, the only thing the Approve and
 // Cancel buttons carry.
 //
-//   { person, module, runId, destination, listName, rows, skipped, idempotencyKey }
+//   { person, module, runId, destination, listName, rows, skipped, skippedIds, idempotencyKey }
 //
 //   rows             a COPY of the approved rows' push fields (and the score,
 //                    for a scored list), taken from the run record at preview
@@ -21,6 +21,10 @@
 //   skipped          the reasons the preview's dry-run plan gave for the rows
 //                    the tool would refuse (one per skipped row, no refs), so
 //                    the push's reply counts them (Story 10.3, Q5).
+//   skippedIds       those rows' row ids, as strings (id-shaped, never contact
+//                    data): the push leaves them out, so the write gets exactly
+//                    the rows the preview said will send, whatever the
+//                    connector's apply re-checks (review R1-1).
 //
 // A partly failed push that is safe to retry (details.retrySafe === true) is
 // offered "Retry the failed ones": recreate() stores the SAME entry (person,
@@ -35,7 +39,7 @@ const crypto = require('node:crypto');
 
 const NS = 'approval';
 const TOKEN = /^[0-9a-f]{32}$/;
-const ENTRY_KEYS = Object.freeze(['person', 'module', 'runId', 'destination', 'listName', 'rows', 'skipped', 'idempotencyKey']);
+const ENTRY_KEYS = Object.freeze(['person', 'module', 'runId', 'destination', 'listName', 'rows', 'skipped', 'skippedIds', 'idempotencyKey']);
 // The longest skip reason kept (the preview shows the same cut).
 const REASON_MAX = 60;
 
@@ -69,11 +73,19 @@ function reasonsOf(skipped) {
 }
 
 function create(store, {
-  person, module, runId, destination, listName, rows, skipped = [], idempotencyKey: key,
+  person, module, runId, destination, listName, rows, skipped = [], skippedIds = [], idempotencyKey: key,
 }) {
   const token = newToken();
   store.set(NS, token, Object.freeze({
-    person, module, runId, destination, listName, rows: Object.freeze(copyRows(rows).map(Object.freeze)), skipped: reasonsOf(skipped), idempotencyKey: key,
+    person,
+    module,
+    runId,
+    destination,
+    listName,
+    rows: Object.freeze(copyRows(rows).map(Object.freeze)),
+    skipped: reasonsOf(skipped),
+    skippedIds: Object.freeze(skippedIds.map((id) => String(id))),
+    idempotencyKey: key,
   }));
   return token;
 }
@@ -90,6 +102,7 @@ function recreate(store, stored) {
     listName: stored.listName,
     rows: Object.freeze(copyRows(stored.rows).map(Object.freeze)),
     skipped: Object.freeze([...stored.skipped]),
+    skippedIds: Object.freeze([...stored.skippedIds]),
     idempotencyKey: stored.idempotencyKey,
   }));
   return token;

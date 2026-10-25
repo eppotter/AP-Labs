@@ -28,7 +28,7 @@ const entry = require('../../kit/runtime/archetypes/approval-write/entry');
 const { createConnectors } = require('../../kit/runtime/archetypes/approval-write/connectors');
 const { messageFor } = require('../../kit/runtime/messages');
 const {
-  PreviewInvalid, AccessDenied, KillSwitchOn, ConfigFault, PartialFailure,
+  PreviewInvalid, AccessDenied, KillSwitchOn, ConfigFault, PartialFailure, PushRefused,
 } = require('../../kit/runtime/errors');
 const { testLog } = require('../../kit/runtime/sdk');
 const { FakeSlackApp } = require('../fixtures/fake-slack');
@@ -166,6 +166,41 @@ test('the push reads only the approval entry: never the run record or the button
   ctx.clock.t += 25 * MIN;
   await approve(ctx, token);
   assert.deepEqual(sentRefs(), SENDABLE);
+});
+
+test('rows the preview skipped never reach the connector, even one whose apply re-checks nothing (review R1-1)', async () => {
+  const ctx = setup();
+  mail.state.trusting = true;
+  const token = await preview(ctx);
+  assert.deepEqual([...ctx.store.get('approval', token).skippedIds], ['880102']);
+  const view = await approve(ctx, token);
+  assert.equal(head(view), '*Pushed 6 to mail tool*, skipped 1, failed 0. List: leads-north-2026-10-25.');
+  assert.deepEqual(mail.state.received.map((c) => c.ref), SENDABLE, 'apply was given exactly the rows previewed as "will send"');
+  assert.deepEqual(sentRefs(), SENDABLE);
+  assert.ok(!mail.state.received.some((c) => c.ref === 880102));
+  // The retry entry keeps the skipped ids: a retry leaves them out too.
+  mail.reset();
+  const ctx2 = setup();
+  mail.state.trusting = true;
+  mail.state.failRefs = new Set(['880104']);
+  const first = await approve(ctx2, await preview(ctx2));
+  const retry = buttons(first).find((b) => b.action_id === approvalWrite.ACTIONS.retry).value;
+  assert.deepEqual([...ctx2.store.get('approval', retry).skippedIds], ['880102']);
+  mail.state.failRefs = new Set();
+  await click(ctx2, approvalWrite.ACTIONS.retry, retry);
+  assert.ok(!mail.state.received.some((c) => c.ref === 880102));
+  assert.deepEqual([...sentRefs()].sort(), [...SENDABLE].sort());
+});
+
+test('a skip the preview cannot match to exactly one row by its row id refuses the preview: no token, nothing sent', async () => {
+  const ctx = setup();
+  mail.state.skipRef = () => 'no-such-row-1';
+  const run = await runList(ctx);
+  const view = await click(ctx, approvalWrite.ACTIONS.push, run.push.value);
+  assert.equal(head(view), messageFor(new ConfigFault({ admin: ADMIN })));
+  assert.deepEqual(buttons(view), []);
+  assert.equal(mail.state.requests, 0);
+  assert.notEqual(head(view), messageFor(new PushRefused('empty')));
 });
 
 test('an approval entry over the 5,000-row cap is refused before anything is consumed or sent (Q10)', async () => {

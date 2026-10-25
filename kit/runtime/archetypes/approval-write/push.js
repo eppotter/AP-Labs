@@ -18,7 +18,10 @@
 //      then push and finish with the outcome.
 //
 // What is sent: only the entry's rows (never the run record, never the
-// button), mapped through write.send, under the entry's idempotency key:
+// button) that the preview did not skip (the entry's skippedIds, review
+// R1-1: a connector whose apply doesn't re-check still never gets a row the
+// person saw as skipped), mapped through write.send, under the entry's
+// idempotency key:
 // the rows the person saw, never more than the 5,000-row cap (Q10). The
 // connector keys each contact under it, so a double click, a replay or a
 // concurrent click never sends twice, and a key already used (the same list
@@ -132,10 +135,14 @@ function createPush({
     token, stored, mod, connector, show, client, action,
   }) {
     const total = stored.rows.length;
+    // The skipped count is the preview's; the rows sent are exactly the
+    // ones it said will send.
     const skipped = stored.skipped.length;
-    const toSend = total - skipped;
+    const skippedIds = new Set(stored.skippedIds);
+    const sendRows = stored.rows.filter((r) => !skippedIds.has(String(r[mod.row_id])));
+    const toSend = sendRows.length;
     const base = { destination: mod.write.destination, listName: stored.listName, skippedReasons: stored.skipped };
-    const input = { name: stored.listName, contacts: sendItems(mod, stored.rows), idempotencyKey: stored.idempotencyKey };
+    const input = { name: stored.listName, contacts: sendItems(mod, sendRows), idempotencyKey: stored.idempotencyKey };
     let result;
     let text;
     let retryToken = null;
