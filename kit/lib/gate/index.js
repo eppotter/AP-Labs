@@ -19,6 +19,8 @@
 //   4. profile invalid                           → DENY with the errors, logged
 //      (except an edit to the profile file itself, so it can be fixed)
 //   5. every in-repo target matches gate.exempt  → allow, silent
+//      (a target under an engine T3 floor, kit/lib/tier ENGINE_T3 with
+//      .aplabs/** included, is never exempt)
 //   6. not inside a subagent (agent_id) and no fresh engagement marker
 //      (session or worktree)                      → DENY, logged
 //   7. plan approval (Story 2.5), by the computed tier of the in-repo targets
@@ -57,7 +59,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { globMatcher, tierFloor } = require('../tier');
+const { globMatcher, tierFloor, isEngineFloor } = require('../tier');
 
 // Loaded on first use: Codex runs this hook on every tool call, and a non-edit
 // call should not pay for compiling the profile schema.
@@ -235,8 +237,11 @@ function decide(input, startDir, now = Date.now(), opts = {}) {
     return deny(ctx, 'invalid-profile', `AP Labs write gate: the profile is invalid, fix the profile first. ${oneLine(ctx.error.message)}${profileRel ? ` Edits to ${profileRel} itself are allowed.` : ''}`, input, inRepo, now);
   }
 
+  // A target under an engine T3 floor is never exempt (#68): the profile
+  // cannot wave the engine's own guarded paths through.
   const exempt = (ctx.profile.gate.exempt || []).map((g) => globMatcher(g));
-  if (inRepo.length && inRepo.every((r) => exempt.some((m) => m(r)))) return { decision: 'allow', rule: 'exempt' };
+  const isExempt = (r) => !isEngineFloor(r) && exempt.some((m) => m(r));
+  if (inRepo.length && inRepo.every(isExempt)) return { decision: 'allow', rule: 'exempt' };
 
   const subagent = typeof input.agent_id === 'string' && input.agent_id !== '';
   let worktree = null;

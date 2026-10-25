@@ -122,15 +122,17 @@ function isInstructionFile(p) {
   return /^(claude(\.local)?|agents|skill)\.md$/i.test(segs[segs.length - 1]) || segs.some((s) => /^\.claude$/i.test(s));
 }
 
+const raise = (globs) => (globs || []).map((g) => globMatcher(g, { nocase: true }));
+const engineMatchers = raise(ENGINE_T3);
+
 // Compiled rules, cached per (frozen) profile object.
 const compiled = new WeakMap();
 
 function rulesOf(profile) {
   let rules = compiled.get(profile);
   if (!rules) {
-    const raise = (globs) => (globs || []).map((g) => globMatcher(g, { nocase: true }));
     rules = {
-      engineT3: raise(ENGINE_T3),
+      engineT3: engineMatchers,
       T3: raise(profile.tiers.T3),
       T2: raise(profile.tiers.T2),
       T1: raise(profile.tiers.T1),
@@ -163,6 +165,16 @@ function tierOf(profile, filePath) {
   if (any(p, r.T1) || isInstructionFile(p)) return 'T1';
   if (any(p, r.inert)) return 'T0';
   return 'T1';
+}
+
+/**
+ * True when ONE path is under an engine T3 floor (ENGINE_T3), or leaves the
+ * repo (fail high). No profile is involved: the write gate uses it to refuse
+ * gate.exempt for these paths.
+ */
+function isEngineFloor(filePath) {
+  const p = normalise(filePath);
+  return p === null || any(p, engineMatchers);
 }
 
 /** Floor of a change: the highest tier of any path. Throws on an empty list. */
@@ -199,7 +211,7 @@ function resolveTier(profile, paths, declared) {
   };
 }
 
-module.exports = { tierOf, tierFloor, maxTier, resolveTier, globMatcher, ENGINE_T3, TIERS };
+module.exports = { tierOf, tierFloor, maxTier, resolveTier, globMatcher, isEngineFloor, ENGINE_T3, TIERS };
 
 // CLI: node kit/lib/tier [--declared T1] path…   (or paths on stdin, one per line;
 //      lines are taken verbatim, only empty lines are dropped)

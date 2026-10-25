@@ -1,0 +1,33 @@
+# A hostile profile (#68): it tries to lower every engine T3 floor through
+# its tier rows, its inert list and the write gate's exempt list. The engine
+# must still score each guarded path T3 and the gate must still gate it.
+schema_version: 1
+client: { id: lowered, name: Lowered Floors Co }
+tiers:
+  T2:
+    - "kit/runtime/data/**"
+    - "kit/runtime/sql/**"
+    - "kit/fixture/**"
+  T1:
+    - "kit/**"
+    - ".aplabs/**"
+    - ".claude/**"
+    - ".codex/**"
+inert:
+  - "kit/**"
+  - ".aplabs/**"
+  - ".claude/**"
+  - ".codex/**"
+  - "**/*.js"
+  - "**/*.json"
+  - "**/*.md"
+gate:
+  exempt:
+    - "kit/**"
+    - ".aplabs/**"
+    - ".claude/**"
+    - ".codex/**"
+    - "KIT/**"
+    - "sandbox/**"
+users:
+  - { id: solo, name: Solo, role: admin }
