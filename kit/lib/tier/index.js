@@ -33,7 +33,30 @@ const path = require('path');
 
 const TIERS = ['T0', 'T1', 'T2', 'T3'];
 const ORDER = { T0: 0, T1: 1, T2: 2, T3: 3 };
-const ENGINE_T3 = ['.aplabs/**'];
+// Engine floors (#68): always T3 under every profile. Matched like every
+// raise rule (case-insensitive, after normalising); see the header comment.
+const ENGINE_T3 = Object.freeze([
+  '.aplabs/**',
+  // Who can use which tool, and the profile that says so.
+  'kit/runtime/access/**',
+  'kit/lib/permissions/**',
+  'kit/lib/profile/**',
+  // Every key, and the code that holds the MotherDuck write key.
+  'kit/lib/secrets/**',
+  'kit/fixture/publish.js',
+  'kit/fixture/remote.js',
+  'kit/fixture/motherduck.js',
+  'kit/fixture/md-probe.js',
+  // The bot's read-only data connection and the SQL checker.
+  'kit/runtime/data/**',
+  'kit/runtime/sql/**',
+  // The governance itself: tiers, the gate, the hooks and their wiring.
+  'kit/lib/tier/**',
+  'kit/lib/gate/**',
+  'kit/hooks/**',
+  '.claude/settings.json',
+  '.codex/hooks.json',
+]);
 
 // Minimal glob: `**` = any depth (incl. none), `*` = within one segment, every
 // other character literal. Anchored. Profile globs are untrusted (PR-07), so
