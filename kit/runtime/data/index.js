@@ -2,8 +2,9 @@
 
 // The query runner (Story 7.5, AD-9, AD-10): the only way SQL runs.
 //
-// Only this file, the offline fixture builder (kit/fixture/build.js) and the
-// human-run MotherDuck connection (kit/fixture/motherduck.js) may import
+// Only this file, the offline fixture builder (kit/fixture/build.js), the
+// human-run MotherDuck connection (kit/fixture/motherduck.js) and the
+// human-run MotherDuck lockdown probe (kit/fixture/md-probe.js) may import
 // @duckdb/node-api; a test fails on any other importer.
 //
 // Every call to run(sql, params) passes the kit/runtime/sql guardrail first,
