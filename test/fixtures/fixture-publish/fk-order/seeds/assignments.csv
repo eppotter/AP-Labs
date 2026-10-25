@@ -1,0 +1,5 @@
+assignment_id,crew_id,zone_id,starts_on
+1,1,north,2026-09-01
+2,2,north,2026-09-02
+3,3,south,2026-09-03
+4,3,north,2026-09-04

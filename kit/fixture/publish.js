@@ -21,7 +21,11 @@
 //      fixture_publish table (this tool published it): --database can name
 //      any MotherDuck database, and publish never replaces one it did not
 //      write. The refusal sends no write, a staging cleanup included.
-//      Then upload the build to <database>__publishing, add the fixture_publish
+//      Then upload the build to <database>__publishing table by table:
+//      attach the build read-only, refuse anything in it besides tables and
+//      any foreign-key cycle, create each table from its local DDL parents
+//      first, copy its rows in the same order, and detach the build on every
+//      path (see upload). Then add the fixture_publish
 //      table (fixture version, seeds hash, as_of, published_at, rows_<table>),
 //      and check its row counts and version against the local build.
 //   4. Swap: CREATE OR REPLACE DATABASE <database> FROM <staging> (a
@@ -94,11 +98,90 @@ async function checkCopy(conn, database, local, what) {
   if (!diff.match) throw new PublishError(`${what} does not match the local build:\n  ${diff.differences.join('\n  ')}`);
 }
 
+// The alias the local build is attached under, read-only, during the upload.
+const LOCAL = 'aplabs_publish_local';
+
+// Table names ordered so every table comes after the tables its foreign keys
+// reference (Kahn's algorithm, ties by name). edges are [child, parent]; a
+// table referencing itself, or a parent not in `names`, does not constrain
+// the order. A cycle has no such order and is refused.
+function parentFirst(names, edges) {
+  const parents = new Map(names.map((n) => [n, new Set()]));
+  for (const [child, parent] of edges) {
+    if (child !== parent && parents.has(child) && parents.has(parent)) parents.get(child).add(parent);
+  }
+  const order = [];
+  const placed = new Set();
+  while (order.length < names.length) {
+    const ready = [...parents].filter(([n, ps]) => !placed.has(n) && [...ps].every((p) => placed.has(p))).map(([n]) => n).sort();
+    if (!ready.length) {
+      const stuck = names.filter((n) => !placed.has(n)).sort();
+      throw new PublishError(`the foreign keys among ${stuck.join(', ')} form a cycle, so no load order works; nothing was uploaded`);
+    }
+    order.push(ready[0]);
+    placed.add(ready[0]);
+  }
+  return order;
+}
+
+// What the attached local build holds: its main-schema tables with their DDL
+// (keys, NOT NULL, UNIQUE and CHECK rules included) in parent-first order.
+// Anything else (a view, index, sequence, macro, type or other schema) is
+// refused, since publish uploads tables only. Only reads.
+async function localTables(conn) {
+  const here = `database_name = ${remote.sqlString(LOCAL)}`;
+  const others = await conn.run([
+    `SELECT 'schema' AS kind, schema_name AS name FROM duckdb_schemas() WHERE ${here} AND NOT internal`,
+    `SELECT 'view', view_name FROM duckdb_views() WHERE ${here} AND NOT internal`,
+    `SELECT 'index', index_name FROM duckdb_indexes() WHERE ${here}`,
+    `SELECT 'sequence', sequence_name FROM duckdb_sequences() WHERE ${here}`,
+    `SELECT 'macro', function_name FROM duckdb_functions() WHERE ${here} AND NOT internal`,
+    `SELECT 'type', type_name FROM duckdb_types() WHERE ${here} AND NOT internal`,
+  ].join(' UNION ALL ') + ' ORDER BY 1, 2');
+  if (others.length) {
+    throw new PublishError(`the local build holds more than tables (${others.map((o) => `${o.kind} ${o.name}`).join(', ')}), and publish uploads tables only; nothing was uploaded`);
+  }
+  const tables = await conn.run(`SELECT table_name, sql FROM duckdb_tables() WHERE ${here} AND schema_name = 'main' ORDER BY table_name`);
+  const fks = await conn.run(`SELECT table_name, referenced_table FROM duckdb_constraints() WHERE ${here} AND constraint_type = 'FOREIGN KEY'`);
+  const ddl = new Map(tables.map((t) => [t.table_name, t.sql]));
+  return parentFirst([...ddl.keys()], fks.map((f) => [f.table_name, f.referenced_table])).map((name) => ({ name, sql: ddl.get(name) }));
+}
+
+// Uploads the build to staging table by table, parents first, so every
+// foreign key holds as each table loads. MotherDuck's whole-database copy of
+// a local file (CREATE DATABASE ... FROM '<file>') loads tables in an order
+// that ignores foreign keys, which broke the first live publish (2026-10-24).
+// The DDL runs with staging as the current database, so its REFERENCES
+// resolve to staging's tables; the connection's own database is current
+// again before anything else runs. The local build is detached on every
+// path; a cleanup failure is raised only when the upload itself succeeded.
 async function upload(conn, { db, database, local, now }) {
   const staging = remote.stagingNameFor(database);
   const s = remote.ident(staging);
-  await conn.run(`DROP DATABASE IF EXISTS ${s}`);
-  await conn.run(`CREATE DATABASE ${s} FROM ${remote.sqlString(db)}`);
+  const l = remote.ident(LOCAL);
+  await conn.run(`ATTACH ${remote.sqlString(db)} AS ${l} (READ_ONLY)`);
+  let home = null;
+  let inStaging = false;
+  let failure = null;
+  try {
+    const tables = await localTables(conn);
+    [{ d: home }] = await conn.run('SELECT current_database() AS d');
+    await conn.run(`DROP DATABASE IF EXISTS ${s}`);
+    await conn.run(`CREATE DATABASE ${s}`);
+    await conn.run(`USE ${s}`);
+    inStaging = true;
+    for (const t of tables) await conn.run(t.sql);
+    await conn.run(`USE ${remote.ident(home)}`);
+    inStaging = false;
+    for (const t of tables) await conn.run(`INSERT INTO ${s}.main.${remote.ident(t.name)} SELECT * FROM ${l}.main.${remote.ident(t.name)}`);
+  } catch (e) {
+    failure = e;
+  }
+  let cleanupError = null;
+  for (const sql of [...(inStaging ? [`USE ${remote.ident(home)}`] : []), `DETACH ${l}`]) {
+    try { await conn.run(sql); } catch (e) { cleanupError = cleanupError || e; }
+  }
+  if (failure || cleanupError) throw failure || cleanupError;
   const recorded = [
     ['fixture_version', local.version],
     ['generator_version', local.generatorVersion || 'unknown'],
@@ -242,4 +325,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, parseArgs, USAGE };
+module.exports = { main, parseArgs, parentFirst, USAGE };
