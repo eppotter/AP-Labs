@@ -158,6 +158,7 @@ function validateProfile(profile, file) {
   p.verify = { checks: [], env_allow: [], ...p.verify };
   p.sql = { forbidden_columns: [], ...p.sql };
   p.data = { source: 'local', ...p.data };
+  p.jobs = { enabled: false, ...p.jobs };
   p.llm = { ...LLM_DEFAULTS, ...p.llm };
   p.verify.checks = p.verify.checks.map((c) => ({ timeout_seconds: 300, ...c }));
   p.users = p.users.map((u) => ({ identities: {}, grants: [], deny: [], ...u }));

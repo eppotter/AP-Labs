@@ -143,6 +143,15 @@
       "else": { "properties": { "database": false } }
     },
 
+    "jobs": {
+      "description": "Scheduled jobs (kit/runtime/jobs, <app>/jobs.json). enabled: true lets the app run the jobs its jobs.json enables; default false. APLABS_JOBS_OFF (any non-empty value) turns every job off whatever this says.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+
     "llm": {
       "description": "The AI helper (kit/runtime/llm). All optional. model and extraction_model must be priced in kit/runtime/llm/prices.js (boot refuses one that is not); default claude-sonnet-5-5. hourly_usd_limit caps this process's estimated AI spend in any hour, in US dollars (default 2). max_tokens caps each reply (default 1024). The key is never set here.",
       "type": "object",

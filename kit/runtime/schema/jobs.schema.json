@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/eppotter/AP-Labs/kit/runtime/schema/jobs.schema.json",
+  "title": "AP Labs scheduled jobs",
+  "description": "A fork's scheduled jobs: <app>/jobs.json, a list of entries. Checked at startup even when jobs are off. Unknown keys are errors. See kit/templates/job.md.",
+  "type": "array",
+  "maxItems": 100,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["name", "schedule", "run", "enabled"],
+    "properties": {
+      "name": {
+        "description": "A unique kebab-case slug, used in every log line.",
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+        "maxLength": 64
+      },
+      "schedule": {
+        "description": "Five-field cron in UTC: minute hour day-of-month month day-of-week. Numbers, *, lists, ranges and steps; at most every 5 minutes; never both day fields.",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "run": {
+        "description": "The job file, relative to <app>/jobs/ (for example nightly-check.js). It must resolve inside <app>/jobs/ and export an async run(ctx).",
+        "type": "string",
+        "pattern": "^[^\\\\\\u0000]+\\.c?js$",
+        "maxLength": 256
+      },
+      "enabled": {
+        "description": "This job's own switch. It runs only if this, the profile's jobs.enabled are true and APLABS_JOBS_OFF is unset.",
+        "type": "boolean"
+      }
+    }
+  }
+}

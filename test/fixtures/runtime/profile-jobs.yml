@@ -1,0 +1,8 @@
+# Runtime test profile with scheduled jobs switched on (Story 11.1).
+schema_version: 1
+client: { id: tiny, name: Tiny }
+jobs: { enabled: true }
+resources:
+  - { key: OPEN_THING, label: Open thing, open_access: true }
+users:
+  - { id: solo, name: Solo, role: admin }
