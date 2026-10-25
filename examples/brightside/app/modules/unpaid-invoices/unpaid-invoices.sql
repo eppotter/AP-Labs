@@ -4,7 +4,9 @@
 -- date first. Definition: "Outstanding at as_of" in fixture-tables.md (the
 -- outstanding-at-as-of truth): per invoice, total_cents minus its payments
 -- with paid_on <= as_of, kept only where positive. Payments are summed per
--- invoice first, so nothing fans out. Amounts are in dollars.
+-- invoice first, so nothing fans out. Amounts are in dollars, converted
+-- exactly: cents as DECIMAL(18, 0) times 0.01 gives DECIMAL(18, 2), never a
+-- floating-point division.
 -- Columns: only what chasing an invoice needs (the client's name and zone,
 -- never their email, phone or address).
 -- A fixed template: only the declared parameters bind, never pasted text.
@@ -29,9 +31,9 @@ owed AS (
 )
 SELECT o.invoice_id, o.client_id, c.first_name, c.last_name, c.zone_id,
   o.issued_on, o.due_on, o.days_past_due,
-  CAST(o.total_cents / 100 AS DECIMAL(14, 2)) AS total,
-  CAST(o.paid_cents / 100 AS DECIMAL(14, 2)) AS paid,
-  CAST(o.outstanding_cents / 100 AS DECIMAL(14, 2)) AS outstanding
+  CAST(o.total_cents AS DECIMAL(18, 0)) * 0.01 AS total,
+  CAST(o.paid_cents AS DECIMAL(18, 0)) * 0.01 AS paid,
+  CAST(o.outstanding_cents AS DECIMAL(18, 0)) * 0.01 AS outstanding
 FROM owed o
 JOIN clients c ON c.client_id = o.client_id
 WHERE ($zone = 'all' OR c.zone_id = $zone)

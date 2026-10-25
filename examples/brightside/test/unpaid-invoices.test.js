@@ -5,7 +5,9 @@
 // Checked here: it loads with two bounded inputs, its SQL passes the startup
 // check, and on a temporary build of the fixture its rows reconcile with the
 // known truth outstanding-at-as-of (every zone, no past-due filter: the
-// outstanding amounts add up to $198,753.25 exactly). Then the scripted
+// outstanding amounts add up to $198,753.25 exactly), and that cents become
+// dollars by exact decimal arithmetic (19.99, 100000.01, two places in the
+// CSV). Then the scripted
 // request (North, at least 30 days past due) runs end to end: the exact rows
 // in the CSV in the admin's DM, the count in the view, and a member without
 // UNPAID_INVOICES never sees it.
@@ -28,6 +30,7 @@ const { loadRegistry } = require('../../../kit/runtime/registry');
 const { createData } = require('../../../kit/runtime/data');
 const { checkQuery, bindValues } = require('../../../kit/runtime/archetypes/scoped-pull/run');
 const { forbiddenColumnsOf } = require('../../../kit/runtime/sql');
+const { toCsv, BOM } = require('../../../kit/runtime/archetypes/scoped-pull/csv');
 const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
 
 const ROOT = path.join(__dirname, '../../..');
@@ -99,6 +102,43 @@ test('on the fixture, every zone with no filter reconciles to the outstanding-at
     [16, 1998, '2024-10-24', '706', '166.00'],
     [133, 16, '2024-11-08', '691', '154.00'],
   ]);
+});
+
+test('cents become dollars exactly: DECIMAL(18, 2) from decimal arithmetic, never a floating-point division, and the CSV keeps two places', async (t) => {
+  assert.ok(!/\/\s*100\b/.test(unpaid.sql.replace(/--[^\n]*/g, '')), 'no division of cents by 100');
+  // The module's own SQL, run through the data layer on the built fixture,
+  // with its four tables shadowed by small hand-made ones (a CTE named like a
+  // table wins over the table).
+  const shadow = `WITH fixture_meta AS (SELECT 'as_of' AS key, '2025-01-31' AS value),
+    clients AS (SELECT 1 AS client_id, 'Ada' AS first_name, 'Penn' AS last_name, 'north' AS zone_id),
+    invoices AS (
+      SELECT 1 AS invoice_id, 1 AS client_id, DATE '2025-01-01' AS issued_on, DATE '2025-01-10' AS due_on, CAST(1999 AS BIGINT) AS total_cents
+      UNION ALL SELECT 2 AS invoice_id, 1 AS client_id, DATE '2025-01-02' AS issued_on, DATE '2025-01-11' AS due_on, CAST(10000001 AS BIGINT) AS total_cents
+      UNION ALL SELECT 3 AS invoice_id, 1 AS client_id, DATE '2025-01-03' AS issued_on, DATE '2025-01-12' AS due_on, CAST(1000 AS BIGINT) AS total_cents),
+    payments AS (
+      SELECT 2 AS invoice_id, DATE '2025-01-20' AS paid_on, CAST(1 AS BIGINT) AS amount_cents
+      UNION ALL SELECT 2 AS invoice_id, DATE '2025-02-01' AS paid_on, CAST(500 AS BIGINT) AS amount_cents
+      UNION ALL SELECT 3 AS invoice_id, DATE '2025-01-15' AS paid_on, CAST(999 AS BIGINT) AS amount_cents),
+    `;
+  const body = unpaid.sql.replace(/^(?:--[^\n]*\n)*\s*WITH\s+/, '');
+  assert.notEqual(body, unpaid.sql, 'the module SQL opens with comments and WITH');
+  const sql = shadow + body;
+  const data = createData({ file: FIXTURE, profile });
+  t.after(() => data.close());
+  const params = bindValues(unpaid.parameters, { zone: 'all' });
+  // (The checker refuses naming "paid" here, a CTE in the module SQL; paid is
+  // the same expression, and its "0.00" below shows the two places.)
+  const types = await data.run(`SELECT DISTINCT typeof(r.total) AS t, typeof(r.outstanding) AS o FROM (${sql}) AS r`, params, { declared });
+  assert.deepEqual(types, [{ t: 'DECIMAL(18,2)', o: 'DECIMAL(18,2)' }]);
+  const rows = await data.run(sql, params, { declared });
+  // A payment after as_of does not count; invoice 3 has one cent left.
+  assert.deepEqual(rows.map((r) => [r.invoice_id, r.total, r.paid, r.outstanding]), [
+    [1, '19.99', '0.00', '19.99'],
+    [2, '100000.01', '0.01', '100000.00'],
+    [3, '10.00', '9.99', '0.01'],
+  ]);
+  const csv = toCsv(COLUMNS, rows).replace(BOM, '').trimEnd().split('\r\n');
+  assert.deepEqual(csv.slice(1).map((l) => l.split(',').slice(-3).join(',')), ['19.99,0.00,19.99', '100000.01,0.01,100000.00', '10.00,9.99,0.01']);
 });
 
 class ViewsSlackApp extends FakeSlackApp {
