@@ -32,6 +32,12 @@
 // blocks Slack: the app starts and the data stays unavailable until a connect
 // succeeds. A local profile never reads either MotherDuck key.
 //
+// Story 9.1: boot reads the AI key once (ANTHROPIC_API_KEY, else the Keychain
+// item aplabs-anthropic-key) and registers it with the logger. A missing key,
+// or APLABS_LLM_OFF, leaves the AI off and the app starts anyway; the startup
+// line says which. A profile naming an unpriced model refuses to start. The AI
+// service (kit/runtime/llm) is built once here and is engine-internal.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
@@ -48,8 +54,11 @@ const { loadRegistry, ENV_PATTERN } = require('../registry');
 const { createStore } = require('../store');
 const { createData, dataPathFor, sourceOf } = require('../data');
 const md = require('../data/motherduck');
+const llm = require('../llm');
 
 const REPO = path.resolve(__dirname, '../../..');
+// The startup line's word for why the AI is off.
+const AI_OFF_WORDS = Object.freeze({ off: `switched off by ${llm.OFF_ENV}`, no_key: `${llm.KEY_ENV} not set`, config: 'configuration fault' });
 const DEFAULT_ENV = 'dev';
 
 // Secret env var names live here, never in the profile (AD-12).
@@ -133,6 +142,11 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
     problems.push(...loaded.problems.map((p) => `app: ${p}`));
     registry = loaded.registry;
   }
+  if (profile) problems.push(...llm.modelProblems(profile));
+  // Read once, here; a missing key is not a problem (the AI stays off).
+  const aiKey = llm.readKey({ env, deps, register });
+  if (aiKey) tokens[llm.KEY_ENV] = aiKey;
+
   let dataFile = null;
   if (profile && sourceOf(profile) === 'motherduck') {
     const keys = checkMotherDuckKeys({ env, deps, problems, register });
@@ -214,9 +228,22 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     }
   }
 
+  const store = deps.store || createStore({ now: deps.now });
+  const ai = llm.createLlm({
+    apiKey: cfg.tokens[llm.KEY_ENV] || null,
+    profile: cfg.profile,
+    profilePath: cfg.profilePath,
+    store,
+    log,
+    env,
+    ...(deps.now ? { now: deps.now } : {}),
+    deps: deps.llm || {},
+  });
+  const aiStatus = ai.status();
+  if (aiStatus.reason === 'config') log.error('AI helper off: configuration fault', { problem: aiStatus.problem });
+
   let app;
   try {
-    const store = deps.store || createStore({ now: deps.now });
     app = createApp({ ...cfg, store, data, log, App: deps.App });
     await app.start();
   } catch (err) {
@@ -231,9 +258,10 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     hubs: cfg.registry.hubs.map((h) => h.command),
     modules: cfg.registry.modules.length,
     data: dataState(data, remote),
+    ai: aiStatus.on ? 'on' : `off (${AI_OFF_WORDS[aiStatus.reason]})`,
     instance: 'single instance',
   });
-  return { code: 0, app, log, data, connecting };
+  return { code: 0, app, log, data, connecting, llm: ai };
 }
 
 // Anything that escapes main() is logged through the same redacting logger

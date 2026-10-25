@@ -58,6 +58,7 @@ const GUARDED = {
   'kit/fixture/md-probe.js': 'kit/fixture/md-probe.js',
   'kit/runtime/data/**': 'kit/runtime/data/motherduck.js',
   'kit/runtime/sql/**': 'kit/runtime/sql/index.js',
+  'kit/runtime/llm/**': 'kit/runtime/llm/prices.js',
   'kit/lib/tier/**': 'kit/lib/tier/index.js',
   'kit/lib/gate/**': 'kit/lib/gate/index.js',
   'kit/hooks/**': 'kit/hooks/README.md',
@@ -96,6 +97,7 @@ test('nearby paths outside the floors keep their current tier', () => {
   const nearby = [
     'kit/fixture/build.js', 'kit/fixture/query.js', 'kit/fixture/publish.test.js', 'kit/fixture/publish.jsx',
     'kit/runtime/slack/handle.js', 'kit/runtime/sqlite/x.js', 'kit/runtime/database/x.js', 'kit/runtime/connectors/contract.js',
+    'kit/runtime/llm.js', 'kit/runtime/llms/x.js',
     'kit/lib/review/index.js', 'kit/lib/tiers/x.js', 'kit/lib/gateway/x.js', 'kit/hooks.js', 'kit/lib/profile.js',
     '.codex/config.toml', 'docs/kit/hooks/README.md',
   ];

@@ -108,7 +108,7 @@ A vision to realise. The Orchestrator gives builders a governed way to build; th
 ## Assumptions
 
 - Slack runs in Socket Mode for dev (no public URL). HTTP mode is a fork deploy choice.
-- Tier 1 means about 1–3k clients and 24 months of visits; committed seed files stay under 20 MiB (raised from 10 MB on 2026-10-24 (Ely) for labour/homes/scheduling; to be restored by compressing seeds).
+- Tier 1 means about 1–3k clients and 24 months of visits; committed seed files stay under 10 MB (stored gzip-compressed, `fixture_meta.csv` excepted).
 - Seed data is versioned as committed generated files plus the generator. CI regenerates and fails on any diff.
 - Mock tools persist to a gitignored local outbox (`var/outbox/`). The runtime never writes the fixture database.
 - Story 4.3 of the Orchestrator epics (prove onboarding on Brightside, DEP-004) stays there and becomes buildable once Epic 7 lands; it reuses the truth blocks Story 7.6 writes into Brightside's `context/data.md`.

@@ -401,3 +401,41 @@ test('a missing app dir, a relative one and a bad APLABS_ENV are refused by name
   assert.match(relative.text, /APLABS_APP_DIR must be an absolute path/);
   assert.match(relative.text, /APLABS_ENV must be a lower-case name/);
 });
+
+// Story 9.1: the AI key and the AI service at boot. A stand-in client; no
+// request is ever sent.
+const AI_KEY = 'sk-ant-api00-fake-boot-key-value';
+const fakeAiClient = () => ({ messages: { create: async () => assert.fail('no AI call at boot') } });
+
+test('no AI key: the app still boots, and the startup line says the AI is off', async () => {
+  const { code, entries, llm } = await boot(env());
+  assert.equal(code, 0);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].ai, 'off (ANTHROPIC_API_KEY not set)');
+  assert.deepEqual([llm.status().on, llm.status().reason], [false, 'no_key']);
+});
+
+test('the AI key is read once at startup, registered with the redactor, and turns the AI on', async () => {
+  const built = [];
+  const res = await boot(env({ ANTHROPIC_API_KEY: AI_KEY }), { llm: { createClient: (o) => { built.push(o); return fakeAiClient(); } } });
+  assert.equal(res.code, 0);
+  assert.equal(res.entries[0].ai, 'on');
+  assert.equal(built.length, 1);
+  assert.equal(built[0].apiKey, AI_KEY);
+  assert.equal(res.log.redact(`key=${AI_KEY}`), 'key=[redacted]');
+  assert.ok(!res.text.includes(AI_KEY));
+});
+
+test('APLABS_LLM_OFF keeps the AI off even with a key, and builds no client', async () => {
+  const res = await boot(env({ ANTHROPIC_API_KEY: AI_KEY, APLABS_LLM_OFF: '1' }), { llm: { createClient: () => assert.fail('no client when off') } });
+  assert.equal(res.code, 0);
+  assert.equal(res.entries[0].ai, 'off (switched off by APLABS_LLM_OFF)');
+  assert.equal(res.log.redact(AI_KEY), '[redacted]', 'the key is still registered');
+});
+
+test('a profile naming an unpriced model refuses to start, naming the setting', async () => {
+  const { code, text } = await boot(env({ APLABS_PROFILE: path.join(__dirname, '../fixtures/runtime/profile-unpriced-model.yml') }));
+  assert.equal(code, 1);
+  assert.match(text, /refusing to start/);
+  assert.match(text, /llm\.model \\"claude-unpriced-9\\" has no price/);
+});

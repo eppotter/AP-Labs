@@ -143,6 +143,18 @@
       "else": { "properties": { "database": false } }
     },
 
+    "llm": {
+      "description": "The AI helper (kit/runtime/llm). All optional. model and extraction_model must be priced in kit/runtime/llm/prices.js (boot refuses one that is not); default claude-sonnet-5-5. hourly_usd_limit caps this process's estimated AI spend in any hour, in US dollars (default 2). max_tokens caps each reply (default 1024). The key is never set here.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "$ref": "#/$defs/modelId" },
+        "extraction_model": { "$ref": "#/$defs/modelId" },
+        "hourly_usd_limit": { "type": "number", "exclusiveMinimum": 0 },
+        "max_tokens": { "type": "integer", "minimum": 1, "maximum": 8192 }
+      }
+    },
+
     "verify": {
       "type": "object",
       "additionalProperties": false,
@@ -185,6 +197,7 @@
     "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
     "globs": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/glob" } },
     "glob": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "\\S" },
+    "modelId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{0,63}$" },
     "resourceKey": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
     "resourceKeys": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/resourceKey" } }
   }
