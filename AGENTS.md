@@ -104,12 +104,12 @@ Scope changes mid-program: `bmad-correct-course`. Do not route to BMAD's build, 
 1. Delegate the story to the builder. The brief ends with: "stop after reporting; never start another story; do not open a PR".
    Before running two stories in parallel, compare the files each will touch. If both edit the same engine file, run them one after the other, or tell the later builder to merge main and resolve the conflicts itself before it reports.
 2. When it reports, verify its worktree before anything else: the right branch, a clean `git status`, and the local head equal to the pushed head.
-3. If the branch conflicts with main, merge main in.
+3. If the branch conflicts with main, merge main in. Resolve `docs/ledger.md` by keeping main's rows and adding only this branch's own row, then run `node --test test/unit/ledger*.test.js` before pushing.
 4. Open a draft PR. The body starts with `**What this does:**` and has a `Kind:` line.
 5. Run `npm run review`. Send each P1 to the refuter and record each verdict with `npm run review -- --refute <id> <verdict>`. Non-blocking findings go to the follow-up issue.
    On a T2 or T3 PR, a non-blocking finding that touches write safety, credential handling, a fail-open default or data exposure is fixed on the branch before merge (one more round), not filed for later.
 6. Merge only when review shows nothing blocking AND CI passes. Never chain a merge after a command that merely prints check status; prefer `npm run land -- <n>`.
-7. Post `npm run notify -- --kind merged "<story and what changed>"`.
+7. Post `npm run notify -- --kind merged "<story and what changed>"` only after `npm run land` has printed `Merged PR #<n>`. Never chain notify after land in the same command.
 
 ### Merge authority
 
