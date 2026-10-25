@@ -1,0 +1,7 @@
+- [AP Labs handoff](ap-labs-handoff.md) — START HERE: runtime phase approved and building (6.1, 7.1 in progress)
+- [AP Labs venture](ap-labs-venture.md) — build-from-scratch repo; rules, git setup, read-only bi-platform reference
+- [Token economy](token-economy.md) — Pro plan: one session per PR, no subagents, quiet logs, batched edits
+- [PR summary line](pr-summary-line.md) — every PR body opens with a plain-language "What this does:" line
+- [AP Labs business model](ap-labs-business-model.md) — consulting; this repo = OUR starter template (runtime + governance building blocks) forked per engagement
+- [AP Labs orchestrator design](ap-labs-orchestrator-design.md) — running decisions: Onboarder agent trains SQLsmith/Architect/Connector; Leadership Panel removed; org-context doc by Scribe; all other roles kept; BMAD plans + p3 builds; Opus builds, Codex reviews (default)
+- [Done means checkable](done-means-checkable.md) — report "built (tests only)" vs "live-checked"; live-check each runtime epic before the next
