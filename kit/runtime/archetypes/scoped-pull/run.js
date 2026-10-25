@@ -16,7 +16,10 @@
 //                the SQL again and refuses an undeclared parameter), caps the
 //                rows at ROW_CAP, sends the CSV to the person's DM
 //                (./deliver) and builds the summary for the module's view
-//                (./results).
+//                (./results). With a store, a run that reached the data
+//                (rows, or zero rows) also keeps its run record and gets the
+//                "How was this made?" button (Story 9.6,
+//                kit/runtime/slack/provenance).
 //
 // Every outcome is one of: rows, empty (zero rows), blocked (the SQL checker
 // or the parameter rules refused it), failed (any other query error) or
@@ -32,6 +35,7 @@ const { DataUnavailable } = require('../../errors');
 const { toCsv } = require('./csv');
 const { deliverCsv } = require('./deliver');
 const { resultMessage, failureMessage, csvComment, csvFilename } = require('./results');
+const provenance = require('../../slack/provenance');
 
 // The engine stops at this many rows and says "first 5,000 of N".
 const ROW_CAP = 5000;
@@ -134,16 +138,42 @@ async function runQuery({ data, mod, values, log }) {
   return { kind: 'rows', columns: Object.keys(kept[0]), rows: kept, total, capped: total > ROW_CAP };
 }
 
+// Keeps the run record (Story 9.6) and returns message with its button. The
+// SQL and parameters are exactly what runQuery gave the runner. A record
+// that can't be kept never costs the person the result: it goes without the
+// button.
+async function keepRecord({ store, data, log, mod, values, person, ranAt, outcome, message }) {
+  try {
+    const parameters = bindValues(mod.parameters || [], values);
+    const rowIds = mod.row_id && outcome.rows ? outcome.rows.map((r) => r[mod.row_id]) : null;
+    const record = provenance.buildRecord({
+      person, module: mod.id, parameters, sql: mod.sql, source: provenance.sourceOf(data), fixtureVersion: await provenance.readVersion(data, log), ranAt, rowIds,
+    });
+    provenance.save(store, record);
+    return provenance.withButton(message, record.runId);
+  } catch (err) {
+    log.error('run record not kept', { module: mod.id, err });
+    return message;
+  }
+}
+
 // What a consumed Confirm runs: run(mod, values, person, { client }) resolves
 // { message, failed }. data: the query runner (null without a data source).
 // admin: who the person is told to contact. now: the clock, for the CSV's
-// file name.
-function createRunner({ data, log, admin = 'your admin', now = () => new Date() }) {
+// file name and the run record's time. store: where the run record goes (no
+// record and no button without one).
+function createRunner({
+  data, log, admin = 'your admin', now = () => new Date(), store = null,
+}) {
   return async function run(mod, values, person, { client } = {}) {
+    const ranAt = now();
     const outcome = await runQuery({ data, mod, values, log });
+    const recorded = (message) => (store && (outcome.kind === 'rows' || outcome.kind === 'empty')
+      ? keepRecord({ store, data, log, mod, values, person, ranAt, outcome, message })
+      : message);
     if (outcome.kind !== 'rows') {
       log.info('list ran', { module: mod.id, outcome: outcome.kind });
-      return { message: failureMessage(mod, values, outcome, { admin }), failed: outcome.kind !== 'empty' };
+      return { message: await recorded(failureMessage(mod, values, outcome, { admin })), failed: outcome.kind !== 'empty' };
     }
     let delivery;
     try {
@@ -160,7 +190,7 @@ function createRunner({ data, log, admin = 'your admin', now = () => new Date() 
       delivery = { failed: true };
     }
     log.info('list ran', { module: mod.id, outcome: delivery.failed ? 'not delivered' : 'rows', rows: outcome.rows.length, total: outcome.total });
-    return { message: resultMessage(mod, values, outcome, delivery, { admin }), failed: Boolean(delivery.failed) };
+    return { message: await recorded(resultMessage(mod, values, outcome, delivery, { admin })), failed: Boolean(delivery.failed) };
   };
 }
 

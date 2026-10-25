@@ -29,6 +29,7 @@ const {
   DataUnavailable, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
 } = require('../../kit/runtime/errors');
 const { messageFor } = require('../../kit/runtime/messages');
+const { VERSION_SQL } = require('../../kit/runtime/slack/provenance');
 const { createData, QueryRefusedError } = require('../../kit/runtime/data');
 const { createStore } = require('../../kit/runtime/store');
 const access = require('../../kit/runtime/access');
@@ -88,6 +89,7 @@ function setup({ data = fakeData() } = {}) {
 }
 
 const MENU_VIEW = { id: 'VMENU', type: 'modal', private_metadata: 'alpha', title: { type: 'plain_text', text: 'Alpha tools' } };
+const moduleRuns = (ctx) => ctx.data.runs.filter((r) => r.sql === PULL.sql);
 const updates = (app) => app.views.filter((v) => v.method === 'update').map((v) => v.args);
 const blockTexts = (view) => view.blocks.map((b) => (b.text && b.text.text) || (b.elements && b.elements[0] && b.elements[0].text) || null);
 
@@ -190,8 +192,12 @@ test('bindValues binds every declared input and nothing else; an optional input 
 test('Confirm runs the fixed SQL with only the declared inputs, then shows the summary in the view and sends the CSV to the DM', async () => {
   const ctx = setup();
   const { view } = await confirm(ctx, { zone: 'north', code: 'AB' });
-  // One run: the module's own SQL, its declared names, its values.
-  assert.deepEqual(ctx.data.runs, [{ sql: PULL.sql, params: { zone: 'north', days: 90, code: 'AB' }, opts: { declared: ['zone', 'days', 'code'] } }]);
+  // One run of the module's own SQL, its declared names, its values; then the
+  // data version for "How was this made?" (Story 9.6), with no parameters.
+  assert.deepEqual(ctx.data.runs, [
+    { sql: PULL.sql, params: { zone: 'north', days: 90, code: 'AB' }, opts: { declared: ['zone', 'days', 'code'] } },
+    { sql: VERSION_SQL, params: {}, opts: { declared: [] } },
+  ]);
   // "Running…", then the result, both in place on the Confirm screen's view.
   const ups = updates(ctx.app);
   assert.deepEqual(ups.map((u) => u.view_id), ['V1', 'V1']);
@@ -224,7 +230,7 @@ test('a replay after a complete run is told it ran once; the run is not repeated
   const { session, from } = await confirm(ctx);
   await ctx.app.dispatchAction(ACTIONS.confirm, { user: { id: 'U1' }, view: { ...from, hash: `h${ctx.app.viewSeq}` }, value: session });
   assert.equal(blockTexts(updates(ctx.app).at(-1).view)[0], DONE_REPLAY);
-  assert.equal(ctx.data.runs.length, 1);
+  assert.equal(moduleRuns(ctx).length, 1);
   assert.equal(ctx.app.uploads.length, 1);
 });
 
@@ -371,10 +377,15 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
   const uses = hubs.replace(/\/\/[^\n]*/g, '').split('\n').filter((l) => /\bllm\b/.test(l)).map((l) => l.trim());
   assert.deepEqual(uses, [
     'registry, profile, env, log, store, data = null, llm = null, canUse = defaultCanUse(profile),',
-    'store, log, run: createRunner({ data, log, admin }), read: llm ? createReader({ llm, log }) : null,',
+    'store, log, run: createRunner({ data, log, admin, store }), read: llm ? createReader({ llm, log }) : null,',
   ]);
   const app = fs.readFileSync(path.join(ROOT, 'kit/runtime/app/index.js'), 'utf8');
   assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, data, llm \}\)/);
+  // The run record (Story 9.6) holds rows; its file never reaches or names the AI service.
+  const provenance = fs.readFileSync(path.join(ROOT, 'kit/runtime/slack/provenance.js'), 'utf8');
+  assert.ok(!/require\([^)]*llm[^)]*\)/.test(provenance));
+  assert.ok(!/\bllm\b/.test(provenance.replace(/\/\/[^\n]*/g, '')));
+  assert.ok(!/require\([^)]*(extract|provenance)[^)]*\)/.test(fs.readFileSync(path.join(dir, 'extract.js'), 'utf8')));
 });
 
 test('createRunner without a Slack client still answers: the CSV is reported as not delivered', async () => {

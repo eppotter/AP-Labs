@@ -40,6 +40,12 @@
 // apart from the checked values (session.pending), so no Confirm can run
 // them unconfirmed. A second Read click while one is reading does nothing.
 //
+// How was this made? (Story 9.6): a result that reached the data carries a
+// button naming its run record (kit/runtime/slack/provenance). details()
+// shows the record in the view, only to the person who ran it and only while
+// they may still open the module; an expired or unknown record says the
+// details are gone. Reading changes nothing, so a replay shows them again.
+//
 // The engine never logs the values a person typed: only the module and the
 // action.
 
@@ -58,6 +64,7 @@ const {
 const { checkGiven, whyOf } = require('./extract');
 const { createRunner, checkQuery, ROW_CAP } = require('./run');
 const { runningMessage } = require('./results');
+const provenance = require('../../slack/provenance');
 
 // The message for a session lookup that found nothing usable.
 function refusalFor(status) {
@@ -230,10 +237,25 @@ function createScopedPull({ store, log, run, read = null }) {
     return show(result.message, { force: true });
   }
 
-  return { open, submit, answer, click };
+  // A "How was this made?" click. Synchronous; show(message) renders into
+  // the view the button is in.
+  function details({ runId, person, resolve, show }) {
+    const found = provenance.lookup(store, runId, person);
+    if (found.status !== provenance.STATUS.OK) {
+      log.info('run details refused', { reason: found.status });
+      return show(provenance.refusalFor(found.status));
+    }
+    const allowed = resolve(found.record.module);
+    if (!allowed.mod) return show(allowed.refusal);
+    log.info('run details shown', { module: allowed.mod.id });
+    return show(provenance.detailsMessage(found.record, { mod: allowed.mod }));
+  }
+
+  return { open, submit, answer, click, details };
 }
 
 module.exports = {
+  PROVENANCE_ACTION: provenance.ACTION,
   createScopedPull, createRunner, checkQuery, ROW_CAP, checkDeclarations, verbOf, parseMetadata, ACTIONS, ACTION_PATTERN, FORM_CALLBACK,
   ANSWER_CALLBACK,
 };

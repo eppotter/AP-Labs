@@ -249,7 +249,8 @@ test('Confirm consumes the session, runs the list and shows the result with its 
   const confirmScreen = ctx.screen.get();
   const done = await click(ctx, 'confirm');
   assert.equal(done.view.blocks[0].text.text, '*Lapsed list: 2 rows.*');
-  assert.equal(ctx.data.runs.length, 1);
+  // The list's SQL ran once (the other run reads the data version, Story 9.6).
+  assert.equal(ctx.data.runs.filter((r) => !r.sql.includes('fixture_meta')).length, 1);
   assert.deepEqual(fieldsOf(done.view), [['*Zone*', 'north'], ['*Days*', '90']]);
   assert.deepEqual(buttonsOf(done.view), []);
   // The replay carries the same session.

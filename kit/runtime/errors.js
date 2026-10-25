@@ -143,6 +143,17 @@ class CsvNotDelivered extends RuntimeRefusal {
   }
 }
 
+// A "How was this made?" click whose run record is gone: older than 24 hours,
+// or never known (Story 9.6). details: {}
+class ProvenanceGone extends RuntimeRefusal {
+  constructor() { super('run details no longer available', {}); }
+}
+
+// A "How was this made?" click on another person's run (Story 9.6). details: {}
+class ProvenanceNotYours extends RuntimeRefusal {
+  constructor() { super('run details belong to another person', {}); }
+}
+
 // The AI service refused or failed (Story 9.1), so the module falls back to its
 // typed form. Raised before anything is sent, except 'failed'. reason is one
 // of LLM_REASONS; details.log, when set, is for the log only and never shown.
@@ -161,4 +172,5 @@ module.exports = {
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, LLM_REASONS,
   KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
   SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
+  ProvenanceGone, ProvenanceNotYours,
 };

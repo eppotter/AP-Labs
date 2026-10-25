@@ -93,7 +93,8 @@ function fakeModel({ reply = toolReply({ zone: 'north', days: 30, limit: 25 }), 
 
 function fakeData(rows = ROWS) {
   const runs = [];
-  return { runs, run: async (sql, params, opts) => { runs.push({ sql, params, opts }); return rows; }, describe: () => ({ available: true }) };
+  // listRuns: the module's own query only (Story 9.6 adds a data-version query).
+  return { runs, listRuns: () => runs.filter((r) => r.sql === PULL.sql), run: async (sql, params, opts) => { runs.push({ sql, params, opts }); return rows; }, describe: () => ({ available: true }) };
 }
 
 // What the person sees: the latest views call or submission update.
@@ -280,8 +281,8 @@ test('a full request: the form offers the box, "Reading your request…" shows f
   // Nothing has run yet; Confirm runs the read values, once.
   assert.equal(ctx.data.runs.length, 0);
   await click(ctx, 'confirm');
-  assert.equal(ctx.data.runs.length, 1);
-  assert.deepEqual(ctx.data.runs[0].params, { zone: 'north', days: 30, limit: 25, note: null });
+  assert.equal(ctx.data.listRuns().length, 1);
+  assert.deepEqual(ctx.data.listRuns()[0].params, { zone: 'north', days: 30, limit: 25, note: null });
   assert.ok(ctx.log.lines.some((l) => l.msg === 'request read' && l.fields.dropped === 0));
   assert.ok(!JSON.stringify(ctx.log.lines).includes('lapsed in the last'), 'the request is never logged');
 });
@@ -313,7 +314,7 @@ test('a value the AI was not asked for is dropped; a value with Slack formatting
   assert.ok(!JSON.stringify(confirm.view).includes('DROP TABLE'));
   assert.ok(ctx.log.lines.some((l) => l.msg === 'request read' && l.fields.dropped === 2));
   await click(ctx, 'confirm');
-  assert.deepEqual(Object.keys(ctx.data.runs[0].params).sort(), ['days', 'limit', 'note', 'zone']);
+  assert.deepEqual(Object.keys(ctx.data.listRuns()[0].params).sort(), ['days', 'limit', 'note', 'zone']);
 });
 
 test('a missing value: one question from the label, in the same view; the answer leads to Confirm', async () => {
@@ -338,7 +339,7 @@ test('a missing value: one question from the label, in the same view; the answer
   assert.equal(ack.response_action, 'update');
   assert.deepEqual(fieldsOf(ack.view).map(([l, v]) => [l, v.text]), [['*Zone*', 'north'], ['*Days*', '30'], ['*How many*', '50']]);
   await click(ctx, 'confirm');
-  assert.deepEqual(ctx.data.runs.map((r) => r.params), [{ zone: 'north', days: 30, limit: 50, note: null }]);
+  assert.deepEqual(ctx.data.listRuns().map((r) => r.params), [{ zone: 'north', days: 30, limit: 50, note: null }]);
 });
 
 test('a second miss opens the typed form, prefilled with what was read', async () => {
