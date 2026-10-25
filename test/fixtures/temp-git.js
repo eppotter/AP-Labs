@@ -1,6 +1,7 @@
 'use strict';
 
-// Throwaway git repos for the template release and check tests (Story 11.5).
+// Throwaway git repos for the template release and check tests (Story 11.5)
+// and the template update tests (Story 11.6, makeUpdateRepos below).
 // Nothing here reaches GitHub or the network: "origin" is a bare repo in a
 // temp dir, and gh is a fake that prints the check runs a test sets.
 //
@@ -107,8 +108,11 @@ function handle(dir) {
 
   const copy = () => {
     const to = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-temp-git-')));
-    fs.cpSync(dir, to, { recursive: true, verbatimSymlinks: true });
+    // Timestamps kept, so with core.checkStat=minimal (set on the update
+    // repos) git need not re-read every file of a copied worktree.
+    fs.cpSync(dir, to, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
     fs.rmSync(path.join(to, 'gh-calls.txt'), { force: true });
+    fs.rmSync(path.join(to, 'pr-body.md'), { force: true });
     return handle(to);
   };
 
@@ -135,4 +139,111 @@ function makeTemplate() {
   return h;
 }
 
-module.exports = { makeTemplate, PASSING_RUNS, CHANGELOG, REPO };
+// ---- template updates (Story 11.6) --------------------------------------
+
+// The stand-in example client the fork deletes on purpose. It is test data
+// only: the update derives what a fork deleted, and the engine names no
+// example client.
+const DEMO = Object.freeze({
+  'examples/demo/README.md': 'The demo client.\n',
+  'examples/demo/app/hubs/demo.json': '{ "id": "demo" }\n',
+  'profiles/demo/profile.yml': 'schema_version: 1\n',
+});
+
+const FORK_LEDGER_LINE = '<!-- This fork\'s own ledger. -->';
+
+// A CHANGELOG.md entry for version.
+const changelogEntry = (version, mustDo = ['- Nothing.']) => [
+  `## ${version}`, '', '### What changed', '', `- The ${version} release.`, '', '### What a fork must do', '', ...mustDo, '', '',
+].join('\n');
+
+/**
+ * The repos a template update needs, all in one temp dir:
+ *   origin.git      the template's remote: the fork's `upstream`
+ *   template/       the template: a real copy of this repo's files (as
+ *                   test/fixtures/temp-fork.js's copy mode makes them), plus
+ *                   the demo client above, tagged v1.0.0 and pushed
+ *   fork/           cloned from origin.git at v1.0.0, `origin` renamed to
+ *                   `upstream`; the demo client deleted, the Stub Co client
+ *                   (test/fixtures/fork/) added, its own line on top of the
+ *                   ledger, and v1.0.0 recorded (npm run template:check --
+ *                   --record); pushed to fork-origin.git, its `origin`
+ * Returns the handle (see handle()) with fork, forkOrigin and
+ * release(version, edit, { mustDo }), which runs edit(templateRoot), adds a
+ * changelog entry, commits, tags and pushes to origin.git. handle.copy()
+ * gives each test its own.
+ */
+function makeUpdateRepos() {
+  const { copyRepoFiles, addClient } = require('./temp-fork');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-temp-git-')));
+  fs.mkdirSync(path.join(dir, 'home'));
+  const h = handle(dir);
+  try {
+    h.git(dir, ['init', '-q', '--bare', '-b', 'main', h.bare]);
+    fs.mkdirSync(h.work);
+    copyRepoFiles(h.work);
+    h.git(h.work, ['init', '-q', '-b', 'main']);
+    h.git(h.work, ['remote', 'add', 'origin', '../origin.git']);
+    for (const [rel, text] of Object.entries(DEMO)) h.write(h.work, rel, text);
+    h.write(h.work, 'CHANGELOG.md', `# Changelog\n\n## Unreleased\n\n${changelogEntry('v1.0.0')}`);
+    h.commit(h.work, 'template v1.0.0');
+    h.git(h.work, ['tag', '-a', 'v1.0.0', '-m', 'v1.0.0']);
+    h.git(h.work, ['push', '-q', 'origin', 'main', 'refs/tags/v1.0.0']);
+    h.git(h.work, ['gc', '-q']);
+
+    const fork = path.join(dir, 'fork');
+    h.git(dir, ['clone', '-q', h.bare, fork]);
+    h.git(fork, ['remote', 'rename', 'origin', 'upstream']);
+    h.git(fork, ['remote', 'set-url', 'upstream', '../origin.git']);
+    h.git(dir, ['init', '-q', '--bare', '-b', 'main', path.join(dir, 'fork-origin.git')]);
+    h.git(fork, ['remote', 'add', 'origin', '../fork-origin.git']);
+    fs.rmSync(path.join(fork, 'examples/demo'), { recursive: true });
+    fs.rmSync(path.join(fork, 'profiles/demo'), { recursive: true });
+    addClient(fork, 'fork');
+    const ledger = path.join(fork, 'docs/ledger.md');
+    fs.writeFileSync(ledger, `${FORK_LEDGER_LINE}\n${fs.readFileSync(ledger, 'utf8')}`);
+    h.commit(fork, 'fork: day one');
+    const rec = h.run('kit/release/check.js', ['--record', 'v1.0.0'], fork);
+    if (rec.code !== 0) throw new Error(`could not record v1.0.0: ${rec.stderr}`);
+    h.commit(fork, 'fork: record the template version');
+    h.git(fork, ['push', '-q', '-u', 'origin', 'main']);
+    // A copy has new inodes and ctimes: judge a file by its size and mtime
+    // only, so each test's copy doesn't make git re-read every file.
+    for (const repo of [h.work, fork]) {
+      h.git(repo, ['config', 'core.checkStat', 'minimal']);
+      h.git(repo, ['config', 'core.trustctime', 'false']);
+      h.git(repo, ['update-index', '-q', '--refresh']);
+    }
+  } catch (err) {
+    h.cleanup();
+    throw err;
+  }
+  return withUpdate(h);
+}
+
+// Adds the update helpers to a handle (and to each of its copies).
+function withUpdate(h) {
+  const copy = h.copy;
+  return Object.assign(h, {
+    fork: path.join(h.dir, 'fork'),
+    forkOrigin: path.join(h.dir, 'fork-origin.git'),
+    release(version, edit, { mustDo } = {}) {
+      if (edit) edit(h.work);
+      const file = path.join(h.work, 'CHANGELOG.md');
+      const text = fs.readFileSync(file, 'utf8').replace('## Unreleased\n\n', `## Unreleased\n\n${changelogEntry(version, mustDo)}`);
+      fs.writeFileSync(file, text);
+      h.commit(h.work, `template ${version}`);
+      h.git(h.work, ['tag', '-a', version, '-m', version]);
+      h.git(h.work, ['push', '-q', 'origin', 'main', `refs/tags/${version}`]);
+      return h.git(h.work, ['rev-parse', 'HEAD']);
+    },
+    // Commits everything in the fork on its current branch and pushes it.
+    forkCommit(message) {
+      h.commit(h.fork, message);
+      h.git(h.fork, ['push', '-q', 'origin', 'HEAD']);
+    },
+    copy: () => withUpdate(copy()),
+  });
+}
+
+module.exports = { makeTemplate, makeUpdateRepos, PASSING_RUNS, CHANGELOG, REPO, DEMO, FORK_LEDGER_LINE };

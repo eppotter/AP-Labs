@@ -1,8 +1,8 @@
 'use strict';
 
-// Template releases and the "engine untouched" check (Story 11.5): the pure
-// half plus the small git reads both CLIs share. The CLIs live in
-// kit/release/ (release.js, check.js).
+// Template releases, the "engine untouched" check (Story 11.5) and template
+// updates (Story 11.6): the pure half plus the small git reads the CLIs
+// share. The CLIs live in kit/release/ (release.js, check.js, update.js).
 //
 // The engine fingerprint (Q15, review N9) is a sha256 over the files
 // `git ls-files -z kit profiles/_schema` lists (the identical-engine set,
@@ -32,7 +32,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const YAML = require('yaml');
 const { ENGINE_DIRS } = require('../../runtime/paths');
-const { areaOf } = require('../fork');
+const { areaOf, packageDelta, DEP_SECTIONS } = require('../fork');
 
 const PROFILE_REL = '.aplabs/profile.yml';
 const RECORD_REL = '.aplabs/template-version';
@@ -45,10 +45,11 @@ const NO_RECORD = `fork without a template record; run \`npm run template:check 
 
 // ---- git ----------------------------------------------------------------
 
-// Runs git in cwd. Returns { ok, stdout (Buffer or string), stderr }.
-function git(cwd, args, { encoding = 'utf8', input } = {}) {
+// Runs git in cwd (with env, default the process's). Returns { ok, stdout
+// (Buffer or string), stderr }.
+function git(cwd, args, { encoding = 'utf8', input, env } = {}) {
   const r = spawnSync('git', args, {
-    cwd, encoding: encoding === 'buffer' ? undefined : encoding, input, maxBuffer: 256 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
+    cwd, env, encoding: encoding === 'buffer' ? undefined : encoding, input, maxBuffer: 256 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
   });
   const stderr = r.error ? r.error.message : String(r.stderr || '').trim();
   return { ok: !r.error && r.status === 0, stdout: r.stdout ?? (encoding === 'buffer' ? Buffer.alloc(0) : ''), stderr };
@@ -171,14 +172,14 @@ function diffFiles(a, b) {
  * with an `upstream` remote, that one tag fetched from it (no other tags).
  * Returns { ref } or { error } (a plain reason).
  */
-function resolveTag(root, version) {
+function resolveTag(root, version, { env } = {}) {
   const ref = `refs/tags/${version}`;
-  if (git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).ok) return { ref };
-  if (!git(root, ['remote', 'get-url', 'upstream']).ok) {
+  if (git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { env }).ok) return { ref };
+  if (!git(root, ['remote', 'get-url', 'upstream'], { env }).ok) {
     return { error: `the tag ${version} is not here and there is no \`upstream\` remote` };
   }
-  const f = git(root, ['fetch', '--quiet', '--no-tags', 'upstream', `+${ref}:${ref}`]);
-  if (!f.ok || !git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).ok) {
+  const f = git(root, ['fetch', '--quiet', '--no-tags', 'upstream', `+${ref}:${ref}`], { env });
+  if (!f.ok || !git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { env }).ok) {
     return { error: `could not fetch the tag ${version} from \`upstream\`${f.stderr ? ` (${f.stderr.split('\n')[0]})` : ''}` };
   }
   return { ref };
@@ -295,6 +296,128 @@ function checkRunProblems(runs, required = REQUIRED_JOBS) {
   return problems;
 }
 
+// ---- updates (Story 11.6) ---------------------------------------------
+
+/**
+ * The CHANGELOG.md entry for version: { found, lines, forkMustDo }, where
+ * lines is the entry's body and forkMustDo the non-blank lines under its
+ * "### What a fork must do" heading.
+ */
+function changelogEntry(text, version) {
+  if (text === null || text === undefined) return { found: false, lines: [], forkMustDo: [] };
+  const lines = String(text).replace(/\r\n/g, '\n').split('\n');
+  const heading = new RegExp(`^##\\s+${version.replace(/\./g, '\\.')}(\\s|$)`);
+  const start = lines.findIndex((l) => heading.test(l));
+  if (start < 0) return { found: false, lines: [], forkMustDo: [] };
+  const body = [];
+  for (let i = start + 1; i < lines.length && !/^##\s/.test(lines[i]); i++) body.push(lines[i]);
+  const forkMustDo = [];
+  let inside = false;
+  for (const l of body) {
+    if (/^###\s/.test(l)) {
+      inside = /^###\s+What a fork must do\s*$/i.test(l);
+      continue;
+    }
+    if (inside && l.trim()) forkMustDo.push(l);
+  }
+  return { found: true, lines: body, forkMustDo };
+}
+
+// GitHub's anchor for a "## vX.Y.Z" heading (lowercase, dots dropped).
+const changelogAnchor = (version) => version.toLowerCase().replace(/[^a-z0-9 -]/g, '').replace(/ /g, '-');
+
+/**
+ * The package rule (review B10): the template's package.json with the fork's
+ * appended dependencies re-applied. recordedPkg: package.json at the fork's
+ * recorded release; forkPkg: the fork's; templatePkg: the target release's.
+ * Returns { pkg, appended, problems }. problems is non-empty, naming each,
+ * when the fork changed package.json beyond appending dependencies, or
+ * appended a dependency the template now ships itself.
+ */
+function packagePlan({ recordedPkg, forkPkg, templatePkg }) {
+  const { appended, problems } = packageDelta(recordedPkg, forkPkg);
+  const out = problems.map((p) => `the fork changed package.json beyond appending dependencies: ${p}`);
+  const ships = (name) => DEP_SECTIONS.some((s) => templatePkg && templatePkg[s] && Object.hasOwn(templatePkg[s], name));
+  for (const a of appended) {
+    if (ships(a.name)) out.push(`the fork appended ${a.name} (${a.section}), which the template now ships itself: remove the fork's entry on main first`);
+  }
+  if (out.length) return { pkg: null, appended, problems: out };
+  const pkg = JSON.parse(JSON.stringify(templatePkg));
+  for (const a of appended) {
+    const section = { ...(pkg[a.section] || {}), [a.name]: a.spec };
+    // npm keeps dependency sections sorted by name.
+    pkg[a.section] = Object.fromEntries(Object.entries(section).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
+  }
+  return { pkg, appended, problems: [] };
+}
+
+const bullets = (items, none) => (items.length ? items.map((i) => `- ${i}`).join('\n') : `- ${none}`);
+const code = (p) => `\`${p}\``;
+
+/**
+ * The body of a template update's PR in the fork. It opens with "What this
+ * does", names the version and its changelog entry, copies the entry's
+ * "What a fork must do" lines, and lists every conflict resolution, every
+ * path handled after the merge, the package files and the profile diff.
+ */
+function updatePrBody({
+  version, from, branch, changelog, conflicts = [], removed = [], reset = [], deletedRoots = [],
+  packageFiles = [], appended = [], lockRegenerated = false, profileDiff = '', migrations = [],
+}) {
+  const lines = [
+    `**What this does:** Takes the template's ${version} release into this fork (from ${from}) with a merge commit, keeping the fork's own files as they are.`,
+    '',
+    'Kind: infra',
+    '',
+    `Opened by \`npm run template:update -- ${version}\` from the branch ${code(branch)}. The engine (\`kit/\`, \`profiles/_schema/\`) is now exactly ${version}'s, and \`.aplabs/template-version\` records it. \`npm run check && npm test\` passed on this branch.`,
+    '',
+    '## The release',
+    '',
+    changelog.found
+      ? `Changelog: [\`CHANGELOG.md\`, ${version}](CHANGELOG.md#${changelogAnchor(version)}).`
+      : `Changelog: \`CHANGELOG.md\` has no ${version} entry.`,
+    '',
+    '### What a fork must do',
+    '',
+    changelog.forkMustDo.length ? changelog.forkMustDo.join('\n') : '- (the entry lists nothing)',
+    '',
+    '## Conflicts resolved',
+    '',
+    bullets(conflicts.map((c) => `${code(c.path)}: ${c.how}`), 'none'),
+    '',
+    '## Paths handled after the merge',
+    '',
+    `Deleted on purpose by this fork since ${from} (derived from what it deleted): ${deletedRoots.length ? deletedRoots.map(code).join(', ') : 'none'}.`,
+    '',
+    'Removed again (the fork deleted them on purpose):',
+    '',
+    bullets(removed.map(code), 'none'),
+    '',
+    'Kept as on the fork\'s main (fork-owned):',
+    '',
+    bullets(reset.map(code), 'none'),
+    '',
+    '## Package files',
+    '',
+    packageFiles.length
+      ? bullets([
+        `\`package.json\`: the template's, with the fork's appended dependencies re-applied (${appended.length ? appended.map((a) => `${a.name} ${a.spec}`).join(', ') : 'none'})`,
+        `\`package-lock.json\`: ${lockRegenerated ? 'the template\'s, regenerated with `npm install --package-lock-only --ignore-scripts`' : 'the template\'s'}`,
+      ], 'none')
+      : '- unchanged by this release',
+    '',
+    '## Profile',
+    '',
+  ];
+  if (profileDiff.trim()) {
+    lines.push(`Migrated \`.aplabs/profile.yml\` (steps from schema_version ${migrations.join(', ')}). Review the diff:`, '', '```diff', profileDiff.trimEnd(), '```');
+  } else {
+    lines.push('- unchanged (no schema version change)');
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
 module.exports = {
   PROFILE_REL,
   RECORD_REL,
@@ -317,4 +440,8 @@ module.exports = {
   writeRecord,
   changelogProblems,
   checkRunProblems,
+  changelogEntry,
+  changelogAnchor,
+  packagePlan,
+  updatePrBody,
 };
