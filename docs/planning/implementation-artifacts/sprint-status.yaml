@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-23-2026 22:37
-last_updated: 10-25-2026 12:00
+last_updated: 10-25-2026 18:00
 project: AP-Labs
 project_key: NOKEY
 tracking_system: file-system
@@ -102,11 +102,13 @@ development_status:
   9-6-how-was-this-made: backlog
   epic-9-retrospective: optional
 
-  epic-10: backlog
-  10-1-deterministic-scoring-with-a-reason-per-row: backlog
-  10-2-preview-and-approve-before-anything-is-pushed: backlog
-  10-3-push-once-report-honestly-escalate-quietly: backlog
-  10-4-the-demo-flow-end-to-end: backlog
+  epic-10: in-progress
+  10-0-save-push-progress-after-every-request: done
+  10-1-deterministic-scoring-with-a-reason-per-row: done
+  10-2-preview-and-approve-before-anything-is-pushed: done
+  10-3-push-once-report-honestly-escalate-quietly: done
+  # review: built (tests only), waiting on Ely's live demo (docs/runtime/demo-script.md)
+  10-4-the-demo-flow-end-to-end: review
   epic-10-retrospective: optional
 
   epic-11: backlog
