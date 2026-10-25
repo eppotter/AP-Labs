@@ -5,8 +5,8 @@
 //   npm run fixture:publish
 //   node kit/fixture/publish.js <fixture-dir> [--db <file>] [--name <client>] [--database <name>] [--profile <file>]
 //
-// Replaces the shared MotherDuck database (default <client>_fixture, see
-// kit/fixture/remote databaseNameFor) with the local build, in this order:
+// Publishes the local build to the shared MotherDuck database (default
+// <client>_fixture, see kit/fixture/remote databaseNameFor), in this order:
 //
 //   1. Refuse unless a profile governs (its forbidden columns guard the
 //      checks; no profile is exit 2, as in validate and query, issue #85),
@@ -28,14 +28,18 @@
 //      path (see upload). Then add the fixture_publish
 //      table (fixture version, seeds hash, as_of, published_at, rows_<table>),
 //      and check its row counts and version against the local build.
-//   4. Swap: CREATE OR REPLACE DATABASE <database> FROM <staging> (a
-//      MotherDuck copy), check the result, then drop staging.
+//   4. Swap. First publish: CREATE DATABASE <database> FROM <staging> (no
+//      share can exist yet). Re-publish: update <database> in place, in one
+//      transaction (see swapInPlace): MotherDuck refuses to replace or drop
+//      a database while a share is attached, and the bot reads through one.
+//      Then check the result against the local build and drop staging.
 //
 // Every refusal in step 1 or 2 comes before any connection, and step 3's
 // target refusal comes before any write, so no refusal changes anything
-// remotely. Any failure before step 4 leaves the shared database as it was. The swap
-// itself is one statement but not a transaction with the drop: if the drop
-// fails, the next publish removes the leftover staging copy first.
+// remotely. Any failure before step 4 leaves the shared database as it was,
+// and so does a failure inside step 4's transaction once it is rolled back.
+// A staging copy left behind (after a failed commit, rollback or final drop)
+// is removed by the next publish before it uploads.
 // Exit codes: 0 published, 1 refused or failed (closing the connection
 // failing included, even after a publish), 2 usage or profile error.
 
@@ -83,12 +87,13 @@ class PublishError extends Error {}
 class TargetRefused extends PublishError {}
 
 // Step 3's refusal: an existing database this tool did not publish is never
-// replaced. Only reads are sent.
+// replaced. Only reads are sent. Returns whether the target exists.
 async function checkTarget(conn, database) {
   const snap = await remote.remoteSnapshot(conn, database);
   if (snap && !snap.published) {
     throw new TargetRefused(`${database} already exists and was not published by fixture:publish (it has no ${remote.PUBLISH_TABLE} table), so it is never replaced. Pass --database with a new name or one fixture:publish wrote`);
   }
+  return Boolean(snap);
 }
 
 // Step 3 and 4's check: the copy at `database` is the local build.
@@ -104,8 +109,9 @@ const LOCAL = 'aplabs_publish_local';
 // Table names ordered so every table comes after the tables its foreign keys
 // reference (Kahn's algorithm, ties by name). edges are [child, parent]; a
 // table referencing itself, or a parent not in `names`, does not constrain
-// the order. A cycle has no such order and is refused.
-function parentFirst(names, edges) {
+// the order. A cycle has no such order and is refused; `outcome` ends that
+// message.
+function parentFirst(names, edges, outcome = 'so no load order works; nothing was uploaded') {
   const parents = new Map(names.map((n) => [n, new Set()]));
   for (const [child, parent] of edges) {
     if (child !== parent && parents.has(child) && parents.has(parent)) parents.get(child).add(parent);
@@ -116,7 +122,7 @@ function parentFirst(names, edges) {
     const ready = [...parents].filter(([n, ps]) => !placed.has(n) && [...ps].every((p) => placed.has(p))).map(([n]) => n).sort();
     if (!ready.length) {
       const stuck = names.filter((n) => !placed.has(n)).sort();
-      throw new PublishError(`the foreign keys among ${stuck.join(', ')} form a cycle, so no load order works; nothing was uploaded`);
+      throw new PublishError(`the foreign keys among ${stuck.join(', ')} form a cycle, ${outcome}`);
     }
     order.push(ready[0]);
     placed.add(ready[0]);
@@ -163,8 +169,9 @@ async function upload(conn, { db, database, local, now }) {
   let home = null;
   let inStaging = false;
   let failure = null;
+  let tables;
   try {
-    const tables = await localTables(conn);
+    tables = await localTables(conn);
     [{ d: home }] = await conn.run('SELECT current_database() AS d');
     await conn.run(`DROP DATABASE IF EXISTS ${s}`);
     await conn.run(`CREATE DATABASE ${s}`);
@@ -192,7 +199,70 @@ async function upload(conn, { db, database, local, now }) {
   ];
   await conn.run(`CREATE TABLE ${s}.main.${remote.PUBLISH_TABLE} (key VARCHAR, value VARCHAR)`);
   await conn.run(`INSERT INTO ${s}.main.${remote.PUBLISH_TABLE} VALUES ${recorded.map(([k, v]) => `(${remote.sqlString(k)}, ${remote.sqlString(v)})`).join(', ')}`);
-  return staging;
+  return { staging, tables };
+}
+
+// Step 4 for a re-publish: updates <database> in place from staging, in one
+// transaction, so a share attached to it stays attached. With <database> as
+// the current database (MotherDuck refuses a REFERENCES that names another
+// database):
+//
+//   BEGIN TRANSACTION
+//   DROP TABLE each of the target's tables except fixture_publish, children
+//     first by the target's own foreign keys
+//   CREATE TABLE each of the build's tables from the DDL the upload ran,
+//     parents first, then INSERT INTO it SELECT * FROM <staging>.main.<table>
+//   DROP, CREATE and fill fixture_publish from staging, last, so the version
+//     commits with the data and is never missing (the next publish refuses a
+//     database without it)
+//   COMMIT
+//
+// Every table is rebuilt, never only its rows swapped: DuckDB checks foreign
+// keys statement by statement, even inside a transaction, so deleting a
+// parent's rows while the old child rows exist is refused (live test on
+// MotherDuck, 2026-10-25). On a failure inside the transaction it rolls
+// back. setStage records what a failure leaves: 'transaction' once BEGIN
+// ran, then 'rolledBack' or 'rollbackFailed'; 'commit' while COMMIT runs (a
+// failed COMMIT leaves the outcome unknown, so nothing is rolled back); and
+// 'after' once it committed. The connection's own database is current again
+// before it returns or throws.
+async function swapInPlace(conn, { database, staging, tables }, setStage) {
+  const s = remote.ident(staging);
+  const here = `database_name = ${remote.sqlString(database)}`;
+  const [{ d: home }] = await conn.run('SELECT current_database() AS d');
+  await conn.run(`USE ${remote.ident(database)}`);
+  let stage = 'before';
+  const at = (next) => { stage = next; setStage(next); };
+  let failure = null;
+  try {
+    await conn.run('BEGIN TRANSACTION');
+    at('transaction');
+    const old = (await conn.run(`SELECT table_name FROM duckdb_tables() WHERE ${here} AND schema_name = 'main' ORDER BY table_name`))
+      .map((r) => r.table_name).filter((n) => n !== remote.PUBLISH_TABLE);
+    const fks = await conn.run(`SELECT table_name, referenced_table FROM duckdb_constraints() WHERE ${here} AND constraint_type = 'FOREIGN KEY'`);
+    const childrenFirst = parentFirst(old, fks.map((f) => [f.table_name, f.referenced_table]), 'so no drop order works').reverse();
+    for (const name of childrenFirst) await conn.run(`DROP TABLE ${remote.ident(name)}`);
+    for (const t of tables) await conn.run(t.sql);
+    for (const t of tables) await conn.run(`INSERT INTO ${remote.ident(t.name)} SELECT * FROM ${s}.main.${remote.ident(t.name)}`);
+    await conn.run(`DROP TABLE ${remote.PUBLISH_TABLE}`);
+    await conn.run(`CREATE TABLE ${remote.PUBLISH_TABLE} (key VARCHAR, value VARCHAR)`);
+    await conn.run(`INSERT INTO ${remote.PUBLISH_TABLE} SELECT * FROM ${s}.main.${remote.PUBLISH_TABLE}`);
+    at('commit');
+    await conn.run('COMMIT');
+    at('after');
+  } catch (e) {
+    failure = e;
+  }
+  if (failure && stage === 'transaction') {
+    try {
+      await conn.run('ROLLBACK');
+      at('rolledBack');
+    } catch {
+      at('rollbackFailed');
+    }
+  }
+  try { await conn.run(`USE ${remote.ident(home)}`); } catch (e) { failure = failure || e; }
+  if (failure) throw failure;
 }
 
 async function main(argv, deps = {}) {
@@ -289,12 +359,16 @@ async function main(argv, deps = {}) {
   let code;
   try {
     conn = await connect({ token });
-    await checkTarget(conn, database);
-    const staging = await upload(conn, { db, database, local, now });
+    const exists = await checkTarget(conn, database);
+    const { staging, tables } = await upload(conn, { db, database, local, now });
     await checkCopy(conn, staging, local, 'the uploaded copy');
-    stage = 'swap';
-    await conn.run(`CREATE OR REPLACE DATABASE ${remote.ident(database)} FROM ${remote.ident(staging)}`);
-    stage = 'after';
+    if (exists) {
+      await swapInPlace(conn, { database, staging, tables }, (s) => { stage = s; });
+    } else {
+      stage = 'create';
+      await conn.run(`CREATE DATABASE ${remote.ident(database)} FROM ${remote.ident(staging)}`);
+      stage = 'after';
+    }
     await checkCopy(conn, database, local, `the shared database ${database}`);
     await conn.run(`DROP DATABASE ${remote.ident(staging)}`);
     const total = Object.values(local.counts).reduce((n, c) => n + c, 0);
@@ -302,13 +376,20 @@ async function main(argv, deps = {}) {
     code = 0;
   } catch (e) {
     const why = e instanceof PublishError ? e.message : `MotherDuck failed: ${remote.firstLine(e.message)}`;
-    if (stage === 'before' && conn && !(e instanceof TargetRefused)) {
+    // The shared database is as it was, so staging is removed (a refusal
+    // sent no write, so it removes nothing). After a failed commit or
+    // rollback it is kept; the next publish removes it first.
+    if (['before', 'rolledBack'].includes(stage) && conn && !(e instanceof TargetRefused)) {
       try { await conn.run(`DROP DATABASE IF EXISTS ${remote.ident(remote.stagingNameFor(database))}`); } catch { /* reported below */ }
     }
+    const check = 'check with npm run fixture:status -- --remote';
     const state = {
       before: `the shared database ${database} was not changed`,
-      swap: `the shared database ${database} may not have been replaced; check with npm run fixture:status -- --remote`,
-      after: `the shared database ${database} was replaced; check it with npm run fixture:status -- --remote`,
+      rolledBack: `the update was rolled back, so the shared database ${database} was not changed`,
+      rollbackFailed: `the rollback failed too, so the shared database ${database} may be partly changed; ${check}`,
+      commit: `the commit failed, so it is unknown whether the shared database ${database} was updated; ${check}`,
+      create: `the shared database ${database} may not have been created; ${check}`,
+      after: `the shared database ${database} was published; check it with npm run fixture:status -- --remote`,
     }[stage];
     warn(`fixture:publish: ${why}\n${state}.`);
     code = 1;

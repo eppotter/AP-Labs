@@ -33,9 +33,11 @@ Every refusal above happens before the token is read or a connection opens. Once
 1. uploads the build to `brightside_fixture__publishing`, table by table. It attaches the local build read-only, creates each table from its local definition (keys, foreign keys and `NOT NULL` rules kept), parents before the tables that reference them, copies the rows in the same order, and detaches the local build again, also when something fails. It refuses, before creating the staging copy, when the foreign keys form a cycle or the build holds anything besides tables (a view, index, sequence, macro, type or extra schema). A whole-database copy of the file is not used: MotherDuck loads its tables in an order that ignores foreign keys, which broke the first publish,
 2. adds a `fixture_publish` table recording the fixture version, seeds hash, as-of date, publish time and row counts,
 3. checks that copy against the local build,
-4. replaces `brightside_fixture` with it (`CREATE OR REPLACE DATABASE … FROM …`), checks it again, and drops the staging copy.
+4. swaps it in, checks `brightside_fixture` against the local build again, and drops the staging copy. How it swaps:
+   - **First publish** (the database doesn't exist yet, so no share can either): `CREATE DATABASE brightside_fixture FROM brightside_fixture__publishing`.
+   - **Re-publish:** MotherDuck refuses to replace or drop a database while a share is attached, and the bot reads through one. So publish updates `brightside_fixture` in place, in one transaction, with it as the current database (MotherDuck refuses foreign keys that name another database). It drops the old tables, children first by the database's own foreign keys. Then it creates the build's tables from the definitions the upload used, parents first, and copies their rows in from the staging copy. It replaces `fixture_publish` last, so the version commits with the data, and then commits. Every table is rebuilt, even when its layout is unchanged: DuckDB checks foreign keys statement by statement, even inside a transaction, so deleting a parent's rows while the old child rows still exist is refused.
 
-If anything fails before step 4, the shared database stays as it was. If the final drop fails, the next publish clears the leftover staging copy. To publish under another name, pass `-- --database <name>`: a new name, or one `fixture:publish` wrote before. Names are lower-case letters, digits and `_`.
+If anything fails before step 4, the shared database stays as it was. A failure inside the re-publish transaction rolls it back; publish says the database was not changed only when the rollback succeeded, and otherwise says it may be partly changed. If the commit itself fails, whether the database was updated is unknown: publish says so and asks you to check with `npm run fixture:status -- --remote`. A staging copy left behind (after a failed commit, rollback or final drop) is cleared by the next publish. To publish under another name, pass `-- --database <name>`: a new name, or one `fixture:publish` wrote before. Names are lower-case letters, digits and `_`.
 
 The **fixture version** is `<generator_version>+<12 hex>`. The hex comes from a hash of `schema.sql` and `seeds/*.csv`, so a seed edit shows even without a generator version bump.
 
@@ -50,7 +52,9 @@ npm run fixture:status -- --remote   # also compares the shared copy (needs the 
 
 ## Sharing
 
-After the first publish, share `brightside_fixture` read-only with the teammate from the MotherDuck UI. A re-publish replaces the database, so check that the share still points at it.
+After the first publish, share `brightside_fixture` read-only with the teammate from the MotherDuck UI. A re-publish updates the database in place, so its shares stay attached.
+
+**The lag after a re-publish.** A share is a read copy that catches up after a publish. In the live test on 2026-10-25, a reader on the bot's share kept seeing the old rows of the rebuilt tables for about 60 seconds, then switched cleanly to the new ones, with no errors. The exception is a publish that **adds new tables**: until it propagates, a query that touches a new table fails, and the bot answers "data unavailable" for a minute or two. Re-run `npm run fixture:probe` (checks 8 and 9) to see when the read copy matches.
 
 ## Probe
 
@@ -112,4 +116,4 @@ At startup the bot registers the read key with the log scrubber first. A missing
 
 **When MotherDuck is slow or down.** Connecting has a 10s limit and never holds up Slack: the app starts and the data stays unavailable until a connect succeeds. Each query has a 30s limit. Any MotherDuck error shows the person "data unavailable" (the log gets a redacted reason); anything except a catalog or binder error drops the connection and the bot waits 30s before reconnecting. There is no fallback to the local file.
 
-**What /brightside → Dataset shows:** the source (MotherDuck), the database, the fixture version, the as-of date and the publish time, read in one query from `fixture_meta` and `fixture_publish`. Just after a publish the read copy can lag; the version tells you which copy you see.
+**What /brightside → Dataset shows:** the source (MotherDuck), the database, the fixture version, the as-of date and the publish time, read in one query from `fixture_meta` and `fixture_publish`. Just after a publish the read copy can lag (see "The lag after a re-publish" above); the version tells you which copy you see.
