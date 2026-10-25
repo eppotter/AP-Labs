@@ -29,6 +29,17 @@
 // and each one re-checks that the person may still open the module
 // (resolve), before any state changes.
 //
+// Read my request (Story 9.4), offered only when the hub wiring gives a
+// reader (./extract, which alone holds the AI service). The click shows
+// "Reading your request…", makes one structured AI call with only the typed
+// request and the declarations, then updates the view: the Confirm screen
+// when every value passes its declaration, else one follow-up question (a
+// text box in the same view, its submit answered in the ack), and a second
+// miss opens the form. The AI being off, over a limit or failing shows its
+// plain message above the form. Values the AI or a question fills are held
+// apart from the checked values (session.pending), so no Confirm can run
+// them unconfirmed. A second Read click while one is reading does nothing.
+//
 // How was this made? (Story 9.6): a result that reached the data carries a
 // button naming its run record (kit/runtime/slack/provenance). details()
 // shows the record in the view, only to the person who ran it and only while
@@ -38,15 +49,19 @@
 // The engine never logs the values a person typed: only the module and the
 // action.
 
-const { SessionExpired, SessionNotYours, AlreadyConfirmed } = require('../../errors');
+const {
+  SessionExpired, SessionNotYours, AlreadyConfirmed, LlmUnavailable,
+} = require('../../errors');
 const { PLAIN_ERROR } = require('../../slack/handle');
-const { messageFor } = require('../../messages');
+const { messageFor, READ_WORDS } = require('../../messages');
 const session = require('./session');
 const { checkValues, checkDeclarations } = require('./params');
 const {
   formMessage, formErrors, confirmMessage, readState, verbOf, parseMetadata,
-  ACTIONS, ACTION_PATTERN, FORM_CALLBACK,
+  readingMessage, questionMessage, readRequest, readAnswer,
+  ACTIONS, ACTION_PATTERN, FORM_CALLBACK, ANSWER_CALLBACK,
 } = require('./form');
+const { checkGiven, whyOf } = require('./extract');
 const { createRunner, checkQuery, ROW_CAP } = require('./run');
 const { runningMessage } = require('./results');
 const provenance = require('../../slack/provenance');
@@ -65,13 +80,19 @@ function refusalFor(status) {
 // store: the runtime store (AD-7). log: the app logger. run(mod, values,
 // person, { client }): what a consumed Confirm does (./run createRunner); it
 // resolves { message, failed }, or a bare message for a run that finished.
-function createScopedPull({ store, log, run }) {
+// read({ mod, person, request }): fills values from plain English
+// (./extract createReader), or null when the AI is not wired in.
+function createScopedPull({ store, log, run, read = null }) {
   if (typeof run !== 'function') throw new TypeError('createScopedPull needs run (see ./run createRunner)');
+  if (read !== null && typeof read !== 'function') throw new TypeError('createScopedPull: read must be a function or null');
+  const ask = read !== null;
+  const form = (mod, opts) => formMessage(mod, { ...opts, ask });
+
   // Opens a session on mod for person (a Slack id). Returns the form.
   function open(mod, person) {
     const sessionId = session.open(store, { person, module: mod.id });
     log.info('form opened', { module: mod.id });
-    return formMessage(mod, { sessionId });
+    return form(mod, { sessionId });
   }
 
   // The session a submit or click names, checked: { found, mod } or
@@ -104,17 +125,91 @@ function createScopedPull({ store, log, run }) {
     return { message: confirmMessage(c.mod, { sessionId, values }) };
   }
 
-  // A Confirm screen button. verb: confirm | change. show(message, { force })
+  // The follow-up question's submit (Story 9.4). Synchronous, answered in the
+  // ack like submit(): the answer is checked with the values already read;
+  // all good gives the Confirm screen, a second miss the form.
+  function answer({ sessionId, person, state, resolve }) {
+    const c = check(sessionId, person, resolve, 'answer');
+    if (!c.mod) return { message: c.message };
+    const { mod, found } = c;
+    const pending = found.session.pending;
+    const cleared = { ...found.session, pending: null };
+    if (!pending || !mod.parameters.some((p) => p.name === pending.ask)) {
+      session.save(store, sessionId, cleared, null);
+      return { message: form(mod, { sessionId }) };
+    }
+    const checked = checkGiven(mod.parameters, { ...pending.values, [pending.ask]: readAnswer(state) });
+    if (checked.problems.length) {
+      log.info('question missed; form shown', { module: mod.id });
+      session.save(store, sessionId, cleared, null);
+      return { message: form(mod, { sessionId, initial: checked.values, notice: READ_WORDS.secondMiss() }) };
+    }
+    session.save(store, sessionId, cleared, checked.values);
+    return { message: confirmMessage(mod, { sessionId, values: checked.values }) };
+  }
+
+  // "Read my request". show(message) renders into the view.
+  async function readRequestClick({ c, sessionId, person, resolve, show, state }) {
+    const { mod, found } = c;
+    if (!ask) return show(form(mod, { sessionId }));
+    if (found.session.reading) {
+      log.info('read click ignored', { module: mod.id, reason: 'already reading' });
+      return undefined;
+    }
+    const request = readRequest(state);
+    if (!request.trim()) return show(form(mod, { sessionId, notice: READ_WORDS.empty() }));
+    // Marked before any await, so a second click finds it (AD-7).
+    session.save(store, sessionId, { ...found.session, reading: true, pending: null }, null);
+    let outcome;
+    try {
+      try {
+        await show(readingMessage(mod));
+      } catch (err) {
+        log.warn('could not show reading notice', { module: mod.id, err });
+      }
+      outcome = { checked: await read({ mod, person, request }) };
+    } catch (err) {
+      outcome = { err };
+    }
+    // The session may have expired or changed hands while the AI answered.
+    const now = check(sessionId, person, resolve, 'read');
+    if (!now.mod) return show(now.message);
+    const base = { ...now.found.session, reading: false, pending: null };
+    if (outcome.err) {
+      session.save(store, sessionId, base, null);
+      const { err } = outcome;
+      const refused = !(err instanceof LlmUnavailable) && messageFor(err);
+      if (refused) return show(refused);
+      if (!(err instanceof LlmUnavailable)) log.error('reading a request failed', { module: mod.id, err });
+      const notice = messageFor(err instanceof LlmUnavailable ? err : new LlmUnavailable('failed'));
+      return show(form(mod, { sessionId, notice }));
+    }
+    const { values, problems } = outcome.checked;
+    if (problems.length === 0) {
+      session.save(store, sessionId, base, values);
+      return show(confirmMessage(mod, { sessionId, values }));
+    }
+    const first = problems[0];
+    const param = mod.parameters.find((p) => p.name === first.name);
+    session.save(store, sessionId, { ...base, pending: { values, ask: first.name } }, null);
+    return show(questionMessage(mod, { sessionId, param, why: whyOf(first) }));
+  }
+
+  // A button. verb: confirm | change | read. show(message, { force })
   // renders into the view. client: the Slack client the run delivers with.
-  async function click({ verb, sessionId, person, resolve, show, client }) {
+  // state: the view's state when clicked (read takes the request from it).
+  async function click({ verb, sessionId, person, resolve, show, client, state }) {
     const c = check(sessionId, person, resolve, verb);
     if (!c.mod) return show(c.message);
     const { found, mod } = c;
 
+    if (verb === 'read') return readRequestClick({ c, sessionId, person, resolve, show, state });
+
     if (verb === 'change') {
-      const initial = found.session.values || {};
-      session.save(store, sessionId, found.session, null);
-      return show(formMessage(mod, { sessionId, initial }));
+      const held = found.session.pending ? found.session.pending.values : null;
+      const initial = found.session.values || held || {};
+      session.save(store, sessionId, { ...found.session, pending: null }, null);
+      return show(form(mod, { sessionId, initial }));
     }
 
     // confirm. No await between the lookup above and this consume (AD-7).
@@ -122,7 +217,7 @@ function createScopedPull({ store, log, run }) {
     if (!consumed.consumed) {
       if (consumed.status !== session.STATUS.OK) return show(refusalFor(consumed.status));
       // Nothing checked yet (a stale Confirm after Change): back to the form.
-      return show(formMessage(mod, { sessionId }));
+      return show(form(mod, { sessionId }));
     }
     const values = consumed.session.values;
     let result = { message: PLAIN_ERROR, failed: true };
@@ -156,10 +251,11 @@ function createScopedPull({ store, log, run }) {
     return show(provenance.detailsMessage(found.record, { mod: allowed.mod }));
   }
 
-  return { open, submit, click, details };
+  return { open, submit, answer, click, details };
 }
 
 module.exports = {
   PROVENANCE_ACTION: provenance.ACTION,
   createScopedPull, createRunner, checkQuery, ROW_CAP, checkDeclarations, verbOf, parseMetadata, ACTIONS, ACTION_PATTERN, FORM_CALLBACK,
+  ANSWER_CALLBACK,
 };

@@ -67,6 +67,12 @@
 // (conversations.open, then files.uploadV2 to that DM). Results are never
 // posted in a channel. Zero rows, a refused query, a failed one, data
 // unavailable or an undelivered CSV each get a plain message in the view.
+//
+// Plain English (Story 9.4): given the AI service (llm), the form also offers
+// a request box and "Read my request". The service goes only to the reader
+// (archetypes/scoped-pull/extract), never to the runner, so rows can't reach
+// it. The click is a form button like Confirm; a follow-up question's submit
+// (ANSWER_CALLBACK) is answered in the ack like "Check values".
 
 const access = require('../access');
 const {
@@ -83,8 +89,9 @@ const {
 } = require('./modal');
 const { messageParts } = require('./format');
 const {
-  createScopedPull, createRunner, verbOf, parseMetadata, ACTION_PATTERN: FORM_ACTION, FORM_CALLBACK,
+  createScopedPull, createRunner, verbOf, parseMetadata, ACTION_PATTERN: FORM_ACTION, FORM_CALLBACK, ANSWER_CALLBACK,
 } = require('../archetypes/scoped-pull');
+const { createReader } = require('../archetypes/scoped-pull/extract');
 const { PROVENANCE_ACTION } = require('../archetypes/scoped-pull');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
@@ -149,7 +156,9 @@ function moduleData(data, mod) {
   });
 }
 
-function registerHubs(app, { registry, profile, env, log, store, data = null, canUse = defaultCanUse(profile) }) {
+function registerHubs(app, {
+  registry, profile, env, log, store, data = null, llm = null, canUse = defaultCanUse(profile),
+}) {
   const admin = access.adminContact(profile);
   const personOf = (slackId) => ({ id: slackId, user: access.personFor(profile, slackId) });
   const decide = (person, mod) => {
@@ -161,7 +170,9 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
     .filter((m) => isVisible(m, env) && decide(person, m) === 'allowed');
   const notSetUp = (person) => (person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin })));
   const fellBack = (where, reason, hub) => log.info('hub modal fallback', { where, reason, hub: hub || null });
-  const scopedPull = createScopedPull({ store, log, run: createRunner({ data, log, admin, store }) });
+  const scopedPull = createScopedPull({
+    store, log, run: createRunner({ data, log, admin, store }), read: llm ? createReader({ llm, log }) : null,
+  });
 
   // Why this person may not open mod (a message), or null when they may.
   // The refusal is logged with the click's action id.
@@ -343,14 +354,17 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
     blocks: messageBlocks(message),
     message,
   });
-  app.view(FORM_CALLBACK, handleView('hub:form-submit', ({ body }) => {
-    const view = body.view || {};
-    const person = personOf((body.user || {}).id);
-    const { sessionId } = parseMetadata(view.private_metadata);
-    const res = scopedPull.submit({ sessionId, person: person.id, state: view.state, resolve: resolveForm(person, FORM_CALLBACK) });
-    if (res.errors) return { response_action: 'errors', errors: res.errors };
-    return { response_action: 'update', view: submittedView(view, res.message) };
-  }, { log, onError: ({ body }) => ({ response_action: 'update', view: submittedView(body && body.view, PLAIN_ERROR) }) }));
+  // The follow-up question's submit (Story 9.4) is answered the same way.
+  for (const [callback, name, step] of [[FORM_CALLBACK, 'hub:form-submit', 'submit'], [ANSWER_CALLBACK, 'hub:form-answer', 'answer']]) {
+    app.view(callback, handleView(name, ({ body }) => {
+      const view = body.view || {};
+      const person = personOf((body.user || {}).id);
+      const { sessionId } = parseMetadata(view.private_metadata);
+      const res = scopedPull[step]({ sessionId, person: person.id, state: view.state, resolve: resolveForm(person, callback) });
+      if (res.errors) return { response_action: 'errors', errors: res.errors };
+      return { response_action: 'update', view: submittedView(view, res.message) };
+    }, { log, onError: ({ body }) => ({ response_action: 'update', view: submittedView(body && body.view, PLAIN_ERROR) }) }));
+  }
 
   // The Confirm screen's buttons. Each click updates the view it came from.
   app.action(FORM_ACTION, handle('hub:form', async ({ action, body, client, respond }) => {
@@ -372,7 +386,7 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
     const person = personOf((body.user || {}).id);
     try {
       await scopedPull.click({
-        verb, sessionId: action.value, person: person.id, resolve: resolveForm(person, action.action_id), show, client,
+        verb, sessionId: action.value, person: person.id, resolve: resolveForm(person, action.action_id), show, client, state: from.state,
       });
     } catch (err) {
       log.error('handler failed', { handler: 'hub:form', err });
