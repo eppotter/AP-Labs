@@ -49,6 +49,7 @@ const { loadProfile } = require('../../../kit/lib/profile');
 const { loadRegistry } = require('../../../kit/runtime/registry');
 const { escapeText } = require('../../../kit/runtime/messages');
 const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
+const { checkRequest } = require('../../../test/fixtures/fake-anthropic');
 
 const ROOT = path.join(__dirname, '../../..');
 // A fixture copy of the demo profile (fake Slack ids), never profiles/brightside (#161).
@@ -96,7 +97,8 @@ class ViewsSlackApp extends FakeSlackApp {
 }
 
 // A stand-in model that fills the form from the request (Story 9.4),
-// recording every request it is sent.
+// recording every request it is sent. Like the real API, it refuses a
+// tool_choice of type "tool" or "any" (checkRequest).
 function standInModel() {
   const calls = [];
   const reply = {
@@ -104,7 +106,7 @@ function standInModel() {
     stop_reason: 'tool_use',
     usage: { input_tokens: 400, output_tokens: 30 },
   };
-  return { calls, created: 0, client: { messages: { create: async (params) => { calls.push(params); return reply; } } } };
+  return { calls, created: 0, client: { messages: { create: async (params) => { calls.push(params); checkRequest(params); return reply; } } } };
 }
 
 let seq = 0;

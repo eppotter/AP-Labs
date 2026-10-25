@@ -116,7 +116,7 @@ Everything from 9.3 on runs one story at a time. Those stories share the scoped-
 **Acceptance criteria:**
 
 - One AI call (no back-and-forth tool use) returns values for the module's declared inputs only. Each is checked against its declaration before it is shown with Confirm and Change. Anything the AI returns that wasn't declared is dropped.
-- The request goes to the AI as clearly marked data, through one forced tool, `fill_parameters`, declared `effects: "none"`. The AI can only fill that in.
+- The request goes to the AI as clearly marked data, through one tool, `fill_parameters`, declared `effects: "none"`. It is the only tool sent and the model is told to answer only by calling it; it is not forced (`tool_choice` is `auto`), because the models we use refuse a forced choice (plan `ai-tool-choice`). The AI can only fill that in.
 - On "Read my request", the view first changes to "Reading your request…", then the AI call runs, then the view is updated with the result.
 - A missing required value, or one out of range: the bot asks one plain question instead of guessing. A second miss opens the form. The question is written by the bot from the input's label, never by the AI. Values are shown as plain text, so nothing in them can format or link in Slack.
 - The AI is off, over budget, or the person is over their limit: they are told plainly and given the form.
