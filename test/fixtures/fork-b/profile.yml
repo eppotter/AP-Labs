@@ -1,0 +1,18 @@
+# Client B for the two-forks acceptance test (Story 11.3). Not the template's
+# example client. Against client A (test/fixtures/fork/profile.yml): another
+# name, hub and resource key; the same Slack ids UBO and UCY with the access the
+# other way round (here cy may use the module and bo may not); app/modules/**
+# tiered T1 (A: T2); and its own verify check.
+schema_version: 1
+client: { id: bravo, name: Bravo Ltd }
+tiers:
+  T1: ["app/modules/**"]
+resources:
+  - { key: ROTA_PLANNER, label: Rota planner }
+users:
+  - { id: dee, name: Dee, role: admin, identities: { slack: UDEE } }
+  - { id: bo, name: Bo, role: member, identities: { slack: UBO } }
+  - { id: cy, name: Cy, role: member, identities: { slack: UCY }, grants: [ROTA_PLANNER] }
+verify:
+  checks:
+    - { id: bravo-check, run: [node, -e, "console.log('bravo check ran')"], timeout_seconds: 30 }

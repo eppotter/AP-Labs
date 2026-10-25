@@ -1,11 +1,20 @@
 # A minimal stub fork profile (Story 6.5): the module the template tests fill
 # in sits on a gated resource, granted to one member (bo) and not another (cy).
 # Used by the template tests and the clean-bones boot smoke test.
+#
+# Story 11.3 (two forks): this is client A. Client B (test/fixtures/fork-b/)
+# has the same Slack ids UBO and UCY with the access the other way round, tiers
+# app/modules/** lower (T1; here T2) and runs its own verify check.
 schema_version: 1
 client: { id: stub, name: Stub Co }
+tiers:
+  T2: ["app/modules/**"]
 resources:
   - { key: WEEKLY_REPORT, label: Weekly report }
 users:
   - { id: ada, name: Ada, role: admin, identities: { slack: UADA } }
   - { id: bo, name: Bo, role: member, identities: { slack: UBO }, grants: [WEEKLY_REPORT] }
   - { id: cy, name: Cy, role: member, identities: { slack: UCY } }
+verify:
+  checks:
+    - { id: stub-check, run: [node, -e, "console.log('stub check ran')"], timeout_seconds: 30 }
