@@ -58,6 +58,15 @@
 // hash_conflict means the view changed since the click: the out-of-date
 // result is dropped and logged. A form needs the hub modal; opened from an
 // old message menu, the person is told to open it from the hub window.
+//
+// Running (Story 9.5): Confirm shows "Running…" in the view, then runs the
+// module's fixed SQL with only its declared inputs bound, through the query
+// runner (archetypes/scoped-pull/run). The result replaces the view: the row
+// count (capped at 5,000: "the first 5,000 of N"), the values, the first rows
+// (escaped) and a link to the CSV, which goes only to the person's DM
+// (conversations.open, then files.uploadV2 to that DM). Results are never
+// posted in a channel. Zero rows, a refused query, a failed one, data
+// unavailable or an undelivered CSV each get a plain message in the view.
 
 const access = require('../access');
 const {
@@ -74,8 +83,9 @@ const {
 } = require('./modal');
 const { messageParts } = require('./format');
 const {
-  createScopedPull, verbOf, parseMetadata, ACTION_PATTERN: FORM_ACTION, FORM_CALLBACK,
+  createScopedPull, createRunner, verbOf, parseMetadata, ACTION_PATTERN: FORM_ACTION, FORM_CALLBACK,
 } = require('../archetypes/scoped-pull');
+const { PROVENANCE_ACTION } = require('../archetypes/scoped-pull');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
@@ -151,7 +161,7 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
     .filter((m) => isVisible(m, env) && decide(person, m) === 'allowed');
   const notSetUp = (person) => (person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin })));
   const fellBack = (where, reason, hub) => log.info('hub modal fallback', { where, reason, hub: hub || null });
-  const scopedPull = createScopedPull({ store, log });
+  const scopedPull = createScopedPull({ store, log, run: createRunner({ data, log, admin, store }) });
 
   // Why this person may not open mod (a message), or null when they may.
   // The refusal is logged with the click's action id.
@@ -361,13 +371,48 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
     };
     const person = personOf((body.user || {}).id);
     try {
-      await scopedPull.click({ verb, sessionId: action.value, person: person.id, resolve: resolveForm(person, action.action_id), show });
+      await scopedPull.click({
+        verb, sessionId: action.value, person: person.id, resolve: resolveForm(person, action.action_id), show, client,
+      });
     } catch (err) {
       log.error('handler failed', { handler: 'hub:form', err });
       try {
         await view.show(PLAIN_ERROR);
       } catch (showErr) {
         log.error('could not tell the person about a failure', { handler: 'hub:form', err: showErr });
+      }
+    }
+  }, { log, store }));
+
+  // "How was this made?" (Story 9.6) on a result. Updates the view the
+  // button is in with the run's details, for the person who ran it only,
+  // re-checking they may still open the module. A result is only ever shown
+  // in a view, so a click from anywhere else is told to use the hub window.
+  app.action(PROVENANCE_ACTION, handle('hub:provenance', async ({ action, body, client, respond }) => {
+    const from = body.view;
+    if (!from || typeof from.id !== 'string' || !from.id || !hasViews(client)) {
+      fellBack('provenance', from ? 'no views client' : 'not from a modal', null);
+      if (typeof respond === 'function') await respond(ephemeral(FORM_NEEDS_WINDOW));
+      return;
+    }
+    const { hubId } = parseMetadata(from.private_metadata);
+    const view = updatedView({ client, view: from, title: from.title && from.title.text, hubId });
+    const show = async (message) => {
+      const status = await view.show(message);
+      if (status === 'dropped') log.info('stale view result dropped', { action: 'provenance', reason: 'hash_conflict' });
+      return status;
+    };
+    const person = personOf((body.user || {}).id);
+    try {
+      await scopedPull.details({
+        runId: action && action.value, person: person.id, resolve: resolveForm(person, PROVENANCE_ACTION), show,
+      });
+    } catch (err) {
+      log.error('handler failed', { handler: 'hub:provenance', err });
+      try {
+        await view.show(PLAIN_ERROR);
+      } catch (showErr) {
+        log.error('could not tell the person about a failure', { handler: 'hub:provenance', err: showErr });
       }
     }
   }, { log, store }));

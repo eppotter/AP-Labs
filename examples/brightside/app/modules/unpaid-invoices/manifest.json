@@ -1,0 +1,29 @@
+{
+  "id": "unpaid-invoices",
+  "hub": "brightside",
+  "label": "Unpaid invoices",
+  "description": "Invoices with money still owed at the data's as-of date, oldest due date first, with what is left to pay.",
+  "resource": "UNPAID_INVOICES",
+  "archetype": "scoped-pull",
+  "environments": ["dev", "prod"],
+  "parameters": [
+    {
+      "name": "zone",
+      "label": "Zone",
+      "type": "string",
+      "description": "The client's home zone, or all zones.",
+      "enum": ["all", "north", "south", "east", "west", "central"],
+      "default": "all",
+      "required": true
+    },
+    {
+      "name": "min_days_past_due",
+      "label": "At least this many days past due",
+      "type": "integer",
+      "description": "Leave empty for every unpaid invoice, including ones not yet due.",
+      "min": 0,
+      "max": 730
+    }
+  ],
+  "query": "unpaid-invoices.sql"
+}

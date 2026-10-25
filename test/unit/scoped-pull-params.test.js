@@ -70,7 +70,8 @@ test('startup refuses a module with a bad declaration, naming the module file an
   const write = (manifest) => {
     fs.mkdirSync(path.join(dir, 'modules/pull'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'modules/pull/manifest.json'), JSON.stringify(manifest));
-    fs.writeFileSync(path.join(dir, 'modules/pull/pull.sql'), 'SELECT 1 AS one\n');
+    // Its SQL names exactly the declared input (Story 9.5 checks that at startup).
+    fs.writeFileSync(path.join(dir, 'modules/pull/pull.sql'), 'SELECT $zone AS zone\n');
   };
   const base = {
     id: 'pull', hub: 'h', label: 'Pull', description: 'd', resource: 'R', archetype: 'scoped-pull', environments: ['dev'], query: 'pull.sql',
@@ -80,7 +81,7 @@ test('startup refuses a module with a bad declaration, naming the module file an
   write({ ...base, parameters: [ZONE] });
   const ok = load();
   assert.deepEqual(ok.problems, []);
-  assert.equal(ok.modules[0].sql, 'SELECT 1 AS one\n');
+  assert.equal(ok.modules[0].sql, 'SELECT $zone AS zone\n');
   assert.equal(ok.modules[0].run, undefined);
 
   write({ ...base, parameters: [{ name: 'zone', type: 'text' }] });

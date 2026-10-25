@@ -109,9 +109,49 @@ class SessionNotYours extends RuntimeRefusal {
 }
 
 // A second Confirm (a double click or a replay) on a request already confirmed
-// (Story 9.3). details: { done } (false while it is still running)
+// (Story 9.3). details: { done } (false while it is still running), and
+// failed: true when the run finished without delivering the list (Story 9.5).
 class AlreadyConfirmed extends RuntimeRefusal {
-  constructor(details) { super(`request already ${details.done ? 'done' : 'running'}`, details); }
+  constructor(details) { super(`request already ${details.done ? (details.failed ? 'tried' : 'done') : 'running'}`, details); }
+}
+
+// A scoped pull's query was refused before it ran: the SQL checker or the
+// parameter rules (Story 9.5). Nothing ran. rule is for the log. details: { rule }
+class QueryBlocked extends RuntimeRefusal {
+  constructor(rule) {
+    super(`list query refused (${rule})`, { rule });
+    this.code = 'QUERY_BLOCKED';
+  }
+}
+
+// A scoped pull's query failed while running, for a reason other than the
+// data being unavailable (Story 9.5). No rows are shown. details: {}
+class QueryFailed extends RuntimeRefusal {
+  constructor() {
+    super('list query failed', {});
+    this.code = 'QUERY_FAILED';
+  }
+}
+
+// A scoped pull ran but its CSV could not be sent to the person's DM (Story
+// 9.5). The view still shows the count and first rows, saying the file is
+// missing. details: {}
+class CsvNotDelivered extends RuntimeRefusal {
+  constructor() {
+    super('list CSV not delivered', {});
+    this.code = 'CSV_NOT_DELIVERED';
+  }
+}
+
+// A "How was this made?" click whose run record is gone: older than 24 hours,
+// or never known (Story 9.6). details: {}
+class ProvenanceGone extends RuntimeRefusal {
+  constructor() { super('run details no longer available', {}); }
+}
+
+// A "How was this made?" click on another person's run (Story 9.6). details: {}
+class ProvenanceNotYours extends RuntimeRefusal {
+  constructor() { super('run details belong to another person', {}); }
 }
 
 // The AI service refused or failed (Story 9.1), so the module falls back to its
@@ -131,5 +171,6 @@ class LlmUnavailable extends RuntimeRefusal {
 module.exports = {
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, LLM_REASONS,
   KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
-  SessionExpired, SessionNotYours, AlreadyConfirmed,
+  SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
+  ProvenanceGone, ProvenanceNotYours,
 };
