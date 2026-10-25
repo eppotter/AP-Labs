@@ -8,11 +8,16 @@
 // extension installer (scripts/install-duckdb-extensions.js, Story 11.2) may
 // import @duckdb/node-api; a test fails on any other importer.
 //
-// extensionLoads(name) (Story 11.2) proves an extension installed ahead of
-// time loads: an in-memory instance with extension auto-install and
-// auto-load off (MD_LOCKDOWN's instance settings) runs LOAD <name> and
-// nothing else. No INSTALL, no network, no token. The container smoke test
-// calls it for motherduck with the network off (DEP-016).
+// extensionLoads(name) (Story 11.2) tries an extension installed ahead of
+// time: an in-memory instance with extension auto-install and auto-load off
+// (MD_LOCKDOWN's instance settings) runs LOAD <name> and nothing else. No
+// INSTALL, no token. installedExtensions(names) reports, on the same kind of
+// instance, the DuckDB version and platform and where DuckDB finds each named
+// extension (duckdb_extensions()). The container smoke test uses both with
+// the network off to prove the image holds the MotherDuck extension
+// (DEP-016). A real LOAD motherduck needs MotherDuck's network: its own init
+// calls MotherDuck's API, so offline the smoke test accepts only that one
+// failure, after DuckDB has found the extension.
 //
 // Every call to run(sql, params) passes the kit/runtime/sql guardrail first,
 // with the profile's forbidden columns. Parameters are bound as prepared-
@@ -142,6 +147,37 @@ async function extensionLoads(name, { create = (where, options) => DuckDBInstanc
     return { loaded: false, reason: withoutPaths(firstLine(err && err.message), '/') };
   } finally {
     if (instance) closeQuietly(instance);
+  }
+}
+
+// What DuckDB reports about the named extensions, without loading or
+// installing anything. Resolves { version, platform, extensions } where each
+// entry is { name, installed, installPath } (installPath is '' when DuckDB
+// has none). Throws TypeError on a malformed name. Names never reach SQL:
+// the rows are matched to them here.
+async function installedExtensions(names, { create = (where, options) => DuckDBInstance.create(where, options) } = {}) {
+  if (!Array.isArray(names) || names.length === 0 || !names.every((n) => typeof n === 'string' && EXTENSION_NAME.test(n))) {
+    throw new TypeError('extension names must be a non-empty list of lower-case letters, digits and _');
+  }
+  const instance = await create(':memory:', { ...md.MD_LOCKDOWN.instance });
+  try {
+    const conn = await instance.connect();
+    try {
+      const one = async (sql) => (await conn.runAndReadAll(sql)).getRowObjectsJson();
+      const [{ v: version }] = await one('SELECT library_version AS v FROM pragma_version()');
+      const [{ p: platform }] = await one('SELECT platform AS p FROM pragma_platform()');
+      const rows = await one('SELECT extension_name AS name, installed, install_path AS path FROM duckdb_extensions()');
+      const byName = new Map(rows.map((r) => [r.name, r]));
+      const extensions = names.map((name) => {
+        const r = byName.get(name);
+        return { name, installed: Boolean(r && r.installed), installPath: (r && r.path) || '' };
+      });
+      return { version, platform, extensions };
+    } finally {
+      closeQuietly(conn);
+    }
+  } finally {
+    closeQuietly(instance);
   }
 }
 
@@ -429,6 +465,7 @@ function createData({
 module.exports = {
   createData,
   extensionLoads,
+  installedExtensions,
   openLocked,
   openMotherDuck,
   dataPathFor,

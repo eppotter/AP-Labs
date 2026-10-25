@@ -14,7 +14,7 @@ const { execFileSync } = require('node:child_process');
 const { build } = require('../../kit/fixture/build');
 const sqlGuard = require('../../kit/runtime/sql');
 const {
-  createData, openLocked, dataPathFor, DataUnavailableError, QueryRefusedError, PARAM_RULES, LOCKDOWN, extensionLoads,
+  createData, openLocked, dataPathFor, DataUnavailableError, QueryRefusedError, PARAM_RULES, LOCKDOWN, extensionLoads, installedExtensions,
 } = require('../../kit/runtime/data');
 
 const REPO = path.join(__dirname, '..', '..');
@@ -219,6 +219,57 @@ test('extensionLoads: a malformed name is refused before DuckDB, never spliced i
   const create = async () => assert.fail('DuckDB must not start');
   for (const bad of ['', 'MotherDuck', 'json; INSTALL x', "a'b", '1abc', 'md:x', null, 7]) {
     await assert.rejects(extensionLoads(bad, { create }), TypeError, String(bad));
+  }
+});
+
+// --- installedExtensions (Story 11.2) -----------------------------------------
+
+test('installedExtensions: version, platform and where DuckDB finds each named extension', async () => {
+  const r = await installedExtensions(['json', 'aplabs_no_such_extension']);
+  assert.match(r.version, /^v\d+\.\d+\.\d+/);
+  assert.match(r.platform, /^[a-z0-9_]+$/);
+  assert.equal(r.extensions[0].name, 'json');
+  assert.equal(r.extensions[0].installed, true);
+  assert.deepEqual(r.extensions[1], { name: 'aplabs_no_such_extension', installed: false, installPath: '' });
+});
+
+test('installedExtensions: reads only, on an in-memory instance with auto-install and auto-load off; names never reach SQL', async () => {
+  const calls = [];
+  const rows = {
+    'SELECT library_version AS v FROM pragma_version()': [{ v: 'v1.5.6' }],
+    'SELECT platform AS p FROM pragma_platform()': [{ p: 'linux_amd64' }],
+    'SELECT extension_name AS name, installed, install_path AS path FROM duckdb_extensions()': [
+      { name: 'motherduck', installed: true, path: '/h/.duckdb/extensions/v1.5.6/linux_amd64/motherduck.duckdb_extension' },
+    ],
+  };
+  const create = async (where, options) => {
+    calls.push({ where, options });
+    return {
+      connect: async () => ({
+        runAndReadAll: async (sql) => { calls.push(sql); return { getRowObjectsJson: () => rows[sql] }; },
+        closeSync: () => calls.push('conn closed'),
+      }),
+      closeSync: () => calls.push('instance closed'),
+    };
+  };
+  const r = await installedExtensions(['motherduck', 'motherduck_impl'], { create });
+  assert.deepEqual(r, {
+    version: 'v1.5.6',
+    platform: 'linux_amd64',
+    extensions: [
+      { name: 'motherduck', installed: true, installPath: '/h/.duckdb/extensions/v1.5.6/linux_amd64/motherduck.duckdb_extension' },
+      { name: 'motherduck_impl', installed: false, installPath: '' },
+    ],
+  });
+  assert.deepEqual(calls, [
+    { where: ':memory:', options: { autoinstall_known_extensions: 'false', autoload_known_extensions: 'false' } },
+    ...Object.keys(rows),
+    'conn closed',
+    'instance closed',
+  ]);
+  const never = async () => assert.fail('DuckDB must not start');
+  for (const bad of [[], ['MotherDuck'], ["a'b"], 'motherduck', null, [7]]) {
+    await assert.rejects(installedExtensions(bad, { create: never }), TypeError, String(bad));
   }
 });
 
