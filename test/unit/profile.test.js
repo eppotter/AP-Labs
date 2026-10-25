@@ -61,6 +61,28 @@ test('accepts sql.forbidden_columns as unique lower-case "table.column" strings'
   rejects({ ...parsed('minimal'), sql: { forbidden: [] } }, /\/sql has unknown key "forbidden"/);
 });
 
+test('data.source defaults to local; motherduck needs data.database, and local refuses it', () => {
+  assert.deepEqual(loadProfile(fixture('minimal')).data, { source: 'local' });
+  assert.deepEqual(validateProfile({ ...parsed('minimal'), data: { source: 'local' } }).data, { source: 'local' });
+  assert.deepEqual(
+    validateProfile({ ...parsed('minimal'), data: { source: 'motherduck', database: 'acme_fixture' } }).data,
+    { source: 'motherduck', database: 'acme_fixture' },
+  );
+  rejects({ ...parsed('minimal'), data: { source: 'motherduck' } }, /^\[profile\] refusing to start: \/data\/database is required with data\.source: motherduck$/);
+  rejects({ ...parsed('minimal'), data: { source: 'local', database: 'acme_fixture' } }, /\/data\/database is only allowed with data\.source: motherduck/);
+  rejects({ ...parsed('minimal'), data: { database: 'acme_fixture' } }, /\/data\/database is only allowed with data\.source: motherduck/);
+  rejects({ ...parsed('minimal'), data: { source: 'warehouse' } }, /\/data\/source must be equal to one of the allowed values/);
+  rejects({ ...parsed('minimal'), data: { source: 'local', path: '/x' } }, /\/data has unknown key "path"/);
+});
+
+test('data.database must be a plain name, not my_db, sample_data or a *__publishing staging copy', () => {
+  const md = (database) => ({ ...parsed('minimal'), data: { source: 'motherduck', database } });
+  for (const bad of ['my_db', 'sample_data', 'acme__publishing']) {
+    rejects(md(bad), /\/data\/database must not be my_db or sample_data \(MotherDuck's own\) or end in __publishing/);
+  }
+  for (const bad of ['Acme', '9lives', 'a-b', 'a"b', 'x'.repeat(64), '']) rejects(md(bad), /\/data\/database must match pattern/);
+});
+
 test('result is deep-frozen and the input is not mutated', () => {
   const input = parsed('full');
   const before = JSON.stringify(input);

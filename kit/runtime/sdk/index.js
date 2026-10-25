@@ -8,7 +8,8 @@
 //   ctx.person   { id, name }       the Slack user who pressed Open
 //   ctx.client   { id, name }       from the profile
 //   ctx.module   { id, label }      from the manifest
-//   ctx.data     run(sql, params), describe()   the read-only query runner
+//   ctx.data     run(sql, params), describe()   the read-only query runner;
+//                describe() is { source, label, available, problem }
 //   ctx.reply    (text) => Promise  a private (ephemeral) reply
 // The SDK adds only what a handler or its test needs beyond that, plus what a
 // connector adapter and its test need (kit/templates/connector.md).
@@ -47,7 +48,7 @@ function testContext({
       if (!available) throw new DataUnavailableError('test context: data unavailable');
       return typeof rows === 'function' ? rows(sql, params) : rows;
     },
-    describe: () => (available ? { available: true, source: 'test context' } : { available: false }),
+    describe: () => ({ source: 'test context', label: null, available, problem: available ? null : 'test context: data unavailable' }),
   });
   return {
     person, client, module, data, replies, queries,

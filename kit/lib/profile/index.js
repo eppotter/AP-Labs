@@ -44,11 +44,24 @@ function schemaValidator() {
   return _validate;
 }
 
+// Plain words for the data block's rules (schema: data.source and
+// data.database); Ajv's own say "boolean schema is false" or "must NOT be valid".
+const DATA_MESSAGES = Object.freeze({
+  '/data/database false schema': '/data/database is only allowed with data.source: motherduck',
+  '/data/database not': '/data/database must not be my_db or sample_data (MotherDuck\'s own) or end in __publishing (publish\'s staging copy)',
+});
+
 function formatSchemaError(e) {
   const where = e.instancePath || '(root)';
   if (e.keyword === 'additionalProperties') return `${where} has unknown key "${e.params.additionalProperty}"`;
+  const plain = DATA_MESSAGES[`${where} ${e.keyword}`];
+  if (plain) return plain;
+  if (where === '/data' && e.keyword === 'required') return '/data/database is required with data.source: motherduck';
   return `${where} ${e.message}`;
 }
+
+// The "must match then/else schema" lines only repeat the error under them.
+const isEcho = (e) => e.keyword === 'if';
 
 // env defaults to process.env; the runtime passes its own (tests inject one).
 function findProfilePath(startDir = process.cwd(), env = process.env) {
@@ -124,7 +137,7 @@ function validateProfile(profile, file) {
   }
   const validate = schemaValidator();
   if (!validate(profile)) {
-    throw new ProfileError(validate.errors.map(formatSchemaError).join('; '), file);
+    throw new ProfileError(validate.errors.filter((e) => !isEcho(e)).map(formatSchemaError).join('; '), file);
   }
 
   const p = structuredClone(profile);
@@ -135,6 +148,7 @@ function validateProfile(profile, file) {
   p.stages = { addons: [], ...p.stages };
   p.verify = { checks: [], env_allow: [], ...p.verify };
   p.sql = { forbidden_columns: [], ...p.sql };
+  p.data = { source: 'local', ...p.data };
   p.verify.checks = p.verify.checks.map((c) => ({ timeout_seconds: 300, ...c }));
   p.users = p.users.map((u) => ({ identities: {}, grants: [], deny: [], ...u }));
 

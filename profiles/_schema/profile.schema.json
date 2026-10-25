@@ -117,6 +117,32 @@
       }
     },
 
+    "data": {
+      "description": "Where the bot reads its data (kit/runtime/data). source: local (default; the built fixture file) or motherduck (the one MotherDuck database named by database, read with MOTHERDUCK_READ_TOKEN). database is required for motherduck and refused for local.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": { "enum": ["local", "motherduck"] },
+        "database": {
+          "description": "A plain lower-case name, not MotherDuck's own my_db or sample_data and not a fixture:publish staging copy (*__publishing).",
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]{0,62}$",
+          "not": {
+            "anyOf": [
+              { "type": "string", "enum": ["my_db", "sample_data"] },
+              { "type": "string", "pattern": "__publishing$" }
+            ]
+          }
+        }
+      },
+      "if": {
+        "properties": { "source": { "const": "motherduck" } },
+        "required": ["source"]
+      },
+      "then": { "properties": { "database": true }, "required": ["database"] },
+      "else": { "properties": { "database": false } }
+    },
+
     "verify": {
       "type": "object",
       "additionalProperties": false,

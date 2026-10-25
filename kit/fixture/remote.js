@@ -5,7 +5,8 @@
 // a snapshot of a local build or a remote copy (version and row counts).
 //
 // Publishing is a human-run path, separate from the runtime: the app never
-// loads this file and never reads MotherDuck (DEP-011). The only code here
+// loads this file. The bot reads MotherDuck with its own read key through
+// kit/runtime/data (plan motherduck-read), never through here. The only code here
 // that opens a network connection is ./motherduck's connect(), and callers
 // inject their own (tests pass a fake), so nothing in this file needs DuckDB.
 //
@@ -24,10 +25,13 @@ const path = require('node:path');
 const { readSecret } = require('../lib/secrets');
 const { createLog } = require('../runtime/log');
 const { createData } = require('../runtime/data');
+// The database name check is the runtime's (kit/runtime/data/motherduck), so
+// the runtime never loads fixture code; publish and the bot refuse the same names.
+const mdNames = require('../runtime/data/motherduck');
 const { schemaTables } = require('./build');
 
-const TOKEN_ENV = 'MOTHERDUCK_TOKEN';
-const TOKEN_KEYCHAIN = 'aplabs-motherduck-token';
+const TOKEN_ENV = mdNames.PUBLISH_TOKEN_ENV;
+const TOKEN_KEYCHAIN = mdNames.PUBLISH_TOKEN_KEYCHAIN;
 const DOC = 'docs/runtime/motherduck-publish.md';
 const TOKEN_HELP = [
   'no MotherDuck token. Set it one of two ways:',
@@ -40,10 +44,7 @@ const TOKEN_HELP = [
 // was published. It is never part of the local build.
 const PUBLISH_TABLE = 'fixture_publish';
 const META_TABLE = 'fixture_meta';
-const STAGING_SUFFIX = '__publishing';
-// MotherDuck's default database, which the connection opens on: never a target.
-const RESERVED = new Set(['my_db']);
-const NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+const { STAGING_SUFFIX, databaseNameProblem } = mdNames;
 
 // The shared database: --database, else <client>_fixture, where <client> is
 // --name or the folder holding the fixture dir (as kit/fixture/build names
@@ -52,15 +53,6 @@ function databaseNameFor(fixtureDir, { name = null, database = null } = {}) {
   if (database) return database;
   const client = name || path.basename(path.dirname(path.resolve(fixtureDir)));
   return `${client.toLowerCase().replace(/[^a-z0-9_]/g, '_')}_fixture`;
-}
-
-// Why a database name can't be used, or null. Names are spliced into SQL as
-// quoted identifiers, so only plain lower-case identifiers are allowed.
-function databaseNameProblem(name) {
-  if (!NAME.test(name)) return `"${name}" is not a plain name (lower-case letters, digits and _, up to 63, not starting with a digit)`;
-  if (RESERVED.has(name)) return `"${name}" is MotherDuck's default database`;
-  if (name.endsWith(STAGING_SUFFIX)) return `"${name}" ends with ${STAGING_SUFFIX}, which publish uses for its staging copy`;
-  return null;
 }
 
 const stagingNameFor = (database) => `${database}${STAGING_SUFFIX}`;

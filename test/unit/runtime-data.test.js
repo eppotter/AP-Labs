@@ -261,7 +261,7 @@ test('a missing file is unavailable, and a file that appears later is opened on 
   t.after(() => data.close());
   await assert.rejects(data.open(), (err) => err instanceof DataUnavailableError && /does not exist/.test(err.reason));
   await assert.rejects(data.run('SELECT 1 AS n'), (err) => err.code === 'DATA_UNAVAILABLE');
-  assert.deepEqual(data.describe(), { source: 'local fixture', file: 'later.duckdb', available: false, problem: 'the data file does not exist' });
+  assert.deepEqual(data.describe(), { source: 'local fixture', label: 'later.duckdb', available: false, problem: 'the data file does not exist' });
   await build({ fixtureDir: MINI, out: file });
   assert.deepEqual(await data.run('SELECT count(*)::INT AS n FROM regions'), [{ n: 2 }]);
   assert.equal(data.describe().available, true);

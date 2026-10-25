@@ -73,6 +73,7 @@ test('the Dataset entry replies privately with the source, fixture version, as-o
     'Source: local fixture (tiny.duckdb)',
     'Fixture version: not recorded',
     'As of: 2026-09-30',
+    'Published: local build',
     'Tables (2):',
     '• regions: 2',
     '• shops: 3',
@@ -93,7 +94,7 @@ test('the Dataset entry shows the fixture version and formats large counts', asy
 
   const fake = {
     run: async () => [{ key: 'as_of', value: '2026-01-01' }, { key: 'rows_visits', value: '40895' }],
-    describe: () => ({ source: 'local fixture', file: 'x.duckdb' }),
+    describe: () => ({ source: 'local fixture', label: 'x.duckdb', available: true, problem: null }),
   };
   await datasetModule.run({ data: fake, reply: async (m) => replies.push(m) });
   assert.match(replies[1], /^• visits: 40,895$/m);
@@ -108,6 +109,45 @@ test('the Dataset template passes the guardrail even with forbidden columns conf
   assert.ok(!sql.includes('${'), 'no string interpolation in a template');
   assert.equal(manifest.parameters, undefined);
   assert.ok((await data.run(sql)).length > 0);
+});
+
+test('on MotherDuck the Dataset entry reads fixture_meta and fixture_publish in one query and shows the database, version and publish time', async (t) => {
+  const { createFakeMotherDuck } = require('../../../test/fixtures/fake-motherduck');
+  const remoteSql = fs.readFileSync(path.join(DATASET, 'fixture_meta_remote.sql'), 'utf8');
+  const fake = createFakeMotherDuck({
+    database: 'tiny_fixture',
+    rows: (sql) => {
+      assert.equal(sql, remoteSql, 'the remote template, unchanged');
+      return [
+        { src: 'meta', key: 'as_of', value: '2026-09-30' },
+        { src: 'meta', key: 'generator_version', value: '2' },
+        { src: 'meta', key: 'rows_shops', value: '1200' },
+        { src: 'publish', key: 'fixture_version', value: '2+0123456789ab' },
+        { src: 'publish', key: 'generator_version', value: '2' },
+        { src: 'publish', key: 'published_at', value: '2026-10-24T21:00:00.000Z' },
+      ];
+    },
+  });
+  // Fake values only; nothing here is a credential.
+  const profile = { ...PROFILE, data: { source: 'motherduck', database: 'tiny_fixture' }, sql: { forbidden_columns: ['shops.postal_code'] } };
+  const data = createData({ profile, token: 'fake-read-key-not-a-credential', connect: fake.create });
+  t.after(() => data.close());
+  await data.open();
+  const { app } = setup(data);
+  await app.dispatchAction('dataset:open');
+  assert.equal(app.responded[0].text, [
+    '*Dataset*',
+    'Source: MotherDuck (tiny_fixture)',
+    'Fixture version: 2+0123456789ab',
+    'As of: 2026-09-30',
+    'Published: 2026-10-24T21:00:00.000Z',
+    'Tables (1):',
+    '• shops: 1,200',
+  ].join('\n'));
+  // One query per click, on a connection that ran USE first.
+  const conns = fake.state.instances[0].connections.slice(1);
+  assert.deepEqual(conns.map((c) => c.statements), [['USE "tiny_fixture"', remoteSql]]);
+  assert.ok(!remoteSql.includes('${'), 'no string interpolation in a template');
 });
 
 test('when the data file is missing, the person is told plainly and the app keeps answering', async (t) => {

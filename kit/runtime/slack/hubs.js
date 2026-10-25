@@ -102,7 +102,7 @@ function moduleData(data, mod) {
       if (!data) return Promise.reject(new DataUnavailable('no data source'));
       return data.run(sql, params, { declared });
     },
-    describe: () => (data ? data.describe() : { available: false }),
+    describe: () => (data ? data.describe() : { source: null, label: null, available: false, problem: 'no data source' }),
   });
 }
 
