@@ -61,6 +61,12 @@ resources:
   # Gated, not open_access: the admin role confers it; grant it to anyone else who needs it.
   - key: UNPAID_INVOICES
     label: Unpaid invoices
+  # Runtime: Labour cost (Story 9.7): a month's total pay for visit time. Totals only, but pay
+  # rates are open for the demo (GRD-006), so it is never open_access: only the admin role
+  # confers it (the schema's roles are admin and member; the owner, Dana, is an admin). Do not
+  # grant it to members. A real client decides on day one whether pay rates are forbidden.
+  - key: LABOUR_COST
+    label: Labour cost
 
 users:
   - id: dana
