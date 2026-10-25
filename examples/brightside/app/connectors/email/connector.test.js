@@ -2,11 +2,16 @@
 
 // The mock email tool's own test: the shared contract suite, then what its
 // writes leave in the outbox: create, add, a repeated key, a restart, both
-// kill switches, a simulated row failure and a process that dies mid-push. Every test writes to its own
-// temporary outbox, never var/.
+// kill switches, a simulated row failure and a process that dies mid-push.
+// Story 10.2: pushList, the one write a Win-back push makes (the list, then
+// its contacts, under one key): its dry run lists the rows it would skip,
+// each request answers only counts and id-shaped refs, and a push that dies
+// after the list step, a middle batch or the last batch resumes and sends
+// nothing twice. Every test writes to its own temporary outbox, never var/.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -39,8 +44,12 @@ connectorContract(connector, {
   write: {
     createList: (idempotencyKey) => ({ name: 'win-back-north-2026-10-24', idempotencyKey }),
     addContacts: (idempotencyKey) => ({ listId: SUITE_LIST, contacts: contacts(3), idempotencyKey }),
+    pushList: (idempotencyKey) => ({ name: 'win-back-north-2026-10-24', contacts: contacts(3), idempotencyKey }),
   },
-  bulk: { operation: 'addContacts', input: (count, idempotencyKey) => ({ listId: SUITE_LIST, contacts: contacts(count), idempotencyKey }) },
+  bulk: [
+    { operation: 'addContacts', input: (count, idempotencyKey) => ({ listId: SUITE_LIST, contacts: contacts(count), idempotencyKey }) },
+    { operation: 'pushList', input: (count, idempotencyKey) => ({ name: 'win-back-north-2026-10-24', contacts: contacts(count), idempotencyKey }) },
+  ],
 }, {
   deps: {
     get outboxPath() {
@@ -66,14 +75,14 @@ function readLines(file) {
 
 const live = { dryRun: false };
 
-test('email: a mock with no credential, its own kill switch, and two writes', () => {
+test('email: a mock with no credential, its own kill switch, and three writes', () => {
   assert.equal(connector.id, 'email');
   assert.deepEqual([...connector.auth.env], [], 'a mock declares no credential (#90)');
   assert.equal(connector.killSwitchEnv, 'BRIGHTSIDE_EMAIL_OFF');
-  assert.deepEqual([...connector.write].sort(), ['addContacts', 'createList']);
+  assert.deepEqual([...connector.write].sort(), ['addContacts', 'createList', 'pushList']);
   assert.deepEqual([...connector.read], []);
   assert.deepEqual({ ...connector.rateLimit }, { perSecond: 5, batchSize: 100 });
-  assert.deepEqual([...connector.perItemIdempotency], ['addContacts'], 'each contact is keyed, so a retry re-sends only the failed ones');
+  assert.deepEqual([...connector.perItemIdempotency], ['addContacts', 'pushList'], 'each contact is keyed, so a retry re-sends only the failed ones');
 });
 
 test('email: the outbox defaults to var/outbox/email.jsonl, under APLABS_VAR_DIR when set', () => {
@@ -88,7 +97,8 @@ test('email: creating a list records it with its key; the file is created on fir
   assert.equal(fs.existsSync(file), false, 'a dry run writes nothing');
 
   const list = await instance.write.createList({ name: 'win-back-north-2026-10-24', idempotencyKey: 'k1', ...live });
-  assert.match(list.listId, /^list-[0-9a-f]{12}$/);
+  assert.match(list.listId, /^list-[0-9a-f]{12}0?$/);
+  assert.match(list.listId, /[0-9]/, 'a list id always has a digit (id-shaped)');
   assert.equal(list.name, 'win-back-north-2026-10-24');
   const recorded = lines().filter((l) => l.type === 'list');
   assert.equal(recorded.length, 1);
@@ -327,14 +337,14 @@ test('email: the outbox records the contract slot with the connector id (DEP-012
 // dies partway resumes after a restart. The dying process is this one: its
 // store answers the k-th progress save never (it stopped there). The restart
 // is a new node process over the same outbox file, with nothing in memory.
-function restartedPush(file, input) {
+function restartedPush(file, input, operation = 'addContacts') {
   const script = `
     const { testLog } = require('#sdk');
     const email = require(${JSON.stringify(path.join(__dirname, 'connector.js'))}).create({
       log: testLog(), env: {}, outboxPath: process.env.OUTBOX, onRequest: () => { requests += 1; },
     });
     let requests = 0;
-    email.write.addContacts(JSON.parse(process.env.INPUT)).then(
+    email.write[${JSON.stringify(operation)}](JSON.parse(process.env.INPUT)).then(
       (result) => console.log(JSON.stringify({ result, requests })),
       (err) => console.log(JSON.stringify({ error: err.name, reason: err.reason, requests })),
     );`;
@@ -401,4 +411,119 @@ test('email: a per-item push that partly fails after saving progress drops it, s
   assert.deepEqual(await retried.instance.write.addContacts(input), { listId, added: 1, alreadyAdded: 200 });
   assert.equal(retried.requests.length, 3, 'the retry called every batch');
   assert.equal(lines().filter((l) => l.type === 'contact' && l.key.startsWith('B3:')).length, 201);
+});
+
+// Story 10.2: pushList, the one write the approval-write archetype calls for
+// a Win-back push (plan epic-10, decision 3).
+const withoutEmail = (list, refs) => list.map((c) => (refs.includes(c.external_ref) ? { external_ref: c.external_ref, first_name: c.first_name } : c));
+
+test('email: pushList\'s dry run lists the contacts the tool would refuse as skipped, with the reason, and writes nothing', async () => {
+  const { instance, file, requests } = email();
+  const input = { name: 'win-back-north-2026-10-25', contacts: withoutEmail(contacts(5), ['2', '4']), idempotencyKey: 'K' };
+  const dry = await instance.write.pushList(input);
+  assert.deepEqual(dry, {
+    dryRun: true,
+    operation: 'pushList',
+    wouldWrite: { create: 'list', name: 'win-back-north-2026-10-25', add: 3, skipped: [{ ref: '2', reason: 'no email' }, { ref: '4', reason: 'no email' }] },
+  });
+  assert.equal(requests.length, 0);
+  assert.equal(fs.existsSync(file), false);
+  // A shape fault is not a skip: an unknown field, a missing ref or a ref twice is refused.
+  for (const bad of [[{ ...contacts(1)[0], score: 80 }], [{ email: 'x@home.invalid' }], [...contacts(1), ...contacts(1)]]) {
+    await assert.rejects(instance.write.pushList({ ...input, contacts: bad }), ConnectorFailed);
+  }
+});
+
+test('email: pushList creates the list once and adds only the contacts it did not skip; a repeat adds nothing', async () => {
+  const { instance, lines, requests } = email();
+  const input = { name: 'win-back-north-2026-10-25', contacts: withoutEmail(contacts(5), ['2']), idempotencyKey: 'K', ...live };
+  const res = await instance.write.pushList(input);
+  assert.match(res.listId, /^list-[0-9a-f]{12}0?$/);
+  assert.deepEqual(res, { listId: res.listId, added: 4, alreadyAdded: 0, skipped: 1 });
+  assert.deepEqual(requests.map((r) => r.size), [0, 4], 'the list step carries no items, then one batch');
+  const lists = lines().filter((l) => l.type === 'list');
+  assert.deepEqual(lists.map((l) => l.payload), [{ listId: res.listId, name: 'win-back-north-2026-10-25' }]);
+  const added = lines().filter((l) => l.type === 'contact');
+  assert.deepEqual(added.map((l) => l.payload.external_ref), ['1', '3', '4', '5']);
+  assert.deepEqual(added.map((l) => l.key), ['1', '3', '4', '5'].map((r) => `K:${res.listId}:${r}`));
+  const n = lines().length;
+  assert.deepEqual(await instance.write.pushList(input), res);
+  assert.equal(lines().length, n, 'the repeat wrote nothing');
+});
+
+test('email: every pushList request answers only counts and id-shaped refs: { listId }, then { added, alreadyAdded, failedRefs }', async () => {
+  const { instance, lines } = email({ simulate: { failContacts: new Set(['150']) } });
+  await assert.rejects(instance.write.pushList({ name: 'l', contacts: contacts(201), idempotencyKey: 'R', ...live }), PartialFailure);
+  // The progress records the contract kept, latest last (before B3 dropped it).
+  const kept = lines().filter((l) => l.type === 'progress' && l.key === 'R').map((l) => l.completed).filter((c) => c.length);
+  const results = kept.at(-1).map((c) => c.result);
+  assert.ok(kept.at(-1).every((c) => !c.opaque), 'no answer was too rich to keep');
+  assert.deepEqual(Object.keys(results[0]), ['listId']);
+  assert.match(results[0].listId, /[0-9]/);
+  assert.deepEqual(results[1], { added: 100, alreadyAdded: 0, failedRefs: [] });
+  assert.ok(!JSON.stringify(kept).includes('home.invalid') && !JSON.stringify(kept).includes('"name"'));
+});
+
+test('email: a list id always has a digit, even when its hash starts with none', async () => {
+  const hex = (k) => crypto.createHash('sha256').update(k).digest('hex').slice(0, 12);
+  let key = null;
+  for (let i = 0; !key; i += 1) if (!/[0-9]/.test(hex(`k${i}`))) key = `k${i}`;
+  const { instance } = email();
+  const { listId } = await instance.write.createList({ name: 'l', idempotencyKey: key, ...live });
+  assert.equal(listId, `list-${hex(key)}0`);
+});
+
+test('email: a pushList whose process dies after the list step, a middle batch or the last batch resumes after a restart, sending each contact once', async () => {
+  // 201 contacts: the list step, then batches of 100, 100 and 1 (four requests).
+  for (const k of [1, 2, 4]) {
+    const file = freshPath();
+    const outbox = openOutbox(file);
+    let saves = 0;
+    const requests = [];
+    const dying = connector.create({
+      log: testLog(), env: {}, outboxPath: file, onRequest: (r) => requests.push(r),
+      now: () => 0,
+      sleep: async () => {},
+      idempotency: {
+        get: (slot) => outbox.ledger.get(slot),
+        set: (slot, value) => {
+          outbox.ledger.set(slot, value);
+          return slot.includes('\u0001progress') && (saves += 1) === k ? new Promise(() => {}) : undefined;
+        },
+      },
+    });
+    const input = { name: 'win-back-north-2026-10-25', contacts: contacts(201), idempotencyKey: `Q${k}`, ...live };
+    dying.write.pushList(input).catch(() => {});
+    for (let i = 0; i < 1000 && saves < k; i += 1) await new Promise(setImmediate);
+    assert.equal(requests.length, k, `k=${k}: the process died after request ${k}`);
+    const kept = readLines(file).filter((l) => l.type === 'progress' && l.key === `Q${k}`);
+    assert.deepEqual(kept.at(-1).completed.map((c) => c.size), [0, 100, 100, 1].slice(0, k));
+
+    const after = restartedPush(file, input, 'pushList');
+    assert.equal(after.error, undefined, `k=${k}: the restart finished, got ${after.error}: ${after.reason}`);
+    assert.equal(after.requests, 4 - k, `k=${k}: the restart sent only requests ${k + 1} to 4`);
+    assert.equal(after.result.added, 201);
+    assert.equal(after.result.alreadyAdded, 0);
+    assert.equal(readLines(file).filter((l) => l.type === 'list').length, 1, `k=${k}: one list`);
+    const added = readLines(file).filter((l) => l.type === 'contact');
+    assert.equal(added.length, 201, `k=${k}: each contact is in the outbox once`);
+    assert.equal(new Set(added.map((l) => l.key)).size, 201);
+  }
+});
+
+test('email: a pushList that partly fails is retry-safe, and the retry adds only the failed contact', async () => {
+  const simulate = { failContacts: new Set(['150']) };
+  const { instance, file, lines } = email({ simulate });
+  const input = { name: 'l', contacts: contacts(201), idempotencyKey: 'PF', ...live };
+  await assert.rejects(instance.write.pushList(input), (err) => {
+    assert.ok(err instanceof PartialFailure);
+    assert.deepEqual([err.details.succeeded, err.details.failed, [...err.details.failedRefs], err.details.retrySafe], [200, 1, ['150'], true]);
+    return true;
+  });
+  simulate.failContacts.clear();
+  const retried = email({ file, simulate });
+  const res = await retried.instance.write.pushList(input);
+  assert.deepEqual({ added: res.added, alreadyAdded: res.alreadyAdded }, { added: 1, alreadyAdded: 200 });
+  assert.equal(lines().filter((l) => l.type === 'list').length, 1);
+  assert.equal(lines().filter((l) => l.type === 'contact').length, 201);
 });

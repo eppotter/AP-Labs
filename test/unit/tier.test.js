@@ -73,6 +73,13 @@ const GUARDED = {
   'kit/release/**': 'kit/release/index.js',
   'kit/lib/template/**': 'kit/lib/template/index.js',
   'kit/lib/fork/**': 'kit/lib/fork/index.js',
+  'kit/runtime/archetypes/approval-write/**': 'kit/runtime/archetypes/approval-write/connectors.js',
+  'kit/runtime/connectors/**': 'kit/runtime/connectors/contract.js',
+  'kit/verify/write-path.js': 'kit/verify/write-path.js',
+  'scripts/check-write-path.js': 'scripts/check-write-path.js',
+  'kit/runtime/slack/channel.js': 'kit/runtime/slack/channel.js',
+  'kit/runtime/store/**': 'kit/runtime/store/index.js',
+  'kit/runtime/archetypes/scoped-pull/run.js': 'kit/runtime/archetypes/scoped-pull/run.js',
 };
 
 test('ENGINE_T3 lists exactly the guarded paths, and is frozen', () => {
@@ -105,13 +112,15 @@ test('nearby paths outside the floors keep their current tier', () => {
   const minimal = validateProfile({ schema_version: 1, client: { id: 'm', name: 'M' }, users: [{ id: 'a', name: 'A', role: 'admin' }] });
   const nearby = [
     'kit/fixture/build.js', 'kit/fixture/query.js', 'kit/fixture/publish.test.js', 'kit/fixture/publish.jsx',
-    'kit/runtime/slack/handle.js', 'kit/runtime/sqlite/x.js', 'kit/runtime/database/x.js', 'kit/runtime/connectors/contract.js',
+    'kit/runtime/slack/handle.js', 'kit/runtime/sqlite/x.js', 'kit/runtime/database/x.js', 'kit/runtime/connector/x.js',
     'kit/runtime/llm.js', 'kit/runtime/llms/x.js',
     'kit/lib/review/index.js', 'kit/lib/tiers/x.js', 'kit/lib/gateway/x.js', 'kit/hooks.js', 'kit/lib/profile.js',
     '.codex/config.toml', 'docs/kit/hooks/README.md',
     'kit/runtime/schema/module.schema.json', 'kit/runtime/jobs.js', 'kit/runtime/jobsx/x.js',
     'Dockerfile.md', 'docs/Dockerfile', '.github/CODEOWNERS', '.github/workflow/x.yml',
     'kit/releases/x.js', 'kit/templates/job.md', 'kit/lib/fork.js',
+    'kit/runtime/archetypes/scoped-pull/results.js', 'kit/runtime/archetypes/approval-writer/x.js',
+    'kit/verify/run-all.js', 'scripts/check-job-imports.js', 'kit/runtime/slack/hubs.js', 'kit/runtime/stores/x.js',
   ];
   for (const p of nearby) assert.equal(tierOf(minimal, p), 'T1', p);
   assert.equal(tier('kit/hooksREADME.md'), 'T0', 'a profile can still mark a nearby doc inert');

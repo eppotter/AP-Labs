@@ -42,13 +42,16 @@ function setup({ env = 'dev', canUse, views = false, reg = registry } = {}) {
 // The Open buttons, in menu order (the Help button is checked on its own).
 const buttons = (msg) => msg.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
 
-test('each hub file registers its slash command; one listener each handles Open, Help, form and "How was this made?" clicks', () => {
+test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" and push clicks', () => {
   const { app } = setup();
   assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
-  assert.equal(app.actionListeners.length, 4);
+  assert.equal(app.actionListeners.length, 5);
   // The form listener takes Confirm, Change and Read my request (Story 9.4).
   for (const id of ['scoped-pull:confirm', 'scoped-pull:change', 'scoped-pull:read']) assert.ok(app.actionListeners[2].pattern.test(id), id);
   assert.equal(app.actionListeners[3].pattern, 'provenance:show');
+  // Push, Approve and Cancel on an approval-write result (Story 10.2).
+  for (const id of ['approval-write:push', 'approval-write:approve', 'approval-write:cancel']) assert.ok(app.actionListeners[4].pattern.test(id), id);
+  assert.ok(!app.actionListeners[4].pattern.test('approval-write:open'));
   // Two submits: the form's "Check values" and a follow-up question's answer (Story 9.4).
   assert.deepEqual(app.viewListeners.map((v) => v.callbackId), ['scoped-pull:form', 'scoped-pull:answer']);
   assert.deepEqual([...app.eventListeners.keys()], ['team_join']);

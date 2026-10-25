@@ -73,6 +73,15 @@
 // (archetypes/scoped-pull/extract), never to the runner, so rows can't reach
 // it. The click is a form button like Confirm; a follow-up question's submit
 // (ANSWER_CALLBACK) is answered in the ack like "Check values".
+//
+// Approval write (Story 10.2): an approval-write module runs the same form,
+// query and results as a scoped pull (its runner gets the archetype's reuse
+// hook, so its result carries "Push to <destination>"). Push, Approve and
+// Cancel are buttons in the module's view; one listener updates that view in
+// place, never a new one. Every click re-checks the person's grant and the
+// environment the same way dispatch does (resolveModule), before the
+// archetype (kit/runtime/archetypes/approval-write) looks at anything else.
+// connectors: the instances the app made at boot (approval-write/connectors.js).
 
 const access = require('../access');
 const {
@@ -93,6 +102,10 @@ const {
 } = require('../archetypes/scoped-pull');
 const { createReader } = require('../archetypes/scoped-pull/extract');
 const { PROVENANCE_ACTION } = require('../archetypes/scoped-pull');
+const {
+  createApprovalWrite, pushHooks, verbOf: writeVerbOf, ACTION_PATTERN: WRITE_ACTION,
+} = require('../archetypes/approval-write');
+const { QUERY_ARCHETYPES } = require('../registry');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
@@ -157,7 +170,7 @@ function moduleData(data, mod) {
 }
 
 function registerHubs(app, {
-  registry, profile, env, log, store, data = null, llm = null, canUse = defaultCanUse(profile),
+  registry, profile, env, log, store, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),
 }) {
   const admin = access.adminContact(profile);
   const personOf = (slackId) => ({ id: slackId, user: access.personFor(profile, slackId) });
@@ -171,8 +184,9 @@ function registerHubs(app, {
   const notSetUp = (person) => (person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin })));
   const fellBack = (where, reason, hub) => log.info('hub modal fallback', { where, reason, hub: hub || null });
   const scopedPull = createScopedPull({
-    store, log, run: createRunner({ data, log, admin, store }), read: llm ? createReader({ llm, log }) : null,
+    store, log, run: createRunner({ data, log, admin, store, hooks: pushHooks }), read: llm ? createReader({ llm, log }) : null,
   });
+  const approvalWrite = createApprovalWrite({ store, log, connectors, admin });
 
   // Why this person may not open mod (a message), or null when they may.
   // The refusal is logged with the click's action id.
@@ -187,12 +201,14 @@ function registerHubs(app, {
     return messageFor(refusal);
   };
 
-  // The scoped-pull module a form session names, if this person may still
-  // open it: { mod } or { refusal }. Synchronous, so Confirm can consume with
-  // no await after the check.
-  const resolveForm = (person, actionId) => (moduleId) => {
+  // The module a click names, if this person may still open it here: { mod }
+  // or { refusal }. Synchronous, so Confirm can consume with no await after
+  // the check. archetypes: the ones this click may act on. A form step
+  // (resolveForm) takes a scoped pull or an approval write; Push, Approve and
+  // Cancel take only an approval write.
+  const resolveModule = (person, actionId, archetypes) => (moduleId) => {
     const mod = registry.module(moduleId);
-    if (!mod || mod.archetype !== 'scoped-pull' || !isVisible(mod, env)) {
+    if (!mod || !archetypes.has(mod.archetype) || !isVisible(mod, env)) {
       log.warn('hub action refused', {
         action_id: actionId, reason: !mod ? 'unknown module' : 'not available', user: person.user ? person.user.id : null, env,
       });
@@ -201,6 +217,8 @@ function registerHubs(app, {
     const refused = refusalFor(person, mod, actionId);
     return refused ? { refusal: refused } : { mod };
   };
+  const resolveForm = (person, actionId) => resolveModule(person, actionId, QUERY_ARCHETYPES);
+  const WRITES = new Set(['approval-write']);
 
   // Where a click's replies go. From a hub modal: a view pushed onto it
   // (reply() pushes, then appends; loading() pushes "Loading…" first). From a
@@ -318,7 +336,7 @@ function registerHubs(app, {
         await target.reply(refused);
         return;
       }
-      if (mod.archetype === 'scoped-pull') {
+      if (QUERY_ARCHETYPES.has(mod.archetype)) {
         log.info('module dispatched', { module: mod.id, hub: mod.hub });
         await target.reply(target.modal ? { ...scopedPull.open(mod, user.id), ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
         return;
@@ -427,6 +445,41 @@ function registerHubs(app, {
         await view.show(PLAIN_ERROR);
       } catch (showErr) {
         log.error('could not tell the person about a failure', { handler: 'hub:provenance', err: showErr });
+      }
+    }
+  }, { log, store }));
+
+  // Push, Approve and Cancel (Story 10.2) on an approval-write result. Each
+  // updates the view the button is in, re-checking the person's grant and
+  // the environment first (resolveModule), as dispatch does. A result is
+  // only ever shown in a view, so a click from anywhere else is told to use
+  // the hub window.
+  app.action(WRITE_ACTION, handle('hub:approval', async ({ action, body, client, respond }) => {
+    const verb = writeVerbOf(action && action.action_id);
+    const from = body.view;
+    if (!from || typeof from.id !== 'string' || !from.id || !hasViews(client)) {
+      fellBack('approval', from ? 'no views client' : 'not from a modal', null);
+      if (typeof respond === 'function') await respond(ephemeral(FORM_NEEDS_WINDOW));
+      return;
+    }
+    const { hubId } = parseMetadata(from.private_metadata);
+    const view = updatedView({ client, view: from, title: from.title && from.title.text, hubId });
+    const show = async (message) => {
+      const status = await view.show(message);
+      if (status === 'dropped') log.info('stale view result dropped', { action: verb, reason: 'hash_conflict' });
+      return status;
+    };
+    const person = personOf((body.user || {}).id);
+    try {
+      await approvalWrite.click({
+        verb, value: action.value, person: person.id, resolve: resolveModule(person, action.action_id, WRITES), show,
+      });
+    } catch (err) {
+      log.error('handler failed', { handler: 'hub:approval', err });
+      try {
+        await view.show(PLAIN_ERROR);
+      } catch (showErr) {
+        log.error('could not tell the person about a failure', { handler: 'hub:approval', err: showErr });
       }
     }
   }, { log, store }));

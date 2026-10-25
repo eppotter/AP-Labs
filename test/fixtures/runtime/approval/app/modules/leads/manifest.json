@@ -1,0 +1,22 @@
+{
+  "id": "leads",
+  "hub": "alpha",
+  "label": "Leads list",
+  "description": "People in one zone to win back.",
+  "resource": "PUSH_LEADS",
+  "archetype": "approval-write",
+  "environments": ["dev"],
+  "parameters": [
+    { "name": "zone", "label": "Zone", "type": "string", "enum": ["north", "south"], "required": true }
+  ],
+  "query": "leads.sql",
+  "row_id": "person_id",
+  "write": {
+    "connector": "mail",
+    "operation": "sendList",
+    "destination": "mail tool",
+    "fields": ["person_id", "first", "address"],
+    "send": { "ref": "person_id", "first": "first", "address": "address" },
+    "list_name": "leads-{zone}-{run_date}"
+  }
+}

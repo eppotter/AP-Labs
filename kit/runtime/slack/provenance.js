@@ -20,8 +20,8 @@
 //   fixtureVersion  the data version read from fixture_meta through the
 //                   runner ("3, as of 2026-09-30"), or null when unreadable
 //   ranAt           when the query started (ISO 8601, UTC)
-//   rowIds, rows    null for a module that pushes nowhere. For a module with
-//                   a write (Story 10.1): the row ids and the declared push
+//   rowIds, rows    null for a module that pushes nowhere. For an approval-write
+//                   module (Stories 10.1, 10.2: picked by its reuse hook): the row ids and the declared push
 //                   fields (plus the score, when scored) of only the rows the
 //                   person saw, after a scored module's cut, in rank order
 //
