@@ -1,0 +1,12 @@
+# Approval-write test profile (Story 10.2): the push resource is owner-only
+# (admin_grantable: false), granted by name to two people; an admin without
+# the grant can't use it.
+schema_version: 1
+client: { id: approval-fixture, name: Approval Fixture Co }
+resources:
+  - { key: PUSH_LEADS, label: Push leads, admin_grantable: false }
+  - { key: OPEN_THING, label: Open thing, open_access: true }
+users:
+  - { id: owner, name: Olive Owner, role: admin, identities: { slack: U0OWNER01 }, grants: [PUSH_LEADS] }
+  - { id: other, name: Otto Other, role: member, identities: { slack: U0OTHER01 }, grants: [PUSH_LEADS] }
+  - { id: boss, name: Bea Boss, role: admin, identities: { slack: U0BOSS001 } }

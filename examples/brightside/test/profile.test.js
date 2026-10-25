@@ -13,3 +13,13 @@ test('the Brightside demo profile is valid', () => {
   const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
   assert.equal(p.client.id, 'brightside');
 });
+
+// Story 10.2 (Q6): Win-back pushes to the email tool (approval-write), so its
+// resource is owner-only and granted to Dana by name; the admin role alone
+// does not confer it.
+test('WIN_BACK is admin_grantable: false and granted to Dana by name', () => {
+  const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
+  assert.equal(p.resources.find((r) => r.key === 'WIN_BACK').admin_grantable, false);
+  const holders = p.users.filter((u) => (u.grants || []).includes('WIN_BACK')).map((u) => u.name);
+  assert.deepEqual(holders, ['Dana Reyes']);
+});

@@ -171,6 +171,28 @@ class ProvenanceNotYours extends RuntimeRefusal {
   constructor() { super('run details belong to another person', {}); }
 }
 
+// An approval preview's Approve or Cancel whose token is expired, unknown,
+// malformed, already used or another person's (Story 10.2, AD-17). Each case
+// gets the same words, so a click learns nothing about someone else's push.
+// Nothing is pushed or consumed. details: {}
+class PreviewInvalid extends RuntimeRefusal {
+  constructor() { super('approval preview no longer valid', {}); }
+}
+
+// A Push click that can't make a preview (Story 10.2): the run's record has
+// expired ('expired'), the run's CSV did not reach the person so its rows were
+// never kept ('not_delivered'), or the run had no rows ('empty'). No token is
+// created. details: { reason }
+const PUSH_REFUSALS = Object.freeze(['expired', 'not_delivered', 'empty']);
+class PushRefused extends RuntimeRefusal {
+  constructor(reason) {
+    if (!PUSH_REFUSALS.includes(reason)) throw new TypeError(`unknown PushRefused reason "${reason}"`);
+    super(`push refused: ${reason}`, { reason });
+    this.code = 'PUSH_REFUSED';
+    this.reason = reason;
+  }
+}
+
 // The AI service refused or failed (Story 9.1), so the module falls back to its
 // typed form. Raised before anything is sent, except 'failed'. reason is one
 // of LLM_REASONS; details.log, when set, is for the log only and never shown.
@@ -189,5 +211,5 @@ module.exports = {
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, LLM_REASONS,
   KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
   SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
-  ProvenanceGone, ProvenanceNotYours, ScoringFault, SCORING_PROBLEMS,
+  ProvenanceGone, ProvenanceNotYours, ScoringFault, SCORING_PROBLEMS, PreviewInvalid, PushRefused, PUSH_REFUSALS,
 };

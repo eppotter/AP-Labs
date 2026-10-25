@@ -1,0 +1,9 @@
+{
+  "id": "alpha",
+  "command": "/alpha",
+  "name": "Alpha tools",
+  "description": "Open the Alpha menu",
+  "usage_hint": "no arguments",
+  "welcome": "Hi & welcome to <Alpha>.",
+  "feedback": "Post in the alpha feedback thread."
+}

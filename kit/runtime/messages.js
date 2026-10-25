@@ -13,7 +13,9 @@ const {
 const {
   SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
 } = require('./errors');
-const { ProvenanceGone, ProvenanceNotYours, ScoringFault } = require('./errors');
+const {
+  ProvenanceGone, ProvenanceNotYours, ScoringFault, PreviewInvalid, PushRefused,
+} = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
 function escapeText(s) {
@@ -111,7 +113,18 @@ const MESSAGES = [
   // "How was this made?" (Story 9.6). Neither says anything about the run.
   [ProvenanceGone, () => "The details of this run are no longer available (they're kept for 24 hours). Run the list again from the menu to see how a new one is made."],
   [ProvenanceNotYours, () => "These details belong to someone else's run, so I can't show them. Run the list yourself from the menu to see how yours is made."],
+  // Push and its preview (Story 10.2). The same words for every invalid
+  // preview, whoever clicked: nothing about another person's push leaks.
+  [PreviewInvalid, () => 'This preview is no longer valid, so nothing was sent. Run the list again from the menu and press Push for a new preview.'],
+  [PushRefused, ({ reason }) => PUSH_WORDS[reason]],
 ];
+
+// Why a Push click made no preview (Story 10.2). Nothing was sent.
+const PUSH_WORDS = Object.freeze({
+  expired: "These results have expired (they're kept for 24 hours), so they can't be pushed and nothing was sent. Run the list again from the menu, then press Push.",
+  not_delivered: "This list's CSV didn't reach you, so I won't push it: you'd be sending rows you haven't had in full. Nothing was sent. Run the list again from the menu.",
+  empty: "This list has no rows, so there's nothing to push.",
+});
 
 // Hub wording (Story 6.4). A hub file may set its own welcome and feedback
 // lines; these defaults keep a hub without them working.

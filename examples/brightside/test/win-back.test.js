@@ -15,7 +15,12 @@
 // declared inputs and ranked best first, ties by client_id; the SQL returns
 // every candidate (ORDER BY ..., client_id LIMIT 5001) and never names the
 // limit, which the engine applies after scoring. North over 90 days gives the
-// exact top five below, the same on every run.
+// exact top five below, the same on every run. Story 10.2: Win-back is an
+// approval-write module (the same pull, plus a push to the mock email tool);
+// its resource is owner-only, so an admin without the grant doesn't see it.
+// Its result carries "Push to email tool", which previews the list
+// (win-back-north-<UTC run date>) with the real email connector's dry run
+// over a temporary outbox, and nothing is sent.
 //
 // An example test (architecture carve-out): it reads Brightside's app dir and
 // fixture data, and is deleted with the example in a fork. Its profile and
@@ -71,13 +76,24 @@ before(async () => {
 });
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-// The fixture's admin (WIN_BACK through the admin role) and a member without it.
+// The fixture's admin (granted WIN_BACK by name: it is owner-only) and a member without it.
 const ADMIN = profile.users.find((u) => u.role === 'admin').identities.slack;
 const MEMBER = profile.users.find((u) => u.role === 'member').identities.slack;
 
-test('Win-back loads as a scoped pull with three bounded inputs and its SQL', () => {
+test('Win-back loads as an approval-write module with three bounded inputs, its SQL and a push to the mock email tool', () => {
   assert.deepEqual(problems, []);
-  assert.equal(winBack.archetype, 'scoped-pull');
+  assert.equal(winBack.archetype, 'approval-write');
+  // Story 10.2 (decision 3): one write, pushList, with the fields it copies,
+  // what each contact holds and the list name.
+  assert.deepEqual(winBack.write, {
+    connector: 'email',
+    operation: 'pushList',
+    destination: 'email tool',
+    fields: ['client_id', 'email', 'first_name'],
+    send: { external_ref: 'client_id', email: 'email', first_name: 'first_name' },
+    list_name: 'win-back-{zone}-{run_date}',
+  });
+  assert.equal(profile.resources.find((r) => r.key === 'WIN_BACK').admin_grantable, false);
   assert.equal(winBack.resource, 'WIN_BACK');
   assert.deepEqual(declared, ['zone', 'lapsed_days', 'limit']);
   assert.deepEqual(winBack.parameters.map((p) => [p.name, p.enum || [p.min, p.max], p.default]), [
@@ -200,16 +216,18 @@ function fillingAi(input) {
 
 // Boots the app on the fixture build (or a missing file with noData), with a
 // fake AI key so the AI service is on and its stand-in client is watched.
-async function boot(t, { noData = false, ai = spyAi() } = {}) {
+// The mock email tool's outbox goes under a temporary APLABS_VAR_DIR.
+async function boot(t, { noData = false, ai = spyAi(), profilePath = PROFILE_PATH } = {}) {
   const lines = [];
   const res = await main({
     env: {
+      APLABS_VAR_DIR: path.join(tmp, 'var'),
       APLABS_NO_KEYCHAIN: '1',
       // Fake values, shaped like the real ones; nothing here is a credential.
       SLACK_BOT_TOKEN: 'xoxb-000-111-faketokenvalue',
       SLACK_APP_TOKEN: 'xapp-1-A000-222-fakeappvalue',
       ANTHROPIC_API_KEY: 'sk-ant-api00-fake-win-back-key-value',
-      APLABS_PROFILE: PROFILE_PATH,
+      APLABS_PROFILE: profilePath,
       APLABS_APP_DIR: APP_DIR,
       APLABS_DATA_PATH: noData ? path.join(os.tmpdir(), 'aplabs-no-data', 'none.duckdb') : FIXTURE,
     },
@@ -268,7 +286,12 @@ test('the Win-back list end to end: the admin checks North with the defaults, co
   NORTH_TOP_5.forEach(([score, id, reason], i) => {
     assert.match(tableLines[3 + i], new RegExp(`^${score} +${id} +.* ${reason.replace(/[()$]/g, '\\$&')}$`));
   });
-  assert.match(result.blocks.at(-1).elements[0].text, /^The ranked list \(38 rows\) is a CSV in your DM with me\. <https:\/\/fake\.slack\.test\/files\/F1\|Open the CSV>$/);
+  const where = result.blocks.filter((b) => b.type === 'context').at(-1);
+  assert.match(where.elements[0].text, /^The ranked list \(38 rows\) is a CSV in your DM with me\. <https:\/\/fake\.slack\.test\/files\/F1\|Open the CSV>$/);
+  // Story 10.2: the result ends with "Push to email tool", carrying the run's random id.
+  const push = actionsOf(result).find((b) => b.action_id === 'approval-write:push');
+  assert.equal(push.text.text, 'Push to email tool');
+  assert.match(push.value, /^[0-9a-f]{32}$/);
   // The CSV: all 38, ranked, in the admin's DM, with score first and reason last.
   assert.deepEqual(app.dms, [{ user: ADMIN, channel: `D${ADMIN.slice(1)}` }]);
   assert.equal(app.uploads.length, 1);
@@ -291,6 +314,66 @@ test('the Win-back list end to end: the admin checks North with the defaults, co
   // The AI service was on, and the rows never reached it.
   assert.equal(app.llmStatus.on, true);
   assert.deepEqual(app.ai.calls, []);
+});
+
+// Runs Win-back as user (North, the given limit) through the hub window.
+// Returns the result view, where it is shown and its Push button.
+async function runWinBack(app, user, limit = '25') {
+  await app.dispatchAction('win-back:open', { user: { id: user }, view: MENU });
+  const form = last(app);
+  const formId = `V${app.viewSeq}`;
+  const state = { values: {
+    'sp-input:zone': { value: { type: 'static_select', selected_option: { value: 'north' } } },
+    'sp-input:limit': { value: { type: 'plain_text_input', value: limit } },
+  } };
+  await app.dispatchView('scoped-pull:form', {
+    user: { id: user }, view: { id: formId, hash: `h${app.viewSeq}`, title: form.title, private_metadata: form.private_metadata, state },
+  });
+  const confirm = app.viewAcks.at(-1).view;
+  const from = { id: formId, hash: 'hc', title: confirm.title, private_metadata: confirm.private_metadata, state: { values: {} } };
+  await app.dispatchAction('scoped-pull:confirm', { user: { id: user }, view: from, value: actionsOf(confirm)[0].value });
+  const result = last(app);
+  return { result, from: { ...from, hash: `h${app.viewSeq}` }, push: actionsOf(result).find((b) => b.action_id === 'approval-write:push') };
+}
+
+test('Story 10.2: Push previews the top 25 for the email tool: win-back-north-<UTC run date>, 25 rows, none skipped, a sample of 5; Approve sends nothing yet', async (t) => {
+  const app = await boot(t);
+  const { result, from, push } = await runWinBack(app, ADMIN);
+  assert.equal(result.blocks[0].text.text, '*Win-back list: the top 25 of 38 rows, by score.*');
+  await app.dispatchAction('approval-write:push', { user: { id: ADMIN }, view: from, value: push.value });
+  const preview = last(app);
+  assert.equal(app.views.at(-1).method, 'update', 'the module view is updated in place');
+  const texts = preview.blocks.map((b) => (b.text && b.text.text) || '').join('\n');
+  const today = new Date().toISOString().slice(0, 10);
+  // The run date is the pull's UTC date (the fixture's as_of is 2026-09-30).
+  assert.ok(texts.includes(`*List name:* win-back-north-${today}`), texts);
+  assert.ok(!texts.includes('2026-09-30'));
+  assert.match(texts, /\*Rows to send:\* 25 of 25 rows/);
+  assert.match(texts, /\*Skipped:\* none/);
+  const sample = preview.blocks.find((b) => b.text && b.text.text.startsWith('*A sample of 5:*')).text.text.split('\n');
+  assert.match(sample[2], /^score +client_id +email +first_name$/);
+  NORTH_TOP_5.forEach(([score, id], i) => assert.match(sample[3 + i], new RegExp(`^${score} +${id} +\\S+@\\S+ +\\S`)));
+  const [approve, cancel] = actionsOf(preview);
+  assert.deepEqual([approve.text.text, cancel.text.text], ['Approve', 'Cancel']);
+  assert.match(approve.value, /^[0-9a-f]{32}$/);
+  // Approve: the push itself is Story 10.3, so nothing reaches the outbox.
+  await app.dispatchAction('approval-write:approve', { user: { id: ADMIN }, view: { ...from, hash: `h${app.viewSeq}` }, value: approve.value });
+  assert.match(last(app).blocks[0].text.text, /isn't switched on yet/);
+  assert.equal(fs.existsSync(path.join(tmp, 'var', 'outbox', 'email.jsonl')), false, 'nothing was sent to the email tool');
+  // Cancel ends it.
+  await app.dispatchAction('approval-write:cancel', { user: { id: ADMIN }, view: { ...from, hash: `h${app.viewSeq}` }, value: approve.value });
+  assert.match(last(app).blocks[0].text.text, /^\*Push cancelled\.\*/);
+  assert.deepEqual(app.posted, [], 'nothing was posted to a channel');
+});
+
+test('Story 10.2 (Q6): Win-back is owner-only: an admin without the WIN_BACK grant never sees it', async (t) => {
+  const file = path.join(tmp, 'no-grant-profile.yml');
+  fs.writeFileSync(file, fs.readFileSync(PROFILE_PATH, 'utf8').replace(', grants: [WIN_BACK]', ''));
+  const app = await boot(t, { profilePath: file });
+  await app.dispatchCommand('/brightside', { user_id: ADMIN });
+  assert.ok(!app.views[0].args.view.blocks.some((b) => b.accessory && b.accessory.action_id === 'win-back:open'));
+  await app.dispatchAction('win-back:open', { user: { id: ADMIN }, view: MENU });
+  assert.match(last(app).blocks[0].text.text, /You don't have access to Win-back list/);
 });
 
 test('with the data unavailable, Confirm shows the standard message in the view and sends nothing', async (t) => {

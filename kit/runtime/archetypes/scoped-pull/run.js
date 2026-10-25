@@ -287,46 +287,30 @@ async function runQuery({ data, mod, values, log }) {
   return { kind: 'rows', columns: Object.keys(kept[0]), rows: kept, total, capped: total > ROW_CAP };
 }
 
-// The run record's rowIds and rows (AD-15): only for a module with a write,
-// and only the rows the person saw (after a scored module's cut), in rank
-// order. rows holds the declared push fields, plus the score when scored.
-// A run whose CSV did not reach the person keeps neither (delivered false),
-// so nothing they didn't fully receive can be pushed later.
-// 10.2 moves push-field picking into approval-write/ and removes this alias.
-function pushRowsOf(mod, outcome, { delivered = true } = {}) {
-  // The manifest's write block, read for its push field names only. It is
-  // not a connector (this file imports none); the push itself belongs to the
-  // approval-write archetype (kit/verify/write-path).
-  const block = mod.write;
-  if (!block || !mod.row_id || !outcome.rows || !delivered) return { rowIds: null, rows: null };
-  const { fields } = block;
-  return {
-    rowIds: outcome.rows.map((r) => r[mod.row_id]),
-    rows: outcome.rows.map((r) => {
-      const picked = Object.fromEntries(fields.map((f) => [f, r[f] === undefined ? null : r[f]]));
-      if (outcome.scored) picked.score = r.score;
-      return picked;
-    }),
-  };
-}
+// No push rows: what a run record keeps for a module without a push hook.
+const NO_PUSH = Object.freeze({ rowIds: null, rows: null });
 
 // Keeps the run record (Story 9.6) and returns message with its button. The
 // SQL and parameters are exactly what runQuery gave the runner. A record
 // that can't be kept never costs the person the result: it goes without the
-// button.
+// button. hooks (the reuse hook, Story 10.2): pushRows(mod, outcome,
+// { delivered }) gives the record's rowIds and rows, and decorate(mod,
+// message, record) adds to the result (the approval-write archetype's Push
+// button). This file never reads a module's write block.
 async function keepRecord({
-  store, data, log, mod, values, person, ranAt, outcome, message, delivered = true,
+  store, data, log, mod, values, person, ranAt, outcome, message, delivered = true, hooks = {},
 }) {
   try {
     // The confirmed values: what was bound, plus a scored module's limit
     // (which the scoring line in the details explains).
     const parameters = bindValues(mod.parameters || [], values);
-    const { rowIds, rows } = pushRowsOf(mod, outcome, { delivered });
+    const { rowIds, rows } = hooks.pushRows ? hooks.pushRows(mod, outcome, { delivered }) : NO_PUSH;
     const record = provenance.buildRecord({
       person, module: mod.id, parameters, sql: mod.sql, source: provenance.sourceOf(data), fixtureVersion: await provenance.readVersion(data, log), ranAt, rowIds, rows,
     });
     provenance.save(store, record);
-    return provenance.withButton(message, record.runId);
+    const shown = provenance.withButton(message, record.runId);
+    return hooks.decorate ? hooks.decorate(mod, shown, record) : shown;
   } catch (err) {
     log.error('run record not kept', { module: mod.id, err });
     return message;
@@ -337,15 +321,17 @@ async function keepRecord({
 // { message, failed }. data: the query runner (null without a data source).
 // admin: who the person is told to contact. now: the clock, for the CSV's
 // file name and the run record's time. store: where the run record goes (no
-// record and no button without one).
+// record and no button without one). hooks: the reuse hook (keepRecord); the
+// hub wiring passes the approval-write archetype's, so an approval-write
+// module's record keeps its push rows and its result gets Push.
 function createRunner({
-  data, log, admin = 'your admin', now = () => new Date(), store = null,
+  data, log, admin = 'your admin', now = () => new Date(), store = null, hooks = {},
 }) {
   return async function run(mod, values, person, { client } = {}) {
     const ranAt = now();
     const outcome = await runQuery({ data, mod, values, log });
     const recorded = (message, { delivered = true } = {}) => (store && (outcome.kind === 'rows' || outcome.kind === 'empty')
-      ? keepRecord({ store, data, log, mod, values, person, ranAt, outcome, message, delivered })
+      ? keepRecord({ store, data, log, mod, values, person, ranAt, outcome, message, delivered, hooks })
       : message);
     if (outcome.kind !== 'rows') {
       log.info('list ran', { module: mod.id, outcome: outcome.kind });
@@ -374,5 +360,5 @@ function createRunner({
 }
 
 module.exports = {
-  checkQuery, checkScoredSql, codeText, placeholders, bindValues, boundNames, runQuery, pushRowsOf, createRunner, ROW_CAP, SCORED_LIMIT,
+  checkQuery, checkScoredSql, codeText, placeholders, bindValues, boundNames, runQuery, createRunner, ROW_CAP, SCORED_LIMIT,
 };

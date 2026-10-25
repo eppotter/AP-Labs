@@ -20,7 +20,7 @@ const { registerHubs } = require('../../kit/runtime/slack/hubs');
 const { ACTIONS, FORM_CALLBACK, ROW_CAP } = require('../../kit/runtime/archetypes/scoped-pull');
 const { INPUT_BLOCK, VALUE_ACTION } = require('../../kit/runtime/archetypes/scoped-pull/form');
 const {
-  checkQuery, placeholders, bindValues, boundNames, pushRowsOf, createRunner, runQuery, SCORED_LIMIT,
+  checkQuery, placeholders, bindValues, boundNames, createRunner, runQuery, SCORED_LIMIT,
 } = require('../../kit/runtime/archetypes/scoped-pull/run');
 const { toCsv, BOM } = require('../../kit/runtime/archetypes/scoped-pull/csv');
 const { deliverCsv, permalinkOf } = require('../../kit/runtime/archetypes/scoped-pull/deliver');
@@ -376,11 +376,18 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
   assert.ok(!/require\([^)]*llm[^)]*\)/.test(hubs));
   const uses = hubs.replace(/\/\/[^\n]*/g, '').split('\n').filter((l) => /\bllm\b/.test(l)).map((l) => l.trim());
   assert.deepEqual(uses, [
-    'registry, profile, env, log, store, data = null, llm = null, canUse = defaultCanUse(profile),',
-    'store, log, run: createRunner({ data, log, admin, store }), read: llm ? createReader({ llm, log }) : null,',
+    'registry, profile, env, log, store, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),',
+    'store, log, run: createRunner({ data, log, admin, store, hooks: pushHooks }), read: llm ? createReader({ llm, log }) : null,',
   ]);
   const app = fs.readFileSync(path.join(ROOT, 'kit/runtime/app/index.js'), 'utf8');
-  assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, data, llm \}\)/);
+  assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, data, llm, connectors \}\)/);
+  // The approval-write archetype (Story 10.2) shows rows too: none of its files reaches or names the AI.
+  const writeDir = path.join(ROOT, 'kit/runtime/archetypes/approval-write');
+  for (const f of fs.readdirSync(writeDir)) {
+    const src = fs.readFileSync(path.join(writeDir, f), 'utf8');
+    assert.ok(!/require\([^)]*llm[^)]*\)/.test(src), f);
+    assert.ok(!/\bllm\b/.test(src.replace(/\/\/[^\n]*/g, '')), `${f} names the AI service`);
+  }
   // The run record (Story 9.6) holds rows; its file never reaches or names the AI service.
   const provenance = fs.readFileSync(path.join(ROOT, 'kit/runtime/slack/provenance.js'), 'utf8');
   assert.ok(!/require\([^)]*llm[^)]*\)/.test(provenance));
@@ -546,47 +553,19 @@ test('a scored list whose rows can\'t be scored stops: the plain message names t
   }
 });
 
-test('the run record keeps only the rows after the cut, in rank order, with the score, for a module with a write; none without', async () => {
-  const store = createStore();
-  const data = fakeData(() => RANKED_ROWS);
-  const run = createRunner({ data, log: quietLog(), store });
-  const withWrite = { ...RANKED, write: { connector: 'email', operation: 'pushList', destination: 'A list', fields: ['person_id', 'name'] } };
-  const { client } = new FakeSlackApp({ views: true });
-  const res = await run(withWrite, { zone: 'north', limit: 3 }, 'U1', { client });
-  assert.equal(res.failed, false);
-  const runId = res.message.blocks[0].accessory.value;
-  const record = store.get('provenance', runId);
-  assert.deepEqual(record.rowIds, [1, 2, 10]);
-  assert.deepEqual(record.rows, [
-    { person_id: 1, name: 'Ann', score: 79 },
-    { person_id: 2, name: 'Bo', score: 64 },
-    { person_id: 10, name: 'Eve', score: 64 },
-  ]);
-  // The confirmed values, with the limit the scoring line explains.
-  assert.deepEqual(record.parameters, { zone: 'north', limit: 3 });
-  const plain = await run(RANKED, { zone: 'north', limit: 3 }, 'U1', { client });
-  const r2 = store.get('provenance', plain.message.blocks[0].accessory.value);
-  assert.equal(r2.rowIds, null);
-  assert.equal(r2.rows, null);
-  assert.deepEqual(pushRowsOf(withWrite, { rows: [{ person_id: 4, name: 'Di' }] }), { rowIds: [4], rows: [{ person_id: 4, name: 'Di' }] });
-});
-
-test('a run whose CSV did not reach the DM keeps no push rows in its record: nothing the person didn\'t fully receive can be pushed', async () => {
+// The run record's push rows (Story 10.1) are picked by the approval-write
+// archetype through the runner's reuse hook since Story 10.2: their tests are
+// in test/unit/runtime-approval-preview.test.js. Without the hook, a record
+// keeps none.
+test('without the reuse hook, a run record keeps no push rows and the result has no Push button', async () => {
   const store = createStore();
   const run = createRunner({ data: fakeData(() => RANKED_ROWS), log: quietLog(), store });
-  const withWrite = { ...RANKED, write: { connector: 'email', operation: 'pushList', destination: 'A list', fields: ['person_id', 'name'] } };
-  // No Slack client, and a Slack that refuses the upload: both are not delivered.
-  const failing = new FakeSlackApp({ views: true });
-  failing.filesFail = new Error('upload refused');
-  for (const opts of [{}, { client: failing.client }]) {
-    const res = await run(withWrite, { zone: 'north', limit: 3 }, 'U1', opts);
-    assert.equal(res.failed, true);
-    assert.match(JSON.stringify(res.message), /The CSV didn't arrive/);
-    const record = store.get('provenance', res.message.blocks[0].accessory.value);
-    assert.equal(record.rowIds, null);
-    assert.equal(record.rows, null);
-  }
-  assert.deepEqual(pushRowsOf(withWrite, { rows: [{ person_id: 4, name: 'Di' }] }, { delivered: false }), { rowIds: null, rows: null });
+  const { client } = new FakeSlackApp({ views: true });
+  const res = await run(RANKED, { zone: 'north', limit: 3 }, 'U1', { client });
+  const record = store.get('provenance', res.message.blocks[0].accessory.value);
+  assert.equal(record.rowIds, null);
+  assert.equal(record.rows, null);
+  assert.ok(!res.message.blocks.some((b) => b.type === 'actions'));
 });
 
 test('a scored list\'s limit: only null or undefined keeps every row; any other non-integer stops the run as a setup fault', async () => {
