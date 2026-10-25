@@ -85,6 +85,27 @@ test('consume gets and deletes in one call and leaves a running marker; finish r
   assert.deepEqual(store.done('approval', 'tok'), { state: 'done', result: { pushed: 3 } });
 });
 
+test('consume(ns, key, marker) ties the done marker to whoever consumed it; finish keeps the marker (Story 10.3, decision 5)', () => {
+  const { store } = clockStore();
+  store.set('approval', 'tok', { rows: 3 });
+  assert.deepEqual(store.consume('approval', 'tok', { person: 'U1', action: 'approve' }), { rows: 3 });
+  assert.deepEqual(store.done('approval', 'tok'), { person: 'U1', action: 'approve', state: 'running' });
+  assert.ok(Object.isFrozen(store.done('approval', 'tok')));
+  store.finish('approval', 'tok', { pushed: 3 });
+  assert.deepEqual(store.done('approval', 'tok'), { person: 'U1', action: 'approve', state: 'done', result: { pushed: 3 } });
+  // A marker is a plain object, and never sets state or result itself.
+  store.set('approval', 'b', 1);
+  for (const bad of [null, 'U1', ['U1'], { state: 'done' }, { result: 1 }, new Map()]) {
+    assert.throws(() => store.consume('approval', 'b', bad), /consume marker/);
+  }
+  assert.equal(store.get('approval', 'b'), 1, 'a refused marker consumes nothing');
+  // The caller's object is copied: changing it later changes nothing.
+  const marker = { person: 'U2' };
+  store.consume('approval', 'b', marker);
+  marker.person = 'U3';
+  assert.equal(store.done('approval', 'b').person, 'U2');
+});
+
 test('consuming a missing or expired entry marks nothing', () => {
   const { clock, store } = clockStore();
   assert.equal(store.consume('approval', 'none'), undefined);

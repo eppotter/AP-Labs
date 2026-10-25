@@ -67,7 +67,12 @@
 //     request is bound to that input, even after a failure.
 //   - Every write needs an idempotencyKey. A repeated key (per operation)
 //     with the same input returns the first result and calls nothing; two
-//     concurrent calls with one key share one apply. The input is fingerprinted
+//     concurrent calls with one key share one apply. A caller that must tell
+//     a replay from a fresh write (the approval-write archetype says "already
+//     sent today; nothing new sent", Story 10.3) passes a second argument
+//     { report: true } and gets { result, replayed }: replayed is true when
+//     the key's result came from the store or from another call's apply, so
+//     this call sent nothing. The options are never part of the input. The input is fingerprinted
 //     under its key, so a reused key with a different input is refused with
 //     IdempotencyConflict and calls nothing. Keys are kept in
 //     deps.idempotency ({ get, set }, holding { input, result }) or, by
@@ -558,7 +563,9 @@ function defineConnector(spec) {
 
     const write = {};
     for (const [name, op] of Object.entries(spec.write || {})) {
-      write[name] = async (input = {}) => {
+      write[name] = async (input = {}, { report = false } = {}) => {
+        // { result, replayed } when the caller asked (report), else the result.
+        const out = (result, replayed) => (report === true ? Object.freeze({ result, replayed }) : result);
         refuseIfSwitchedOff();
         const { dryRun, ...rest } = input;
         const key = rest.idempotencyKey;
@@ -566,7 +573,7 @@ function defineConnector(spec) {
           if (typeof key !== 'string' || !key || key.length > MAX_KEY) {
             throw new Error(`idempotencyKey must be a non-empty string of at most ${MAX_KEY} characters`);
           }
-          if (dryRun !== false) return { dryRun: true, operation: name, wouldWrite: await op.plan(rest) };
+          if (dryRun !== false) return out({ dryRun: true, operation: name, wouldWrite: await op.plan(rest) }, false);
           // "<connector id>\u0000<operation>\u0000<key>": the connector is part
           // of the slot, so one store can serve several connectors (DEP-012).
           const slot = `${declaration.id}\u0000${name}\u0000${key}`;
@@ -578,13 +585,13 @@ function defineConnector(spec) {
           if (inFlight.has(slot)) {
             const other = inFlight.get(slot);
             if (other.input !== input) throw conflict();
-            return await other.run;
+            return out((await other.run).result, true);
           }
           const run = (async () => {
             const done = await ledger.get(slot);
             if (done !== undefined) {
               if (!done || done.input !== input) throw conflict();
-              return done.result;
+              return { result: done.result, replayed: true };
             }
             // Stopped partway on an earlier try: resume after what was sent,
             // only when the requests can be the same ones (same input, same
@@ -636,7 +643,7 @@ function defineConnector(spec) {
               if (progress.unsaved) throw progress.unsaved;
               const settled = result === undefined ? null : result;
               await ledger.set(slot, { input, result: settled });
-              return settled;
+              return { result: settled, replayed: false };
             } catch (thrown) {
               const err = progress.unsaved || thrown;
               const counts = progress.completed.some(Boolean) ? sentSoFar(progress.completed) : null;
@@ -662,7 +669,10 @@ function defineConnector(spec) {
             }
           })();
           inFlight.set(slot, { input, run });
-          try { return await run; } finally { inFlight.delete(slot); }
+          try {
+            const settled = await run;
+            return out(settled.result, settled.replayed);
+          } finally { inFlight.delete(slot); }
         } catch (err) {
           if (err instanceof Stopped) return rethrow(err.err, name, 'write', err.sent, err.recorded);
           return rethrow(err, name, 'write');

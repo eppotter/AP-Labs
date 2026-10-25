@@ -57,3 +57,18 @@ test('nothing outside kit/runtime/slack/channel.js posts to a channel that is no
     assert.match(hit.src, guard, `${file}: ${why}`);
   }
 });
+
+// Story 10.3: the one exception lives in kit/runtime/slack/channel.js. It has
+// exactly one send, and that send is reached only after the exception is
+// looked up in its declared list and the channel matched as a channel id.
+test('kit/runtime/slack/channel.js has exactly one send, guarded by its declared exceptions and the channel-id check', () => {
+  const src = fs.readFileSync(path.join(ROOT, CHANNEL), 'utf8');
+  const sends = src.split('\n').filter((line) => !/^\s*(\/\/|\*)/.test(line) && SENDS.test(line));
+  assert.deepEqual(sends.map((l) => l.trim()), ['return client.chat.postMessage({ channel, text, unfurl_links: false, unfurl_media: false });']);
+  const at = src.indexOf('client.chat.postMessage(');
+  const guards = src.slice(src.indexOf('async function postToChannel('), at);
+  assert.match(guards, /if \(!Object\.hasOwn\(EXCEPTIONS, exception\)\) throw/);
+  assert.match(guards, /if \(typeof channel !== 'string' \|\| !CHANNEL_ID\.test\(channel\)\) throw/);
+  assert.match(guards, /const text = EXCEPTIONS\[exception\]\(fields\);/, 'the text is built by the exception, never passed in');
+  assert.match(src, /const CHANNEL_ID = \/\^\[CG\]\[A-Z0-9\]\{8,\}\$\/;/, 'the profile schema\'s pattern: never a DM (D…) or a person (U…)');
+});

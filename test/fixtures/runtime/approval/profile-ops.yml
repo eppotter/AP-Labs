@@ -1,0 +1,13 @@
+# Approval-write test profile with an ops channel (Story 10.3): as profile.yml,
+# plus slack.ops_channel, where a failed push is escalated (module, reason and
+# counts only). The channel id is made up.
+schema_version: 1
+client: { id: approval-fixture, name: Approval Fixture Co }
+resources:
+  - { key: PUSH_LEADS, label: Push leads, admin_grantable: false }
+  - { key: OPEN_THING, label: Open thing, open_access: true }
+users:
+  - { id: owner, name: Olive Owner, role: admin, identities: { slack: U0OWNER01 }, grants: [PUSH_LEADS] }
+  - { id: other, name: Otto Other, role: member, identities: { slack: U0OTHER01 }, grants: [PUSH_LEADS] }
+  - { id: boss, name: Bea Boss, role: admin, identities: { slack: U0BOSS001 } }
+slack: { ops_channel: C0OPS12345 }

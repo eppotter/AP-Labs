@@ -14,7 +14,7 @@ const {
   SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
 } = require('./errors');
 const {
-  ProvenanceGone, ProvenanceNotYours, ScoringFault, PreviewInvalid, PushRefused,
+  ProvenanceGone, ProvenanceNotYours, ScoringFault, PreviewInvalid, PushRefused, AlreadyPushed,
 } = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
@@ -117,7 +117,46 @@ const MESSAGES = [
   // preview, whoever clicked: nothing about another person's push leaks.
   [PreviewInvalid, () => 'This preview is no longer valid, so nothing was sent. Run the list again from the menu and press Push for a new preview.'],
   [PushRefused, ({ reason }) => PUSH_WORDS[reason]],
+  // A second Approve by the person who approved (Story 10.3): never twice.
+  [AlreadyPushed, ({ running, result }, { admin }) => (running
+    ? "You already approved this push and it's still running, so I won't send it twice."
+    : `You already approved this push, so it ran once and I won't send it again. ${pushResultText(result, { admin })}`)],
 ];
+
+const num = (n) => Number(n).toLocaleString('en-US');
+
+// A push's outcome in words (Story 10.3): honest counts, nothing partial
+// called complete. result: { outcome, destination, listName, counts, retry }
+// with counts { total, sent, already, skipped, failed } (whole numbers) and
+// outcome one of
+//   sent       the push went: sent new, already there, skipped, failed 0
+//   replayed   the key was already used (the same list sent earlier today):
+//              nothing new sent, never "Pushed n"
+//   partial    some failed (retry: a "Retry the failed ones" is offered)
+//   stopped    it stopped partway or failed (an outage, a rejected sign-in,
+//              a key reused with other rows, a kill switch flipped partway)
+//   refused    a kill switch refused before anything was sent
+function pushResultText(result, { admin = 'your admin' } = {}) {
+  const r = result || {};
+  const c = r.counts || {};
+  const dest = escapeText(r.destination || 'the tool');
+  const list = r.listName ? ` List: ${escapeText(r.listName)}.` : '';
+  const skipped = num(c.skipped || 0);
+  switch (r.outcome) {
+    case 'sent':
+      return `*Pushed ${num(c.sent || 0)} to ${dest}*${c.already ? ` (${num(c.already)} ${c.already === 1 ? 'was' : 'were'} already there)` : ''}, skipped ${skipped}, failed 0.${list}`;
+    case 'replayed':
+      return `*Already sent today; nothing new sent.* ${dest} already has this list with these rows, so I didn't send it again (skipped ${skipped}).${list}`;
+    case 'partial':
+      return `Sent ${num(c.sent || 0)} of ${num((c.sent || 0) + (c.failed || 0))} to ${dest}; ${num(c.failed || 0)} failed, skipped ${skipped}. `
+        + (r.retry ? 'Nothing was sent twice, so trying again is safe: it sends only the ones that failed.' : `Please tell ${admin} before trying again.`)
+        + list;
+    case 'refused':
+      return `Nothing was sent to ${dest}: sending was switched off.${list}`;
+    default:
+      return `It didn't finish: ${num(c.sent || 0)} sent, ${num(c.failed || 0)} not sent, skipped ${skipped}. Please tell ${admin} before anyone tries again.${list}`;
+  }
+}
 
 // Why a Push click made no preview (Story 10.2). Nothing was sent.
 const PUSH_WORDS = Object.freeze({
@@ -161,4 +200,6 @@ function messageFor(err, { admin = 'your admin' } = {}) {
   return null;
 }
 
-module.exports = { messageFor, escapeText, welcomeText, feedbackText, joinWelcomeText, READ_WORDS };
+module.exports = {
+  messageFor, escapeText, welcomeText, feedbackText, joinWelcomeText, pushResultText, READ_WORDS,
+};

@@ -193,6 +193,16 @@ class PushRefused extends RuntimeRefusal {
   }
 }
 
+// A second Approve (a double click, a replay or a concurrent click) on a push
+// this same person already approved (Story 10.3, plan epic-10 decision 5).
+// Anyone else gets PreviewInvalid. Nothing is sent again. details:
+// { running: true } while the first push is in flight, else { running: false,
+// result } with result the push's outcome ({ outcome, counts, destination,
+// listName }, see kit/runtime/messages pushResultText).
+class AlreadyPushed extends RuntimeRefusal {
+  constructor(details) { super(`push already ${details.running ? 'running' : 'done'}`, details); }
+}
+
 // The AI service refused or failed (Story 9.1), so the module falls back to its
 // typed form. Raised before anything is sent, except 'failed'. reason is one
 // of LLM_REASONS; details.log, when set, is for the log only and never shown.
@@ -211,5 +221,5 @@ module.exports = {
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, LLM_REASONS,
   KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
   SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
-  ProvenanceGone, ProvenanceNotYours, ScoringFault, SCORING_PROBLEMS, PreviewInvalid, PushRefused, PUSH_REFUSALS,
+  ProvenanceGone, ProvenanceNotYours, ScoringFault, SCORING_PROBLEMS, PreviewInvalid, PushRefused, PUSH_REFUSALS, AlreadyPushed,
 };

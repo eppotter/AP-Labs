@@ -74,10 +74,10 @@
 // it. The click is a form button like Confirm; a follow-up question's submit
 // (ANSWER_CALLBACK) is answered in the ack like "Check values".
 //
-// Approval write (Story 10.2): an approval-write module runs the same form,
+// Approval write (Stories 10.2, 10.3): an approval-write module runs the same form,
 // query and results as a scoped pull (its runner gets the archetype's reuse
-// hook, so its result carries "Push to <destination>"). Push, Approve and
-// Cancel are buttons in the module's view; one listener updates that view in
+// hook, so its result carries "Push to <destination>"). Push, Approve,
+// Cancel and Retry the failed ones are buttons in the module's view; one listener updates that view in
 // place, never a new one. Every click re-checks the person's grant and the
 // environment the same way dispatch does (resolveModule), before the
 // archetype (kit/runtime/archetypes/approval-write) looks at anything else.
@@ -186,7 +186,12 @@ function registerHubs(app, {
   const scopedPull = createScopedPull({
     store, log, run: createRunner({ data, log, admin, store, hooks: pushHooks }), read: llm ? createReader({ llm, log }) : null,
   });
-  const approvalWrite = createApprovalWrite({ store, log, connectors, admin });
+  // A failed push is escalated to the profile's slack.ops_channel (Story
+  // 10.3); with none set, it is logged only.
+  const opsChannel = (profile.slack && profile.slack.ops_channel) || null;
+  const approvalWrite = createApprovalWrite({
+    store, log, connectors, admin, opsChannel,
+  });
 
   // Why this person may not open mod (a message), or null when they may.
   // The refusal is logged with the click's action id.
@@ -449,9 +454,10 @@ function registerHubs(app, {
     }
   }, { log, store }));
 
-  // Push, Approve and Cancel (Story 10.2) on an approval-write result. Each
-  // updates the view the button is in, re-checking the person's grant and
-  // the environment first (resolveModule), as dispatch does. A result is
+  // Push, Approve and Cancel (Story 10.2), and Retry the failed ones (Story
+  // 10.3), on an approval-write result. Each updates the view the button is
+  // in, re-checking the person's grant and the environment first
+  // (resolveModule), as dispatch does (N12). A result is
   // only ever shown in a view, so a click from anywhere else is told to use
   // the hub window.
   app.action(WRITE_ACTION, handle('hub:approval', async ({ action, body, client, respond }) => {
@@ -472,7 +478,7 @@ function registerHubs(app, {
     const person = personOf((body.user || {}).id);
     try {
       await approvalWrite.click({
-        verb, value: action.value, person: person.id, resolve: resolveModule(person, action.action_id, WRITES), show,
+        verb, value: action.value, person: person.id, resolve: resolveModule(person, action.action_id, WRITES), show, client,
       });
     } catch (err) {
       log.error('handler failed', { handler: 'hub:approval', err });

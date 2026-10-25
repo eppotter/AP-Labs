@@ -2,9 +2,9 @@
 
 // The push preview (Story 10.2, AD-15): what a Push click shows in the
 // module's view before anything is sent, and the one approval-write file that
-// reads a run record (kit/runtime/slack/provenance). The push itself (10.3)
-// never does: it reads only the approval entry's own copy of the rows
-// (./entry).
+// reads a run record (kit/runtime/slack/provenance). The push itself (10.3,
+// ./push) never does: it reads only the approval entry's own copy of the rows
+// (./entry). This file also builds the push's reply (pushResultMessage).
 //
 // The preview names the destination list (its name carries the pull's UTC
 // run date), the rows to send, the rows skipped and why (the write's dry-run
@@ -22,8 +22,9 @@ const ACTIONS = Object.freeze({
   push: 'approval-write:push',
   approve: 'approval-write:approve',
   cancel: 'approval-write:cancel',
+  retry: 'approval-write:retry',
 });
-const ACTION_PATTERN = /^approval-write:(push|approve|cancel)$/;
+const ACTION_PATTERN = /^approval-write:(push|approve|cancel|retry)$/;
 const SAMPLE_ROWS = 5;
 // A skip reason comes from the connector's plan: shown cut to this length.
 const REASON_MAX = 60;
@@ -134,13 +135,17 @@ function cancelledMessage(mod) {
   };
 }
 
-// Approve on a valid preview. The push itself arrives with Story 10.3; until
-// then nothing is sent and the preview stays valid.
-function notYetMessage(mod) {
-  return {
-    text: `${mod.label}: sending isn't switched on yet.`,
-    blocks: [section(`*Sending to ${escapeText(mod.write.destination)} isn't switched on yet,* so nothing was sent. Your preview stays valid for 30 minutes.`)],
-  };
+// A push's reply (Story 10.3): the outcome text (kit/runtime/messages), the
+// skip reasons when rows were skipped, and "Retry the failed ones" carrying
+// the re-stored entry's token when a retry is safe.
+function pushResultMessage({ mod, text, skipped = [], retryToken = null }) {
+  const blocks = [section(text)];
+  if (skipped.length) blocks.push(context(`Skipped rows were never sent: ${skipWords(skipped.map((reason) => ({ reason })))}.`));
+  if (retryToken) {
+    blocks.push(context('The retry sends the same list under the same key, so only the ones that failed go. It expires in 30 minutes.'));
+    blocks.push({ type: 'actions', block_id: 'approval-write:retry', elements: [button(ACTIONS.retry, 'Retry the failed ones', retryToken, 'primary')] });
+  }
+  return { text: `${mod.label}: ${text.replace(/\*/g, '')}`.slice(0, 300), blocks };
 }
 
 // The result's Push button, beside the "How was this made?" button: it
@@ -150,6 +155,6 @@ function pushButtonBlock(mod, runId) {
 }
 
 module.exports = {
-  readRun, runDate, placeholders, listNameOf, previewMessage, nothingToSendMessage, cancelledMessage, notYetMessage,
+  readRun, runDate, placeholders, listNameOf, previewMessage, nothingToSendMessage, cancelledMessage, pushResultMessage,
   pushButtonBlock, verbOf, skipWords, ACTIONS, ACTION_PATTERN, SAMPLE_ROWS, RUN_DATE,
 };

@@ -152,6 +152,15 @@
       }
     },
 
+    "slack": {
+      "description": "Slack settings (kit/runtime). ops_channel: the channel id a failed push is escalated to (module, reason and counts only, never client data; AD-14). Optional, no default: unset, an escalation is only logged. Invite the bot to the channel; chat:write covers it. A channel id, never a secret.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ops_channel": { "type": "string", "pattern": "^[CG][A-Z0-9]{8,}$" }
+      }
+    },
+
     "llm": {
       "description": "The AI helper (kit/runtime/llm). All optional. model and extraction_model must be priced in kit/runtime/llm/prices.js (boot refuses one that is not); default claude-sonnet-5-5. hourly_usd_limit caps this process's estimated AI spend in any hour, in US dollars (default 2). max_tokens caps each reply (default 1024). The key is never set here.",
       "type": "object",

@@ -21,9 +21,15 @@
 //             run date), runs the write's dry-run plan so rows the tool would
 //             refuse show as skipped, stores the approval entry under a fresh
 //             token (./entry) and shows the preview in the module's view.
-//   Approve   re-checks access, then the token: expired, unknown, used and
-//             another person's all get PreviewInvalid, and nothing is pushed
-//             or consumed. The push itself is Story 10.3.
+//   Approve   the push (Story 10.3, ./push): the token (expired, unknown,
+//             cancelled and another person's all get PreviewInvalid; a used
+//             one tells only its approver "already running" or "already
+//             done"), access re-checked, the kill switches, then consume and
+//             send the entry's own rows once, with honest counts; a failure
+//             is escalated quietly (./escalate).
+//   Retry     "Retry the failed ones", offered only when a PartialFailure
+//             says details.retrySafe === true: the same flow on the same entry
+//             re-stored under a new token (same rows, same key).
 //   Cancel    re-checks access and the token, then consumes it and confirms.
 //
 // Startup (checkModule, called by the registry): the resource must be
@@ -35,10 +41,12 @@
 
 const { messageFor } = require('../../messages');
 const { PreviewInvalid, PushRefused, ConfigFault } = require('../../errors');
-const { codeText } = require('../scoped-pull/run');
+const { codeText, ROW_CAP } = require('../scoped-pull/run');
 const entry = require('./entry');
 const preview = require('./preview');
 const { checkWrite, createConnectors } = require('./connectors');
+const { createPush, sendItems } = require('./push');
+const { createEscalator } = require('./escalate');
 
 const ARCHETYPE = 'approval-write';
 
@@ -113,13 +121,6 @@ function decorate(mod, message, record) {
 // The scoped-pull runner's reuse hook (kit/runtime/archetypes/scoped-pull/run).
 const pushHooks = Object.freeze({ pushRows: pushRowsOf, decorate });
 
-// What the connector is sent for each row: write.send's field names, each
-// from its declared field.
-function sendItems(mod, rows) {
-  const pairs = Object.entries(mod.write.send);
-  return rows.map((r) => Object.fromEntries(pairs.map(([target, source]) => [target, r[source] === undefined ? null : r[source]])));
-}
-
 // The rows the dry-run plan says the tool would refuse: [{ ref, reason }].
 function skippedOf(planned, total) {
   const list = planned && planned.wouldWrite && Array.isArray(planned.wouldWrite.skipped) ? planned.wouldWrite.skipped : [];
@@ -127,8 +128,15 @@ function skippedOf(planned, total) {
 }
 
 // store: the runtime store. connectors: createConnectors()'s registry.
-// admin: who the person is told to contact.
-function createApprovalWrite({ store, log, connectors = null, admin = 'your admin' }) {
+// admin: who the person is told to contact. opsChannel: the profile's
+// slack.ops_channel (a failed push is escalated there), or null (logged only).
+function createApprovalWrite({
+  store, log, connectors = null, admin = 'your admin', opsChannel = null,
+}) {
+  const { escalate } = createEscalator({ store, log, opsChannel });
+  const pusher = createPush({
+    store, log, connectors, admin, escalate,
+  });
   // Push: show the preview in the view. resolve(moduleId) re-checks access
   // and the environment, as dispatch does: { mod } or { refusal }.
   async function push({ runId, person, resolve, show }) {
@@ -146,6 +154,11 @@ function createApprovalWrite({ store, log, connectors = null, admin = 'your admi
       return show(messageFor(new PushRefused('not_delivered')));
     }
     if (!record.rows.length) return show(messageFor(new PushRefused('empty')));
+    if (record.rows.length > ROW_CAP) {
+      // Never reached: the run record keeps only the rows the person saw.
+      log.error('push refused: the run is over the row cap', { module: mod.id, rows: record.rows.length, cap: ROW_CAP });
+      return show(messageFor(new ConfigFault({ admin })));
+    }
     const connector = connectors && connectors.get(mod.write.connector);
     if (!connector) {
       log.error('push connector not loaded', { module: mod.id, connector: mod.write.connector });
@@ -172,7 +185,7 @@ function createApprovalWrite({ store, log, connectors = null, admin = 'your admi
       return show(preview.nothingToSendMessage({ mod, listName, rows, skipped }));
     }
     const token = entry.create(store, {
-      person, module: mod.id, runId: record.runId, destination: mod.write.destination, listName, rows, idempotencyKey,
+      person, module: mod.id, runId: record.runId, destination: mod.write.destination, listName, rows, skipped, idempotencyKey,
     });
     log.info('push previewed', { module: mod.id, rows: rows.length, skipped: skipped.length, token: true });
     return show(preview.previewMessage({ mod, listName, rows, skipped, token }));
@@ -191,12 +204,14 @@ function createApprovalWrite({ store, log, connectors = null, admin = 'your admi
     return { found, mod: allowed.mod };
   }
 
-  // Approve. Nothing is pushed or consumed here: the push is Story 10.3.
-  function approve({ token, person, resolve, show }) {
-    const c = check(token, person, resolve, 'approve');
-    if (!c.mod) return show(c.message);
-    log.info('push approved; sending is not switched on yet', { module: c.mod.id });
-    return show(preview.notYetMessage(c.mod));
+  // Approve and Retry: the push (./push). client: the Slack client the
+  // escalation posts with.
+  function approve({
+    token, person, resolve, show, client, action = 'approve',
+  }) {
+    return pusher.approve({
+      token, person, resolve, show, client, action,
+    });
   }
 
   // Cancel: consumes the token, synchronously after the check.
@@ -208,10 +223,16 @@ function createApprovalWrite({ store, log, connectors = null, admin = 'your admi
     return show(preview.cancelledMessage(c.mod));
   }
 
-  // A button: verb is push | approve | cancel; value is what it carries.
-  async function click({ verb, value, person, resolve, show }) {
+  // A button: verb is push | approve | retry | cancel; value is what it carries.
+  async function click({
+    verb, value, person, resolve, show, client = null,
+  }) {
     if (verb === 'push') return push({ runId: value, person, resolve, show });
-    if (verb === 'approve') return approve({ token: value, person, resolve, show });
+    if (verb === 'approve' || verb === 'retry') {
+      return approve({
+        token: value, person, resolve, show, client, action: verb,
+      });
+    }
     if (verb === 'cancel') return cancel({ token: value, person, resolve, show });
     return show(messageFor(new PreviewInvalid()));
   }
