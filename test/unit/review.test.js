@@ -16,6 +16,8 @@ const {
   isValidState,
   isClean,
   readVerdict,
+  VERDICT_REMINDER,
+  withVerdictReminder,
   verdictLine,
   repeatedBlockingFiles,
   withRoundsLine,
@@ -571,4 +573,60 @@ test('thinking blocks are ignored and findings must come before the VERDICT line
 
 test('the rubric asks for one sentence per finding and no reasoning in the finding line (#81)', () => {
   assert.match(RUBRIC_BODY, /one sentence per finding; no reasoning in the finding line/i);
+});
+
+// Malformed Codex verdicts (samples in the shape of real replies, test/fixtures/review/).
+const sample = (name) => require('node:fs').readFileSync(require('node:path').join(__dirname, '../fixtures/review', name), 'utf8');
+
+test('BLOCKING with only [P2] lines reads as CLEAN with those P2s and a one-line note', () => {
+  const r = readVerdict(sample('codex-blocking-p2-only.md'));
+  assert.deepEqual(r.findings, [{ priority: 'P2', title: 'Retry message names the wrong reviewer', file: 'kit/review/cli.js' }]);
+  assert.equal(r.error, undefined);
+  assert.equal(r.retry, undefined);
+  assert.match(r.note, /^Verdict said BLOCKING but listed only \[P2\] findings; read as CLEAN with 1 non-blocking finding\(s\)\.$/);
+});
+
+test('BLOCKING with only [P2] lines and a prose blocker bullet is a retryable failure, never a pass', () => {
+  const r = readVerdict('- [P2] Nit — kit/a.js:2\n- Blocking: kit/b.js drops rows on retry\nVERDICT: BLOCKING\n');
+  assert.match(r.error, /Verdict says BLOCKING but 1 line\(s\) read like an unformatted blocking finding/);
+  assert.equal(r.retry, true);
+  assert.equal(r.findings, undefined);
+});
+
+test('a reply with no VERDICT line and no readable finding is a retryable failure', () => {
+  const r = readVerdict(sample('codex-no-verdict.md'));
+  assert.match(r.error, /Could not read findings or a clean verdict/);
+  assert.equal(r.retry, true);
+  assert.equal(readVerdict('Some thoughts.\n').retry, true);
+});
+
+test('BLOCKING with no finding lines at all is a retryable failure', () => {
+  const r = readVerdict(sample('codex-blocking-prose.md'));
+  assert.match(r.error, /Verdict says BLOCKING but no \[P1\] line could be read/);
+  assert.equal(r.retry, true);
+});
+
+test('CLEAN with a listed [P1] keeps the P1 and is never retried (a retry could lose it)', () => {
+  const r = readVerdict(sample('codex-clean-with-p1.md'));
+  assert.deepEqual(r.findings.map((f) => f.priority), ['P1']);
+  assert.equal(r.retry, undefined);
+  assert.match(r.note, /^Verdict said CLEAN but listed 1 \[P1\] finding\(s\); read as BLOCKING: the P1s count\.$/);
+  const prose = readVerdict('- [P1] Data loss — kit/a.js:1\n- Blocking: kit/b.js drops rows\nVERDICT: CLEAN\n');
+  assert.match(prose.error, /Verdict says CLEAN but 1 line/);
+  assert.equal(prose.retry, undefined, 'a reply with a readable P1 is never retried');
+});
+
+test('malformed and reasoning-aloud finding lines are never retried: they go straight to the fallback', () => {
+  assert.equal(readVerdict('- [P1] no path here\n').retry, undefined);
+  assert.equal(readVerdict(`${PR80_LINE}\n`).retry, undefined);
+  assert.equal(readVerdict('- [P2] Nit — kit/a.js:2\nVERDICT: CLEAN\n- [P1] Data loss — kit/b.js:1\n').retry, undefined);
+  assert.equal(readVerdict('').retry, undefined);
+});
+
+test('the retry prompt is the round prompt plus the VERDICT reminder', () => {
+  const state = { branch: 'b', rounds: [] };
+  const reminded = withVerdictReminder(promptFor(state));
+  assert.ok(reminded.startsWith(promptFor(state)));
+  assert.ok(reminded.endsWith(`\n\n${VERDICT_REMINDER}`));
+  assert.match(VERDICT_REMINDER, /^End with exactly one VERDICT line/);
 });

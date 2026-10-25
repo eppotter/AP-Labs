@@ -664,6 +664,87 @@ test('a reviewer that fails or gives no usable verdict hands the round to the ot
   }
 });
 
+const sample = (name) => path.join(fixtures, name);
+const RETRY_LINE = /^codex: Could not read findings or a clean verdict \(log: .*round-1\.attempt-1\.log\); retrying codex once with a VERDICT reminder\.$/m;
+
+test('Codex BLOCKING with only a [P2] counts as CLEAN with that P2: no retry, no fallback, one-line note', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const r = t.review([], { FAKE_CODEX_VERDICT: sample('codex-blocking-p2-only.md'), FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /^Note: Verdict said BLOCKING but listed only \[P2\] findings; read as CLEAN with 1 non-blocking finding\(s\)\.$/m);
+  assert.doesNotMatch(r.err, /retrying|fallback/);
+  assert.match(r.out, /reviewer: codex\): 0 blocking, 1 non-blocking\./);
+  assert.match(r.out, /No blocking findings: the review is done/);
+  assert.ok(!t.claudeRan());
+  assert.ok(!fs.existsSync(path.join(t.codex, 'retry-args.txt')));
+  assert.deepEqual([t.state().rounds[0].reviewer, t.state().rounds[0].fallback, t.state().rounds[0].retried], ['codex', false, undefined]);
+});
+
+test('Codex with no VERDICT line gets one retry with the reminder; a good retry counts as a Codex round', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const good = '- [P2] Published time is shown as raw UTC — examples/a.js:45\nVERDICT: CLEAN\n';
+  const r = t.review([], {
+    FAKE_CODEX_VERDICT: sample('codex-no-verdict.md'),
+    FAKE_CODEX_RETRY_VERDICT: t.verdict(good),
+    FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT),
+  });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, RETRY_LINE);
+  assert.doesNotMatch(r.err, /fallback/);
+  assert.ok(!t.claudeRan(), 'Claude is not asked');
+  const retryPrompt = fs.readFileSync(path.join(t.codex, 'retry-args.txt'), 'utf8');
+  assert.match(retryPrompt, /End with exactly one VERDICT line/);
+  assert.ok(retryPrompt.includes("Review this branch's changes against origin/main"), 'the reminder is appended to the round prompt');
+  assert.match(r.out, /reviewer: codex\): 0 blocking, 1 non-blocking\./);
+  assert.deepEqual([t.state().rounds[0].reviewer, t.state().rounds[0].fallback, t.state().rounds[0].retried], ['codex', false, true]);
+  assert.doesNotMatch(t.body(), /same-model fallback/);
+  const file = (suffix) => path.join(t.stateDir, `feat%2Freview-me.round-1${suffix}`);
+  assert.equal(fs.readFileSync(file('.attempt-1.md'), 'utf8'), fs.readFileSync(sample('codex-no-verdict.md'), 'utf8'), 'the first reply is kept');
+  assert.equal(fs.readFileSync(file('.md'), 'utf8'), good);
+});
+
+test('Codex BLOCKING with no finding lines is retried once, and a second bad reply falls back to Claude', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const r = t.review([], { FAKE_CODEX_VERDICT: sample('codex-blocking-prose.md'), FAKE_CLAUDE_VERDICT: t.verdict(P2_ONLY) });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /^codex: Verdict says BLOCKING but no \[P1\] line could be read \(log: .*attempt-1\.log\); retrying codex once/m);
+  assert.match(r.err, /^codex: Verdict says BLOCKING but no \[P1\] line could be read \(log: .*attempt-2\.log\); trying claude as a same-model fallback\.$/m);
+  assert.ok(fs.existsSync(path.join(t.codex, 'retry-args.txt')), 'Codex was retried');
+  assert.match(r.out, /reviewer: claude, same-model fallback/);
+  assert.deepEqual([t.state().rounds[0].reviewer, t.state().rounds[0].fallback, t.state().rounds[0].retried], ['claude', true, true]);
+  for (const n of [1, 2]) assert.ok(fs.existsSync(path.join(t.stateDir, `feat%2Freview-me.round-1.attempt-${n}.md`)), `attempt ${n} kept`);
+});
+
+test('Codex CLEAN with a listed [P1] keeps the P1: no retry, no fallback, one-line note', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const r = t.review([], { FAKE_CODEX_VERDICT: sample('codex-clean-with-p1.md'), FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /^Note: Verdict said CLEAN but listed 1 \[P1\] finding\(s\); read as BLOCKING: the P1s count\.$/m);
+  assert.doesNotMatch(r.err, /retrying|fallback/);
+  assert.ok(!t.claudeRan());
+  assert.match(r.out, /reviewer: codex\): 1 blocking, 0 non-blocking\./);
+  assert.deepEqual(t.state().rounds[0].findings.map((f) => [f.priority, f.id]), [['P1', 'R1-1']]);
+});
+
+test('an unparseable finding line is not retried: it goes straight to the fallback', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict('- [P1] no path here\nVERDICT: BLOCKING\n'), FAKE_CLAUDE_VERDICT: t.verdict(P2_ONLY) });
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.err, /retrying/);
+  assert.ok(!fs.existsSync(path.join(t.codex, 'retry-args.txt')));
+  assert.match(r.out, /reviewer: claude, same-model fallback/);
+});
+
 test('both reviewers failing exits 1 without counting the round', () => {
   const t = setup();
   t.openPr();
