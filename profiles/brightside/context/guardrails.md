@@ -1,7 +1,7 @@
 ---
 owner: Dana Reyes          # the named client person who owns this file
-signed_off: pending  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
-signed_off_by: ""  # who signed off: the owner, recorded by a facilitator
+signed_off: 2026-10-25  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
+signed_off_by: "Dana Reyes (Ely as Dana Reyes, 2026-10-25)"  # who signed off: the owner, recorded by a facilitator
 updated: 2026-10-25        # ISO date of the last edit
 ---
 
@@ -11,7 +11,8 @@ Written by the Onboarder for Architect. Most of this mirrors `.aplabs/profile.ym
 profile rather than copy it, and propose profile changes to the Orchestrator instead of editing it.
 
 In this template repo Brightside's profile is `profiles/brightside/profile.yml` (a fork keeps it at
-`.aplabs/profile.yml`). Every card below is **draft** until Dana Reyes signs it with a date.
+`.aplabs/profile.yml`). Every card below is **approved**: Dana Reyes signed it off on 2026-10-25
+(Ely as Dana Reyes).
 
 ## Guardrails
 
@@ -104,7 +105,7 @@ exception_workflow and data_quality_guard.
 - owner: Dana Reyes
 - evidence: Story 7.4 and 7.5; the guardrail and runner tests in `test/`. A build tests it by
   sending a write through the runner and expecting a refusal.
-- status: draft
+- status: approved
 
 ### GRD-002: Forbidden columns
 - type: access_rule
@@ -116,7 +117,7 @@ exception_workflow and data_quality_guard.
 - owner: Dana Reyes
 - evidence: profile `sql.forbidden_columns`; `kit/runtime/sql`; `fixture-tables.md` "Rules". The
   mock CRM's field list and the email connector's contact shape leave these columns out too.
-- status: draft
+- status: approved
 
 ### GRD-003: MotherDuck reader lockdown
 - type: access_rule
@@ -127,12 +128,13 @@ exception_workflow and data_quality_guard.
   sees "data unavailable"; there is no fallback to the local file.
 - exception (accepted by Ely, 2026-10-24): the reader account's own `my_db` can still be attached
   by name; MotherDuck can't block it. The barrier is GRD-001: the guardrail refuses `ATTACH`. The
-  reader's `my_db` must stay empty. Dana to confirm the exception for the client canon.
+  reader's `my_db` must stay empty. Exception confirmed for the client canon by Dana Reyes (Ely as
+  Dana Reyes, 2026-10-25).
 - owner: Dana Reyes
 - evidence: `docs/runtime/motherduck-publish.md` ("The bot reading MotherDuck", "Known
   exception"); `npm run fixture:probe` (Ely only) shows each lock as PASS and `my_db` as ACCEPTED.
   Brightside's profile in this repo stays `local`.
-- status: draft
+- status: approved
 
 ### GRD-004: Writes only through approval
 - type: exception_workflow
@@ -149,7 +151,7 @@ exception_workflow and data_quality_guard.
 - evidence: `kit/templates/connector.md` (the contract); Epic 10 stories in
   `docs/planning/planning-artifacts/epics.md`. Who may approve a push is an **empty field, owner
   Dana Reyes**.
-- status: draft
+- status: approved
 
 ### GRD-005: The AI service
 - type: access_rule
@@ -163,7 +165,7 @@ exception_workflow and data_quality_guard.
 - owner: Dana Reyes
 - evidence: `kit/runtime/llm/index.js` and `context.js` (Story 9.1); `docs/runtime/ai-setup.md`;
   the Epic 9 plan. A grep test keeps the AI off the SDK.
-- status: draft
+- status: approved
 
 ### GRD-006: Pay rates and Labour cost
 - type: access_rule
@@ -176,7 +178,7 @@ exception_workflow and data_quality_guard.
 - evidence: Ely's decision on the Epic 9 plan (`approve plan epic-9`, 2026-10-25,
   `docs/planning/planning-artifacts/plan-epic-9.md`, decision 1). `LABOUR_COST` is not in the
   profile yet; Story 9.7 adds it.
-- status: draft
+- status: approved
 
 ### GRD-007: Synthetic data, human publish
 - type: data_quality_guard
@@ -187,4 +189,4 @@ exception_workflow and data_quality_guard.
   `synthetic-phone.sql`); a stale or hand-edited build (publish refuses it).
 - owner: Dana Reyes
 - evidence: `fixture-tables.md` "Rules" and "Validation"; `docs/runtime/motherduck-publish.md`.
-- status: draft
+- status: approved

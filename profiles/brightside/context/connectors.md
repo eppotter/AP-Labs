@@ -1,7 +1,7 @@
 ---
 owner: Dana Reyes          # the named client person who owns this file
-signed_off: pending  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
-signed_off_by: ""  # who signed off: the owner, recorded by a facilitator
+signed_off: 2026-10-25  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
+signed_off_by: "Dana Reyes (Ely as Dana Reyes, 2026-10-25)"  # who signed off: the owner, recorded by a facilitator
 updated: 2026-10-25        # ISO date of the last edit
 ---
 
@@ -10,8 +10,8 @@ updated: 2026-10-25        # ISO date of the last edit
 Written by the Onboarder for Connector. Record how each system authenticates, never the
 credential itself.
 
-Brightside's CRM and email tool are mocks (no real vendor). Every entry is **draft** until Dana
-Reyes signs it with a date.
+Brightside's CRM and email tool are mocks (no real vendor). Every entry is **approved**: Dana
+Reyes signed it off on 2026-10-25 (Ely as Dana Reyes).
 
 ## Systems
 
@@ -39,7 +39,8 @@ Contract fields (what the system's connector declares; kit/templates/connector.m
 -->
 
 ### MotherDuck (the data source)
-- owner: Ely (AP Labs) for the demo; in a fork, the client's data owner. Dana to confirm.
+- owner: Ely (AP Labs) for the demo; in a fork, the client's data owner. Confirmed by
+  Dana Reyes (Ely as Dana Reyes, 2026-10-25).
 - purpose: the shared, read-only copy of the Brightside data (database `brightside_fixture`).
   Not a connector: the query runner (`kit/runtime/data`) reads it when the profile says
   `data.source: motherduck`. Brightside's profile in this repo stays `local` (the built fixture
@@ -117,18 +118,18 @@ Contract fields (what the system's connector declares; kit/templates/connector.m
   contract tests). No module talks to a system directly.
 - owner: Dana Reyes
 - evidence: `kit/templates/connector.md`; `connectorContract` tests in each connector folder.
-- status: draft
+- status: approved
 
 ### CON-002: Least-privilege fields
 - rule: a connector fetches or sends only the fields its job needs. The CRM returns five client
   fields; the email tool accepts three per contact. Forbidden columns never pass.
 - owner: Dana Reyes
 - evidence: `FIELDS` in the CRM connector; the contact check in the email connector; their tests.
-- status: draft
+- status: approved
 
 ### CON-003: Credentials by mechanism only
 - rule: a connector declares the env var names of its credentials, never the values. Keys live in
   env or the macOS Keychain and are masked in every log line. The mocks declare none.
 - owner: Dana Reyes
 - evidence: the contract's `auth.env`; `kit/lib/secrets`; the log redactor.
-- status: draft
+- status: approved
