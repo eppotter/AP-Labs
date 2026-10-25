@@ -41,6 +41,8 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 - **Commits end with an `Agent: <harness> <model>` trailer**, for example `Agent: claude-code claude-opus-5-5` or `Agent: codex gpt-6-luna`. Cross-model review uses it to pick the other model as reviewer.
 - **PR descriptions open with `**What this does:**`** followed by one or two plain-language sentences. Technical detail goes below.
 - **Tests read client specifics from fixtures,** never from `profiles/brightside/` or any client path.
+- **CI workflow changes need the `workflow` token scope.** If a push of `.github/workflows/**` is refused for that reason, stop that story and post `--kind blocked`. Never push another way to get around the scope.
+- **Never reword code just to quiet a check** (write-path, job-imports, tier). If a check flags safe code, move the code to where the check allows it, or fix the check in its own reviewed change.
 - **Profiles are untrusted input.** The schema rejects unknown keys. `.aplabs/**` always floors at T3.
 - **Secrets:** never read, print, log or commit tokens. Commands that need a credential (for example publishing the fixture) are run by Ely, not by an agent.
 - **Reference repos are read-only:** `~/Projects/bi-platform` (live Varsity) and `~/Projects/AI-Governance-Layer` (archived). Read them with `git -C <repo> show main:<path>`. Never check out branches, install or run anything in them.
