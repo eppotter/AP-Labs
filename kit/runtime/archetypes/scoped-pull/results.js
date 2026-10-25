@@ -22,6 +22,7 @@
 const { messageFor, escapeText } = require('../../messages');
 const { QueryBlocked, QueryFailed, CsvNotDelivered } = require('../../errors');
 const { valueBlocks } = require('./form');
+const { displayValue, labelOf } = require('./params');
 
 // Rows shown in the view; the CSV holds the rest.
 const PREVIEW_ROWS = 10;
@@ -84,11 +85,13 @@ function csvFilename(mod, when) {
   return `${mod.id}-${stamp}.csv`;
 }
 
-// The DM message that carries the file.
+// The DM message that carries the file. Each value is worded by its
+// declared type, the same as the view (params displayValue): a number 0
+// reads 0, and only a declared boolean reads Yes or No (#142).
 function csvComment(mod, values, outcome) {
   const vals = (mod.parameters || [])
     .filter((p) => values[p.name] !== undefined && values[p.name] !== null)
-    .map((p) => `${p.label || p.name}: ${p.type === 'boolean' ? (values[p.name] ? 'Yes' : 'No') : values[p.name]}`)
+    .map((p) => `${labelOf(p)}: ${displayValue(p, values[p.name])}`)
     .join(', ');
   let size = outcome.scored ? sizeWords(outcome) : rowsWord(outcome.total);
   if (outcome.capped) size = `${sizeWords(outcome)} (${outcome.scored ? `the ranking covers only the first ${count(outcome.total)}` : `the engine stops at ${count(outcome.rows.length)}`})`;

@@ -6,9 +6,13 @@
 //   const store = createStore({ now: () => Date.now() });
 //   store.set('event', eventId, true);          // TTL from the namespace table
 //   store.get('event', eventId);                // undefined once expired
-//   const entry = store.consume('approval', t); // get + delete + done marker
+//   const entry = store.consume('approval', t, { person }); // get + delete + done marker
 //   store.finish('approval', t, { pushed: 3 });
-//   store.done('approval', t);                  // { state: 'done', result }
+//   store.done('approval', t);                  // { person, state: 'done', result }
+//
+// consume's marker (Story 10.3, plan epic-10 decision 5) ties the done marker
+// to whoever consumed the entry (for example { person }), so "already
+// running" and "already done" can be told only to them; finish keeps it.
 //
 // Every call is synchronous: nothing can run between a check and a consume.
 // Tests inject the clock. Expired entries read as absent and are swept on
@@ -46,6 +50,18 @@ function checkNs(ns) {
 
 function checkKey(key) {
   if (typeof key !== 'string' || !key) throw new StoreError('store key must be a non-empty string');
+}
+
+// consume's marker: undefined, or a plain object without state or result.
+function markerFields(marker) {
+  if (marker === undefined) return {};
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker) || Object.getPrototypeOf(marker) !== Object.prototype) {
+    throw new StoreError('a consume marker must be a plain object');
+  }
+  if (Object.hasOwn(marker, 'state') || Object.hasOwn(marker, 'result')) {
+    throw new StoreError('a consume marker may not set state or result (the store sets them)');
+  }
+  return { ...marker };
 }
 
 function createStore({ now = () => Date.now() } = {}) {
@@ -104,23 +120,31 @@ function createStore({ now = () => Date.now() } = {}) {
   }
 
   // Gets and deletes the entry, and in the same call leaves a done marker
-  // { state: 'running' } for it. Returns undefined (and marks nothing) when
-  // the entry is absent or expired.
-  function consume(ns, key) {
+  // { ...marker, state: 'running' } for it. marker (optional) is a plain
+  // object of its own fields (never state or result), copied and frozen.
+  // Returns undefined (and marks nothing) when the entry is absent or expired.
+  function consume(ns, key, marker) {
     checkNs(ns);
     checkKey(key);
+    const fields = markerFields(marker);
     const entry = live(ns, key);
     if (!entry) return undefined;
     maps.get(ns).delete(key);
-    put('done', `${ns}:${key}`, { state: 'running' }, NAMESPACES.done);
+    put('done', `${ns}:${key}`, Object.freeze({ ...fields, state: 'running' }), NAMESPACES.done);
     return entry.value;
   }
 
-  // Records the outcome of a consumed entry.
+  // Records the outcome of a consumed entry, keeping its marker's fields
+  // (the person) while the running marker is still live.
   function finish(ns, key, result) {
     checkNs(ns);
     checkKey(key);
-    put('done', `${ns}:${key}`, { state: 'done', result }, NAMESPACES.done);
+    const prior = live('done', `${ns}:${key}`);
+    const kept = {};
+    if (prior) {
+      for (const [k, v] of Object.entries(prior.value)) if (k !== 'state' && k !== 'result') kept[k] = v;
+    }
+    put('done', `${ns}:${key}`, Object.freeze({ ...kept, state: 'done', result }), NAMESPACES.done);
   }
 
   // The done marker for a consumed entry, or undefined.

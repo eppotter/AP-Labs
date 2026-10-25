@@ -33,6 +33,14 @@
 // 0, the limit input declared), and a scored module's SQL must name its
 // inputs and row id, never its limit input, and end with ORDER BY ...,
 // <row id> LIMIT 5001 (checkQuery).
+//
+// Story 10.2: approval-write is accepted. Its module is a scoped pull (the
+// same form, SQL file and checks) plus a write block, which this file never
+// reads: the archetype checks it (kit/runtime/archetypes/approval-write
+// checkModule: an admin_grantable: false resource, row_id in write.fields,
+// write.fields the query returns, write.send and write.list_name, and,
+// through approval-write/connectors.js, that the connector loads and
+// declares write.operation). Each refusal names the module file and field.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -40,12 +48,14 @@ const Ajv2020 = require('ajv/dist/2020');
 const { checkDeclarations } = require('../archetypes/scoped-pull/params');
 const { checkQuery } = require('../archetypes/scoped-pull/run');
 const { checkScoring } = require('../scoring');
+const approvalWrite = require('../archetypes/approval-write');
 const { forbiddenColumnsOf } = require('../sql');
 
 const SCHEMA_DIR = path.join(__dirname, '../schema');
-// Archetypes whose engine code exists. The other is valid in a manifest but
-// refused at boot until its stories land (10.x approval-write).
-const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull']);
+// Archetypes whose engine code exists (every archetype the schema names).
+const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write']);
+// The archetypes the engine runs from a fixed SQL file and a typed form.
+const QUERY_ARCHETYPES = new Set(['scoped-pull', 'approval-write']);
 const ENV_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 let _validators = null;
@@ -218,16 +228,21 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
     }
     for (const p of checkDeclarations(m.parameters)) problems.push(`${file}: ${p}`);
     for (const p of checkScoring(m)) problems.push(`${file}: ${p}`);
-    if (m.archetype === 'scoped-pull' && m.handler !== undefined) {
-      problems.push(`${file}: field "handler" is not used by a scoped-pull module (the engine runs its form)`);
+    if (QUERY_ARCHETYPES.has(m.archetype) && m.handler !== undefined) {
+      problems.push(`${file}: field "handler" is not used by ${m.archetype === 'approval-write' ? 'an' : 'a'} ${m.archetype} module (the engine runs its form)`);
     }
     if (problems.length > before) continue;
-    if (m.archetype === 'scoped-pull') {
+    if (QUERY_ARCHETYPES.has(m.archetype)) {
       const sql = loadQuery(path.join(appDir, 'modules', folder, m.query), file, problems);
       if (sql === undefined) continue;
       const sqlProblems = checkQuery(sql, m.parameters || [], { forbiddenColumns, scoring: m.scoring || null, rowId: m.row_id || null });
       if (sqlProblems.length) {
         problems.push(...sqlProblems.map((p) => `${file}: field "query" (${m.query}) ${p}`));
+        continue;
+      }
+      const writeProblems = approvalWrite.checkModule(m, { appDir, profile, sql });
+      if (writeProblems.length) {
+        problems.push(...writeProblems.map((p) => `${file}: ${p}`));
         continue;
       }
       modules.push(Object.freeze({ ...m, file, sql }));
@@ -271,4 +286,6 @@ function isVisible(entry, env) {
   return entry.environments.includes(env);
 }
 
-module.exports = { loadRegistry, loadHubs, loadModules, createRegistry, isVisible, ENV_PATTERN };
+module.exports = {
+  loadRegistry, loadHubs, loadModules, createRegistry, isVisible, ENV_PATTERN, QUERY_ARCHETYPES,
+};

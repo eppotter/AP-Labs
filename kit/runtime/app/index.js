@@ -53,6 +53,12 @@
 // closed (never connected, or down over 60 seconds, after the grace: 503).
 // The startup line says "health: on (port n)" or "off"; shutdown closes it.
 //
+// Story 10.2: the registry has checked each approval-write module's connector
+// at boot; main() then makes one instance per connector those modules name,
+// with the app's logger and env (kit/runtime/archetypes/approval-write/
+// connectors.js, the only engine file that loads a connector), and hands them
+// to the hubs. A connector that can't be created refuses to start.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
@@ -72,6 +78,7 @@ const md = require('../data/motherduck');
 const llm = require('../llm');
 const jobs = require('../jobs');
 const health = require('./health');
+const { createConnectors } = require('../archetypes/approval-write');
 
 const REPO = path.resolve(__dirname, '../../..');
 // The startup line's word for why the AI is off.
@@ -185,12 +192,16 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
     if (d.problem) problems.push(d.problem);
     dataFile = d.path || null;
   }
-  return { problems, notes, tokens, profile, profilePath, registry, jobs: jobList, jobsState, dataFile, env: runEnv, healthPort: hp.port || null };
+  return {
+    problems, notes, tokens, profile, profilePath, registry, jobs: jobList, jobsState, dataFile, env: runEnv, appDir, healthPort: hp.port || null,
+  };
 }
 
 // Builds the Bolt app in Socket Mode with the redacting logger. App is
 // injectable so tests use a fake Slack client.
-function createApp({ tokens, profile, registry, env, store, data, log, App, llm = null }) {
+function createApp({
+  tokens, profile, registry, env, store, data, log, App, llm = null, connectors = null,
+}) {
   const AppClass = App || require('@slack/bolt').App;
   const app = new AppClass({
     token: tokens.SLACK_BOT_TOKEN,
@@ -203,7 +214,7 @@ function createApp({ tokens, profile, registry, env, store, data, log, App, llm 
     log.error('slack app error', { err });
   });
   registerGreeting(app, { profile, log, store });
-  registerHubs(app, { registry, profile, env, log, store, data, llm });
+  registerHubs(app, { registry, profile, env, log, store, data, llm, connectors });
   return app;
 }
 
@@ -223,6 +234,13 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   for (const note of cfg.notes) log.info(note);
   if (cfg.problems.length) {
     log.error('refusing to start', { problems: cfg.problems });
+    return { code: 1 };
+  }
+  let connectors;
+  try {
+    connectors = createConnectors({ appDir: cfg.appDir, modules: cfg.registry.modules, log, env });
+  } catch (err) {
+    log.error('refusing to start', { problems: [err.message] });
     return { code: 1 };
   }
 
@@ -285,7 +303,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
 
   let app;
   try {
-    app = createApp({ ...cfg, store, data, log, App: deps.App, llm: ai });
+    app = createApp({ ...cfg, store, data, log, App: deps.App, llm: ai, connectors });
     // Before start(): Bolt's start() resolves on the first connected event.
     if (healthState && !health.watchConnection(app, healthState)) {
       log.warn('health: no Socket Mode client to watch, so /healthz reports down after the grace period');
@@ -314,7 +332,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     jobs: cfg.jobsState.on ? cfg.jobs : [], log, data, now: clockOf(deps), ...(deps.timers ? { timers: deps.timers } : {}),
   });
   scheduler.start();
-  return { code: 0, app, log, data, connecting, llm: ai, jobs: scheduler, health: healthCheck };
+  return { code: 0, app, log, data, connecting, llm: ai, jobs: scheduler, health: healthCheck, connectors };
 }
 
 // Anything that escapes main() is logged through the same redacting logger

@@ -36,7 +36,8 @@
 // when every value passes its declaration, else one follow-up question (a
 // text box in the same view, its submit answered in the ack), and a second
 // miss opens the form. The AI being off, over a limit or failing shows its
-// plain message above the form. Values the AI or a question fills are held
+// plain message above the form, with the typed request back in its box (made
+// safe and cut to the box's limit, form requestInitial). Values the AI or a question fills are held
 // apart from the checked values (session.pending), so no Confirm can run
 // them unconfirmed. A second Read click while one is reading does nothing.
 //
@@ -45,6 +46,10 @@
 // shows the record in the view, only to the person who ran it and only while
 // they may still open the module; an expired or unknown record says the
 // details are gone. Reading changes nothing, so a replay shows them again.
+// When the result was kept (provenance keepingResult), the details end with
+// "Back to the list": back() puts that result back in the view, with the
+// reuse hook's buttons rebuilt from the record (decorate, the approval-write
+// Push), under the same checks. It never runs the query or sends the CSV.
 //
 // The engine never logs the values a person typed: only the module and the
 // action.
@@ -82,8 +87,11 @@ function refusalFor(status) {
 // resolves { message, failed }, or a bare message for a run that finished.
 // read({ mod, person, request }): fills values from plain English
 // (./extract createReader), or null when the AI is not wired in.
-function createScopedPull({ store, log, run, read = null }) {
+function createScopedPull({
+  store, log, run, read = null, decorate = null,
+}) {
   if (typeof run !== 'function') throw new TypeError('createScopedPull needs run (see ./run createRunner)');
+  if (decorate !== null && typeof decorate !== 'function') throw new TypeError('createScopedPull: decorate must be a function or null');
   if (read !== null && typeof read !== 'function') throw new TypeError('createScopedPull: read must be a function or null');
   const ask = read !== null;
   const form = (mod, opts) => formMessage(mod, { ...opts, ask });
@@ -182,7 +190,8 @@ function createScopedPull({ store, log, run, read = null }) {
       if (refused) return show(refused);
       if (!(err instanceof LlmUnavailable)) log.error('reading a request failed', { module: mod.id, err });
       const notice = messageFor(err instanceof LlmUnavailable ? err : new LlmUnavailable('failed'));
-      return show(form(mod, { sessionId, notice }));
+      // The typed request goes back in its box, so a retry needs no retyping (#149).
+      return show(form(mod, { sessionId, notice, request }));
     }
     const { values, problems } = outcome.checked;
     if (problems.length === 0) {
@@ -248,14 +257,39 @@ function createScopedPull({ store, log, run, read = null }) {
     const allowed = resolve(found.record.module);
     if (!allowed.mod) return show(allowed.refusal);
     log.info('run details shown', { module: allowed.mod.id });
-    return show(provenance.detailsMessage(found.record, { mod: allowed.mod }));
+    const back = provenance.resultOf(store, runId) !== null;
+    return show(provenance.detailsMessage(found.record, { mod: allowed.mod, back }));
   }
 
-  return { open, submit, answer, click, details };
+  // A "Back to the list" click on the details. Synchronous, with the same
+  // checks as details(); shows the kept result with its buttons rebuilt.
+  function back({ runId, person, resolve, show }) {
+    const found = provenance.lookup(store, runId, person);
+    if (found.status !== provenance.STATUS.OK) {
+      log.info('run result refused', { reason: found.status });
+      return show(provenance.refusalFor(found.status));
+    }
+    const allowed = resolve(found.record.module);
+    if (!allowed.mod) return show(allowed.refusal);
+    const kept = provenance.resultOf(store, runId);
+    if (kept === null) {
+      log.info('run result refused', { reason: 'not kept' });
+      return show(provenance.refusalFor(provenance.STATUS.GONE));
+    }
+    log.info('run result shown again', { module: allowed.mod.id });
+    return show(decorate ? decorate(allowed.mod, kept, found.record) : kept);
+  }
+
+  return {
+    open, submit, answer, click, details, back,
+  };
 }
 
 module.exports = {
   PROVENANCE_ACTION: provenance.ACTION,
+  PROVENANCE_BACK_ACTION: provenance.BACK_ACTION,
+  PROVENANCE_PATTERN: provenance.ACTION_PATTERN,
+  keepingResult: provenance.keepingResult,
   createScopedPull, createRunner, checkQuery, ROW_CAP, checkDeclarations, verbOf, parseMetadata, ACTIONS, ACTION_PATTERN, FORM_CALLBACK,
   ANSWER_CALLBACK,
 };

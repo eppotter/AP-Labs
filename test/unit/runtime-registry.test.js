@@ -122,14 +122,13 @@ test('a module on a declared resource that is not open_access registers (access 
   assert.equal(registry.module('echo').resource, 'CLOSED_THING');
 });
 
-test('an archetype whose engine is not built yet is refused', () => {
-  const { problems } = loadEdited((d) => editJson(d, 'modules/echo/manifest.json', (m) => {
-    m.archetype = 'approval-write';
-    m.parameters = [{ name: 'zone', type: 'string', enum: ['north'] }];
-    m.query = 'query.sql';
-    m.write = { connector: 'crm', operation: 'push', destination: 'A list', fields: ['client_id'] };
-  }));
-  assert.deepEqual(problems, ['modules/echo/manifest.json: field "archetype" "approval-write" is not available yet']);
+test('every archetype the schema names is built: approval-write is accepted (Story 10.2)', () => {
+  const schema = JSON.parse(fs.readFileSync(path.join(__dirname, '../../kit/runtime/schema/module.schema.json'), 'utf8'));
+  assert.deepEqual(schema.properties.archetype.enum, ['handler', 'scoped-pull', 'approval-write']);
+  const { registry, problems } = loadApproval();
+  assert.deepEqual(problems, []);
+  assert.equal(registry.module('leads').archetype, 'approval-write');
+  assert.match(registry.module('leads').sql, /^-- A fixture approval-write list/);
 });
 
 test('a handler file that is missing, throws on load or exports no function is refused', () => {
@@ -227,7 +226,9 @@ test('scoring needs a row id, and the old inputs-and-weights shape is refused by
 });
 
 test('a write block is refused on any archetype but approval-write', () => {
-  const write = { connector: 'crm', operation: 'push', destination: 'A list', fields: ['client_id'] };
+  const write = {
+    connector: 'crm', operation: 'push', destination: 'A list', fields: ['client_id'], send: { ref: 'client_id' }, list_name: 'a-{run_date}',
+  };
   const refusal = (file) => `${file}: field "write" is used only by an approval-write module (writes go through that archetype)`;
   const onHandler = loadEdited((d) => editJson(d, 'modules/echo/manifest.json', (m) => { m.write = write; }));
   assert.equal(onHandler.registry, null);
@@ -235,12 +236,94 @@ test('a write block is refused on any archetype but approval-write', () => {
   const onPull = editRanked((m) => { m.write = write; });
   assert.equal(onPull.registry, null);
   assert.deepEqual(onPull.problems, [refusal(RANKED_FILE)]);
-  // approval-write may carry one (refused only because its engine isn't built yet).
-  const onWrite = loadEdited((d) => editJson(d, 'modules/echo/manifest.json', (m) => {
-    m.archetype = 'approval-write';
-    m.parameters = [{ name: 'zone', type: 'string', enum: ['north'] }];
-    m.query = 'query.sql';
-    m.write = write;
-  }));
-  assert.deepEqual(onWrite.problems, ['modules/echo/manifest.json: field "archetype" "approval-write" is not available yet']);
+  // approval-write carries one, and must.
+  assert.deepEqual(loadApproval().problems, []);
+  assert.deepEqual(editLeads((m) => { delete m.write; }).problems, [`${LEADS_FILE}: field "write" is required`]);
+});
+
+// Story 10.2: an approval-write module's startup refusals, each naming the
+// module file and the field. The fixture app and profile are
+// test/fixtures/runtime/approval (the connector's own refusals are in
+// runtime-approval-connectors.test.js).
+const APPROVAL = path.join(FIX, 'approval');
+const approvalProfile = loadProfile(path.join(APPROVAL, 'profile.yml'));
+const LEADS_FILE = 'modules/leads/manifest.json';
+function loadApproval(edit = () => {}, { withProfile = approvalProfile } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-reg-aw-'));
+  try {
+    fs.cpSync(path.join(APPROVAL, 'app'), dir, { recursive: true });
+    // The copied connector requires '#sdk', which resolves from this repo only.
+    fs.writeFileSync(path.join(dir, 'connectors/mail/connector.js'), `module.exports = require(${JSON.stringify(path.join(APPROVAL, 'app/connectors/mail/connector.js'))});\n`);
+    edit(dir);
+    return loadRegistry({ appDir: dir, profile: withProfile });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+const editLeads = (fn) => loadApproval((d) => editJson(d, LEADS_FILE, fn));
+
+test('startup refuses an approval-write module whose resource is not admin_grantable: false in the profile', () => {
+  const grantable = loadProfile(path.join(APPROVAL, 'profile.yml'));
+  const open = { ...grantable, resources: grantable.resources.map((r) => (r.key === 'PUSH_LEADS' ? { ...r, admin_grantable: true } : r)) };
+  const { registry, problems } = loadApproval(() => {}, { withProfile: open });
+  assert.equal(registry, null);
+  assert.deepEqual(problems, [`${LEADS_FILE}: field "resource" PUSH_LEADS must be declared admin_grantable: false in the profile: a push sends client data out, so only people granted it by name may use it (AD-16)`]);
+});
+
+test('startup refuses an approval-write module with no row_id, or whose row_id is not in write.fields', () => {
+  assert.deepEqual(editLeads((m) => { delete m.row_id; }).problems, [`${LEADS_FILE}: field "row_id" is required`]);
+  assert.deepEqual(editLeads((m) => { m.write.fields = ['first', 'address']; m.write.send = { first: 'first', address: 'address' }; }).problems, [
+    `${LEADS_FILE}: field "write.fields" must include the row id "person_id"`,
+  ]);
+});
+
+test('startup refuses a write.fields entry the module\'s query does not return', () => {
+  assert.deepEqual(editLeads((m) => { m.write.fields.push('phone'); }).problems, [
+    `${LEADS_FILE}: field "write.fields" names "phone", which the module's query never returns`,
+  ]);
+});
+
+test('startup refuses a send mapping that names a field not in write.fields', () => {
+  assert.deepEqual(editLeads((m) => { m.write.send.score = 'score'; }).problems, [
+    `${LEADS_FILE}: field "write.send.score" names "score", which is not in write.fields`,
+  ]);
+});
+
+test('startup refuses a list name placeholder that is not {run_date} or a required input with allowed values', () => {
+  assert.deepEqual(editLeads((m) => { m.write.list_name = 'leads-{region}-{run_date}'; }).problems, [
+    `${LEADS_FILE}: field "write.list_name" uses {region}, which is not a declared input or {run_date}`,
+  ]);
+  const notEnum = loadApproval((d) => {
+    editJson(d, LEADS_FILE, (m) => {
+      m.parameters.push({ name: 'tag', type: 'string', pattern: '[a-z]+', max_length: 8, required: true });
+      m.write.list_name = 'leads-{tag}';
+    });
+    const sql = path.join(d, 'modules/leads/leads.sql');
+    fs.writeFileSync(sql, fs.readFileSync(sql, 'utf8').replace('WHERE zone = $zone', 'WHERE zone = $zone AND tag = $tag'));
+  });
+  assert.deepEqual(notEnum.problems, [
+    `${LEADS_FILE}: field "write.list_name" uses {tag}; a list name may use only {run_date} and required inputs with allowed values (enum), so nothing typed freely reaches it`,
+  ]);
+  const optional = loadApproval((d) => {
+    editJson(d, LEADS_FILE, (m) => { m.parameters[0].required = false; });
+  });
+  assert.deepEqual(optional.problems, [
+    `${LEADS_FILE}: field "write.list_name" uses {zone}; a list name may use only {run_date} and required inputs with allowed values (enum), so nothing typed freely reaches it`,
+  ]);
+  assert.deepEqual(editLeads((m) => { m.write.list_name = 'leads-{zone-{run_date}'; }).problems, [
+    `${LEADS_FILE}: field "write.list_name" has a "{" or "}" that is not a placeholder ({run_date}, or {<input>})`,
+  ]);
+  assert.deepEqual(editLeads((m) => { m.write.list_name = 'leads-{run_date}'; }).problems, []);
+});
+
+test('startup refuses a write block with no send mapping or list name, or a list name with other characters', () => {
+  const missing = editLeads((m) => { delete m.write.send; delete m.write.list_name; });
+  assert.deepEqual(missing.problems.sort(), [`${LEADS_FILE}: field "write.list_name" is required`, `${LEADS_FILE}: field "write.send" is required`]);
+  assert.match(editLeads((m) => { m.write.list_name = 'leads/<zone>'; }).problems[0], /field "write.list_name" must match pattern/);
+});
+
+test('startup refuses an approval-write module with a handler', () => {
+  assert.deepEqual(editLeads((m) => { m.handler = 'handler.js'; }).problems, [
+    `${LEADS_FILE}: field "handler" is not used by an approval-write module (the engine runs its form)`,
+  ]);
 });

@@ -4,7 +4,7 @@
   "label": "Win-back list",
   "description": "Clients in one zone whose plan lapsed recently and who have no plan now, best win-back prospects first.",
   "resource": "WIN_BACK",
-  "archetype": "scoped-pull",
+  "archetype": "approval-write",
   "environments": ["dev", "prod"],
   "parameters": [
     {
@@ -47,5 +47,13 @@
       { "name": "price_rise", "label": "Price rise before lapse", "weight": 2, "min": 0, "max": 1 }
     ],
     "limit_parameter": "limit"
+  },
+  "write": {
+    "connector": "email",
+    "operation": "pushList",
+    "destination": "email tool",
+    "fields": ["client_id", "email", "first_name"],
+    "send": { "external_ref": "client_id", "email": "email", "first_name": "first_name" },
+    "list_name": "win-back-{zone}-{run_date}"
   }
 }

@@ -42,3 +42,19 @@ If a token or the profile is missing or wrong, it exits non-zero listing each pr
 ## Later (Story 6.3)
 
 To see menus your profile grants, add your `aplabs-demo` member id (Profile → ⋯ → Copy member ID) to a Brightside user's `identities.slack` in `profiles/brightside/profile.yml`. It's an id, not a secret.
+
+## The ops channel (Story 10.3)
+
+A failed push (some contacts refused, an outage, a rejected sign-in, a list key reused with other rows, or a kill switch flipped partway) posts one quiet note to an ops channel: the module, a fixed reason and counts only, never client data. It is the runtime's only channel post. Without an ops channel the note goes to the bot's log only, and the person's reply is the same either way.
+
+1. In `aplabs-demo`, create `#brightside-ops` (private is fine).
+2. Invite the bot: in the channel, type `/invite @Brightside Bot (dev)`. **No new scope is needed**: `chat:write` covers a channel the bot has been invited to. If it isn't invited, Slack refuses the post (`not_in_channel`), which is logged and never shown to the person.
+3. Copy the channel id: open the channel's details (click its name); the id is at the bottom and starts with `C` (or `G` for an old private channel). It's an id, not a secret.
+4. Put it in `profiles/brightside/profile.yml` (a reviewed profile change; update `examples/brightside/test/profile.test.js` with it):
+
+   ```yaml
+   slack:
+     ops_channel: C0123456789
+   ```
+
+   The schema accepts only a channel id (`^[CG][A-Z0-9]{8,}$`): a channel name like `#brightside-ops`, a DM id (`D…`) or a person (`U…`) is refused at boot. The same module and reason are posted at most once every 15 minutes.

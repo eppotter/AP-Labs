@@ -31,14 +31,14 @@ The manifest is JSON, checked against `kit/runtime/schema/module.schema.json`. U
 | `label` | yes | The menu button's text, up to 60 characters. |
 | `description` | yes | One line under the button, up to 200 characters. Say what it does for the person. |
 | `resource` | yes | The profile resource key that grants it (`WEEKLY_REPORT`). It must be declared in the profile, or startup fails: a missing key is a setup fault, never shown to a person as a denial. |
-| `archetype` | yes | `handler` (your code replies) or `scoped-pull` (a list with a typed form, no code: see below). `approval-write` is valid in a manifest but refused at startup until its engine lands. |
+| `archetype` | yes | `handler` (your code replies), `scoped-pull` (a list with a typed form, no code: see below) or `approval-write` (a scoped pull whose list can be pushed to another system after the person previews and approves it: see below). |
 | `environments` | yes | Where it shows, by `APLABS_ENV` (`["dev"]`, then `["dev", "prod"]` when it is ready). Off the menu, and refused if opened, everywhere else. |
 | `handler` | for `handler` | The handler file in the module's folder (`handler.js`). It exports one async function. |
-| `parameters` | for `scoped-pull` | The inputs a person gives (see "Declaring inputs" below). The query runner refuses a parameter the manifest does not declare. |
-| `query` | for `scoped-pull` | A `.sql` file in the module's folder. Startup fails if it is missing or empty. |
-| `row_id` | with `scoring` | The column the query returns that tells rows apart (`client_id`). Equal scores are ordered by it. |
+| `parameters` | for `scoped-pull` and `approval-write` | The inputs a person gives (see "Declaring inputs" below). The query runner refuses a parameter the manifest does not declare. |
+| `query` | for `scoped-pull` and `approval-write` | A `.sql` file in the module's folder. Startup fails if it is missing or empty. |
+| `row_id` | with `scoring`, and for `approval-write` | The column the query returns that tells rows apart (`client_id`). Equal scores are ordered by it, and a push's idempotency key is built from it. |
 | `scoring` | no | A score from 0 to 100 and a one-line reason per row, worked out by the engine (see "A scored list" below). |
-| `write` | `approval-write` | `connector`, `operation`, `destination` and the `fields` copied into the approval entry. |
+| `write` | for `approval-write` | Where and what it pushes (see "Pushing a list" below). |
 
 ## A scoped pull: a list with a typed form
 
@@ -91,6 +91,33 @@ The score is `round-half-up(100 × (S − Σneg) / (Σpos − Σneg))`, where S 
 - `COALESCE`s every input that can be null, to a number that means "worst" or "none" (`COALESCE(SUM(p.amount_cents), 0)`). A null, a missing column or a value that is not a number stops the run with a plain message naming the module and the input; it is never scored as 0. Numbers, numeric text (BIGINT, HUGEINT and DECIMAL columns arrive as text) and true/false (1/0) are accepted.
 
 Two rows with the same `row_id` also stop the run, so the SQL must return one row per `row_id`. Startup also stops on a range with `min` at or above `max`, on every weight 0, and on a `limit_parameter` that is not a declared integer input.
+
+### Pushing a list (approval-write)
+
+An `approval-write` module is a scoped pull (the same form, SQL, scoring, results and "How was this made?") plus a push. Its result carries a **Push to <destination>** button for the person who ran it. Push shows a preview in the same window: the list name, how many rows go, the rows the system would refuse and why, a sample of 5 rows, and **Approve** and **Cancel**. Nothing is sent before that person approves, and only the rows they saw, from the preview's own copy. A run whose CSV didn't reach the person can't be pushed.
+
+```json
+"row_id": "client_id",
+"write": {
+  "connector": "email",
+  "operation": "pushList",
+  "destination": "email tool",
+  "fields": ["client_id", "email", "first_name"],
+  "send": { "external_ref": "client_id", "email": "email", "first_name": "first_name" },
+  "list_name": "win-back-{zone}-{run_date}"
+}
+```
+
+| Field | What it is |
+|---|---|
+| `connector` | The connector's folder in `app/connectors/` (`kit/templates/connector.md`). |
+| `operation` | One of its write operations: one write per push. |
+| `destination` | Where the list goes, in plain words: the button says "Push to email tool". |
+| `fields` | The columns the query returns that the preview keeps (a scored list's score is kept too). Must include `row_id`. |
+| `send` | What each pushed item holds: the connector's field name, then the `fields` entry it comes from. |
+| `list_name` | The destination list's name. `{run_date}` is the pull's date in UTC; `{<input>}` is a required input with allowed values (`enum`). |
+
+Startup stops, naming the module and the field, unless the module's `resource` is declared `admin_grantable: false` in the profile (a push sends client data out, so only people granted it by name may use it: the admin role alone doesn't), `row_id` is set and in `fields`, every `fields` entry is a column the query returns, `send` names only `fields`, `list_name` uses only those placeholders, and the connector exists, loads and declares `operation`. Every Push, Approve and Cancel click re-checks the person may still use the module here.
 
 ### Declaring inputs
 

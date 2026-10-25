@@ -42,13 +42,18 @@ function setup({ env = 'dev', canUse, views = false, reg = registry } = {}) {
 // The Open buttons, in menu order (the Help button is checked on its own).
 const buttons = (msg) => msg.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
 
-test('each hub file registers its slash command; one listener each handles Open, Help, form and "How was this made?" clicks', () => {
+test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" (and Back) and push clicks', () => {
   const { app } = setup();
   assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
-  assert.equal(app.actionListeners.length, 4);
+  assert.equal(app.actionListeners.length, 5);
   // The form listener takes Confirm, Change and Read my request (Story 9.4).
   for (const id of ['scoped-pull:confirm', 'scoped-pull:change', 'scoped-pull:read']) assert.ok(app.actionListeners[2].pattern.test(id), id);
-  assert.equal(app.actionListeners[3].pattern, 'provenance:show');
+  // "How was this made?" and its details' "Back to the list".
+  for (const id of ['provenance:show', 'provenance:back']) assert.ok(app.actionListeners[3].pattern.test(id), id);
+  assert.ok(!app.actionListeners[3].pattern.test('provenance:showx'));
+  // Push, Approve and Cancel on an approval-write result (Story 10.2).
+  for (const id of ['approval-write:push', 'approval-write:approve', 'approval-write:cancel']) assert.ok(app.actionListeners[4].pattern.test(id), id);
+  assert.ok(!app.actionListeners[4].pattern.test('approval-write:open'));
   // Two submits: the form's "Check values" and a follow-up question's answer (Story 9.4).
   assert.deepEqual(app.viewListeners.map((v) => v.callbackId), ['scoped-pull:form', 'scoped-pull:answer']);
   assert.deepEqual([...app.eventListeners.keys()], ['team_join']);
@@ -317,6 +322,71 @@ test('if the first push fails and Slack gave a response_url, the click falls bac
   assert.equal(responded.length, 1);
   assert.match(responded[0].text, /^echo for eight/);
   assert.deepEqual(fallbacks(log).map((l) => l.fields), [{ where: 'open', reason: 'expired_trigger_id', hub: 'alpha' }]);
+});
+
+// #114: a click inside a modal has no response_url, so a failed push used to
+// leave the person with nothing. The reply now replaces the view the click
+// came from.
+const expired = () => Object.assign(new Error('x'), { data: { error: 'expired_trigger_id' } });
+const MENU_WITH_HASH = { ...MENU_VIEW, hash: 'hmenu' };
+
+test('if the first push fails inside a modal (no response_url), the reply updates the view the click came from, and the fallback is logged', async () => {
+  const { app, log } = setup({ views: true });
+  app.users.U7 = { profile: { display_name: 'Sev' } };
+  app.viewsFail.push = expired();
+  await app.dispatchAction('echo:open', { user: { id: 'U7' }, view: MENU_WITH_HASH });
+  assert.deepEqual(app.views.map((v) => v.method), ['push', 'update']);
+  const [update] = calls(app, 'update');
+  assert.equal(update.view_id, 'VMENU');
+  assert.equal(update.hash, 'hmenu');
+  assert.equal(update.view.title.text, 'Echo');
+  assert.equal(update.view.private_metadata, 'alpha');
+  assert.deepEqual(viewTexts(update.view), ['echo for Sev (U7) at Tiny from echo']);
+  assert.deepEqual(app.responded, []);
+  assert.deepEqual(fallbacks(log).map((l) => l.fields), [{ where: 'open', reason: 'expired_trigger_id', hub: 'alpha', via: 'views.update' }]);
+  assert.ok(!log.lines.some((l) => l.msg === 'could not tell the person about a failure'));
+});
+
+test('after an in-place fallback, later replies append below the first, each with the latest hash', async () => {
+  const many = handlerModule('many', async ({ reply }) => { await reply('one'); await reply('two'); });
+  const { app } = setup({ views: true, reg: createRegistry({ hubs: registry.hubs, modules: [many] }), canUse: () => true });
+  app.viewsFail.push = expired();
+  await app.dispatchAction('many:open', { view: MENU_WITH_HASH });
+  const updates = calls(app, 'update');
+  assert.deepEqual(updates.map((u) => u.view_id), ['VMENU', 'VMENU']);
+  assert.deepEqual(updates.map((u) => u.hash), ['hmenu', 'h1']);
+  assert.deepEqual(viewTexts(updates[0].view), ['one']);
+  assert.deepEqual(viewTexts(updates[1].view), ['one', 'two']);
+});
+
+test('a refusal, Help and a failing handler reach the person in place when the push fails inside a modal', async () => {
+  const canUse = (person, mod) => mod.id !== 'echo';
+  const { app, log } = setup({ views: true, canUse });
+  app.viewsFail.push = expired();
+  await app.dispatchAction('echo:open', { user: { id: 'U2' }, view: MENU_WITH_HASH });
+  await app.dispatchAction('alpha:help', { view: MENU_WITH_HASH });
+  await app.dispatchAction('boom:open', { view: MENU_WITH_HASH });
+  const updates = calls(app, 'update');
+  assert.equal(updates.length, 3);
+  assert.match(viewTexts(updates[0].view)[0], /^You're not set up in Tiny's bot yet/);
+  assert.equal(updates[1].view.title.text, 'Help: Alpha tools');
+  assert.ok(updates[1].view.blocks.some((b) => b.block_id === 'help:modules'));
+  // The failing handler: "Loading…" could not be pushed, so nothing shows
+  // until the plain error replaces the menu.
+  assert.deepEqual(viewTexts(updates[2].view), [PLAIN_ERROR]);
+  assert.ok(!JSON.stringify(app.views).includes('internal detail'));
+  assert.deepEqual(app.responded, []);
+  assert.deepEqual(fallbacks(log).map((l) => l.fields.via), ['views.update', 'views.update', 'views.update']);
+  assert.ok(!log.lines.some((l) => l.msg === 'could not tell the person about a failure'));
+});
+
+test('when the in-place update fails too, the failure is logged and nothing throws', async () => {
+  const { app, log } = setup({ views: true });
+  app.viewsFail.push = expired();
+  app.viewsFail.update = Object.assign(new Error('y'), { data: { error: 'not_found' } });
+  await app.dispatchAction('echo:open', { view: MENU_WITH_HASH });
+  assert.ok(log.lines.some((l) => l.msg === 'could not tell the person about a failure'));
+  assert.deepEqual(app.responded, []);
 });
 
 test('a menu over 100 blocks keeps Help at the end with a "more…" note; long titles are cut to 24', async () => {

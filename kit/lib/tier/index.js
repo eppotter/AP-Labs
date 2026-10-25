@@ -25,8 +25,15 @@
 //                                    what ships in the image and what CI runs
 //         kit/release/**, kit/lib/template/**, kit/lib/fork/**
 //                                    template releases, updates and the fork comparison
+//         kit/runtime/archetypes/approval-write/**, kit/runtime/connectors/**,
+//         kit/verify/write-path.js, scripts/check-write-path.js,
+//         kit/runtime/slack/channel.js, kit/runtime/store/**,
+//         kit/runtime/archetypes/scoped-pull/run.js
+//                                    the write path: the only code that writes to a
+//                                    client system, its guard, the one channel post,
+//                                    approvals, and the run a push reads from
 //       A path near these but outside them (kit/fixture/build.js,
-//       kit/runtime/slack/**, kit/lib/review/**) keeps its profile tier.
+//       kit/runtime/slack/hubs.js, kit/lib/review/**) keeps its profile tier.
 //       Compute a change's tier with renames as both paths
 //       (git diff --no-renames --name-only), so a move cannot hide a floor.
 //   T3  profile tiers.T3
@@ -94,6 +101,17 @@ const ENGINE_T3 = Object.freeze([
   'kit/release/**',
   'kit/lib/template/**',
   'kit/lib/fork/**',
+  // Epic 10 (plan epic-10, decision 4, Story 10.2): the write path. The
+  // approval-write archetype, the connector contract, the check that keeps
+  // writes inside that archetype, the one channel-post function (N9), the
+  // store that holds approvals, and the scoped-pull run every push reads from.
+  'kit/runtime/archetypes/approval-write/**',
+  'kit/runtime/connectors/**',
+  'kit/verify/write-path.js',
+  'scripts/check-write-path.js',
+  'kit/runtime/slack/channel.js',
+  'kit/runtime/store/**',
+  'kit/runtime/archetypes/scoped-pull/run.js',
 ]);
 
 // Minimal glob: `**` = any depth (incl. none), `*` = within one segment, every
