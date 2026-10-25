@@ -16,22 +16,22 @@
 //      opens the typed form, prefilled
 //   4  Confirm: the top 25 by score with a reason each, "How was this
 //      made?", and the CSV in Dana's DM
-//   5  How was this made?: the values and the exact SQL
+//   5  How was this made?: the values and the exact SQL, then Back to the
+//      list: the same result again, with its buttons
 //   6  Push to email tool: the list name, the count, a sample, Approve / Cancel
 //   7  Approve: pushed, skipped and failed counts; a second click sends nothing
 //   8  the Outbox entry shows the list the mock email tool received
 //
 // At the end: the outbox holds exactly the approved, scored list, once;
 // every message went privately to Dana (a modal or an ephemeral reply,
-// nothing posted to a channel); the CSV went only to her DM.
+// nothing posted to a channel); exactly one CSV went, only to her DM.
 //
 // A second pass runs with APLABS_LLM_OFF set: step 2 says the AI helper is
 // switched off and shows the typed form, which completes the same flow.
 //
-// Step 5 replaces the result in the window (Story 9.6), so the result's Push
-// button is no longer on screen: as in the live demo (docs/runtime/
-// demo-script.md), Dana opens Win-back again and confirms the same values to
-// reach step 6. The two runs pick the same 25 rows.
+// Step 5 replaces the result in the window (Story 9.6); "Back to the list"
+// on the details puts the same result back, Push included, without running
+// the query or sending the CSV again (docs/runtime/demo-script.md).
 //
 // An example test (architecture carve-out, plan epic-10 Q7): it reads
 // Brightside's profile, app dir and fixture, and is deleted with the example
@@ -266,12 +266,15 @@ async function demo(t, { llmOff }) {
   const sql = details.blocks.filter((b) => b.text && /```/.test(b.text.text)).map((b) => b.text.text.replace(/^\*The SQL that ran:\*\n/, '').replace(/^```\n|\n```$/g, '')).join('');
   assert.equal(sql, escapeText(winBack.sql), 'the exact SQL');
 
-  // The details replaced the result in the window: open Win-back again and
-  // confirm the same values (the live script does the same).
-  const again = await confirm(ctx, await askForTheList(ctx, { llmOff }));
-  assert.equal(again.blocks[0].text.text, '*Win-back list: the top 25 of 38 rows, by score.*');
-  assert.equal(app.uploads.length, 2);
-  assert.deepEqual(csvRows(app.uploads[1]), scored, 'the same 25, in the same order');
+  // The details replaced the result in the window: Back to the list puts
+  // the same result back, with its buttons, and runs nothing.
+  const back = button(details, 'provenance:back');
+  assert.equal(back.text.text, 'Back to the list');
+  await app.dispatchAction('provenance:back', { user: { id: DANA }, view: from(app, details), value: back.value });
+  const again = last(app);
+  assert.deepEqual(again.blocks, result.blocks, 'the same result, as it was shown');
+  assert.equal(button(again, 'approval-write:push').text.text, 'Push to email tool');
+  assert.equal(app.uploads.length, 1, 'Back sends no second CSV');
 
   // Step 6: the preview names the list, the count and a sample.
   await app.dispatchAction('approval-write:push', { user: { id: DANA }, view: from(app, again), value: button(again, 'approval-write:push').value });
@@ -311,18 +314,19 @@ async function demo(t, { llmOff }) {
   assert.ok(contacts.every((c) => c.listId === lists[0].payload.listId));
 
   // Every message was private: modals and ephemeral replies only, nothing
-  // posted to a channel; the CSV went only to Dana's DM.
+  // posted to a channel; exactly one CSV, only to Dana's DM.
   assert.deepEqual(app.posted, [], 'nothing posted to a channel');
   assert.ok(app.said.every((m) => m.ephemeral), 'every said reply is ephemeral');
   assert.ok(app.responded.every((m) => m.response_type === 'ephemeral'), 'every respond is ephemeral');
   assert.ok(app.views.every((v) => ['open', 'push', 'update'].includes(v.method) && (v.args.view.type || 'modal') === 'modal'));
+  assert.equal(app.uploads.length, 1, 'exactly one CSV');
   assert.ok(app.uploads.every((u) => u.channel_id === DANA_DM));
   assert.ok(app.dms.every((d) => d.user === DANA && d.channel === DANA_DM));
 
   // The rows never reached the model.
   const sent = JSON.stringify(ctx.model.calls);
   assert.ok(scored.every((r) => !sent.includes(r.email)));
-  assert.equal(ctx.model.calls.length, llmOff ? 0 : 2);
+  assert.equal(ctx.model.calls.length, llmOff ? 0 : 1);
   return contacts;
 }
 

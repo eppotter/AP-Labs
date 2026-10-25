@@ -101,7 +101,9 @@ const {
   createScopedPull, createRunner, verbOf, parseMetadata, ACTION_PATTERN: FORM_ACTION, FORM_CALLBACK, ANSWER_CALLBACK,
 } = require('../archetypes/scoped-pull');
 const { createReader } = require('../archetypes/scoped-pull/extract');
-const { PROVENANCE_ACTION } = require('../archetypes/scoped-pull');
+const {
+  PROVENANCE_ACTION, PROVENANCE_BACK_ACTION, PROVENANCE_PATTERN, keepingResult,
+} = require('../archetypes/scoped-pull');
 const {
   createApprovalWrite, pushHooks, verbOf: writeVerbOf, ACTION_PATTERN: WRITE_ACTION,
 } = require('../archetypes/approval-write');
@@ -183,8 +185,12 @@ function registerHubs(app, {
     .filter((m) => isVisible(m, env) && decide(person, m) === 'allowed');
   const notSetUp = (person) => (person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin })));
   const fellBack = (where, reason, hub) => log.info('hub modal fallback', { where, reason, hub: hub || null });
+  // The runner keeps each result as shown, so "Back to the list" can put it
+  // back; Back rebuilds the Push button with the same hook.
+  const hooks = keepingResult(pushHooks, store, log);
   const scopedPull = createScopedPull({
-    store, log, run: createRunner({ data, log, admin, store, hooks: pushHooks }), read: llm ? createReader({ llm, log }) : null,
+    store, log, run: createRunner({ data, log, admin, store, hooks }), read: llm ? createReader({ llm, log }) : null,
+    decorate: pushHooks.decorate,
   });
   // A failed push is escalated to the profile's slack.ops_channel (Story
   // 10.3); with none set, it is logged only.
@@ -421,11 +427,12 @@ function registerHubs(app, {
     }
   }, { log, store }));
 
-  // "How was this made?" (Story 9.6) on a result. Updates the view the
-  // button is in with the run's details, for the person who ran it only,
-  // re-checking they may still open the module. A result is only ever shown
-  // in a view, so a click from anywhere else is told to use the hub window.
-  app.action(PROVENANCE_ACTION, handle('hub:provenance', async ({ action, body, client, respond }) => {
+  // "How was this made?" (Story 9.6) on a result, and "Back to the list" on
+  // its details. Updates the view the button is in with the run's details,
+  // or the result again, for the person who ran it only, re-checking they
+  // may still open the module. A result is only ever shown in a view, so a
+  // click from anywhere else is told to use the hub window.
+  app.action(PROVENANCE_PATTERN, handle('hub:provenance', async ({ action, body, client, respond }) => {
     const from = body.view;
     if (!from || typeof from.id !== 'string' || !from.id || !hasViews(client)) {
       fellBack('provenance', from ? 'no views client' : 'not from a modal', null);
@@ -440,9 +447,11 @@ function registerHubs(app, {
       return status;
     };
     const person = personOf((body.user || {}).id);
+    const actionId = action && action.action_id === PROVENANCE_BACK_ACTION ? PROVENANCE_BACK_ACTION : PROVENANCE_ACTION;
+    const step = actionId === PROVENANCE_BACK_ACTION ? 'back' : 'details';
     try {
-      await scopedPull.details({
-        runId: action && action.value, person: person.id, resolve: resolveForm(person, PROVENANCE_ACTION), show,
+      await scopedPull[step]({
+        runId: action && action.value, person: person.id, resolve: resolveForm(person, actionId), show,
       });
     } catch (err) {
       log.error('handler failed', { handler: 'hub:provenance', err });
