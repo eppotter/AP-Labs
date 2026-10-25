@@ -140,7 +140,7 @@ test('on MotherDuck the Dataset entry reads fixture_meta and fixture_publish in 
     'Source: MotherDuck (tiny_fixture)',
     'Fixture version: 2+0123456789ab',
     'As of: 2026-09-30',
-    'Published: 2026-10-24T21:00:00.000Z',
+    'Published: Oct 24, 2026, 5:00 PM EDT',
     'Tables (1):',
     '• shops: 1,200',
   ].join('\n'));
@@ -196,4 +196,19 @@ test('a handler\'s data.run refuses a parameter its manifest does not declare', 
   await app.dispatchAction('probe-0:open');
   await app.dispatchAction('probe-1:open');
   assert.deepEqual(seen, ['undeclared_parameter', [{ n: 2 }]]);
+});
+
+test('Published shows the publish time in US Eastern local time, with its zone; an undated value is shown as recorded', async () => {
+  const answer = async (publishedAt) => {
+    const rows = [{ src: 'meta', key: 'rows_shops', value: '1' }];
+    if (publishedAt !== undefined) rows.push({ src: 'publish', key: 'published_at', value: publishedAt });
+    const replies = [];
+    const data = { describe: () => ({ source: 'MotherDuck', label: 'tiny_fixture' }), run: async () => rows };
+    await datasetModule.run({ data, reply: async (text) => replies.push(text) });
+    return replies[0].split('\n').find((l) => l.startsWith('Published: '));
+  };
+  assert.equal(await answer('2026-10-25T01:56:31.189Z'), 'Published: Oct 24, 2026, 9:56 PM EDT');
+  assert.equal(await answer('2026-12-25T01:56:31.189Z'), 'Published: Dec 24, 2026, 8:56 PM EST', 'standard time in winter');
+  assert.equal(await answer('not a date'), 'Published: not a date');
+  assert.equal(await answer(undefined), 'Published: not recorded');
 });

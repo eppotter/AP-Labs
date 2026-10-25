@@ -100,7 +100,10 @@ test('parseBody: review lines, CRLF, malformed and repeated lines fail closed', 
   assert.equal(parseBody('Reviewed head: abc123').reviewedHead, 'invalid');
   assert.equal(parseBody(`Reviewed head: ${HEAD}\nReviewed head: ${OTHER}`).reviewedHead, 'invalid');
   assert.deepEqual(parseBody('Refuter: 1 confirmed, 2 not reproduced, 3 escalated, 4 pending').refuter,
-    { confirmed: 1, notReproduced: 2, escalated: 3, pending: 4 });
+    { confirmed: 1, fixed: null, notReproduced: 2, escalated: 3, pending: 4 }, 'the old format, with no fixed count, still parses');
+  assert.deepEqual(parseBody('Refuter: 1 confirmed, 5 fixed, 2 not reproduced, 3 escalated, 4 pending').refuter,
+    { confirmed: 1, fixed: 5, notReproduced: 2, escalated: 3, pending: 4 });
+  assert.equal(parseBody('Refuter: 1 confirmed, 2 not reproduced, 5 fixed, 3 escalated, 4 pending').refuter, 'invalid');
   assert.equal(parseBody('Refuter: all good').refuter, 'invalid');
 });
 
@@ -122,6 +125,14 @@ test('prRefusals: each of conditions a-d', () => {
   assert.match(refuter('Refuter: 0 confirmed, 0 not reproduced, 1 escalated, 0 pending'), /1 escalated/);
   assert.match(refuter('Refuter: 1 confirmed, 0 not reproduced, 0 escalated, 0 pending'), /1 confirmed/);
   assert.match(refuter('Refuter: unknown'), /malformed or repeated/);
+  // The old format cannot tell a fixed P1 from a blocking one, so it fails closed and says how to rewrite it.
+  assert.match(refuter('Refuter: 1 confirmed, 0 not reproduced, 0 escalated, 0 pending'), /predates the fixed count.*--refute/);
+  // The new format: a P1 fixed and checked by a later round does not block.
+  assert.equal(refuter('Refuter: 0 confirmed, 1 fixed, 0 not reproduced, 0 escalated, 0 pending'), '');
+  assert.match(refuter('Refuter: 1 confirmed, 1 fixed, 0 not reproduced, 0 escalated, 0 pending'), /1 confirmed/);
+  assert.doesNotMatch(refuter('Refuter: 1 confirmed, 1 fixed, 0 not reproduced, 0 escalated, 0 pending'), /predates/);
+  assert.match(refuter('Refuter: 0 confirmed, 2 fixed, 0 not reproduced, 1 escalated, 0 pending'), /1 escalated/);
+  assert.match(refuter('Refuter: 0 confirmed, 2 fixed, 0 not reproduced, 0 escalated, 1 pending'), /1 pending/);
 });
 
 test('checksRefusal and isPending: green, red, cancelled and none', () => {
@@ -153,6 +164,13 @@ test('a verified PR merges with a pinned merge commit, is confirmed MERGED and i
   assert.match(r.out, /Deleted remote branch feat\/x/);
   assert.equal(t.remoteHas(BRANCH), false);
   assert.equal(t.notified.length, 0, 'no notify without --notify');
+});
+
+test('a PR whose only confirmed P1 was fixed and re-reviewed in a later round merges', async () => {
+  const t = setup({ pr: openPr({ body: `${REVIEWED}\nRefuter: 0 confirmed, 1 fixed, 0 not reproduced, 0 escalated, 0 pending\n` }) });
+  const r = await t.land();
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Merged PR #7/);
 });
 
 for (const [name, pr, reason] of [

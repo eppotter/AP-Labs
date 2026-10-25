@@ -7,8 +7,10 @@
 //
 // Needs an open PR for the branch with a Kind line, so every round is visible
 // to the retro. Revert, docs-only and tiny config PRs are exempt: no round.
-// Chooses the other model from Agent trailers, falls back to the same model
-// when that reviewer is missing or gives no usable verdict, counts rounds per
+// Chooses the other model from Agent trailers, retries it once with a VERDICT
+// reminder when its only fault is a missing or contradictory VERDICT line,
+// falls back to the same model when that reviewer is missing or gives no
+// usable verdict, counts rounds per
 // branch, files non-blocking findings in one follow-up issue per PR, and
 // updates the PR body. Each P1 gets an id for the Refuter; --refute records
 // its verdict with no reviewer run and no round counted, even over budget.
@@ -30,6 +32,7 @@ const {
   claudeStdin,
   isValidState,
   readVerdict,
+  withVerdictReminder,
   repeatedBlockingFiles,
   withRoundsLine,
   withReviewedHeadLine,
@@ -197,9 +200,10 @@ function main(argv, env = process.env, cwd = process.cwd()) {
 
   const verdictPath = path.join(dir, `${stem}.round-${round}.md`);
   const logPath = path.join(dir, `${stem}.round-${round}.log`);
-  const runReviewer = (reviewer, log) => {
+  const runReviewer = (reviewer, log, reminder) => {
+    const prompt = (opts) => (reminder ? withVerdictReminder(promptFor(state, opts)) : promptFor(state, opts));
     if (reviewer === 'codex') {
-      return spawnSync(codexBin, ['exec', '--sandbox', 'read-only', '-o', verdictPath, 'review', promptFor(state)],
+      return spawnSync(codexBin, ['exec', '--sandbox', 'read-only', '-o', verdictPath, 'review', prompt()],
         { cwd, env, stdio: ['ignore', log, log] });
     }
     const gitDiff = (range) => execFileSync('git', ['diff', '--no-ext-diff', '--no-textconv', range],
@@ -226,41 +230,57 @@ function main(argv, env = process.env, cwd = process.cwd()) {
     const result = spawnSync(claudeBin, [
       '--print', '--restricted', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk',
       '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-session-persistence', '--no-chrome',
-      '--disable-slash-commands', promptFor(state, { diffOnStdin: true }),
+      '--disable-slash-commands', prompt({ diffOnStdin: true }),
     ], { cwd, env, input, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
     if (result.stderr) fs.writeSync(log, result.stderr);
     if (result.stdout) fs.writeFileSync(verdictPath, result.stdout);
     return result;
   };
   // One attempt: { verdict, findings } or { error }. Output lands in verdictPath and logPath.
-  const attempt = (reviewer) => {
+  const attempt = (reviewer, reminder = false) => {
     fs.rmSync(verdictPath, { force: true });
     const log = fs.openSync(logPath, 'w');
     let result;
     try {
-      result = runReviewer(reviewer, log);
+      result = runReviewer(reviewer, log, reminder);
     } finally {
       fs.closeSync(log);
     }
     if (result.error) return { error: result.error.code === 'ENOENT' ? 'not found' : result.error.message };
     if (result.status !== 0) return { error: `exited ${result.status}` };
     const verdict = fs.existsSync(verdictPath) ? fs.readFileSync(verdictPath, 'utf8') : '';
-    return { verdict, ...readVerdict(verdict, repoRoot) };
+    return { verdict, ...readVerdict(verdict, repoRoot, { reminded: reminder }) };
   };
 
-  // The preferred reviewer gets one try; any failure hands the round to the
-  // other model once, labelled as a same-model fallback. The failed attempt's
-  // files are kept under .attempt-1.
+  // Each reviewer gets one try, plus one retry with a VERDICT reminder when
+  // readVerdict marks the failure retryable (a missing or contradictory VERDICT
+  // line, or a finding line it could not read, with no P1 in sight). A failure
+  // of the preferred reviewer hands the round to the other model once, labelled
+  // as a same-model fallback. Each failed attempt's files are kept under .attempt-<n>.
   const initial = pickReviewer({ trailers, codexAvailable: true, claudeAvailable: true });
   let selection = initial;
-  let outcome = attempt(selection.reviewer);
-  if (outcome.error) {
-    const kept = (file) => file.replace(/\.(md|log)$/, '.attempt-1.$1');
+  let tries = 1;
+  const keep = () => {
+    const kept = (file) => file.replace(/\.(md|log)$/, `.attempt-${tries}.$1`);
     for (const file of [verdictPath, logPath]) if (fs.existsSync(file)) fs.renameSync(file, kept(file));
-    const failures = [`${selection.reviewer}: ${outcome.error} (log: ${kept(logPath)})`];
+    return kept(logPath);
+  };
+  let retried = false;
+  const tryReviewer = (reviewer) => {
+    const first = attempt(reviewer);
+    if (!first.error || !first.retry) return first;
+    console.error(`${reviewer}: ${first.error} (log: ${keep()}); retrying ${reviewer} once with a VERDICT reminder.`);
+    tries++;
+    retried = true;
+    return attempt(reviewer, true);
+  };
+  let outcome = tryReviewer(selection.reviewer);
+  if (outcome.error) {
+    const failures = [`${selection.reviewer}: ${outcome.error} (log: ${keep()})`];
+    tries++;
     selection = pickReviewer({ trailers, codexAvailable: initial.reviewer !== 'codex', claudeAvailable: initial.reviewer !== 'claude' });
     console.error(`${failures[0]}; trying ${selection.reviewer} as a same-model fallback.`);
-    outcome = attempt(selection.reviewer);
+    outcome = tryReviewer(selection.reviewer);
     if (outcome.error) {
       failures.push(`${selection.reviewer}: ${outcome.error} (log: ${logPath})`);
       console.error(`${failures.join('\n')}\nNo reviewer gave a usable verdict; this round does not count.`);
@@ -268,9 +288,10 @@ function main(argv, env = process.env, cwd = process.cwd()) {
     }
   }
   const { verdict } = outcome;
+  if (outcome.note) console.error(`Note: ${outcome.note}`);
   const findings = withRefuterIds(round, outcome.findings);
   state.rounds.push({ head, at: new Date().toISOString(), findings, reviewer: selection.reviewer, fallback: selection.fallback,
-    ...(overBudget ? { overBudget } : {}) });
+    ...(retried ? { retried: true } : {}), ...(overBudget ? { overBudget } : {}) });
   saveState();
 
   const p1 = findings.filter((f) => f.priority === 'P1').length;
@@ -305,7 +326,8 @@ function main(argv, env = process.env, cwd = process.cwd()) {
 
   let text = withFallbackLine(withReviewedHeadLine(withRoundsLine(withoutExemptLine(pr.body || ''), round), head), selection.fallback);
   if (state.followup) text = withFollowupLine(text, state.followup);
-  if (p1) text = withRefuterLine(text, state.rounds);
+  // A clean round after a P1 round rewrites the line too, so a fixed P1 stops blocking land.
+  if (state.rounds.some((r) => r.findings.some((f) => f.priority === 'P1'))) text = withRefuterLine(text, state.rounds);
   if (!editBody(withStopLine(text, repeated))) {
     console.error(`Round ${round} counted, but the PR body was not updated. Run: ${ghBin} pr edit ${pr.number} --body-file ${bodyPath}`);
     return 1;

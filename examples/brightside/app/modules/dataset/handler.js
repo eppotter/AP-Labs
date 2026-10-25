@@ -19,6 +19,20 @@ const SQL = Object.freeze({ local: read('fixture_meta.sql'), motherduck: read('f
 const MOTHERDUCK = 'MotherDuck';
 const ROWS_PREFIX = 'rows_';
 
+// Brightside demo default: the profile has no timezone setting (and the
+// handler is not given the profile), so Published shows US Eastern time.
+const TIME_ZONE = 'America/New_York';
+const PUBLISHED_FORMAT = new Intl.DateTimeFormat('en-US', {
+  timeZone: TIME_ZONE, month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+});
+
+// fixture:publish records an ISO timestamp in UTC: "Oct 24, 2026, 9:56 PM EDT".
+// A value that is not a date is shown as recorded.
+function formatPublished(value) {
+  const at = new Date(value);
+  return Number.isNaN(at.getTime()) ? value : PUBLISHED_FORMAT.format(at);
+}
+
 function formatCount(value) {
   return /^\d+$/.test(value) ? Number(value).toLocaleString('en-US') : value;
 }
@@ -36,12 +50,13 @@ module.exports = async function dataset({ data, reply }) {
     .filter((r) => isMeta(r) && r.key.startsWith(ROWS_PREFIX))
     .map((r) => `• ${r.key.slice(ROWS_PREFIX.length)}: ${formatCount(r.value)}`);
   const version = (remote && published.get('fixture_version')) || meta.get('generator_version') || 'not recorded';
+  const publishedAt = published.get('published_at');
   await reply([
     '*Dataset*',
     `Source: ${source}${label ? ` (${label})` : ''}`,
     `Fixture version: ${version}`,
     `As of: ${meta.get('as_of') || 'not recorded'}`,
-    `Published: ${remote ? (published.get('published_at') || 'not recorded') : 'local build'}`,
+    `Published: ${remote ? (publishedAt ? formatPublished(publishedAt) : 'not recorded') : 'local build'}`,
     `Tables (${tables.length}):`,
     ...tables,
   ].join('\n'));
