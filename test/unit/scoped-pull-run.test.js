@@ -361,16 +361,31 @@ test('the fake Slack enforces files.uploadV2\'s required fields, and deliverCsv 
   await assert.rejects(deliverCsv({ client: {}, person: 'U7', filename: 'a', content: 'x' }), /no Slack files client/);
 });
 
-test('rows never reach the AI: the scoped-pull engine does not import the AI service, and the hubs are not given it', () => {
+// Story 9.4 hands the AI service to the hubs for one use: the plain-English
+// reader (archetypes/scoped-pull/extract). Only that file may name it, and it
+// imports nothing that holds rows (scoped-pull-extract.test.js checks its
+// imports and what it sends).
+test('rows never reach the AI: the scoped-pull engine does not import the AI service, and the hubs give it only to the reader', () => {
   const dir = path.join(ROOT, 'kit/runtime/archetypes/scoped-pull');
   for (const f of fs.readdirSync(dir)) {
     const src = fs.readFileSync(path.join(dir, f), 'utf8');
     assert.ok(!/require\([^)]*llm[^)]*\)/.test(src), f);
+    if (f !== 'extract.js') assert.ok(!/\bllm\b/.test(src.replace(/\/\/[^\n]*/g, '')), `${f} names the AI service`);
   }
   const hubs = fs.readFileSync(path.join(ROOT, 'kit/runtime/slack/hubs.js'), 'utf8');
   assert.ok(!/require\([^)]*llm[^)]*\)/.test(hubs));
+  const uses = hubs.replace(/\/\/[^\n]*/g, '').split('\n').filter((l) => /\bllm\b/.test(l)).map((l) => l.trim());
+  assert.deepEqual(uses, [
+    'registry, profile, env, log, store, data = null, llm = null, canUse = defaultCanUse(profile),',
+    'store, log, run: createRunner({ data, log, admin, store }), read: llm ? createReader({ llm, log }) : null,',
+  ]);
   const app = fs.readFileSync(path.join(ROOT, 'kit/runtime/app/index.js'), 'utf8');
-  assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, data \}\)/);
+  assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, data, llm \}\)/);
+  // The run record (Story 9.6) holds rows; its file never reaches or names the AI service.
+  const provenance = fs.readFileSync(path.join(ROOT, 'kit/runtime/slack/provenance.js'), 'utf8');
+  assert.ok(!/require\([^)]*llm[^)]*\)/.test(provenance));
+  assert.ok(!/\bllm\b/.test(provenance.replace(/\/\/[^\n]*/g, '')));
+  assert.ok(!/require\([^)]*(extract|provenance)[^)]*\)/.test(fs.readFileSync(path.join(dir, 'extract.js'), 'utf8')));
 });
 
 test('createRunner without a Slack client still answers: the CSV is reported as not delivered', async () => {

@@ -46,8 +46,11 @@ test('each hub file registers its slash command; one listener each handles Open,
   const { app } = setup();
   assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
   assert.equal(app.actionListeners.length, 4);
-  assert.ok(app.actionListeners[2].pattern.test('scoped-pull:confirm'));
+  // The form listener takes Confirm, Change and Read my request (Story 9.4).
+  for (const id of ['scoped-pull:confirm', 'scoped-pull:change', 'scoped-pull:read']) assert.ok(app.actionListeners[2].pattern.test(id), id);
   assert.equal(app.actionListeners[3].pattern, 'provenance:show');
+  // Two submits: the form's "Check values" and a follow-up question's answer (Story 9.4).
+  assert.deepEqual(app.viewListeners.map((v) => v.callbackId), ['scoped-pull:form', 'scoped-pull:answer']);
   assert.deepEqual([...app.eventListeners.keys()], ['team_join']);
 });
 

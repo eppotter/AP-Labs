@@ -36,7 +36,8 @@
 // item aplabs-anthropic-key) and registers it with the logger. A missing key,
 // or APLABS_LLM_OFF, leaves the AI off and the app starts anyway; the startup
 // line says which. A profile naming an unpriced model refuses to start. The AI
-// service (kit/runtime/llm) is built once here and is engine-internal.
+// service (kit/runtime/llm) is built once here and is engine-internal: it is
+// handed to the hubs only for the scoped-pull reader (Story 9.4).
 //
 // Story 11.1: boot reads <app dir>/jobs.json (kit/runtime/jobs) and refuses
 // on any broken entry, even with jobs off, naming the job and field. Jobs run
@@ -103,8 +104,8 @@ function checkMotherDuckKeys({ env, deps, problems, register }) {
 const clockOf = (deps) => () => new Date(deps.now ? deps.now() : Date.now());
 
 // Collects every boot problem. Returns { problems, notes, tokens, profile,
-// profilePath, registry, jobs, jobsState, dataFile, env }. register(value) is called on each
-// MotherDuck key as soon as it is read.
+// profilePath, registry, jobs, jobsState, dataFile, env }. register(value) is
+// called on each MotherDuck key as soon as it is read.
 // Problems name variables and profile errors, never a secret's value.
 function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
   const problems = [];
@@ -179,7 +180,7 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
 
 // Builds the Bolt app in Socket Mode with the redacting logger. App is
 // injectable so tests use a fake Slack client.
-function createApp({ tokens, profile, registry, env, store, data, log, App }) {
+function createApp({ tokens, profile, registry, env, store, data, log, App, llm = null }) {
   const AppClass = App || require('@slack/bolt').App;
   const app = new AppClass({
     token: tokens.SLACK_BOT_TOKEN,
@@ -192,7 +193,7 @@ function createApp({ tokens, profile, registry, env, store, data, log, App }) {
     log.error('slack app error', { err });
   });
   registerGreeting(app, { profile, log, store });
-  registerHubs(app, { registry, profile, env, log, store, data });
+  registerHubs(app, { registry, profile, env, log, store, data, llm });
   return app;
 }
 
@@ -261,7 +262,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
 
   let app;
   try {
-    app = createApp({ ...cfg, store, data, log, App: deps.App });
+    app = createApp({ ...cfg, store, data, log, App: deps.App, llm: ai });
     await app.start();
   } catch (err) {
     log.error('could not connect to Slack', { err });

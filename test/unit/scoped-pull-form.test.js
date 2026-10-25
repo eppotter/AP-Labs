@@ -180,7 +180,7 @@ test('Open pushes the typed form: one input per parameter, defaults filled, subm
     { type: 'number_input', min: '1', max: '365', initial: '90', decimal: false },
   );
   assert.deepEqual({ type: code.element.type, max: code.element.max_length, optional: code.optional, hint: code.hint.text }, { type: 'plain_text_input', max: 2, optional: true, hint: 'Two capitals.' });
-  // No buttons on the form: no "Read my request" until Story 9.4.
+  // No buttons on the form: "Read my request" (Story 9.4) needs the AI service, not wired in here.
   assert.deepEqual(buttonsOf(view), []);
   assert.ok(!JSON.stringify(view).includes('U1'));
   assert.ok(log.lines.some((l) => l.msg === 'form opened' && l.fields.module === 'lapsed'));
