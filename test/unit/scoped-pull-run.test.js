@@ -172,10 +172,14 @@ test('no SQL file in any app dir or template contains "${"', () => {
       else if (d.name.endsWith('.sql')) files.push(abs);
     }
   };
-  for (const e of fs.readdirSync(path.join(ROOT, 'examples'))) walk(path.join(ROOT, 'examples', e, 'app'));
+  // Every example's app dir, whichever examples this copy has (a fork or the
+  // clean-bones copy has none of Brightside's). That the Brightside modules
+  // are among the files scanned is checked by an example test
+  // (examples/brightside/test/sql-scan.test.js), deleted with the example.
+  const examples = path.join(ROOT, 'examples');
+  if (fs.existsSync(examples)) for (const e of fs.readdirSync(examples)) walk(path.join(examples, e, 'app'));
   walk(path.join(ROOT, 'app'));
   walk(path.join(ROOT, 'kit/templates'));
-  assert.ok(files.some((f) => f.endsWith('win-back.sql')) && files.some((f) => f.endsWith('unpaid-invoices.sql')));
   for (const f of files) assert.ok(!fs.readFileSync(f, 'utf8').includes('${'), path.relative(ROOT, f));
 });
 
