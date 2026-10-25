@@ -7,14 +7,21 @@
 //       way Bolt runs them for a message event (no ack; say posts to the same
 //       channel). body carries event_id for de-duplication tests.
 //   dispatchCommand(command, { user_id })        the listener for that slash
-//       command, with ack and respond.
-//   dispatchAction(action_id, { user })          every action listener whose
-//       pattern matches, with ack and respond.
+//       command, with ack, respond and a trigger_id.
+//   dispatchAction(action_id, { user, view })    every action listener whose
+//       pattern matches, with ack and respond. With view (a modal the click
+//       came from), the body carries it, a container of type view and a
+//       trigger_id, and there is no respond (Slack sends no response_url for a
+//       click inside a modal).
 //   dispatchEvent(type, event, { body })         every listener for that event
 //       type (no ack). body carries event_id for de-duplication tests.
 //
 // Replies land in this.said (say and postEphemeral), this.responded
 // (respond) and this.posted (chat.postMessage); this.acks counts acks. users.info answers from this.users.
+//
+// new FakeSlackApp({ views: true }) adds client.views: open, push and update
+// record { method, args } in this.views and answer with a view id and a fresh
+// hash; set this.viewsFail[method] to an error to make that call throw.
 
 class FakeSlackApp {
   constructor(options) {
@@ -30,6 +37,9 @@ class FakeSlackApp {
     this.posted = [];
     this.acks = 0;
     this.users = {};
+    this.views = [];
+    this.viewsFail = {};
+    this.viewSeq = 0;
     this.client = {
       chat: {
         postEphemeral: async (args) => { this.said.push({ ephemeral: true, ...args }); return { ok: true }; },
@@ -42,6 +52,16 @@ class FakeSlackApp {
         },
       },
     };
+    if (options && options.views) {
+      const call = (method) => async (args) => {
+        this.views.push({ method, args });
+        if (this.viewsFail[method]) throw this.viewsFail[method];
+        this.viewSeq += 1;
+        const id = method === 'update' ? args.view_id : `V${this.viewSeq}`;
+        return { ok: true, view: { id, hash: `h${this.viewSeq}`, ...args.view } };
+      };
+      this.client.views = { open: call('open'), push: call('push'), update: call('update') };
+    }
   }
 
   message(fn) { this.messageListeners.push(fn); }
@@ -80,18 +100,21 @@ class FakeSlackApp {
   async dispatchCommand(name, { user_id = 'U1', text = '' } = {}) {
     const fn = this.commandListeners.get(name);
     if (!fn) throw new Error(`no listener for ${name}`);
-    const command = { command: name, user_id, text };
+    const command = { command: name, user_id, text, trigger_id: 'T-command' };
     await fn({ command, body: command, ack: this.ack(), respond: this.respond(), client: this.client });
   }
 
   // Returns how many listeners ran (0 = Bolt would find no listener).
-  async dispatchAction(action_id, { user = { id: 'U1', name: 'u1' } } = {}) {
+  async dispatchAction(action_id, { user = { id: 'U1', name: 'u1' }, view } = {}) {
     const action = { type: 'button', action_id, value: action_id.split(':')[0] };
     const body = { type: 'block_actions', user, actions: [action] };
+    if (view) Object.assign(body, { view, container: { type: 'view', view_id: view.id }, trigger_id: 'T-action' });
     const matching = this.actionListeners.filter(({ pattern }) => (
       pattern instanceof RegExp ? pattern.test(action_id) : pattern === action_id));
     for (const { fn } of matching) {
-      await fn({ action, body, ack: this.ack(), respond: this.respond(), client: this.client });
+      const args = { action, body, ack: this.ack(), client: this.client };
+      if (!view) args.respond = this.respond();
+      await fn(args);
     }
     return matching.length;
   }
