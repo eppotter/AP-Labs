@@ -1,0 +1,24 @@
+{
+  "id": "ranked",
+  "hub": "alpha",
+  "label": "Ranked list",
+  "description": "People in one zone, best first.",
+  "resource": "CLOSED_THING",
+  "archetype": "scoped-pull",
+  "environments": ["dev"],
+  "parameters": [
+    { "name": "zone", "label": "Zone", "type": "string", "enum": ["north", "south"], "required": true },
+    { "name": "limit", "label": "How many", "type": "integer", "min": 1, "max": 100, "default": 3, "required": true }
+  ],
+  "query": "ranked.sql",
+  "row_id": "person_id",
+  "scoring": {
+    "inputs": [
+      { "name": "tenure", "label": "Months as a client", "weight": 2, "min": 0, "max": 24 },
+      { "name": "spend", "label": "Paid to date ($)", "weight": 3, "min": 0, "max": 10000 },
+      { "name": "idle", "label": "Days since last visit", "weight": -1, "min": 0, "max": 100 },
+      { "name": "rise", "label": "Price rise before lapse", "weight": 1, "min": 0, "max": 1 }
+    ],
+    "limit_parameter": "limit"
+  }
+}

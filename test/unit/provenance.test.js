@@ -349,3 +349,31 @@ test('a push never reads the run record: only the scoped-pull engine loads the p
   assert.deepEqual(loaders.sort(), ['kit/runtime/archetypes/scoped-pull/index.js', 'kit/runtime/archetypes/scoped-pull/run.js']);
   assert.deepEqual(named, []);
 });
+
+// Story 10.1: a scored module's details carry its scoring line, before the
+// SQL. The module is the scored fixture (test/fixtures/runtime/scored).
+test('a scored list\'s "How was this made?" shows a scoring line: the inputs, weights and ranges, the tie rule and the limit kept', async () => {
+  const scoredDir = path.join(FIX, 'scored');
+  const ranked = Object.freeze({
+    ...JSON.parse(fs.readFileSync(path.join(scoredDir, 'manifest.json'), 'utf8')),
+    file: 'modules/ranked/manifest.json',
+    sql: fs.readFileSync(path.join(scoredDir, 'ranked.sql'), 'utf8'),
+  });
+  const rows = JSON.parse(fs.readFileSync(path.join(scoredDir, 'rows.json'), 'utf8'));
+  const ctx = setup({ mod: ranked, data: fakeData(() => rows) });
+  const { button, from } = await runIt(ctx, { zone: 'north' });
+  const { view } = await clickHow(ctx, { from, button });
+  // The confirmed values include the limit, which the SQL never binds.
+  assert.deepEqual(view.blocks.filter((b) => b.fields).map((b) => [b.fields[0].text, b.fields[1].text]), [['*Zone*', 'north'], ['*How many*', '3']]);
+  const all = texts(view);
+  const i = all.findIndex((t) => t && t.startsWith('*Scoring:*'));
+  assert.ok(i > all.findIndex((t) => t && t.startsWith('*Data source:*')));
+  assert.match(all[i + 1], /^\*The SQL that ran:\*/);
+  assert.match(all[i], /Months as a client \(weight 2, 0 to 24\); Paid to date \(\$\) \(weight 3, 0 to 10,000\); Days since last visit \(weight -1, 0 to 100: lower is better\)/);
+  assert.match(all[i], /ties by person_id\. The app kept the top 3 \(How many\); the SQL never uses that value\.$/);
+  assert.match(all[i], /\(no AI\)/);
+  // An unscored list has no scoring line.
+  const plain = setup();
+  const r = await runIt(plain);
+  assert.ok(!texts((await clickHow(plain, r)).view).some((t) => t && t.startsWith('*Scoring:*')));
+});

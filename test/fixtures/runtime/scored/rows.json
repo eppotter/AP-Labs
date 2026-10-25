@@ -1,0 +1,7 @@
+[
+  { "person_id": 1, "name": "Ann", "tenure": 24, "spend": 5000, "idle": 0, "rise": true },
+  { "person_id": 2, "name": "Bo", "tenure": "12", "spend": "10000.00", "idle": 50, "rise": false },
+  { "person_id": 3, "name": "Cy", "tenure": 30, "spend": -5, "idle": 200, "rise": 0 },
+  { "person_id": 5, "name": "Fay", "tenure": 0, "spend": "0", "idle": "100", "rise": false },
+  { "person_id": 10, "name": "Eve", "tenure": 12, "spend": 10000, "idle": "50", "rise": false }
+]
