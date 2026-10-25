@@ -5,3 +5,6 @@ node_modules/
 _bmad/config.user.toml
 # Built fixture databases and mock outboxes (AD-18); never committed
 var/
+
+# Agent worktrees (Claude Code): nested checkouts, never part of the repo.
+.claude/worktrees/
