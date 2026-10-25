@@ -43,6 +43,8 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 - **Tests read client specifics from fixtures,** never from `profiles/brightside/` or any client path.
 - **CI workflow changes need the `workflow` token scope.** If a push of `.github/workflows/**` is refused for that reason, stop that story and post `--kind blocked`. Never push another way to get around the scope.
 - **Never reword code just to quiet a check** (write-path, job-imports, tier). If a check flags safe code, move the code to where the check allows it, or fix the check in its own reviewed change.
+- **A story that adds a Slack screen lists every way out of it** (back, cancel, an error, an expired trigger) in its acceptance criteria, with a test for each.
+- **Steps only CI can run** (a docker build, the network off) are named as untested in the builder's report and the PR body. The first CI run is their test. If the check itself proves wrong, the fix states the changed acceptance criterion in the plan and the PR, and Ely is told.
 - **Profiles are untrusted input.** The schema rejects unknown keys. `.aplabs/**` always floors at T3.
 - **Secrets:** never read, print, log or commit tokens. Commands that need a credential (for example publishing the fixture) are run by Ely, not by an agent.
 - **Reference repos are read-only:** `~/Projects/bi-platform` (live Varsity) and `~/Projects/AI-Governance-Layer` (archived). Read them with `git -C <repo> show main:<path>`. Never check out branches, install or run anything in them.
