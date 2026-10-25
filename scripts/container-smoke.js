@@ -12,8 +12,17 @@
 //
 // Image checks: the process is not root; the app's files are not writable;
 // APLABS_VAR_DIR is; the folders .dockerignore keeps out are absent (test/
-// holds only the mounted fixtures); the MotherDuck extension installed at build loads with
-// the network off (extensionLoads, DEP-016).
+// holds only the mounted fixtures); the MotherDuck extension is installed in
+// the image and DuckDB finds it with the network off (DEP-016):
+//   - installedExtensions: DuckDB is the pinned version, and motherduck and
+//     motherduck_impl (fetched by the build-time LOAD) are files in
+//     $HOME/.duckdb/extensions/<version>/<platform>;
+//   - extensionLoads: an offline LOAD motherduck gets past DuckDB's lookup.
+//     A real LOAD needs MotherDuck's network (the extension's own init calls
+//     MotherDuck's API on every LOAD), so offline the one accepted failure is
+//     that init's network call (classifyOfflineLoad). "Not found", "not
+//     installed", an auto-install or repository download, or any other error
+//     fails the smoke test, with DuckDB's text.
 // Boot checks: the real runtime boots a throwaway stub fork (in /tmp) against
 // a fake Slack client, with the health listener on; /healthz answers 200
 // during the grace and, with the clock moved past it, 200 because the fake
@@ -27,9 +36,10 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
+const os = require('node:os');
 const path = require('node:path');
 const { main } = require('../kit/runtime/app');
-const { extensionLoads } = require('../kit/runtime/data');
+const { extensionLoads, installedExtensions } = require('../kit/runtime/data');
 const { GRACE_MS, OUTAGE_MS } = require('../kit/runtime/app/health');
 const { FakeSlackApp } = require('../test/fixtures/fake-slack');
 const { makeFork, addModule, FILLED } = require('../test/fixtures/temp-fork');
@@ -38,6 +48,52 @@ const REPO = path.resolve(__dirname, '..');
 const PORT = process.env.APLABS_HEALTH_PORT || '8080';
 // Paths .dockerignore keeps out of the image.
 const KEPT_OUT = Object.freeze(['.git', '.github', 'docs', '.claude', '.codex', '.agents', '_bmad', '.aplabs/context', 'var', '.env']);
+
+// The extensions the image must hold: motherduck, and the implementation
+// part its build-time LOAD fetched (scripts/install-duckdb-extensions.js).
+const MD_EXTENSIONS = Object.freeze(['motherduck', 'motherduck_impl']);
+
+// How an offline LOAD motherduck failed, from its reason (DuckDB's first
+// line, paths possibly reduced to file names):
+//   'needs_network' - DuckDB found and opened the extension, and only its own
+//                     init failed, on MotherDuck's API call (the network is
+//                     off). The one accepted result.
+//   'missing'       - DuckDB did not find it (not found, not installed).
+//   'install'       - something tried to install or download it from an
+//                     extension repository.
+//   'other'         - anything else.
+const INIT_NETWORK = new RegExp([
+  '^Invalid Input Error: Initialization function "motherduck_duckdb_cpp_init" ',
+  'from file "[^"]*motherduck\\.duckdb_extension" threw an exception: ',
+  '"Failed to download "[^"\\s]*(?:api\\.motherduck\\.com|extension_version)[^"\\s]*"(?: \\(attempt \\d+\\))?: ',
+  '(?:Could not establish connection|Could not resolve host[^"]*|Couldn\'t resolve host[^"]*)"$',
+].join(''));
+function classifyOfflineLoad(reason) {
+  const text = String(reason == null ? '' : reason);
+  if (/not found|not installed|no such file|unable to find|could not find/i.test(text)) return 'missing';
+  if (/auto-?install|auto-?load|repository|extensions\.duckdb\.org|community-extensions|INSTALL\b|download(?:ing)? extension|Failed to download extension/i.test(text)) return 'install';
+  if (INIT_NETWORK.test(text)) return 'needs_network';
+  return 'other';
+}
+
+// What is wrong with the image's extension folder, as a list (empty = fine).
+// info is installedExtensions(MD_EXTENSIONS); pinned the @duckdb/node-api
+// version in package.json; home the runtime user's $HOME.
+function extensionFolderProblems(info, { pinned, home, isFile = (f) => fs.statSync(f, { throwIfNoEntry: false })?.isFile() === true }) {
+  const problems = [];
+  const want = /^(\d+\.\d+\.\d+)/.exec(String(pinned));
+  if (!want) problems.push(`cannot read the pinned DuckDB version from "${pinned}"`);
+  else if (info.version !== `v${want[1]}`) problems.push(`DuckDB is ${info.version}, not the pinned v${want[1]}`);
+  const folder = path.join(home, '.duckdb', 'extensions', String(info.version), String(info.platform));
+  for (const name of MD_EXTENSIONS) {
+    const e = info.extensions.find((x) => x.name === name);
+    if (!e || !e.installed || !e.installPath) { problems.push(`${name} is not installed`); continue; }
+    if (path.dirname(e.installPath) !== folder) problems.push(`${name} is at ${e.installPath}, not in ${folder}`);
+    else if (!new RegExp(`^${name}(?:\\.[^/]+)?\\.duckdb_extension$`).test(path.basename(e.installPath))) problems.push(`${name} has an unexpected file name: ${path.basename(e.installPath)}`);
+    else if (!isFile(e.installPath)) problems.push(`${name} file is missing: ${e.installPath}`);
+  }
+  return problems;
+}
 
 const step = (msg) => console.log(`container smoke: ok - ${msg}`);
 
@@ -85,9 +141,20 @@ async function imageChecks() {
   assert.deepEqual(fs.existsSync(testDir) ? fs.readdirSync(testDir) : [], ['fixtures'], 'test/ holds only the mounted fixtures');
   step('the image holds no tests, docs, agent folders, client context or data files');
 
+  const pinned = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')).dependencies['@duckdb/node-api'];
+  const info = await installedExtensions([...MD_EXTENSIONS]);
+  const problems = extensionFolderProblems(info, { pinned, home: os.homedir() });
+  assert.deepEqual(problems, [], 'the MotherDuck extension files are installed for the pinned DuckDB version');
+  step(`the MotherDuck extension files are installed for DuckDB ${info.version} (${info.platform})`);
+
   const md = await extensionLoads('motherduck');
-  assert.ok(md.loaded, `the MotherDuck extension does not load offline: ${md.reason}`);
-  step('the MotherDuck extension installed at build loads with the network off');
+  if (!md.loaded) {
+    const kind = classifyOfflineLoad(md.reason);
+    assert.equal(kind, 'needs_network', `an offline LOAD motherduck must fail only in its own init, on MotherDuck's network call; it failed (${kind}): ${md.reason}`);
+  }
+  step(md.loaded
+    ? 'DuckDB found and loaded the MotherDuck extension offline'
+    : 'DuckDB found the MotherDuck extension offline; only its init failed, on MotherDuck\'s network call (a real LOAD needs the network)');
 }
 
 async function bootChecks() {
@@ -148,10 +215,14 @@ async function smoke(argv) {
   await bootChecks();
 }
 
-smoke(process.argv.slice(2)).then(
-  () => console.log('container smoke: PASSED'),
-  (err) => {
-    console.error(`container smoke: FAILED\n${err.message}`);
-    process.exitCode = 1;
-  },
-);
+module.exports = { classifyOfflineLoad, extensionFolderProblems, MD_EXTENSIONS };
+
+if (require.main === module) {
+  smoke(process.argv.slice(2)).then(
+    () => console.log('container smoke: PASSED'),
+    (err) => {
+      console.error(`container smoke: FAILED\n${err.message}`);
+      process.exitCode = 1;
+    },
+  );
+}
