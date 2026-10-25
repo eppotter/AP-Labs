@@ -60,7 +60,7 @@ development_status:
   epic-4: in-progress
   4-1-onboarding-build-and-the-client-files: done
   4-2-known-truths-come-with-checks: done
-  4-3-prove-onboarding-on-brightside: backlog
+  4-3-prove-onboarding-on-brightside: review
   epic-4-retrospective: optional
 
   epic-5: done
@@ -93,9 +93,9 @@ development_status:
   8-3-brightside-s-mock-email-tool-and-the-outbox: done
   epic-8-retrospective: done
 
-  epic-9: backlog
-  9-1-an-llm-service-with-a-spend-breaker-and-kill-switch: backlog
-  9-2-slack-formatting-and-chunking: backlog
+  epic-9: in-progress
+  9-1-an-llm-service-with-a-spend-breaker-and-kill-switch: done
+  9-2-slack-formatting-and-chunking: done
   9-3-declared-parameters-and-a-typed-form-no-llm: backlog
   9-4-plain-english-fills-the-declared-parameters: backlog
   9-5-the-bound-query-runs-and-the-results-arrive-privately: backlog

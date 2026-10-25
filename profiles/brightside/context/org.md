@@ -9,38 +9,40 @@ updated: 2026-10-25        # ISO date of the last edit
 
 Drafted by Scribe from the Onboarder's findings; every agent reads it. Write only what a client
 source supports, and mark anything inferred as _inferred_. No secrets, no personal data.
-
-> **Skeleton.** The Onboarder wrote these facts from the synthetic Brightside sources (Story 4.3).
-> Scribe drafts the prose. Brightside is fictional.
+Brightside is fictional.
 
 ## What the company does
 
-- Brightside Home Cleaning: a residential cleaner working across five service zones.
-- Serves households (about 2,000 client accounts at 2026-09-30). A household can have more than
-  one home.
-- Sells recurring plans (weekly, every two weeks or monthly) and one-off visits.
-- Three packages: Standard clean, Deep clean and Move-out clean. Five add-ons: Baseboards, Inside
-  fridge, Laundry fold, Inside oven and Interior windows.
-- Makes money by invoicing each completed visit. Clients pay by card or bank transfer (ACH), in
-  full or in parts.
-- Data history runs from 2024-10-01 to 2026-09-30.
+Brightside Home Cleaning is a residential cleaner working across five service zones. Its clients
+are households: about 2,000 client accounts at 2026-09-30. A household can have more than one home.
+
+It sells recurring plans (weekly, every two weeks or monthly) and one-off visits. There are three
+packages (Standard clean, Deep clean and Move-out clean) and five add-ons (Baseboards, Inside
+fridge, Laundry fold, Inside oven and Interior windows).
+
+It makes money by invoicing each completed visit. Clients pay by card or bank transfer (ACH),
+in full or in parts. The data history runs from 2024-10-01 to 2026-09-30.
 
 ## Teams
 
-- **Field crews:** 15 crews, three per zone (for example "North crew A"). Each crew has three
-  members, one of them the crew lead. Cleaners and crew leads are paid by the hour; staff join,
-  leave and move between crews.
-- **Office and owners:** _inferred_. Dana Reyes is the admin and owns the client files; Marcus Lee
-  is a member. Their job titles are not recorded.
+**Field crews.** There are 15 crews, three per zone (for example "North crew A"). Each crew has
+three members, one of whom is the crew lead. Cleaners and crew leads are paid by the hour. Staff
+join, leave and move between crews.
+
+**Office and owners** (_inferred_). Dana Reyes is the admin and owns the client files; Marcus Lee
+is a member. Their job titles are not recorded.
 
 ## Tools and systems
 
-- A CRM (client records) and an email tool (lists for campaigns such as win-back). Both are mocks.
-- The Brightside bot in Slack (`/brightside`), which opens a menu: Say hello, Dataset (open to everyone)
-  and Email outbox (admin only). Planned: Win-back list, Unpaid invoices, and Labour cost (owner and
-  admin only).
-- The shared data in MotherDuck, which the bot reads but never writes.
-- Connection details are in `connectors.md`.
+Brightside uses a CRM for client records and an email tool for campaign lists, such as win-back.
+Both are mocks.
+
+The Brightside bot lives in Slack (`/brightside`) and opens a menu: Say hello and Dataset (open to
+everyone) and Email outbox (admin only). Planned entries are Win-back list, Unpaid invoices and
+Labour cost (owner and admin only).
+
+The shared data sits in MotherDuck; the bot reads it but never writes. Connection details are in
+`connectors.md`.
 
 ## Vocabulary
 
