@@ -634,3 +634,14 @@ test('health: shutdown closes the listener after Slack stops', async () => {
   }, 'SIGTERM');
   assert.deepEqual(order, ['jobs', 'slack', 'health', 'data', 'exit']);
 });
+
+test('health: a data or AI setup throw after the listener started closes the listener (#168)', async () => {
+  const brokenData = { ...fakeData(), open: async () => { throw new Error('disk on fire'); } };
+  // AI setup that throws on its first read of its deps.
+  const brokenLlm = new Proxy({}, { get() { throw new Error('llm setup broke'); } });
+  for (const [deps, why] of [[{ data: brokenData }, /disk on fire/], [{ llm: brokenLlm }, /llm setup broke/]]) {
+    const port = await freePort();
+    await assert.rejects(boot(env({ APLABS_HEALTH_PORT: String(port) }), { ...deps, healthHost: '127.0.0.1' }), why);
+    await assert.rejects(getHealth(port), (err) => err.code === 'ECONNREFUSED');
+  }
+});

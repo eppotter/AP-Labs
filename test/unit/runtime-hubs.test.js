@@ -385,8 +385,32 @@ test('when the in-place update fails too, the failure is logged and nothing thro
   app.viewsFail.push = expired();
   app.viewsFail.update = Object.assign(new Error('y'), { data: { error: 'not_found' } });
   await app.dispatchAction('echo:open', { view: MENU_WITH_HASH });
-  assert.ok(log.lines.some((l) => l.msg === 'could not tell the person about a failure'));
+  // #166: the failed update is logged (Slack's code only) and the handler goes on.
+  const failed = log.lines.filter((l) => l.msg === 'in-place reply failed');
+  assert.deepEqual(failed.map((l) => l.fields), [{ where: 'open', reason: 'not_found', hub: 'alpha' }]);
   assert.deepEqual(app.responded, []);
+});
+
+test('#166: once the in-place fallback is chosen, a failed update is logged and later replies still go in place', async () => {
+  let app;
+  let finished = false;
+  const many = handlerModule('many', async ({ reply }) => {
+    await reply('one');
+    app.viewsFail.update = null; // Slack recovers
+    await reply('two');
+    finished = true;
+  });
+  const s = setup({ views: true, reg: createRegistry({ hubs: registry.hubs, modules: [many] }), canUse: () => true });
+  app = s.app;
+  app.viewsFail.push = expired();
+  app.viewsFail.update = Object.assign(new Error('y'), { data: { error: 'not_found' } });
+  await app.dispatchAction('many:open', { view: MENU_WITH_HASH });
+  assert.equal(finished, true, 'the handler kept going after the failed update');
+  const updates = calls(app, 'update');
+  assert.equal(updates.length, 2, 'the failed update, then the one that landed');
+  assert.deepEqual(viewTexts(updates[1].view), ['two']);
+  assert.equal(s.log.lines.filter((l) => l.msg === 'in-place reply failed').length, 1);
+  assert.ok(!s.log.lines.some((l) => l.msg === 'handler failed'));
 });
 
 test('a menu over 100 blocks keeps Help at the end with a "more…" note; long titles are cut to 24', async () => {

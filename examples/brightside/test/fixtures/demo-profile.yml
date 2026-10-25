@@ -1,0 +1,26 @@
+# Test fixture for the demo-flow example test (Story 10.4, issue #161): a copy
+# of the Brightside demo profile's client, resources, users and forbidden
+# columns, with a fake Slack id for Dana. Tests read this, never
+# profiles/brightside/profile.yml. Deleted with the example in a fork.
+schema_version: 1
+
+client:
+  id: brightside
+  name: Brightside Home Cleaning
+
+resources:
+  - { key: TIER3_APPROVE, label: Approve T3 changes, admin_grantable: false }
+  - { key: VERIFY_SKIP, label: Waive a skipped verify check }
+  - { key: HELLO_WORLD, label: Say hello, open_access: true }
+  - { key: DATASET, label: Dataset, open_access: true }
+  - { key: OUTBOX, label: Email outbox }
+  - { key: WIN_BACK, label: Win-back list, admin_grantable: false }
+  - { key: UNPAID_INVOICES, label: Unpaid invoices }
+  - { key: LABOUR_COST, label: Labour cost }
+
+users:
+  - { id: dana, name: Dana Reyes, role: admin, identities: { github: dana-r, slack: U0FIXTUREDANA }, grants: [TIER3_APPROVE, WIN_BACK] }
+  - { id: marcus, name: Marcus Lee, role: member, identities: { github: mlee-bright }, grants: [VERIFY_SKIP] }
+
+sql:
+  forbidden_columns: [clients.phone, properties.street_address, properties.postal_code]

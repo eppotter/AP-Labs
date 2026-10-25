@@ -54,7 +54,7 @@ A vision to realise, with a pain behind it. AP Labs forks this template for ever
 
 ## Constraints
 
-- Node 20 and bash. Hooks are thin bash wrappers over Node; hooks fail open, libraries fail closed.
+- Node 24 (LTS, ADR 0004) and bash. Hooks are thin bash wrappers over Node; hooks fail open, libraries fail closed.
 - Deterministic checks are required. No LLM self-review loops.
 - BMAD 6.12.4 and p3-stack `09909eb` stay unmodified (p3 path fixes excepted). Overrides live in our docs and rules layer.
 - One rules file: `AGENTS.md`, imported by `CLAUDE.md`.

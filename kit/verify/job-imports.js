@@ -12,6 +12,9 @@
 //   - a connectors path (`connectors/...` or `connectors` itself): a job never
 //     reaches a connector. The write-path check (kit/verify/write-path.js)
 //     separately fails a job that reaches a connector's write.
+// It also fails any require() or import() whose argument is not a literal
+// (a variable, a template with ${}, a concatenation): its target can't be
+// checked, so the check fails closed (#154).
 //
 // App dirs are the write-path check's: <repo>/app, APLABS_APP_DIR when set
 // (it must exist), and package.json "aplabs": { "appDirs": [...] }. Imports are
@@ -25,7 +28,14 @@ const { configuredAppDirs, codeLines } = require('./write-path');
 
 const JOBS_DIR = 'jobs';
 const JS = /\.(c|m)?js$/;
-const IMPORT = /\brequire\s*\(\s*(['"`])([^'"`]+)\1\s*\)|\bimport\s*\(\s*(['"`])([^'"`]+)\3\s*\)|\bfrom\s*(['"])([^'"]+)\5|^\s*import\s+(['"])([^'"]+)\7/gm;
+// A require() or import() with a literal specifier: a quoted string, or a
+// template literal with no ${}.
+const IMPORT = /\brequire\s*\(\s*(['"`])((?:(?!\$\{)[^'"`])+)\1\s*\)|\bimport\s*\(\s*(['"`])((?:(?!\$\{)[^'"`])+)\3\s*\)|\bfrom\s*(['"])([^'"]+)\5|^\s*import\s+(['"])([^'"]+)\7/gm;
+// Every require( and import( call (not a method such as obj.import( or
+// require.resolve(); one whose argument is not exactly a literal (#154) can't
+// be checked, so it is a finding: the check fails closed.
+const CALL = /(?<![\w$.])(require|import)\s*\(/g;
+const LITERAL_ARG = /^\s*(?:(['"])[^'"`]*\1|`[^`$]*`)\s*\)/;
 const FORBIDDEN = Object.freeze([
   { test: /^@slack\//, what: 'Slack' },
   { test: /^#sdk(\/|$)/, what: 'the module SDK (#sdk)' },
@@ -78,6 +88,12 @@ function jobImportProblems(root, { env = process.env } = {}) {
         const spec = m[2] || m[4] || m[6] || m[8];
         const hit = FORBIDDEN.find((f) => f.test.test(spec));
         if (hit) problems.push(`${rel(file)}:${i + 1}: imports ${hit.what} ("${spec}") (${WHY})`);
+      }
+      for (const m of code.matchAll(CALL)) {
+        if (!LITERAL_ARG.test(code.slice(m.index + m[0].length))) {
+          const what = m[1] === 'import' ? 'import()' : 'require';
+          problems.push(`${rel(file)}:${i + 1}: a non-literal ${what}, whose target can't be checked (${WHY})`);
+        }
       }
     });
   }

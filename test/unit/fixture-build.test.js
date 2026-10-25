@@ -73,6 +73,25 @@ test('a rebuild replaces the file whole and leaves no temporary files', async (t
   assert.deepEqual(fs.readdirSync(dir), ['mini.duckdb']);
 });
 
+test('#61: a failed final rename keeps the old file; a stale .wal beside the target is removed', async (t) => {
+  const dir = tmpDir(t);
+  const out = path.join(dir, 'mini.duckdb');
+  await build({ fixtureDir: MINI, out });
+  const before = fs.readFileSync(out);
+  const realRename = fs.renameSync;
+  fs.renameSync = () => { throw Object.assign(new Error('EXDEV: rename failed'), { code: 'EXDEV' }); };
+  try {
+    await assert.rejects(build({ fixtureDir: MINI, out }), /rename failed/);
+  } finally {
+    fs.renameSync = realRename;
+  }
+  assert.ok(before.equals(fs.readFileSync(out)), 'the previous build is still there');
+  assert.deepEqual(fs.readdirSync(dir), ['mini.duckdb'], 'the half-built temporary file is cleaned up');
+  fs.writeFileSync(`${out}.wal`, 'stale');
+  await build({ fixtureDir: MINI, out });
+  assert.deepEqual(fs.readdirSync(dir), ['mini.duckdb'], 'the stale .wal is gone and the new file is in place');
+});
+
 test('a row count that disagrees with fixture_meta fails and keeps the old file', async (t) => {
   const fixture = copyMini(t);
   const out = path.join(tmpDir(t), 'mini.duckdb');
