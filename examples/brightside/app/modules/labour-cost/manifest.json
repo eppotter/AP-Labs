@@ -1,0 +1,20 @@
+{
+  "id": "labour-cost",
+  "hub": "brightside",
+  "label": "Labour cost",
+  "description": "What staff time on visits cost in pay for one month: totals only, never one person's rate or name.",
+  "resource": "LABOUR_COST",
+  "archetype": "scoped-pull",
+  "environments": ["dev", "prod"],
+  "parameters": [
+    {
+      "name": "month",
+      "label": "Month",
+      "type": "string",
+      "description": "The latest one on or before the data's as-of date; the result shows its dates.",
+      "enum": ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+      "required": true
+    }
+  ],
+  "query": "labour-cost.sql"
+}
