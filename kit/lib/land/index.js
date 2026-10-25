@@ -52,7 +52,9 @@ const EXEMPT_VALUE = /^Review: exempt — \S/;
 const HEAD_LINE = /^Reviewed head:.*$/gm;
 const HEAD_VALUE = /^Reviewed head: ([0-9a-f]{40})\s*$/;
 const REFUTER_LINE = /^Refuter:.*$/gm;
-const REFUTER_VALUE = /^Refuter: (\d+) confirmed, (\d+) not reproduced, (\d+) escalated, (\d+) pending\s*$/;
+// The fixed count is optional: bodies written before it have none. Their
+// confirmed and pending counts include fixed P1s, so land still refuses them.
+const REFUTER_VALUE = /^Refuter: (\d+) confirmed, (?:(\d+) fixed, )?(\d+) not reproduced, (\d+) escalated, (\d+) pending\s*$/;
 
 // The review lines in a PR body. reviewedHead and refuter are null when the
 // line is absent and 'invalid' when it is malformed or repeated. exempt is
@@ -70,7 +72,8 @@ function parseBody(body) {
     exempt: exemptFrom(text.match(EXEMPT_LINE) || []),
     reviewedHead: one(HEAD_LINE, HEAD_VALUE, (m) => m[1]),
     refuter: one(REFUTER_LINE, REFUTER_VALUE, (m) => ({
-      confirmed: Number(m[1]), notReproduced: Number(m[2]), escalated: Number(m[3]), pending: Number(m[4]),
+      confirmed: Number(m[1]), fixed: m[2] === undefined ? null : Number(m[2]),
+      notReproduced: Number(m[3]), escalated: Number(m[4]), pending: Number(m[5]),
     })),
   };
 }
@@ -106,7 +109,8 @@ function prRefusals(pr) {
     const { confirmed, escalated, pending } = body.refuter;
     if (confirmed || escalated || pending) {
       reasons.push(`Refuter shows ${confirmed} confirmed, ${escalated} escalated, ${pending} pending: every P1 must be fixed ` +
-        'and re-reviewed, not reproduced, or cleared by the human.');
+        'and re-reviewed, not reproduced, or cleared by the human.' +
+        (body.refuter.fixed === null ? ' This line predates the fixed count; recording a verdict with npm run review -- --refute rewrites it.' : ''));
     }
   }
   return reasons;

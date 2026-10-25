@@ -415,12 +415,17 @@ function blockingFindings(rounds) {
     (i === last ? f.verdict !== 'not-reproduced' : f.verdict === 'cannot-verify')));
 }
 
-// Counts every P1 on the branch; one recorded before Story 1.4 counts as pending.
+// Counts every P1 on the branch once; one recorded before Story 1.4 counts as
+// pending. confirmed and pending count only what blockingFindings says blocks;
+// fixed counts earlier rounds' confirmed or pending P1s that a later round checked.
 function withRefuterLine(body, rounds) {
   const p1s = rounds.flatMap((r) => r.findings).filter((f) => f.priority === 'P1');
-  const count = (verdict) => p1s.filter((f) => (f.verdict ?? 'pending') === verdict).length;
-  return withLine(body, REFUTER_LINE, `Refuter: ${count('confirmed')} confirmed, ${count('not-reproduced')} not reproduced, ` +
-    `${count('cannot-verify')} escalated, ${count('pending')} pending`);
+  const blocking = new Set(blockingFindings(rounds));
+  const verdictOf = (f) => f.verdict ?? 'pending';
+  const count = (verdict, blocks) => p1s.filter((f) => verdictOf(f) === verdict && (blocks === undefined || blocking.has(f) === blocks)).length;
+  const fixed = count('confirmed', false) + count('pending', false);
+  return withLine(body, REFUTER_LINE, `Refuter: ${count('confirmed', true)} confirmed, ${fixed} fixed, ` +
+    `${count('not-reproduced')} not reproduced, ${count('cannot-verify')} escalated, ${count('pending', true)} pending`);
 }
 
 // What the CLI prints after a round with P1s: each pending one and what to do with it.

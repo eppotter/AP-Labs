@@ -406,14 +406,30 @@ test('repeatedBlockingFiles ignores P1s that were not reproduced', () => {
   assert.deepEqual(twice('confirmed', 'not-reproduced'), []);
 });
 
-test('withRefuterLine counts every P1 on the branch and replaces the line in place', () => {
+test('withRefuterLine counts every P1 on the branch once and replaces the line in place', () => {
   const rounds = [
     round(SHA_A, [refuted('a.js', 'confirmed', 'R1-1'), refuted('b.js', 'not-reproduced', 'R1-2'), p2('c.js')]),
-    round(SHA_B, [refuted('d.js', 'cannot-verify', 'R2-1'), refuted('e.js', 'pending', 'R2-2'), p1('legacy.js')]),
+    round(SHA_B, [refuted('d.js', 'cannot-verify', 'R2-1'), refuted('e.js', 'pending', 'R2-2'), p1('legacy.js'),
+      refuted('f.js', 'confirmed', 'R2-3')]),
   ];
-  const line = 'Refuter: 1 confirmed, 1 not reproduced, 1 escalated, 2 pending';
+  const line = 'Refuter: 1 confirmed, 1 fixed, 1 not reproduced, 1 escalated, 2 pending';
   assert.equal(withRefuterLine('Body', rounds), `Body\n\n${line}\n`);
-  assert.equal(withRefuterLine('A\nRefuter: 0 confirmed, 0 not reproduced, 0 escalated, 9 pending\nB', rounds), `A\n${line}\nB`);
+  assert.equal(withRefuterLine('A\nRefuter: 0 confirmed, 0 not reproduced, 0 escalated, 9 pending\nB', rounds), `A\n${line}\nB`,
+    'an old-format line is rewritten in the new format');
+});
+
+test('withRefuterLine: only blocking P1s count as confirmed or pending; an earlier round\'s are fixed', () => {
+  const line = (rounds) => withRefuterLine('', rounds).trim();
+  assert.equal(line([round(SHA_A, [refuted('a.js', 'confirmed', 'R1-1')]), round(SHA_B, [])]),
+    'Refuter: 0 confirmed, 1 fixed, 0 not reproduced, 0 escalated, 0 pending', 'confirmed in round 1, clean round 2');
+  assert.equal(line([round(SHA_A, [refuted('a.js', 'pending', 'R1-1')]), round(SHA_B, [p2('b.js')])]),
+    'Refuter: 0 confirmed, 1 fixed, 0 not reproduced, 0 escalated, 0 pending', 'pending in round 1 was checked by round 2');
+  assert.equal(line([round(SHA_A, [refuted('a.js', 'confirmed', 'R1-1')])]),
+    'Refuter: 1 confirmed, 0 fixed, 0 not reproduced, 0 escalated, 0 pending', 'confirmed in the latest round blocks');
+  assert.equal(line([round(SHA_A, []), round(SHA_B, [refuted('a.js', 'pending', 'R2-1')])]),
+    'Refuter: 0 confirmed, 0 fixed, 0 not reproduced, 0 escalated, 1 pending', 'pending in the latest round blocks');
+  assert.equal(line([round(SHA_A, [refuted('a.js', 'cannot-verify', 'R1-1')]), round(SHA_B, [])]),
+    'Refuter: 0 confirmed, 0 fixed, 0 not reproduced, 1 escalated, 0 pending', 'an escalation from any round still counts');
 });
 
 test('refuterBlock lists pending P1s with the exact Refuter instruction', () => {
