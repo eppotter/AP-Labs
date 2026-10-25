@@ -2,7 +2,10 @@
 
 // The job-imports check (Story 11.1, N2, Q3): a scheduled job gets only its
 // ctx (log, data, now, name). `npm run check` runs it through
-// scripts/check-job-imports.js and fails any JS file under <app dir>/jobs/
+// scripts/check-job-imports.js, and the engine also runs it in every
+// `npm run verify` and the end-of-turn hook as the built-in check
+// engine:job-imports (kit/verify/builtins.js), so editing package.json's check
+// line does not switch it off. It fails any JS file under <app dir>/jobs/
 // that imports:
 //   - @slack/... (a job never posts to Slack);
 //   - #sdk (the module SDK; a job needs nothing beyond ctx);
@@ -81,4 +84,28 @@ function jobImportProblems(root, { env = process.env } = {}) {
   return problems;
 }
 
-module.exports = { jobImportProblems, FORBIDDEN, JOBS_DIR };
+// Its id in npm run verify, where it always runs, whatever the profile says.
+const CHECK_ID = 'engine:job-imports';
+
+// The engine's built-in verify check (kit/verify/run-all.js): a verify result.
+// An error inside the check is a fail, never a pass.
+function jobImportsCheck(root, env = process.env) {
+  const started = Date.now();
+  let problems;
+  try {
+    problems = jobImportProblems(root, { env });
+  } catch (err) {
+    problems = [`the check could not run (${err.code || err.message}): failing closed`];
+  }
+  const ok = !problems.length;
+  return {
+    id: CHECK_ID,
+    seconds: (Date.now() - started) / 1000,
+    outcome: ok ? 'pass' : 'fail',
+    ...(ok ? {} : { reason: `${problems.length} problem(s); ${WHY}` }),
+    stdout: '',
+    stderr: problems.join('\n'),
+  };
+}
+
+module.exports = { jobImportProblems, jobImportsCheck, CHECK_ID, FORBIDDEN, JOBS_DIR };

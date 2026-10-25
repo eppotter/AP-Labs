@@ -10,7 +10,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { jobImportProblems } = require('../../kit/verify/job-imports');
+const { jobImportProblems, jobImportsCheck, CHECK_ID } = require('../../kit/verify/job-imports');
+const { BUILTINS, runBuiltins } = require('../../kit/verify/builtins');
 
 const ROOT = path.resolve(__dirname, '../..');
 const SCRIPT = path.join(ROOT, 'scripts/check-job-imports.js');
@@ -79,4 +80,31 @@ test('APLABS_APP_DIR and package.json appDirs are scanned; a missing APLABS_APP_
   const ok = run(clean);
   assert.equal(ok.status, 0, ok.stderr);
   assert.match(ok.stdout, /check-job-imports: ok/);
+});
+
+test('the check is an engine built-in: npm run verify always runs it, and it fails on a planted bad import', (t) => {
+  assert.equal(CHECK_ID, 'engine:job-imports');
+  assert.ok(BUILTINS.includes(jobImportsCheck), 'registered beside engine:write-path');
+  const root = tmpRoot(t);
+  put(root, 'app/jobs/ok.js', 'module.exports = { run: async () => {} };\n');
+  const pass = runBuiltins(root, {}).find((r) => r.id === CHECK_ID);
+  assert.deepEqual([pass.outcome, pass.stderr], ['pass', '']);
+  // A package.json that drops the script from npm run check changes nothing here.
+  put(root, 'package.json', JSON.stringify({ name: 'x', scripts: { check: 'true' } }));
+  put(root, 'app/jobs/bad.js', "const crm = require('../connectors/crm/connector');\n");
+  const fail = runBuiltins(root, {}).find((r) => r.id === CHECK_ID);
+  assert.equal(fail.outcome, 'fail');
+  assert.match(fail.reason, /^1 problem\(s\); a job gets only ctx/);
+  assert.match(fail.stderr, /app\/jobs\/bad\.js:1: imports a connector/);
+});
+
+test('the built-in fails closed when it cannot run', (t) => {
+  const root = tmpRoot(t);
+  put(root, 'package.json', '{ not json');
+  const r = jobImportsCheck(root, {});
+  assert.equal(r.outcome, 'fail');
+  assert.match(r.stderr, /package\.json can't be read/);
+  const broken = jobImportsCheck(null, {});
+  assert.equal(broken.outcome, 'fail');
+  assert.match(broken.stderr, /could not run.*failing closed/);
 });

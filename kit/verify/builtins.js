@@ -10,10 +10,13 @@
 //
 //   engine:write-path  kit/verify/write-path.js (DEP-012, AD-15): app code may
 //                      not write live outside the approval-write archetype.
+//   engine:job-imports kit/verify/job-imports.js (Story 11.1, N2): a scheduled
+//                      job may not import Slack, #sdk or a connector.
 
 const { writePathCheck } = require('./write-path');
+const { jobImportsCheck } = require('./job-imports');
 
-const BUILTINS = Object.freeze([writePathCheck]);
+const BUILTINS = Object.freeze([writePathCheck, jobImportsCheck]);
 
 // Every built-in's result for the repo at root. env supplies APLABS_APP_DIR.
 function runBuiltins(root, env = process.env) {

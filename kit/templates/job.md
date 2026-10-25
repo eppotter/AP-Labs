@@ -70,7 +70,7 @@ A job runs only when all three allow it: the profile's `jobs.enabled` is `true` 
 - `ctx.now()`: the clock, as a `Date`.
 - `ctx.name`: the job's name.
 
-There is no Slack client, no store and no connector. `npm run check` fails a file under `app/jobs/` that imports `@slack/`, `#sdk` or a connectors path, naming the file and line, and the write-path check fails one that reaches a connector's `write`. Job code is trusted, reviewed app code and is not sandboxed: these checks are tripwires, and review reads every job.
+There is no Slack client, no store and no connector. `npm run check` fails a file under `app/jobs/` that imports `@slack/`, `#sdk` or a connectors path, naming the file and line (so does every `npm run verify` and the end-of-turn hook, as the built-in check `engine:job-imports`, which a profile or a `package.json` edit can't drop), and the write-path check fails one that reaches a connector's `write`. Job code is trusted, reviewed app code and is not sandboxed: these checks are tripwires, and review reads every job.
 
 ## How runs behave
 
