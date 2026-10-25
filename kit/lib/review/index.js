@@ -157,10 +157,25 @@ function verdictLine(verdict) {
 const PROSE_BLOCKER = /(?<!\b(?:no|not|non|nothing|zero)[\s-]+(?:new\s+)?)\b(?:P1|blocking)\b/i;
 const REPO_PATH = /(?:^|[\s`(])(?:(?:[\w.-]+\/)+[\w.-]*\w\.[A-Za-z]{1,5}|[\w-]{2,}[\w.-]*\.[A-Za-z]{1,5})(?::\d+)?(?=$|[\s`),.;:])/;
 const SETTLED = /\b(?:fixed|resolved|addressed|no longer)\b/i;
+// SETTLED is read per clause (#47): "the earlier P1 is fixed, but kit/x.js is
+// blocking" still has a blocking clause. Clauses split at ";", a sentence end
+// and a contrast word; a subjectless continuation ("… was blocking but is now
+// fixed") stays with the clause before it.
+const CLAUSE_BREAK = /;|\.\s+|,?\s+\b(?:but|however|although|though|whereas|yet|while)\b/i;
+const CONTINUATION = /^\s*(?:is|was|are|were|has|have|had|now)\b/i;
+
+function clauses(line) {
+  const out = [];
+  for (const part of line.split(new RegExp(CLAUSE_BREAK.source, 'gi'))) {
+    if (out.length && CONTINUATION.test(part)) out[out.length - 1] += ` ${part}`;
+    else out.push(part);
+  }
+  return out;
+}
 
 function proseBlockerLines(verdict) {
   return verdict.split('\n').filter((l) => /^\s*[-*]\s/.test(l) && !/^\s*[-*]\s+\[P\d\]/.test(l) &&
-    PROSE_BLOCKER.test(l) && REPO_PATH.test(l) && !SETTLED.test(l));
+    REPO_PATH.test(l) && clauses(l).some((c) => PROSE_BLOCKER.test(c) && !SETTLED.test(c)));
 }
 
 // "blocking or non-blocking" counts as one word so the two-word limit still

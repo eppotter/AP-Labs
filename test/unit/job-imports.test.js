@@ -98,6 +98,54 @@ test('the check is an engine built-in: npm run verify always runs it, and it fai
   assert.match(fail.stderr, /app\/jobs\/bad\.js:1: imports a connector/);
 });
 
+test('#154: a non-literal require or import() in a job is a finding (fail closed)', (t) => {
+  const root = tmpRoot(t);
+  put(root, 'app/jobs/var.js', "const name = '@slack/bolt';\nconst x = require(name);\n");
+  put(root, 'app/jobs/tpl.js', 'const y = require(`${base}/connectors/crm`);\n');
+  put(root, 'app/jobs/dyn.mjs', 'const m = await import(spec);\nconst n = await import(`./lib/${which}.js`);\n');
+  put(root, 'app/jobs/concat.js', "const z = require('../' + 'connectors');\n");
+  put(root, 'app/jobs/fine.js', [
+    "const path = require('node:path');",
+    'const h = require(`./lib/helper`);',
+    "const lib = await import('./lib/x.js');",
+    'const r = require.resolve(name);',
+    'obj.import(thing);',
+    '',
+  ].join('\n'));
+  const problems = jobImportProblems(root, { env: {} });
+  assert.deepEqual(problems.map((p) => p.split(': ')[0]), [
+    'app/jobs/concat.js:1',
+    'app/jobs/dyn.mjs:1',
+    'app/jobs/dyn.mjs:2',
+    'app/jobs/tpl.js:1',
+    'app/jobs/var.js:2',
+  ]);
+  for (const p of problems) assert.match(p, /a non-literal (require|import\(\)), whose target can't be checked/, p);
+});
+
+test('#100: a built-in that throws is reported under its check id, never its function name', () => {
+  // Load builtins.js against checks that throw, then restore the real modules.
+  const wpPath = require.resolve('../../kit/verify/write-path');
+  const jiPath = require.resolve('../../kit/verify/job-imports');
+  const biPath = require.resolve('../../kit/verify/builtins');
+  const wp = require(wpPath);
+  const ji = require(jiPath);
+  const real = { wp: wp.writePathCheck, ji: ji.jobImportsCheck };
+  wp.writePathCheck = function writePathCheck() { throw new Error('boom'); };
+  ji.jobImportsCheck = function jobImportsCheck() { throw new Error('bang'); };
+  delete require.cache[biPath];
+  try {
+    const results = require(biPath).runBuiltins('/nowhere', {});
+    assert.deepEqual(results.map((r) => [r.id, r.outcome]), [['engine:write-path', 'fail'], ['engine:job-imports', 'fail']]);
+    assert.match(results[0].reason, /could not run \(boom\): failing closed/);
+  } finally {
+    wp.writePathCheck = real.wp;
+    ji.jobImportsCheck = real.ji;
+    delete require.cache[biPath];
+    require(biPath);
+  }
+});
+
 test('the built-in fails closed when it cannot run', (t) => {
   const root = tmpRoot(t);
   put(root, 'package.json', '{ not json');

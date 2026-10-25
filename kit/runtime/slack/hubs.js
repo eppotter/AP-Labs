@@ -265,8 +265,11 @@ function registerHubs(app, {
       try {
         await inPlace.show({ blocks: shownInPlace.flatMap(messageBlocks), ...(modal ? { modal } : {}) }, { force: true });
       } catch (err) {
+        // Once in place is the only way left to reach the person, a failed
+        // update is logged (Slack's code, never the payload) and the handler
+        // goes on, so its later replies still get their chance (#166).
         shownInPlace.pop();
-        throw err;
+        log.error('in-place reply failed', { where, reason: failureReason(err), hub: hubId || null });
       }
       return undefined;
     };

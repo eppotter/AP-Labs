@@ -49,7 +49,14 @@ function createLog({
     seen.add(value);
     if (Array.isArray(value)) return value.map((v) => scrub(v, seen));
     const out = {};
-    for (const [k, v] of Object.entries(value)) out[clean(k)] = scrub(v, seen);
+    // Redacted keys stay unique ("[redacted]", "[redacted]#2", ...), so two
+    // secret-shaped keys never collapse into one and lose a field (#56).
+    for (const [k, v] of Object.entries(value)) {
+      const base = clean(k);
+      let key = base;
+      for (let n = 2; Object.hasOwn(out, key); n += 1) key = `${base}#${n}`;
+      out[key] = scrub(v, seen);
+    }
     return out;
   }
 

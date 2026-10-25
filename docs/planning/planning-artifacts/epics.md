@@ -31,7 +31,7 @@ This document breaks the Orchestrator spec (`SPEC.md`, standing in for a PRD) an
 
 ### NonFunctional Requirements
 
-- NFR1: Node 20 and bash. Hooks are thin bash wrappers over Node.
+- NFR1: Node 24 (LTS, ADR 0004) and bash. Hooks are thin bash wrappers over Node.
 - NFR2: Hooks fail open; libraries fail closed.
 - NFR3: Deterministic checks are required. No LLM self-review loops.
 - NFR4: BMAD 6.12.4 and p3-stack `09909eb` stay unmodified (p3 path fixes excepted).
