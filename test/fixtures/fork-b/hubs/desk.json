@@ -1,0 +1,6 @@
+{
+  "id": "desk",
+  "command": "/desk",
+  "name": "Desk",
+  "description": "Open the Desk menu"
+}
