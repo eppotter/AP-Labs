@@ -11,7 +11,8 @@
 // token. The approval entry holds its own copy of the rows and the
 // idempotency key (sha256 of [listName, sortedIdsAsStrings]). Approve with an
 // expired, unknown or someone else's token gets PreviewInvalid; nothing is
-// pushed or consumed (the push is 10.3). Cancel consumes the token. Through
+// pushed or consumed (the push itself is tested in
+// runtime-approval-push.test.js, Story 10.3). Cancel consumes the token. Through
 // the hub wiring with the fake Slack client, a stand-in query runner and the
 // fixture connector (test/fixtures/runtime/approval), never a client's.
 
@@ -86,6 +87,9 @@ function setup({
 } = {}) {
   const clock = { t: Date.parse('2026-10-25T12:00:00Z') };
   const store = createStore({ now: () => clock.t });
+  // A fresh fixture tool and idempotency store for each test: the same rows
+  // on the same day would otherwise be "already sent today" (Story 10.3).
+  mail.reset();
   const app = new FakeSlackApp({ views: true });
   const log = quietLog();
   const connectors = createConnectors({ appDir: APP, modules: registry.modules, log: testLog(), env: connectorEnv });
@@ -185,14 +189,20 @@ test('the approval entry: the person, the run, the list, its own copy of the row
   assert.deepEqual(Object.keys(stored).sort(), [...entry.ENTRY_KEYS].sort());
   const record = ctx.store.get('provenance', run.push.value);
   const listName = `leads-north-${record.ranAt.slice(0, 10)}`;
-  assert.deepEqual({ ...stored, rows: [...stored.rows] }, {
+  assert.deepEqual({
+    ...stored, rows: [...stored.rows], skipped: [...stored.skipped], skippedIds: [...stored.skippedIds],
+  }, {
     person: OWNER.id,
     module: 'leads',
     runId: run.push.value,
     destination: 'mail tool',
     listName,
     rows: record.rows,
+    skipped: ['no address'],
+    skippedIds: ['2'],
     idempotencyKey: crypto.createHash('sha256').update(JSON.stringify([listName, ['1', '10', '2', '3', '4', '5', '6']])).digest('hex'),
+    originalKey: crypto.createHash('sha256').update(JSON.stringify([listName, ['1', '10', '2', '3', '4', '5', '6']])).digest('hex'),
+    retry: false,
   });
   assert.notEqual(stored.rows, record.rows, 'a copy, not the record\'s array');
   assert.notEqual(stored.rows[0], record.rows[0]);
@@ -228,9 +238,9 @@ test('the entry still holds its own rows after the run record has expired', asyn
   const stored = ctx.store.get('approval', token);
   assert.equal(stored.rows.length, 7);
   assert.deepEqual(stored.rows[0], { person_id: 1, first: 'Ann <b>', address: 'ann@home.invalid' });
-  // Approve still finds it.
+  // Approve still finds it, and pushes the entry's own rows (Story 10.3).
   const approved = await click(ctx, approvalWrite.ACTIONS.approve, token);
-  assert.match(textOf(approved.view), /isn't switched on yet/);
+  assert.match(textOf(approved.view), /^\*Pushed 6 to mail tool\*, skipped 1, failed 0\./);
 });
 
 test('Push after the run record expired: the person is told the results expired; no token is made', async () => {
@@ -266,12 +276,12 @@ test('Approve with a token that is expired, unknown, malformed or someone else\'
   // Someone else's Cancel consumes nothing either.
   assert.equal((await click(ctx, approvalWrite.ACTIONS.cancel, token, { user: OTHER })).view.blocks[0].text.text, INVALID);
   assert.ok(ctx.store.get('approval', token));
-  // The owner's Approve finds it (the push itself is Story 10.3).
-  const sentBefore = mail.state.sent.length;
-  assert.match(textOf((await click(ctx, approvalWrite.ACTIONS.approve, token)).view), /nothing was sent/);
-  assert.ok(ctx.store.get('approval', token), 'Approve consumed nothing yet');
-  assert.equal(mail.state.sent.length, sentBefore, 'nothing was pushed');
-  // After 30 minutes the token is gone.
+  assert.equal(mail.state.sent.length, 0, 'nothing was pushed by the refused clicks');
+  // The owner's Approve finds it and pushes (Story 10.3), consuming it.
+  assert.match(textOf((await click(ctx, approvalWrite.ACTIONS.approve, token)).view), /^\*Pushed 6 to mail tool\*/);
+  assert.equal(ctx.store.get('approval', token), undefined);
+  assert.equal(mail.state.sent.length, 6);
+  // Once the done marker and the token are gone, it is just invalid.
   ctx.clock.t += 30 * 60 * 1000 + 1;
   assert.equal((await click(ctx, approvalWrite.ACTIONS.approve, token)).view.blocks[0].text.text, INVALID);
 });
@@ -284,8 +294,9 @@ test('a person who lost the grant between Push and Approve is refused at Approve
   assert.equal((await click(ctx, approvalWrite.ACTIONS.approve, token)).view.blocks[0].text.text, denied);
   assert.equal((await click(ctx, approvalWrite.ACTIONS.cancel, token)).view.blocks[0].text.text, denied);
   assert.ok(ctx.store.get('approval', token));
+  assert.equal(mail.state.sent.length, 0);
   ctx.granted.on = true;
-  assert.match(textOf((await click(ctx, approvalWrite.ACTIONS.approve, token)).view), /isn't switched on yet/);
+  assert.match(textOf((await click(ctx, approvalWrite.ACTIONS.approve, token)).view), /^\*Pushed 6 to mail tool\*/);
 });
 
 test('Push re-checks the grant the same way: lost between the run and Push, it is refused and no token is made', async () => {

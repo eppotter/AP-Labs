@@ -51,6 +51,13 @@
 // id-shaped. It declares perItemIdempotency: each contact is keyed (the push's
 // key, the list and the ref), so a retry with the same key and input adds
 // only what failed. createList and addContacts stay for other callers.
+//
+// listKey (optional, Story 10.3 review R2-1): the list's own key, when it
+// differs from the write's. The approval-write archetype retries the failed
+// contacts of a push under a derived key, but they belong on the SAME list:
+// it passes the first push's key as listKey on every push and retry, and the
+// list and each contact are keyed by it (else by idempotencyKey), so a retry
+// adds to the list the first push made and never makes a second one.
 
 const crypto = require('node:crypto');
 const path = require('node:path');
@@ -227,17 +234,19 @@ function declare(outbox) {
           const { send, skipped } = sortContacts(contacts);
           return { create: 'list', name: checkName(name), add: send.length, skipped };
         },
-        async apply({ name, contacts }, ctx) {
+        async apply({ name, contacts, listKey }, ctx) {
           checkName(name);
+          if (listKey !== undefined && (typeof listKey !== 'string' || !listKey)) throw new Error('listKey must be a non-empty string');
+          const base = listKey || ctx.idempotencyKey;
           const { send, skipped } = sortContacts(contacts);
           // The list step carries no items (size 0) and answers only its id.
           const { listId } = await ctx.request(async () => {
-            const made = await ctx.client.createList(name, ctx.idempotencyKey);
+            const made = await ctx.client.createList(name, base);
             return { listId: made.listId };
           }, { size: 0 });
           const total = { added: 0, alreadyAdded: 0, failedRefs: [] };
           for (const batch of ctx.batches(send)) {
-            const keyed = batch.map((c) => ({ ...c, key: `${ctx.idempotencyKey}:${listId}:${c.external_ref}` }));
+            const keyed = batch.map((c) => ({ ...c, key: `${base}:${listId}:${c.external_ref}` }));
             // Counts and refs only, never the tool's reason text.
             const res = await ctx.request(async () => {
               const out = await ctx.client.addContacts(listId, keyed);

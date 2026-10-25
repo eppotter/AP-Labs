@@ -20,7 +20,8 @@
 // its resource is owner-only, so an admin without the grant doesn't see it.
 // Its result carries "Push to email tool", which previews the list
 // (win-back-north-<UTC run date>) with the real email connector's dry run
-// over a temporary outbox, and nothing is sent.
+// over a temporary outbox, and nothing is sent until Approve (Story 10.3,
+// win-back-push.test.js).
 //
 // An example test (architecture carve-out): it reads Brightside's app dir and
 // fixture data, and is deleted with the example in a fork. Its profile and
@@ -336,7 +337,7 @@ async function runWinBack(app, user, limit = '25') {
   return { result, from: { ...from, hash: `h${app.viewSeq}` }, push: actionsOf(result).find((b) => b.action_id === 'approval-write:push') };
 }
 
-test('Story 10.2: Push previews the top 25 for the email tool: win-back-north-<UTC run date>, 25 rows, none skipped, a sample of 5; Approve sends nothing yet', async (t) => {
+test('Story 10.2: Push previews the top 25 for the email tool: win-back-north-<UTC run date>, 25 rows, none skipped, a sample of 5; Cancel sends nothing', async (t) => {
   const app = await boot(t);
   const { result, from, push } = await runWinBack(app, ADMIN);
   assert.equal(result.blocks[0].text.text, '*Win-back list: the top 25 of 38 rows, by score.*');
@@ -356,13 +357,14 @@ test('Story 10.2: Push previews the top 25 for the email tool: win-back-north-<U
   const [approve, cancel] = actionsOf(preview);
   assert.deepEqual([approve.text.text, cancel.text.text], ['Approve', 'Cancel']);
   assert.match(approve.value, /^[0-9a-f]{32}$/);
-  // Approve: the push itself is Story 10.3, so nothing reaches the outbox.
-  await app.dispatchAction('approval-write:approve', { user: { id: ADMIN }, view: { ...from, hash: `h${app.viewSeq}` }, value: approve.value });
-  assert.match(last(app).blocks[0].text.text, /isn't switched on yet/);
-  assert.equal(fs.existsSync(path.join(tmp, 'var', 'outbox', 'email.jsonl')), false, 'nothing was sent to the email tool');
-  // Cancel ends it.
+  // Cancel ends it, and nothing reaches the email tool (the push itself,
+  // Story 10.3, is in win-back-push.test.js).
   await app.dispatchAction('approval-write:cancel', { user: { id: ADMIN }, view: { ...from, hash: `h${app.viewSeq}` }, value: approve.value });
   assert.match(last(app).blocks[0].text.text, /^\*Push cancelled\.\*/);
+  assert.equal(fs.existsSync(path.join(tmp, 'var', 'outbox', 'email.jsonl')), false, 'nothing was sent to the email tool');
+  await app.dispatchAction('approval-write:approve', { user: { id: ADMIN }, view: { ...from, hash: `h${app.viewSeq}` }, value: approve.value });
+  assert.match(last(app).blocks[0].text.text, /^This preview is no longer valid/, 'a cancelled preview can\'t be approved');
+  assert.equal(fs.existsSync(path.join(tmp, 'var', 'outbox', 'email.jsonl')), false);
   assert.deepEqual(app.posted, [], 'nothing was posted to a channel');
 });
 
