@@ -57,11 +57,12 @@ test('Dataset replies privately with the local fixture, its version, as-of date 
   const [reply] = app.responded;
   assert.equal(reply.response_type, 'ephemeral');
   const lines = reply.text.split('\n');
-  assert.deepEqual(lines.slice(0, 5), [
+  assert.deepEqual(lines.slice(0, 6), [
     '*Dataset*',
     'Source: local fixture (brightside.duckdb)',
     'Fixture version: 2',
     'As of: 2026-09-30',
+    'Published: local build',
     'Tables (13):',
   ]);
   assert.ok(lines.includes('• visits: 40,895'));

@@ -22,6 +22,16 @@
 // is logged and the app starts anyway; a module that needs the data tells the
 // person it is unavailable.
 //
+// Plan motherduck-read: with data.source: motherduck in the profile, boot
+// reads the read key (MOTHERDUCK_READ_TOKEN, else the Keychain item
+// aplabs-motherduck-read-token) and registers it with the logger first; a
+// missing one refuses to start, naming the setting. If the publish key
+// (MOTHERDUCK_TOKEN, else aplabs-motherduck-token) is present it is
+// registered too and compared: equal keys refuse to start. It is never kept.
+// Absent, the check is logged as skipped. Connecting to MotherDuck never
+// blocks Slack: the app starts and the data stays unavailable until a connect
+// succeeds. A local profile never reads either MotherDuck key.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
@@ -36,7 +46,8 @@ const { registerGreeting } = require('../slack/greeting');
 const { registerHubs } = require('../slack/hubs');
 const { loadRegistry, ENV_PATTERN } = require('../registry');
 const { createStore } = require('../store');
-const { createData, dataPathFor } = require('../data');
+const { createData, dataPathFor, sourceOf } = require('../data');
+const md = require('../data/motherduck');
 
 const REPO = path.resolve(__dirname, '../../..');
 const DEFAULT_ENV = 'dev';
@@ -47,11 +58,37 @@ const SECRETS = Object.freeze([
   { env: 'SLACK_APP_TOKEN', keychain: 'aplabs-slack-app-token', prefix: 'xapp-', what: 'the app-level token' },
 ]);
 
-// Collects every boot problem. Returns { problems, tokens, profile,
-// profilePath, registry, env }.
+// The MotherDuck keys, for a motherduck profile. register(value) is called
+// on each key as soon as it is read (the logger's registerSecret). Returns
+// { token, notes } and pushes onto problems; the publish key is only compared,
+// never returned.
+function checkMotherDuckKeys({ env, deps, problems, register }) {
+  const notes = [];
+  const read = (name, item) => readSecret(name, item, { env, platform: deps.platform, readKeychain: deps.readKeychain });
+  const token = read(md.READ_TOKEN_ENV, md.READ_TOKEN_KEYCHAIN);
+  register(token);
+  if (!token) {
+    problems.push(`${md.READ_TOKEN_ENV} is not set (the MotherDuck read key, needed by data.source: motherduck; set it in env or the macOS Keychain item "${md.READ_TOKEN_KEYCHAIN}")`);
+    return { token: null, notes };
+  }
+  let publish = read(md.PUBLISH_TOKEN_ENV, md.PUBLISH_TOKEN_KEYCHAIN);
+  if (publish) {
+    register(publish);
+    if (publish === token) problems.push(`${md.READ_TOKEN_ENV} is the publish key (${md.PUBLISH_TOKEN_ENV}); the bot needs its own read-only key`);
+  } else {
+    notes.push(`${md.PUBLISH_TOKEN_ENV} is not set, so the check that ${md.READ_TOKEN_ENV} is not the publish key was skipped`);
+  }
+  publish = null;
+  return { token, notes };
+}
+
+// Collects every boot problem. Returns { problems, notes, tokens, profile,
+// profilePath, registry, dataFile, env }. register(value) is called on each
+// MotherDuck key as soon as it is read.
 // Problems name variables and profile errors, never a secret's value.
-function checkConfig({ env, cwd, deps = {} }) {
+function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
   const problems = [];
+  const notes = [];
   const tokens = {};
   for (const s of SECRETS) {
     const value = readSecret(s.env, s.keychain, { env, platform: deps.platform, readKeychain: deps.readKeychain });
@@ -97,12 +134,16 @@ function checkConfig({ env, cwd, deps = {} }) {
     registry = loaded.registry;
   }
   let dataFile = null;
-  if (profile) {
+  if (profile && sourceOf(profile) === 'motherduck') {
+    const keys = checkMotherDuckKeys({ env, deps, problems, register });
+    if (keys.token) tokens[md.READ_TOKEN_ENV] = keys.token;
+    notes.push(...keys.notes);
+  } else if (profile) {
     const d = dataPathFor(profile, env);
     if (d.problem) problems.push(d.problem);
     dataFile = d.path || null;
   }
-  return { problems, tokens, profile, profilePath, registry, dataFile, env: runEnv };
+  return { problems, notes, tokens, profile, profilePath, registry, dataFile, env: runEnv };
 }
 
 // Builds the Bolt app in Socket Mode with the redacting logger. App is
@@ -124,11 +165,20 @@ function createApp({ tokens, profile, registry, env, store, data, log, App }) {
   return app;
 }
 
+// The startup line's word for the data: a MotherDuck connect still running
+// (no problem recorded yet) is 'connecting'.
+function dataState(data, remote) {
+  const d = data.describe();
+  if (d.available) return 'available';
+  return remote && !d.problem ? 'connecting' : 'unavailable';
+}
+
 // Returns { code, app }. code 0 = connected, 1 = refused or failed to start.
 async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) {
   const log = deps.log || createLog({ write: deps.write });
-  const cfg = checkConfig({ env, cwd, deps });
+  const cfg = checkConfig({ env, cwd, deps, register: (v) => log.registerSecret(v) });
   for (const value of Object.values(cfg.tokens)) log.registerSecret(value);
+  for (const note of cfg.notes) log.info(note);
   if (cfg.problems.length) {
     log.error('refusing to start', { problems: cfg.problems });
     return { code: 1 };
@@ -137,12 +187,31 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   // createApp inside the try: a throw while building the app (it may carry a
   // token) still goes through the redacting logger.
   // The data never blocks boot: a failed open is logged, and retried on use.
-  const data = deps.data || createData({ file: cfg.dataFile, profile: cfg.profile });
-  try {
-    await data.open();
-  } catch (err) {
+  // A local file is opened before Slack starts; MotherDuck connects alongside
+  // it (up to its 10s limit) and is reported when the attempt settles.
+  const remote = sourceOf(cfg.profile) === 'motherduck';
+  const data = deps.data || createData({
+    file: cfg.dataFile,
+    profile: cfg.profile,
+    ...(remote ? { token: cfg.tokens[md.READ_TOKEN_ENV], ...(deps.connect ? { connect: deps.connect } : {}), ...deps.dataLimits } : {}),
+  });
+  const unavailable = (err) => {
     if (err.code !== 'DATA_UNAVAILABLE') throw err;
-    log.warn('data unavailable; starting anyway', { source: data.describe().source, reason: err.reason });
+    const { source, label } = data.describe();
+    log.warn('data unavailable; starting anyway', { source, label, reason: err.reason });
+  };
+  let connecting = null;
+  if (remote) {
+    connecting = data.open().then(() => {
+      const { source, label } = data.describe();
+      log.info('data available', { source, label });
+    }, unavailable).catch((err) => log.error('data open failed', { err }));
+  } else {
+    try {
+      await data.open();
+    } catch (err) {
+      unavailable(err);
+    }
   }
 
   let app;
@@ -161,10 +230,10 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     env: cfg.env,
     hubs: cfg.registry.hubs.map((h) => h.command),
     modules: cfg.registry.modules.length,
-    data: data.describe().available ? 'available' : 'unavailable',
+    data: dataState(data, remote),
     instance: 'single instance',
   });
-  return { code: 0, app, log, data };
+  return { code: 0, app, log, data, connecting };
 }
 
 // Anything that escapes main() is logged through the same redacting logger
@@ -180,7 +249,7 @@ function installCrashHandlers(log, proc = process) {
   return crash('boot failed');
 }
 
-module.exports = { main, checkConfig, createApp, installCrashHandlers, SECRETS };
+module.exports = { main, checkConfig, checkMotherDuckKeys, createApp, installCrashHandlers, SECRETS };
 
 if (require.main === module) {
   const log = createLog();

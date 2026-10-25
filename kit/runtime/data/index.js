@@ -18,20 +18,36 @@
 // files, the network and extensions on its own, even if the guardrail were
 // bypassed; the guardrail is defence in depth in front of it.
 //
-// V1 reads the local fixture file only (APLABS_DATA_PATH, else
-// <var>/fixture/<client id>.duckdb). Reading MotherDuck is deferred (DEP-011).
-// A missing or unreadable file never stops the app: open() and run() reject
-// with a DataUnavailableError (kit/runtime/errors DataUnavailable; the words
-// are in kit/runtime/messages), and the next run() tries to open it again.
+// The source is the local fixture file (APLABS_DATA_PATH, else
+// <var>/fixture/<client id>.duckdb) unless the profile says data.source:
+// motherduck (plan motherduck-read; DEP-011 closed). Then it reads the one
+// MotherDuck database data.database with the read key passed in as token,
+// opened by the locked sequence in ./motherduck (MD_LOCKDOWN), with USE <db>
+// on every connection. A missing or unreadable source never stops the app:
+// open() and run() reject with a DataUnavailableError (kit/runtime/errors
+// DataUnavailable; the words are in kit/runtime/messages), and a later run()
+// tries to open it again.
+//
+// MotherDuck mode: connecting has a time limit (10s); one attempt runs at a
+// time, and an attempt that finishes after its limit has its instance closed
+// at once. Every DuckDB error from run() becomes a DataUnavailableError with a
+// redacted reason; on anything but a catalog or binder error the instance is
+// dropped and the next connect waits 30s. In both modes every query has a
+// time limit (30s): a timer calls conn.interrupt() and run() rejects with a
+// DataUnavailableError ("query timed out"). connect, the DuckDB instance
+// factory, is injectable: tests pass a fake and never reach the network.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { DuckDBInstance } = require('@duckdb/node-api');
 const sqlGuard = require('../sql');
 const { DataUnavailable: DataUnavailableError } = require('../errors');
+const md = require('./motherduck');
 
 const REPO = path.resolve(__dirname, '../../..');
 const SOURCE = 'local fixture';
+// describe().source by profile data.source.
+const SOURCES = Object.freeze({ local: SOURCE, motherduck: md.SOURCE });
 
 // Applied when the instance is created, in this order; lock_configuration is
 // set after them with SET, once the instance is up.
@@ -61,6 +77,9 @@ const PARAM_RULES = Object.freeze({
   BAD_VALUE: 'bad_parameter_value',
 });
 
+// The profile's data source: 'local' (the default) or 'motherduck'.
+const sourceOf = (profile) => (profile && profile.data && profile.data.source) || 'local';
+
 // The data file for this client: APLABS_DATA_PATH (absolute), else the file
 // `npm run fixture:build` writes. Returns { path } or { problem }.
 function dataPathFor(profile, env = process.env) {
@@ -89,6 +108,51 @@ async function openLocked(file) {
   } catch (err) {
     if (instance) instance.closeSync();
     throw new DataUnavailableError(`the data file could not be opened (${withoutPaths(firstLine(err.message), file)})`);
+  }
+}
+
+// The default MotherDuck instance factory: DuckDB itself. Tests inject a fake
+// with the same shape (create(path, options) -> instance).
+const createInstance = (where, options) => DuckDBInstance.create(where, options);
+
+function closeQuietly(target) {
+  try { target.closeSync(); } catch { /* already closed or broken: nothing to keep */ }
+}
+
+// A DuckDB error as a DataUnavailableError with a redacted reason.
+function mdUnavailable(err, token, what) {
+  if (err instanceof DataUnavailableError) return err;
+  if (md.classifyError(err) === 'missing_extension') return new DataUnavailableError(md.MISSING_EXTENSION);
+  return new DataUnavailableError(`${what} (${md.reasonFor(err, [token])})`);
+}
+
+// Opens MotherDuck the locked way (./motherduck MD_LOCKDOWN) through create.
+// Returns the instance, or throws DataUnavailableError (never the token).
+// Never creates a database: a missing one fails the ATTACH.
+async function openMotherDuck({ database, token, create }) {
+  let instance;
+  try {
+    instance = await create(md.MD_LOCKDOWN.path, { ...md.MD_LOCKDOWN.instance });
+  } catch (err) {
+    throw mdUnavailable(err, token, 'DuckDB could not start');
+  }
+  try {
+    const conn = await instance.connect();
+    try {
+      for (const sql of md.setupStatements(database, token)) await conn.run(sql);
+      for (const sql of md.perConnectionStatements(database)) await conn.run(sql);
+      const [row] = (await conn.runAndReadAll(md.OPEN_CHECK)).getRowObjectsJson();
+      if (!row || row.db !== database) {
+        throw new DataUnavailableError(`the connection is on ${md.reasonFor(String(row ? row.db : 'no database'), [token])}, not ${database}`);
+      }
+      if (!Number(row.meta)) throw new DataUnavailableError(`${database} has no fixture_meta table`);
+    } finally {
+      closeQuietly(conn);
+    }
+    return instance;
+  } catch (err) {
+    closeQuietly(instance);
+    throw mdUnavailable(err, token, `MotherDuck database ${database} could not be opened`);
   }
 }
 
@@ -135,53 +199,179 @@ function checkParams(prepared, params, declared) {
   }
 }
 
-// The data source. file: the DuckDB file; profile: for its forbidden columns.
+const seconds = (ms) => (ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`);
+
+// The data source. profile: its forbidden columns and data.source.
+// Local: file, the DuckDB file. MotherDuck: token, the read key (the caller
+// has registered it with the redactor), and connect, the instance factory
+// (default DuckDB). Time limits (ms) and the clock are injectable for tests.
 // Returns { open, run, describe, close }.
-function createData({ file, profile }) {
+function createData({
+  file = null,
+  profile,
+  token = null,
+  connect = createInstance,
+  connectTimeoutMs = md.CONNECT_TIMEOUT_MS,
+  queryTimeoutMs = md.QUERY_TIMEOUT_MS,
+  retryAfterMs = md.RETRY_AFTER_MS,
+  now = Date.now,
+} = {}) {
   const forbiddenColumns = sqlGuard.forbiddenColumnsOf(profile);
+  const remote = sourceOf(profile) === 'motherduck';
+  const database = remote ? profile.data.database : null;
+  if (remote) {
+    const bad = md.databaseNameProblem(database);
+    if (bad) throw new TypeError(`data.database: ${bad}`);
+    if (typeof token !== 'string' || !token) throw new TypeError(`MotherDuck mode needs the read key (${md.READ_TOKEN_ENV})`);
+  }
   let instance = null;
-  let opening = null;
+  let opening = null; // the open() every caller waits on
+  let inflight = false; // a MotherDuck attempt is still running, even past its limit
   let lastProblem = null;
+  let retryAt = 0;
+  let generation = 0; // close() bumps it: an attempt started before is never adopted
+
+  function failed(err) {
+    lastProblem = err.reason;
+    if (remote) retryAt = now() + retryAfterMs;
+    return err;
+  }
+
+  function openRemote() {
+    const gen = generation;
+    let timedOut = false;
+    inflight = true;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        timedOut = true;
+        reject(failed(new DataUnavailableError(`connecting to MotherDuck timed out after ${seconds(connectTimeoutMs)}`)));
+      }, connectTimeoutMs);
+      openMotherDuck({ database, token, create: connect }).then((inst) => {
+        inflight = false;
+        if (timedOut || gen !== generation) {
+          closeQuietly(inst); // too late, or closed meanwhile: never adopted
+          if (!timedOut) {
+            clearTimeout(timer);
+            reject(new DataUnavailableError('the data source was closed while connecting'));
+          }
+          return;
+        }
+        clearTimeout(timer);
+        instance = inst;
+        lastProblem = null;
+        retryAt = 0;
+        resolve();
+      }, (err) => {
+        inflight = false;
+        if (timedOut) return; // already reported as timed out
+        clearTimeout(timer);
+        reject(failed(err));
+      });
+    });
+  }
 
   async function open() {
     if (instance) return;
     if (!opening) {
-      opening = openLocked(file).then((inst) => {
+      if (remote && inflight) throw new DataUnavailableError('a MotherDuck connect attempt is still running');
+      if (remote && now() < retryAt) throw new DataUnavailableError(`waiting to reconnect to MotherDuck (${lastProblem})`);
+      opening = (remote ? openRemote() : openLocked(file).then((inst) => {
         instance = inst;
         lastProblem = null;
-      }, (err) => {
-        lastProblem = err.reason;
-        throw err;
-      }).finally(() => { opening = null; });
+      }, (err) => { throw failed(err); })).finally(() => { opening = null; });
     }
     await opening;
   }
 
+  // Drops a MotherDuck instance after a failure. It is closed once after
+  // (the query that failed) has settled.
+  function drop(inst, reason, after = Promise.resolve()) {
+    if (instance === inst) instance = null;
+    lastProblem = reason;
+    retryAt = now() + retryAfterMs;
+    after.catch(() => {}).finally(() => closeQuietly(inst));
+  }
+
+  // A DuckDB error from run(): passed through locally; in MotherDuck mode a
+  // DataUnavailableError, dropping the instance unless the query itself was
+  // at fault (a catalog or binder error).
+  async function duck(inst, fn) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!remote || err instanceof DataUnavailableError) throw err;
+      const kind = md.classifyError(err);
+      const reason = kind === 'missing_extension' ? md.MISSING_EXTENSION : `the MotherDuck query failed (${md.reasonFor(err, [token])})`;
+      if (!md.keepsInstance(kind)) drop(inst, reason);
+      throw new DataUnavailableError(reason);
+    }
+  }
+
+  // Runs query with the time limit. On expiry the timer interrupts the
+  // connection and the result rejects at once; the query may still settle
+  // later (expired() then says so, and the caller closes after it).
+  function timed(conn, inst, query) {
+    let expired = false;
+    const result = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        expired = true;
+        try { conn.interrupt(); } catch { /* the rejection below still stands */ }
+        const reason = `query timed out after ${seconds(queryTimeoutMs)}`;
+        if (remote) drop(inst, reason, query);
+        reject(new DataUnavailableError(reason));
+      }, queryTimeoutMs);
+      query.then((v) => {
+        clearTimeout(timer);
+        if (!expired) resolve(v);
+      }, (e) => {
+        clearTimeout(timer);
+        if (!expired) reject(e);
+      });
+    });
+    return { result, query, expired: () => expired };
+  }
+
   // Runs one read-only query. Returns rows as JSON-safe objects (BIGINT as a
   // string). Rejects with QueryRefusedError (guardrail or parameters),
-  // DataUnavailableError, or DuckDB's own error.
+  // DataUnavailableError, or (local only) DuckDB's own error.
   async function run(sql, params = {}, { declared = [] } = {}) {
     const verdict = sqlGuard.checkSql(sql, { forbiddenColumns });
     if (!verdict.ok) throw new QueryRefusedError(verdict.rule, verdict.detail);
     if (!isPlainObject(params)) throw new QueryRefusedError(PARAM_RULES.BAD_VALUE, 'params must be a plain object of named values');
     await open();
-    const conn = await instance.connect();
+    const inst = instance;
+    const conn = await duck(inst, () => inst.connect());
+    let pending = null;
     try {
-      const prepared = await conn.prepare(sql);
+      if (remote) {
+        for (const stmt of md.perConnectionStatements(database)) await duck(inst, () => conn.run(stmt));
+      }
+      const prepared = await duck(inst, () => conn.prepare(sql));
       checkParams(prepared, params, new Set(declared));
-      if (prepared.parameterCount) prepared.bind(params);
-      return (await prepared.runAndReadAll()).getRowObjectsJson();
+      if (prepared.parameterCount) await duck(inst, () => prepared.bind(params));
+      pending = timed(conn, inst, Promise.resolve().then(() => prepared.runAndReadAll()));
+      const reader = await duck(inst, () => pending.result);
+      return reader.getRowObjectsJson();
     } finally {
-      conn.closeSync();
+      // A query that outlived its limit may still be running: close after it.
+      if (pending && pending.expired()) pending.query.catch(() => {}).finally(() => closeQuietly(conn));
+      else closeQuietly(conn);
     }
   }
 
-  // What the person is told about the data source. Never the full path.
+  // What the person is told about the data source: its kind, and the file
+  // name (never the full path) or the database name.
   function describe() {
-    return { source: SOURCE, file: path.basename(file), available: Boolean(instance), problem: instance ? null : lastProblem };
+    return {
+      source: SOURCES[remote ? 'motherduck' : 'local'],
+      label: remote ? database : path.basename(file),
+      available: Boolean(instance),
+      problem: instance ? null : lastProblem,
+    };
   }
 
   function close() {
+    generation += 1;
     if (instance) instance.closeSync();
     instance = null;
   }
@@ -192,10 +382,13 @@ function createData({ file, profile }) {
 module.exports = {
   createData,
   openLocked,
+  openMotherDuck,
   dataPathFor,
+  sourceOf,
   DataUnavailableError,
   QueryRefusedError,
   PARAM_RULES,
   LOCKDOWN,
   SOURCE,
+  SOURCES,
 };

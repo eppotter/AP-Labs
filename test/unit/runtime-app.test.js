@@ -32,7 +32,7 @@ function env(extra = {}) {
 const fakeData = () => ({
   open: async () => {},
   run: async () => [],
-  describe: () => ({ source: 'local fixture', file: 'fake.duckdb', available: true, problem: null }),
+  describe: () => ({ source: 'local fixture', label: 'fake.duckdb', available: true, problem: null }),
   close: () => {},
 });
 
@@ -238,6 +238,115 @@ test('refuses to start when APLABS_DATA_PATH is not absolute', async () => {
   const { code, entries } = await boot(env({ APLABS_DATA_PATH: 'var/x.duckdb' }));
   assert.equal(code, 1);
   assert.ok(entries[0].problems.includes('APLABS_DATA_PATH must be an absolute path'));
+});
+
+// --- Plan motherduck-read: a motherduck profile, with a fake connection ------
+
+const MD_PROFILE = path.join(__dirname, '../fixtures/runtime/profile-motherduck.yml');
+// Fake keys: shaped like nothing real, findable in output.
+const READ_KEY = 'fake-md-read-key-1111-not-a-credential';
+const PUBLISH_KEY = 'fake-md-publish-key-2222-not-a-credential';
+const mdEnv = (extra = {}) => env({ APLABS_PROFILE: MD_PROFILE, MOTHERDUCK_READ_TOKEN: READ_KEY, ...extra });
+
+test('a motherduck profile with no read key refuses to start, naming the setting', async () => {
+  const { code, entries, text } = await boot(mdEnv({ MOTHERDUCK_READ_TOKEN: '' }), { data: undefined, connect: () => assert.fail('never connects') });
+  assert.equal(code, 1);
+  assert.ok(entries[0].problems.some((p) => /^MOTHERDUCK_READ_TOKEN is not set \(the MotherDuck read key.*Keychain item "aplabs-motherduck-read-token"\)$/.test(p)), text);
+});
+
+test('a read key equal to the publish key refuses to start, and neither value is printed', async () => {
+  const { code, entries, text } = await boot(mdEnv({ MOTHERDUCK_TOKEN: READ_KEY }), { data: undefined, connect: () => assert.fail('never connects') });
+  assert.equal(code, 1);
+  assert.ok(entries[0].problems.includes('MOTHERDUCK_READ_TOKEN is the publish key (MOTHERDUCK_TOKEN); the bot needs its own read-only key'), text);
+  assert.ok(!text.includes(READ_KEY));
+});
+
+test('with no publish key the comparison is logged as skipped; a different publish key is registered with the scrubber, never kept', async (t) => {
+  const { createFakeMotherDuck } = require('../fixtures/fake-motherduck');
+  const skipped = await boot(mdEnv(), { data: undefined, connect: createFakeMotherDuck({ database: 'tiny_fixture' }).create });
+  t.after(() => skipped.data.close());
+  assert.equal(skipped.code, 0);
+  assert.ok(skipped.entries.some((e) => e.level === 'info' && /MOTHERDUCK_TOKEN is not set, so the check that MOTHERDUCK_READ_TOKEN is not the publish key was skipped/.test(e.msg)));
+
+  const res = await boot(mdEnv({ MOTHERDUCK_TOKEN: PUBLISH_KEY }), { data: undefined, connect: createFakeMotherDuck({ database: 'tiny_fixture' }).create });
+  t.after(() => res.data.close());
+  assert.equal(res.code, 0);
+  assert.ok(!res.entries.some((e) => /skipped/.test(e.msg)));
+  await res.connecting;
+  res.log.info(`both ${READ_KEY} and ${PUBLISH_KEY}`);
+  assert.equal(JSON.parse(res.lines.at(-1)).msg, 'both [redacted] and [redacted]', 'both keys are masked');
+  assert.ok(!JSON.stringify(res.data.describe()).includes(PUBLISH_KEY));
+});
+
+test('a slow MotherDuck connect does not hold up Slack: the app starts, then the data comes up', async (t) => {
+  const { createFakeMotherDuck } = require('../fixtures/fake-motherduck');
+  const fake = createFakeMotherDuck({ database: 'tiny_fixture', createDelayMs: 60 });
+  const lines = [];
+  const res = await main({
+    env: mdEnv(),
+    cwd: os.tmpdir(),
+    deps: { App: FakeSlackApp, write: (line) => lines.push(line), readKeychain: () => assert.fail('no Keychain'), connect: fake.create },
+  });
+  t.after(() => res.data.close());
+  assert.equal(res.code, 0);
+  assert.equal(res.app.started, true, 'Slack started while MotherDuck was still connecting');
+  const startup = JSON.parse(lines.at(-1));
+  assert.match(startup.msg, /single instance/);
+  assert.equal(startup.data, 'connecting');
+  assert.equal(res.data.describe().available, false);
+  await res.connecting;
+  const after = lines.map((l) => JSON.parse(l)).at(-1);
+  assert.deepEqual([after.level, after.msg, after.source, after.label], ['info', 'data available', 'MotherDuck', 'tiny_fixture']);
+  assert.equal(res.data.describe().available, true);
+});
+
+test('a MotherDuck connect that fails is logged with the read key masked, and the app keeps running', async (t) => {
+  const { createFakeMotherDuck } = require('../fixtures/fake-motherduck');
+  const fake = createFakeMotherDuck({
+    database: 'tiny_fixture',
+    // A raw error that echoes the key: the data module and the logger both mask it.
+    failOn: (sql) => (sql.startsWith('ATTACH') ? new Error(`IO Error: auth failed for ${READ_KEY}`) : null),
+  });
+  const lines = [];
+  const res = await main({
+    env: mdEnv(),
+    cwd: os.tmpdir(),
+    deps: { App: FakeSlackApp, write: (line) => lines.push(line), readKeychain: () => assert.fail('no Keychain'), connect: fake.create },
+  });
+  t.after(() => res.data.close());
+  assert.equal(res.code, 0);
+  await res.connecting;
+  const warn = lines.map((l) => JSON.parse(l)).find((e) => e.level === 'warn');
+  assert.equal(warn.msg, 'data unavailable; starting anyway');
+  assert.equal(warn.source, 'MotherDuck');
+  assert.match(warn.reason, /auth failed for \[redacted\]/);
+  assert.ok(!lines.join('\n').includes(READ_KEY));
+});
+
+test('a local profile never reads a MotherDuck key, from env or the Keychain', async () => {
+  const read = [];
+  const base = env({ MOTHERDUCK_READ_TOKEN: READ_KEY, MOTHERDUCK_TOKEN: PUBLISH_KEY });
+  delete base.APLABS_NO_KEYCHAIN; // let the Keychain be asked, so a read would show
+  const watched = new Proxy(base, {
+    get(target, key) {
+      if (typeof key === 'string') read.push(key);
+      return target[key];
+    },
+  });
+  const services = [];
+  const res = await main({
+    env: watched,
+    cwd: os.tmpdir(),
+    deps: {
+      App: FakeSlackApp, write: () => {}, data: fakeData(), platform: 'darwin',
+      readKeychain: (service) => { services.push(service); return null; },
+      connect: () => assert.fail('a local profile never connects to MotherDuck'),
+    },
+  });
+  assert.equal(res.code, 0);
+  assert.ok(read.length > 0, 'the env was read');
+  assert.deepEqual(read.filter((k) => /MOTHERDUCK/i.test(k)), []);
+  assert.deepEqual(services.filter((s) => /motherduck/i.test(s)), []);
 });
 
 test('a retried event with an event_id already seen is processed once', async () => {

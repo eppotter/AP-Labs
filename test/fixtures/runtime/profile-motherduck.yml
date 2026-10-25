@@ -1,0 +1,12 @@
+# Runtime test profile for the MotherDuck read path (plan motherduck-read):
+# the runtime profile with data.source: motherduck. Tests pair it with a fake
+# connection (test/fixtures/fake-motherduck.js) and fake keys; nothing here
+# reaches MotherDuck.
+schema_version: 1
+client: { id: tiny, name: Tiny }
+data: { source: motherduck, database: tiny_fixture }
+resources:
+  - { key: OPEN_THING, label: Open thing, open_access: true }
+  - { key: CLOSED_THING, label: Closed thing }
+users:
+  - { id: solo, name: Solo, role: admin }
