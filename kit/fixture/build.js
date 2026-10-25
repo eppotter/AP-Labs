@@ -6,7 +6,8 @@
 //   node kit/fixture/build.js <fixture-dir> [--out <file>] [--name <client>]
 //
 // Loads <fixture-dir>/schema.sql and every <fixture-dir>/seeds/<table>.csv
-// into a local DuckDB file, offline. The default file is
+// (or <table>.csv.gz, gzip-compressed; never both) into a local DuckDB file,
+// offline. The default file is
 // var/fixture/<name>.duckdb (var/ is APLABS_VAR_DIR, else the repo's
 // gitignored var/). <name> defaults to the governing profile's client id, the
 // file the runtime reads (kit/runtime/data dataPathFor), else the folder
@@ -31,6 +32,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { DuckDBInstance } = require('@duckdb/node-api');
 const { governingProfilePath, loadProfile } = require('../lib/profile');
 
@@ -106,16 +108,59 @@ function ident(s) {
   return `"${String(s).replace(/"/g, '""')}"`;
 }
 
-function readHeader(file) {
-  const fd = fs.openSync(file, 'r');
+// Every seed in a seeds/ folder, as a Map from table name to { name, rel,
+// file, gzip }: <table>.csv is plain, <table>.csv.gz is gzip-compressed. rel
+// is always seeds/<table>.csv, whatever the stored form, so names, messages
+// and the fixture version (kit/fixture/remote seedsHash) don't depend on it.
+// A table with both forms is refused: which one is the seed would be a guess.
+// Sorted by rel. plan, readHeader, seedsHash and seedMeta all list seeds here.
+function listSeeds(seedsDir) {
+  const seeds = new Map();
+  const problems = [];
+  for (const f of fs.readdirSync(seedsDir).sort()) {
+    const m = /^(.+)\.csv(\.gz)?$/.exec(f);
+    if (!m) continue;
+    const [, name, gz] = m;
+    if (seeds.has(name)) {
+      problems.push(`seeds/${name}.csv and seeds/${name}.csv.gz are both present: keep one`);
+      continue;
+    }
+    seeds.set(name, { name, rel: `seeds/${name}.csv`, file: path.join(seedsDir, f), gzip: Boolean(gz) });
+  }
+  if (problems.length) throw new FixtureBuildError(`seeds in ${seedsDir} are ambiguous:\n  ${problems.join('\n  ')}`);
+  return new Map([...seeds].sort(([, a], [, b]) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0)));
+}
+
+// A seed's CSV content, unzipped when it is stored as .csv.gz.
+function readSeed(seed) {
+  const raw = fs.readFileSync(seed.file);
+  if (!seed.gzip) return raw;
   try {
-    const buf = Buffer.alloc(4096);
-    const n = fs.readSync(fd, buf, 0, buf.length, 0);
-    const first = buf.subarray(0, n).toString('utf8').split('\n')[0].replace(/\r$/, '');
-    return first.split(',');
+    return zlib.gunzipSync(raw);
+  } catch (err) {
+    throw new FixtureBuildError(`${seed.rel}.gz is not valid gzip: ${err.message}`);
+  }
+}
+
+// The header row of a seed, read from its first bytes (unzipped for .csv.gz).
+function readHeader(seed) {
+  const fd = fs.openSync(seed.file, 'r');
+  let head;
+  try {
+    const buf = Buffer.alloc(seed.gzip ? 65536 : 4096);
+    head = buf.subarray(0, fs.readSync(fd, buf, 0, buf.length, 0));
   } finally {
     fs.closeSync(fd);
   }
+  if (seed.gzip) {
+    try {
+      // A sync flush decodes what the first bytes hold without needing the end.
+      head = zlib.gunzipSync(head, { finishFlush: zlib.constants.Z_SYNC_FLUSH }).subarray(0, 4096);
+    } catch (err) {
+      throw new FixtureBuildError(`${seed.rel}.gz is not valid gzip: ${err.message}`);
+    }
+  }
+  return head.toString('utf8').split('\n')[0].replace(/\r$/, '').split(',');
 }
 
 function removeDb(file) {
@@ -132,12 +177,12 @@ function plan(fixtureDir) {
   const schemaSql = fs.readFileSync(schemaFile, 'utf8');
   const tables = schemaTables(schemaSql);
   if (tables.length === 0) throw new FixtureBuildError(`schema.sql in ${dir} creates no tables`);
-  const seeds = fs.readdirSync(seedsDir).filter((f) => f.endsWith('.csv')).map((f) => f.slice(0, -4));
+  const seeds = listSeeds(seedsDir);
   const problems = [];
-  for (const t of tables) if (!seeds.includes(t)) problems.push(`table ${t} has no seeds/${t}.csv`);
-  for (const s of seeds) if (!tables.includes(s)) problems.push(`seeds/${s}.csv has no table in schema.sql`);
+  for (const t of tables) if (!seeds.has(t)) problems.push(`table ${t} has no seeds/${t}.csv (or .csv.gz)`);
+  for (const s of seeds.values()) if (!tables.includes(s.name)) problems.push(`${s.rel} has no table in schema.sql`);
   if (problems.length) throw new FixtureBuildError(`fixture ${dir} is inconsistent:\n  ${problems.join('\n  ')}`);
-  return { dir, schemaSql, tables: tables.map((name) => ({ name, csv: path.join(seedsDir, `${name}.csv`) })) };
+  return { dir, schemaSql, tables: tables.map((name) => ({ name, seed: seeds.get(name) })) };
 }
 
 // Every header is checked before any row loads, so one bad seed reports
@@ -150,14 +195,16 @@ async function load(conn, p) {
       'SELECT column_name FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position',
       [t.name],
     )).getRows().map((r) => r[0]);
-    const header = readHeader(t.csv);
+    const header = readHeader(t.seed);
     if (header.join(',') !== cols.join(',')) {
-      problems.push(`seeds/${t.name}.csv header (${header.join(',')}) does not match table columns (${cols.join(',')})`);
+      problems.push(`${t.seed.rel} header (${header.join(',')}) does not match table columns (${cols.join(',')})`);
     }
   }
   if (problems.length) throw new FixtureBuildError(`seed headers do not match schema.sql:\n  ${problems.join('\n  ')}`);
+  // COPY into the typed tables: a .csv.gz loads to exactly the rows its .csv would.
   for (const t of p.tables) {
-    await conn.run(`COPY ${ident(t.name)} FROM ${sqlString(t.csv)} (FORMAT csv, HEADER true)`);
+    const compression = t.seed.gzip ? 'gzip' : 'none';
+    await conn.run(`COPY ${ident(t.name)} FROM ${sqlString(t.seed.file)} (FORMAT csv, HEADER true, COMPRESSION ${compression})`);
   }
 }
 
@@ -366,4 +413,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { build, readRows, isFixtureBuild, isBuildOf, STAMP_PREFIX, main, parseArgs, defaultOut, governingClientId, schemaTables, FixtureBuildError, USAGE };
+module.exports = { build, readRows, listSeeds, readSeed, isFixtureBuild, isBuildOf, STAMP_PREFIX, main, parseArgs, defaultOut, governingClientId, schemaTables, FixtureBuildError, USAGE };

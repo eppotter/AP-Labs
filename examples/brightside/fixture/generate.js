@@ -3,22 +3,30 @@
 
 // Brightside's fixture generator (Stories 7.1 and 7.2, AD-18). Offline and
 // deterministic: the recorded seed (seed.json) and this code give
-// byte-identical files. With the recorded seed it also plants the known
+// identical files (for a .csv.gz, identical unzipped content). With the recorded seed it also plants the known
 // truths' figures from targets.json and refuses to write if one misses.
 //
-//   npm run fixture:generate            write schema.sql and seeds/*.csv here
-//   npm run fixture:check               regenerate into a temp dir and diff
-//                                       against the committed files (CI)
+//   npm run fixture:generate            write schema.sql and seeds/*.csv.gz here
+//   npm run fixture:check               regenerate in memory and diff against
+//                                       the committed files (CI)
 //   node generate.js --seed N --clients N --out DIR   a one-off variant
 //                                       (unplanted: targets fit the recorded seed)
 //
 // Seed files are CSV: a header row, rows in primary-key order, LF endings,
 // integers as plain digits, dates as YYYY-MM-DD, NULL as an empty field.
+// Every seed but fixture_meta.csv (tiny, and it keeps the version readable) is
+// stored gzip-compressed as seeds/<table>.csv.gz, which keeps the committed
+// seeds under the 10 MB cap. The gzip carries no name or time, a fixed level
+// and OS byte 255, but its deflate bytes can still differ between zlib builds
+// (a Mac and CI's Linux), so the check compares unzipped content plus the
+// header, and writing leaves a .gz alone when its content already matches.
+// generate() returns every file under its plain name (seeds/<table>.csv);
+// storedName() gives the name on disk.
 // Exit codes: 0 ok, 1 check found a difference or a rule failed, 2 usage.
 
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { createRng, deriveSeed } = require('./lib/prng');
 const { TABLES, schemaSql } = require('./lib/tables');
 const { buildReference, ZONES, HISTORY_START, AS_OF } = require('./lib/reference');
@@ -35,6 +43,9 @@ const FIXTURE_DIR = __dirname;
 const SEED_FILE = path.join(FIXTURE_DIR, 'seed.json');
 const TARGETS_FILE = path.join(FIXTURE_DIR, 'targets.json');
 const SEEDS_DIR = 'seeds';
+const PLAIN_SEEDS = new Set([`${SEEDS_DIR}/fixture_meta.csv`]);
+const GZIP_LEVEL = 9;
+const GZIP_OS_UNKNOWN = 255;
 
 const USAGE = 'Usage: node examples/brightside/fixture/generate.js [--check] [--seed <n>] [--clients <n>] [--out <dir>]';
 
@@ -119,35 +130,82 @@ function generate(config) {
   return { tables, files };
 }
 
+// The name a generated file is stored under: seeds/<table>.csv.gz for every
+// seed but the plain ones, else its own name.
+function storedName(rel) {
+  return rel.startsWith(`${SEEDS_DIR}/`) && !PLAIN_SEEDS.has(rel) ? `${rel}.gz` : rel;
+}
+
+// Deterministic gzip: no name, comment or time (zlib writes none), a fixed
+// level, and the OS byte set to 255 (unknown) rather than the build's own.
+function gzipSeed(content) {
+  const gz = zlib.gzipSync(Buffer.from(content), { level: GZIP_LEVEL });
+  gz[9] = GZIP_OS_UNKNOWN;
+  return gz;
+}
+
+// What is wrong with a stored .gz's header, or null when it is one gzipSeed
+// could have written. The deflate bytes are not compared (see the top).
+function gzipHeaderProblem(buf) {
+  if (buf.length < 18 || buf[0] !== 0x1f || buf[1] !== 0x8b || buf[2] !== 8) return 'not a gzip file';
+  if (buf[3] !== 0) return 'its gzip header stores a name, comment or extra field';
+  if (buf.readUInt32LE(4) !== 0) return 'its gzip header stores a time';
+  if (buf[9] !== GZIP_OS_UNKNOWN) return `its gzip header has OS byte ${buf[9]}, not ${GZIP_OS_UNKNOWN}`;
+  return null;
+}
+
+// A stored file compared with what the generator writes for it: null when it
+// matches, else the problem. A .gz matches on a valid header and identical
+// unzipped content; anything else must match byte for byte.
+function storedProblem(file, rel, content) {
+  if (!fs.existsSync(file)) return 'missing (run npm run fixture:generate)';
+  const raw = fs.readFileSync(file);
+  if (storedName(rel) === rel) return raw.equals(Buffer.from(content)) ? null : 'differs from a fresh generate';
+  const header = gzipHeaderProblem(raw);
+  if (header) return header;
+  let unzipped;
+  try {
+    unzipped = zlib.gunzipSync(raw);
+  } catch (error) {
+    return `does not unzip: ${error.message}`;
+  }
+  return unzipped.equals(Buffer.from(content)) ? null : 'differs from a fresh generate';
+}
+
+// Writes each file under its stored name. A .gz whose header is valid and
+// whose unzipped content already matches is left alone, so files never churn
+// between machines. The other form of a seed (a stale seeds/<table>.csv for a
+// compressed table, or a .gz for a plain one) is deleted.
 function writeFiles(outDir, files) {
   for (const [rel, content] of files) {
-    const target = path.join(outDir, rel);
+    const stored = storedName(rel);
+    const target = path.join(outDir, stored);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, content);
+    if (stored === rel) {
+      fs.writeFileSync(target, content);
+      if (rel.startsWith(`${SEEDS_DIR}/`)) fs.rmSync(`${target}.gz`, { force: true });
+    } else {
+      if (storedProblem(target, rel, content) !== null) fs.writeFileSync(target, gzipSeed(content));
+      fs.rmSync(path.join(outDir, rel), { force: true });
+    }
   }
 }
 
-// Regenerate into a temp dir and compare byte for byte with `dir`, including
-// any seed file in `dir` the generator no longer writes.
+// Regenerate in memory and compare with `dir` (unzipped content for a .gz),
+// including any seed file in `dir` the generator no longer writes.
 function checkCommitted(dir = FIXTURE_DIR, config = readSeedConfig()) {
   const { files } = generate(config);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brightside-fixture-'));
   const differences = [];
-  try {
-    writeFiles(tmp, files);
-    for (const rel of files.keys()) {
-      const committed = path.join(dir, rel);
-      if (!fs.existsSync(committed)) differences.push(`${rel}: missing (run npm run fixture:generate)`);
-      else if (!fs.readFileSync(committed).equals(fs.readFileSync(path.join(tmp, rel)))) {
-        differences.push(`${rel}: differs from a fresh generate`);
-      }
-    }
-    const seedsDir = path.join(dir, SEEDS_DIR);
-    const extra = fs.existsSync(seedsDir) ? fs.readdirSync(seedsDir).filter((f) => !files.has(`${SEEDS_DIR}/${f}`)) : [];
-    for (const f of extra.sort()) differences.push(`${SEEDS_DIR}/${f}: not written by the generator`);
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+  const stored = new Set();
+  for (const [rel, content] of files) {
+    const name = storedName(rel);
+    stored.add(name);
+    const problem = storedProblem(path.join(dir, name), rel, content);
+    if (problem) differences.push(`${name}: ${problem}`);
   }
+  const seedsDir = path.join(dir, SEEDS_DIR);
+  const extra = fs.existsSync(seedsDir) ? fs.readdirSync(seedsDir).filter((f) => !stored.has(`${SEEDS_DIR}/${f}`)) : [];
+  for (const f of extra.sort()) differences.push(`${SEEDS_DIR}/${f}: not written by the generator`);
   return differences;
 }
 
@@ -217,4 +275,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { generate, writeFiles, checkCommitted, readSeedConfig, readTargets, toCsv, main, GENERATOR_VERSION };
+module.exports = { generate, writeFiles, checkCommitted, storedName, gzipSeed, gzipHeaderProblem, readSeedConfig, readTargets, toCsv, main, GENERATOR_VERSION };
