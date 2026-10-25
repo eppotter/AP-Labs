@@ -100,6 +100,32 @@ test('a body with no line break over the limit splits on spaces, then hard, neve
   assert.ok(splitText(link).some((p) => p.includes('<https://a.test|some long link text>')));
 });
 
+test('a link at the start or right at the cut is never split; only a link longer than a section is', () => {
+  const whole = (parts, link) => parts.some((p) => p.includes(link));
+  // A link with spaces at index 0, followed by text with no break to cut at.
+  const first = '<https://a.test|link text with spaces>';
+  const atStart = `${first}${'z'.repeat(4000)}`;
+  const startParts = splitText(atStart);
+  assert.ok(whole(startParts, first));
+  assert.ok(startParts.every((p) => p.length <= SECTION_LIMIT));
+  assert.equal(startParts.join(''), atStart);
+  // Hard cuts: a link starting just before the cut, and one starting exactly at it.
+  const room = SECTION_LIMIT - 4;
+  const link = '<https://b.test|label>';
+  for (const lead of [room - 5, room]) {
+    const text = `${'a'.repeat(lead)}${link}${'b'.repeat(10)}`;
+    const parts = splitText(text);
+    assert.ok(whole(parts, link), `link split with lead ${lead}`);
+    assert.ok(parts.every((p) => p.length <= SECTION_LIMIT));
+    assert.equal(parts.join(''), text);
+  }
+  // A link longer than a whole section cannot fit anywhere: it is cut, but nothing is lost.
+  const huge = `<https://c.test/${'p'.repeat(4000)}|big>`;
+  const hugeParts = splitText(huge);
+  assert.ok(hugeParts.every((p) => p.length <= SECTION_LIMIT));
+  assert.equal(hugeParts.join(''), huge);
+});
+
 test('a code block split across sections is closed and reopened, so each section renders as code', () => {
   const code = Array.from({ length: 300 }, (_, i) => `SELECT ${i} AS n, 'row ${i}' AS label;`).join('\n');
   const text = toMrkdwn(`Here is the query:\n\n\`\`\`sql\n${code}\n\`\`\`\n\nThat's all.`);

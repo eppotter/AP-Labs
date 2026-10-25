@@ -106,22 +106,31 @@ function toMrkdwn(markdown) {
 
 const fencesIn = (s) => (s.match(/```/g) || []).length;
 
+// A cut that is not inside a <link|text>: the cut itself when it is outside
+// one; else just before the link; else, for a link at the very start, just
+// after it when it fits. A link longer than a whole section cannot fit
+// anywhere, so it keeps the cut it was given.
+function outsideLink(rest, cut, room) {
+  const open = rest.lastIndexOf('<', cut - 1);
+  if (open < 0 || rest.lastIndexOf('>', cut - 1) > open) return cut;
+  if (open > 0) return open;
+  const close = rest.indexOf('>', open);
+  return close >= 0 && close + 1 <= room ? close + 1 : cut;
+}
+
 // Where to cut rest so the piece fits in room characters.
 function cutPoint(rest, room) {
   let cut = rest.lastIndexOf('\n', room);
   let drop = 1;
   if (cut <= 0) cut = rest.lastIndexOf(' ', room);
   if (cut > 0) {
-    // Never inside a <link|text>: cut before it instead.
-    const open = rest.lastIndexOf('<', cut);
-    if (open > 0 && open > rest.lastIndexOf('>', cut)) { cut = open; drop = 0; }
-    return { cut, drop };
+    const link = outsideLink(rest, cut, room);
+    return link === cut ? { cut, drop } : { cut: link, drop: 0 };
   }
   cut = room;
   const amp = rest.lastIndexOf('&', cut);
   if (amp > 0 && cut - amp < 6 && !rest.slice(amp, cut).includes(';')) cut = amp;
-  const open = rest.lastIndexOf('<', cut);
-  if (open > 0 && open > rest.lastIndexOf('>', cut - 1)) cut = open;
+  cut = outsideLink(rest, cut, room);
   // Never through a run of backticks (a fence would stop being one).
   while (cut > 1 && rest[cut] === '`' && rest[cut - 1] === '`') cut -= 1;
   const code = rest.charCodeAt(cut - 1);
