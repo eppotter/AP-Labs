@@ -1,0 +1,12 @@
+# AI service test profile (Story 9.1). ASK is granted per person; OPEN_ASK is
+# open to everyone. Its context folder holds every file the onboarding kit
+# writes, so tests can prove only org.md and data.md are read.
+schema_version: 1
+client: { id: acme, name: Acme Tidy }
+resources:
+  - { key: ASK, label: Ask a question }
+  - { key: OPEN_ASK, label: Open question, open_access: true }
+users:
+  - { id: boss, name: Boss, role: admin, identities: { slack: U0BOSS } }
+  - { id: mem, name: Mem, role: member, identities: { slack: U0MEM }, grants: [ASK] }
+  - { id: nope, name: Nope, role: member, identities: { slack: U0NOPE } }

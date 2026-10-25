@@ -1,0 +1,10 @@
+# The runtime test profile with an AI model that has no price (Story 9.1):
+# boot must refuse it.
+schema_version: 1
+client: { id: tiny, name: Tiny }
+resources:
+  - { key: OPEN_THING, label: Open thing, open_access: true }
+  - { key: CLOSED_THING, label: Closed thing }
+users:
+  - { id: solo, name: Solo, role: admin }
+llm: { model: claude-unpriced-9 }

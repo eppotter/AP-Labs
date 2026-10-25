@@ -15,6 +15,7 @@
 //                                    every key; the MotherDuck write key
 //         kit/runtime/data/**, kit/runtime/sql/**
 //                                    the bot's read-only connection; the SQL checker
+//         kit/runtime/llm/**         the AI service: its key, spend breaker and off switch
 //         kit/lib/tier/**, kit/lib/gate/**, kit/hooks/**,
 //         .claude/settings.json, .codex/hooks.json
 //                                    the governance itself and the hook wiring
@@ -69,6 +70,8 @@ const ENGINE_T3 = Object.freeze([
   // The bot's read-only data connection and the SQL checker.
   'kit/runtime/data/**',
   'kit/runtime/sql/**',
+  // The AI service: a key that spends money, the breaker and the off switch.
+  'kit/runtime/llm/**',
   // The governance itself: tiers, the gate, the hooks and their wiring.
   'kit/lib/tier/**',
   'kit/lib/gate/**',
