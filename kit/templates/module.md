@@ -36,7 +36,8 @@ The manifest is JSON, checked against `kit/runtime/schema/module.schema.json`. U
 | `handler` | for `handler` | The handler file in the module's folder (`handler.js`). It exports one async function. |
 | `parameters` | for `scoped-pull` | The inputs a person gives (see "Declaring inputs" below). The query runner refuses a parameter the manifest does not declare. |
 | `query` | for `scoped-pull` | A `.sql` file in the module's folder. Startup fails if it is missing or empty. |
-| `scoring` | later archetypes | `inputs` and `weights` for a scored list. |
+| `row_id` | with `scoring` | The column the query returns that tells rows apart (`client_id`). Equal scores are ordered by it. |
+| `scoring` | no | A score from 0 to 100 and a one-line reason per row, worked out by the engine (see "A scored list" below). |
 | `write` | `approval-write` | `connector`, `operation`, `destination` and the `fields` copied into the approval entry. |
 
 ## A scoped pull: a list with a typed form
@@ -56,6 +57,40 @@ The SQL is a static template with named placeholders (`$zone`, `$limit`), bound 
 - every `$name` in it is a declared input, and every declared input appears in it. An optional input left empty is bound as `NULL`, so write `($code IS NULL OR code = $code)`.
 
 Select only the columns the person needs: the CSV holds every column the query returns.
+
+### A scored list
+
+A scoped pull can rank its rows. The engine gives each row a whole-number score from 0 to 100 and a reason naming the two inputs that lifted it most, then orders the rows best first. No AI is involved: the same data and weights always give the same scores and order. The score and reason show in the module's window and as the CSV's first and last columns, and "How was this made?" lists the weights.
+
+```json
+"row_id": "client_id",
+"scoring": {
+  "inputs": [
+    { "name": "months_as_client", "label": "Months as a client", "weight": 2, "min": 0, "max": 24 },
+    { "name": "days_since_visit", "label": "Days since last completed visit", "weight": -1, "min": 0, "max": 120 }
+  ],
+  "limit_parameter": "limit"
+}
+```
+
+Each input:
+
+| Field | What it is |
+|---|---|
+| `name` | A column the query returns. |
+| `label` | The input in plain words, used in each row's reason ("Months as a client: 31"). |
+| `weight` | How much it counts. Negative means lower is better. At least one weight must not be 0. |
+| `min`, `max` | A fixed range (`min` < `max`). A value is clipped to it and scaled to 0 to 1, so a row's score never depends on which other rows came back. |
+
+The score is `round-half-up(100 × (S − Σneg) / (Σpos − Σneg))`, where S adds up weight × scaled value over the inputs, Σpos is the sum of the positive weights and Σneg the sum of the negative ones.
+
+`limit_parameter` names the integer input that says how many rows to keep. The engine scores every row first and keeps the top that many, so the SQL must never use it (startup stops if it does). Instead, a scored list's SQL:
+
+- returns every input column and the `row_id`;
+- ends with `ORDER BY …, <row_id>` and then exactly `LIMIT 5001` (the 5,000-row cap plus one). The engine ranks the first 5,000 rows; if 5,001 come back, the person is told the ranking covers only the first 5,000 and to narrow the values;
+- `COALESCE`s every input that can be null, to a number that means "worst" or "none" (`COALESCE(SUM(p.amount_cents), 0)`). A null, a missing column or a value that is not a number stops the run with a plain message naming the module and the input; it is never scored as 0. Numbers, numeric text (BIGINT, HUGEINT and DECIMAL columns arrive as text) and true/false (1/0) are accepted.
+
+Startup also stops on a range with `min` at or above `max`, on every weight 0, and on a `limit_parameter` that is not a declared integer input.
 
 ### Declaring inputs
 

@@ -13,7 +13,7 @@ const {
 const {
   SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
 } = require('./errors');
-const { ProvenanceGone, ProvenanceNotYours } = require('./errors');
+const { ProvenanceGone, ProvenanceNotYours, ScoringFault } = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
 function escapeText(s) {
@@ -24,6 +24,16 @@ const sentWords = ({ items }) => `${items} ${items === 1 ? 'item was' : 'items w
 // When what went could not be recorded (sent.recorded false), a retry may send
 // it again, so the next step is always a check first, never a retry (#89).
 const checkFirst = (admin, { start = true } = {}) => `${start ? admin.charAt(0).toUpperCase() + admin.slice(1) : admin} should check what arrived before anyone tries again.`;
+
+// Why a scored list stopped (Story 10.1), from the input's label. Never the
+// value itself.
+const SCORING_WORDS = Object.freeze({
+  missing: (label) => `the results have no "${label}" column`,
+  null: (label) => `"${label}" is empty for at least one row (the list's SQL must COALESCE it to a number)`,
+  not_number: (label) => `"${label}" is not a number for at least one row`,
+  no_row_id: (label) => `the results have no "${label}" column to tell the rows apart`,
+  column_taken: (label) => `the results already have a column named "${label}", which the scores need`,
+});
 
 // The AI service's refusals (Story 9.1). Each points to the typed form, which
 // always works; the module shows it alongside.
@@ -94,6 +104,8 @@ const MESSAGES = [
   [QueryBlocked, (details, { admin }) => `The safety check refused this list's query, so nothing ran and there are no results. I've logged the problem; please tell ${admin}.`],
   [QueryFailed, (details, { admin }) => `This list's query failed, so there are no results (nothing partial was kept). I've logged the problem; please tell ${admin} if it keeps happening.`],
   [CsvNotDelivered, (details, { admin }) => `*The CSV didn't arrive.* I couldn't send the file to your DM, so you have only the first rows shown here, not the whole list. Open it again from the menu to try again, or tell ${admin} if it keeps happening.`],
+  // A scored list (Story 10.1): a setup fault, so nothing partial is shown.
+  [ScoringFault, ({ label, problem }, { admin }) => `This list's scores couldn't be worked out: ${escapeText(SCORING_WORDS[problem](label))}. So there are no results and nothing was sent. I've logged the problem; please tell ${admin}.`],
   // "How was this made?" (Story 9.6). Neither says anything about the run.
   [ProvenanceGone, () => "The details of this run are no longer available (they're kept for 24 hours). Run the list again from the menu to see how a new one is made."],
   [ProvenanceNotYours, () => "These details belong to someone else's run, so I can't show them. Run the list yourself from the menu to see how yours is made."],

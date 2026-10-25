@@ -20,13 +20,13 @@ const { registerHubs } = require('../../kit/runtime/slack/hubs');
 const { ACTIONS, FORM_CALLBACK, ROW_CAP } = require('../../kit/runtime/archetypes/scoped-pull');
 const { INPUT_BLOCK, VALUE_ACTION } = require('../../kit/runtime/archetypes/scoped-pull/form');
 const {
-  checkQuery, placeholders, bindValues, createRunner,
+  checkQuery, placeholders, bindValues, boundNames, pushRowsOf, createRunner, SCORED_LIMIT,
 } = require('../../kit/runtime/archetypes/scoped-pull/run');
 const { toCsv, BOM } = require('../../kit/runtime/archetypes/scoped-pull/csv');
 const { deliverCsv, permalinkOf } = require('../../kit/runtime/archetypes/scoped-pull/deliver');
-const { previewText } = require('../../kit/runtime/archetypes/scoped-pull/results');
+const { previewText, previewFit, PREVIEW_LIMIT } = require('../../kit/runtime/archetypes/scoped-pull/results');
 const {
-  DataUnavailable, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
+  DataUnavailable, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered, ScoringFault,
 } = require('../../kit/runtime/errors');
 const { messageFor } = require('../../kit/runtime/messages');
 const { VERSION_SQL } = require('../../kit/runtime/slack/provenance');
@@ -393,4 +393,188 @@ test('createRunner without a Slack client still answers: the CSV is reported as 
   const res = await run(PULL, { zone: 'north', days: 90 }, 'U1', {});
   assert.equal(res.failed, true);
   assert.match(JSON.stringify(res.message), /The CSV didn't arrive/);
+});
+
+// Story 10.1: a scored list. The fixture module (test/fixtures/runtime/scored)
+// declares four scoring inputs, its row id and its limit input; its SQL ends
+// with ORDER BY person_id LIMIT 5001 and never names the limit.
+const SCORED_DIR = path.join(FIX, 'scored');
+const RANKED = Object.freeze({
+  ...JSON.parse(fs.readFileSync(path.join(SCORED_DIR, 'manifest.json'), 'utf8')),
+  file: 'modules/ranked/manifest.json',
+  sql: fs.readFileSync(path.join(SCORED_DIR, 'ranked.sql'), 'utf8'),
+});
+const RANKED_ROWS = JSON.parse(fs.readFileSync(path.join(SCORED_DIR, 'rows.json'), 'utf8'));
+const scoredCheck = (sql, mod = RANKED) => checkQuery(sql, mod.parameters, { scoring: mod.scoring, rowId: mod.row_id });
+const ORDER_PROBLEM = 'a scored module\'s SQL must end with an ORDER BY whose last key is the row id (ORDER BY ..., person_id) just before LIMIT 5001, so the rows kept at the cap are the same every time';
+const LIMIT_PROBLEM = 'a scored module\'s SQL must end with LIMIT 5001 (the 5,000-row cap plus one), as a literal; the engine keeps the person\'s number after scoring';
+
+function setupRanked({ data = fakeData(() => RANKED_ROWS), mod = RANKED } = {}) {
+  const store = createStore();
+  const app = new FakeSlackApp({ views: true });
+  const log = quietLog();
+  const registry = createRegistry({ hubs: base.hubs, modules: [...base.modules, mod] });
+  registerHubs(app, { registry, profile, env: 'dev', log, store, data, canUse: () => true });
+  return { app, log, store, data, mod };
+}
+
+async function confirmRanked(ctx, zone = 'north') {
+  const user = { id: 'U1' };
+  await ctx.app.dispatchAction(`${ctx.mod.id}:open`, { user, view: MENU_VIEW });
+  const form = ctx.app.views.at(-1).args.view;
+  const formId = `V${ctx.app.viewSeq}`;
+  const state = { values: { [`${INPUT_BLOCK}zone`]: { [VALUE_ACTION]: { type: 'static_select', selected_option: { value: zone } } } } };
+  await ctx.app.dispatchView(FORM_CALLBACK, { user, view: { id: formId, hash: 'hf', title: form.title, private_metadata: form.private_metadata, state } });
+  const screen = ctx.app.viewAcks.at(-1).view;
+  const session = screen.blocks.find((b) => b.type === 'actions').elements[0].value;
+  const from = { id: formId, hash: 'hc', title: screen.title, private_metadata: screen.private_metadata };
+  await ctx.app.dispatchAction(ACTIONS.confirm, { user, view: from, value: session });
+  return { view: updates(ctx.app).at(-1).view, session, from };
+}
+
+test('checkQuery on a scored module: the limit input is exempt from "never used" and refused when the SQL names it', () => {
+  assert.deepEqual(scoredCheck(RANKED.sql), []);
+  const named = RANKED.sql.replace('WHERE zone = $zone', 'WHERE zone = $zone AND rank_no <= $limit');
+  assert.deepEqual(scoredCheck(named), [
+    'its SQL names $limit, the scoring limit; the engine keeps the top $limit after scoring, so the SQL must never use it',
+  ]);
+  // Without scoring, the same input must be used, as before.
+  assert.deepEqual(checkQuery(RANKED.sql, RANKED.parameters), ['input "limit" is declared but its SQL never uses $limit']);
+});
+
+test('checkQuery on a scored module: the SQL must end with ORDER BY ..., <row id> then a literal LIMIT 5001', () => {
+  const head = 'SELECT person_id, name, tenure, spend, idle, rise FROM people WHERE zone = $zone';
+  // Accepted: a qualified row id, a direction, NULLS, a trailing semicolon and comment, other keys first.
+  assert.deepEqual(scoredCheck(`${head}\nORDER BY spend DESC, p.person_id DESC NULLS LAST\nLIMIT 5001;\n-- the end\n`), []);
+  assert.deepEqual(scoredCheck(`${head} ORDER BY COALESCE(spend, 0) DESC, "person_id" limit 5001`), []);
+  // No ORDER BY, or one whose last key is not the row id.
+  assert.deepEqual(scoredCheck(`${head} LIMIT 5001`), [ORDER_PROBLEM]);
+  assert.deepEqual(scoredCheck(`${head} ORDER BY person_id, spend DESC LIMIT 5001`), [ORDER_PROBLEM]);
+  assert.deepEqual(scoredCheck('SELECT person_id, name, tenure, spend, idle, rise, 1 AS person_id_2 FROM people WHERE zone = $zone ORDER BY person_id_2 LIMIT 5001'), [ORDER_PROBLEM]);
+  // An ORDER BY inside a subquery doesn't order the result.
+  assert.deepEqual(scoredCheck(`SELECT person_id, name, tenure, spend, idle, rise FROM (SELECT * FROM people ORDER BY person_id) t WHERE zone = $zone LIMIT 5001`), [ORDER_PROBLEM]);
+  // No LIMIT, another number, or a LIMIT only in a comment or a string.
+  assert.deepEqual(scoredCheck(`${head} ORDER BY person_id`), [LIMIT_PROBLEM]);
+  assert.deepEqual(scoredCheck(`${head} ORDER BY person_id LIMIT 5000`), [LIMIT_PROBLEM]);
+  assert.deepEqual(scoredCheck(`${head} ORDER BY person_id LIMIT 50010`), [LIMIT_PROBLEM]);
+  assert.deepEqual(scoredCheck(`${head} ORDER BY person_id -- LIMIT 5001`), [LIMIT_PROBLEM]);
+  assert.deepEqual(scoredCheck(`${head} ORDER BY person_id LIMIT 5001 OFFSET 10`), [LIMIT_PROBLEM]);
+  // An input or the row id the SQL never returns.
+  assert.deepEqual(scoredCheck('SELECT person_id, tenure, spend, idle FROM people WHERE zone = $zone ORDER BY person_id LIMIT 5001'), [
+    'its SQL never returns "rise", which the scoring needs (a scoring input or the row id)',
+  ]);
+  assert.deepEqual(scoredCheck("SELECT 'rise' AS x, person_id, tenure, spend, idle FROM people WHERE zone = $zone ORDER BY person_id LIMIT 5001"), [
+    'its SQL never returns "rise", which the scoring needs (a scoring input or the row id)',
+  ]);
+});
+
+test('bindValues leaves out a scored module\'s limit input; the run declares only the bound names', () => {
+  assert.deepEqual(bindValues(RANKED.parameters, { zone: 'north', limit: 3 }, { omit: 'limit' }), { zone: 'north' });
+  assert.deepEqual(boundNames(RANKED), ['zone']);
+  assert.deepEqual(boundNames(PULL), ['zone', 'days', 'code']);
+});
+
+test('a scored list: Confirm scores every row in the engine, keeps the top limit, and shows score and reason in the view and the CSV', async () => {
+  const ctx = setupRanked();
+  const { view } = await confirmRanked(ctx);
+  // The limit is never bound: the SQL gets the zone only.
+  assert.deepEqual(ctx.data.runs[0], { sql: RANKED.sql, params: { zone: 'north' }, opts: { declared: ['zone'] } });
+  assert.equal(view.blocks[0].text.text, '*Ranked list: the top 3 of 5 rows, by score.*');
+  assert.deepEqual(view.blocks.filter((b) => b.fields).map((b) => b.fields[1].text), ['north', '3']);
+  assert.equal(blockTexts(view)[3], [
+    '*The top 3:*',
+    '```',
+    'score  person_id  name  reason',
+    '79     1          Ann   Months as a client: 24; Paid to date ($): 5,000',
+    '64     2          Bo    Paid to date ($): 10,000; Months as a client: 12',
+    '64     10         Eve   Paid to date ($): 10,000; Months as a client: 12',
+    '```',
+  ].join('\n'));
+  assert.equal(blockTexts(view).at(-1), 'The ranked list (3 rows) is a CSV in your DM with me. <https://fake.slack.test/files/F1|Open the CSV>');
+  const up = ctx.app.uploads[0];
+  assert.equal(up.content, `${BOM}${[
+    'score,person_id,name,tenure,spend,idle,rise,reason',
+    '79,1,Ann,24,5000,0,true,"Months as a client: 24; Paid to date ($): 5,000"',
+    '64,2,Bo,12,10000.00,50,false,"Paid to date ($): 10,000; Months as a client: 12"',
+    '64,10,Eve,12,10000,50,false,"Paid to date ($): 10,000; Months as a client: 12"',
+  ].join('\r\n')}\r\n`);
+  assert.equal(up.initial_comment, 'Ranked list: the top 3 of 5 rows, by score, for Zone: north, How many: 3.');
+  // A second run on the same data gives the same CSV.
+  const again = setupRanked();
+  await confirmRanked(again);
+  assert.equal(again.app.uploads[0].content, up.content);
+});
+
+test('a scored list at the cap: 5,001 rows back, the engine ranks only the first 5,000 and says so', async () => {
+  const worst = { tenure: 0, spend: 0, idle: 100, rise: false };
+  const many = Array.from({ length: 5001 }, (_, i) => ({ person_id: i + 1, name: `P${i + 1}`, ...worst }));
+  many[3999] = { ...many[3999], tenure: 24 };
+  // The 5,001st row would score 100, but it is past the cap: never ranked.
+  many[5000] = { person_id: 5001, name: 'Late', tenure: 24, spend: 10000, idle: 0, rise: true };
+  const ctx = setupRanked({ data: fakeData(() => many) });
+  const { view } = await confirmRanked(ctx);
+  assert.equal(SCORED_LIMIT, ROW_CAP + 1);
+  assert.equal(view.blocks[0].text.text, '*Ranked list: the top 3 by score, of the first 5,000 rows.*');
+  assert.equal(blockTexts(view)[1], 'The ranking covers only the first 5,000 rows the query returned; more matched. Narrow the values to rank them all.');
+  const lines = ctx.app.uploads[0].content.replace(BOM, '').trimEnd().split('\r\n');
+  assert.deepEqual(lines.slice(1).map((l) => l.split(',').slice(0, 2).join(',')), ['29,4000', '0,1', '0,2']);
+  assert.ok(!ctx.app.uploads[0].content.includes('Late'));
+  assert.match(ctx.app.uploads[0].initial_comment, /^Ranked list: the top 3 by score, of the first 5,000 rows \(the ranking covers only the first 5,000\)/);
+  assert.equal(blockTexts(view).at(-1), 'The CSV in your DM with me holds the top 3 by score, of the first 5,000 rows. <https://fake.slack.test/files/F1|Open the CSV>');
+});
+
+test('a scored list whose rows can\'t be scored stops: the plain message names the input, nothing is sent, the log names module and input', async () => {
+  const rows = RANKED_ROWS.map((r) => (r.person_id === 3 ? { ...r, spend: null } : r));
+  const ctx = setupRanked({ data: fakeData(() => rows) });
+  const { view, session, from } = await confirmRanked(ctx);
+  const words = messageFor(new ScoringFault({ module: 'ranked', input: 'spend', label: 'Paid to date ($)', problem: 'null' }), { admin: ADMIN });
+  assert.equal(view.blocks[0].text.text, words);
+  assert.match(words, /COALESCE/);
+  assert.deepEqual(ctx.app.uploads, []);
+  assert.equal(view.blocks[0].accessory, undefined, 'no "How was this made?" for a run that stopped');
+  const logged = ctx.log.lines.find((l) => l.msg === 'list scoring failed');
+  assert.deepEqual(logged.fields, { module: 'ranked', input: 'spend', problem: 'null' });
+  // The run did not finish: a replay says so.
+  await ctx.app.dispatchAction(ACTIONS.confirm, { user: { id: 'U1' }, view: { ...from, hash: `h${ctx.app.viewSeq}` }, value: session });
+  assert.equal(blockTexts(updates(ctx.app).at(-1).view)[0], FAILED_REPLAY);
+  // A missing input column, and a non-numeric value, stop it the same way.
+  for (const [bad, input, problem] of [[RANKED_ROWS.map(({ idle, ...r }) => r), 'idle', 'missing'], [RANKED_ROWS.map((r) => ({ ...r, tenure: 'long' })), 'tenure', 'not_number']]) {
+    const c = setupRanked({ data: fakeData(() => bad) });
+    await confirmRanked(c);
+    assert.deepEqual(c.log.lines.find((l) => l.msg === 'list scoring failed').fields, { module: 'ranked', input, problem });
+    assert.deepEqual(c.app.uploads, []);
+  }
+});
+
+test('the run record keeps only the rows after the cut, in rank order, with the score, for a module with a write; none without', async () => {
+  const store = createStore();
+  const data = fakeData(() => RANKED_ROWS);
+  const run = createRunner({ data, log: quietLog(), store });
+  const withWrite = { ...RANKED, write: { connector: 'email', operation: 'pushList', destination: 'A list', fields: ['person_id', 'name'] } };
+  const res = await run(withWrite, { zone: 'north', limit: 3 }, 'U1', {});
+  const runId = res.message.blocks[0].accessory.value;
+  const record = store.get('provenance', runId);
+  assert.deepEqual(record.rowIds, [1, 2, 10]);
+  assert.deepEqual(record.rows, [
+    { person_id: 1, name: 'Ann', score: 79 },
+    { person_id: 2, name: 'Bo', score: 64 },
+    { person_id: 10, name: 'Eve', score: 64 },
+  ]);
+  // The confirmed values, with the limit the scoring line explains.
+  assert.deepEqual(record.parameters, { zone: 'north', limit: 3 });
+  const plain = await run(RANKED, { zone: 'north', limit: 3 }, 'U1', {});
+  const r2 = store.get('provenance', plain.message.blocks[0].accessory.value);
+  assert.equal(r2.rowIds, null);
+  assert.equal(r2.rows, null);
+  assert.deepEqual(pushRowsOf(withWrite, { rows: [{ person_id: 4, name: 'Di' }] }), { rowIds: [4], rows: [{ person_id: 4, name: 'Di' }] });
+});
+
+test('the preview stays under Slack\'s section limit: rows are dropped from the end, never cut mid-table', () => {
+  const columns = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'reason'];
+  const rows = Array.from({ length: 10 }, (_, i) => Object.fromEntries(columns.map((c) => [c, `${c}${i}`.padEnd(40, 'x')])));
+  const fit = previewFit(columns, rows, { full: ['reason'] });
+  assert.ok(fit.text.length <= PREVIEW_LIMIT);
+  assert.ok(fit.shown < 10 && fit.shown > 0);
+  assert.equal(fit.text.split('\n').length, 3 + fit.shown);
+  assert.equal(previewFit(['a'], [{ a: 1 }, { a: 2 }]).shown, 2);
 });
