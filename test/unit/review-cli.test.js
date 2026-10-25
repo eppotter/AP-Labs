@@ -665,7 +665,8 @@ test('a reviewer that fails or gives no usable verdict hands the round to the ot
 });
 
 const sample = (name) => path.join(fixtures, name);
-const RETRY_LINE = /^codex: Could not read findings or a clean verdict \(log: .*round-1\.attempt-1\.log\); retrying codex once with a VERDICT reminder\.$/m;
+// The codex-no-verdict.md sample: bold finding lines the parser cannot read, and no VERDICT line (#132).
+const RETRY_LINE = /^codex: Could not parse 2 finding line\(s\):\n- \*\*\[P2\][^]*?\(log: .*round-1\.attempt-1\.log\); retrying codex once with a VERDICT reminder\.$/m;
 
 test('Codex BLOCKING with only a [P2] counts as CLEAN with that P2: no retry, no fallback, one-line note', () => {
   const t = setup();
@@ -738,11 +739,52 @@ test('an unparseable finding line is not retried: it goes straight to the fallba
   const t = setup();
   t.openPr();
   t.commit('change\n\nAgent: claude-code claude-opus-5-5');
-  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict('- [P1] no path here\nVERDICT: BLOCKING\n'), FAKE_CLAUDE_VERDICT: t.verdict(P2_ONLY) });
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict('- [P1] no path here\nVERDICT: BLOCKING\n'), FAKE_CLAUDE_VERDICT: t.verdict(`${P2_ONLY}VERDICT: CLEAN\n`) });
   assert.equal(r.code, 0, r.err);
   assert.doesNotMatch(r.err, /retrying/);
   assert.ok(!fs.existsSync(path.join(t.codex, 'retry-args.txt')));
   assert.match(r.out, /reviewer: claude, same-model fallback/);
+});
+
+test('#132: well-formed findings with no VERDICT line are retried once; the same reply again counts, with a note', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const reply = '- [P2] Tidy names — kit/c.js:2\n- [P2] Missing test — kit/d.js:4\n';
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict(reply), FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /^codex: No VERDICT line after 2 finding\(s\) \(log: .*attempt-1\.log\); retrying codex once with a VERDICT reminder\.$/m);
+  assert.match(r.err, /^Note: Still no VERDICT line after the reminder; read as CLEAN with 2 well-formed non-blocking finding\(s\)\.$/m);
+  assert.ok(fs.existsSync(path.join(t.codex, 'retry-args.txt')), 'Codex was retried');
+  assert.ok(!t.claudeRan(), 'no fallback');
+  assert.match(r.out, /reviewer: codex\): 0 blocking, 2 non-blocking\./);
+  assert.deepEqual(t.state().rounds[0].findings.map((f) => f.file), ['kit/c.js', 'kit/d.js'], 'no finding is lost');
+  assert.equal(t.state().rounds[0].retried, true);
+});
+
+test('#132: bold findings, no VERDICT line and "No other issues" are never read as clean: retry, then fallback', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const reply = '- **[P2] Published time is raw UTC** — `examples/a.js:45` — Hard to read.\n\nNo other issues.\n';
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict(reply), FAKE_CLAUDE_VERDICT: t.verdict(`${P2_ONLY}VERDICT: CLEAN\n`) });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /^codex: Could not parse 1 finding line\(s\):\n- \*\*\[P2\] Published time[^\n]*\n?[^]*?attempt-1\.log\); retrying codex once/m);
+  assert.match(r.err, /attempt-2\.log\); trying claude as a same-model fallback\.$/m);
+  assert.match(r.out, /reviewer: claude, same-model fallback/);
+  assert.deepEqual(t.state().rounds[0].findings.map((f) => f.file), ['kit/c.js']);
+});
+
+test('#132: a readable [P1] with no VERDICT line is never retried and never dropped', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict(P1_VERDICT), FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.err, /retrying|fallback/);
+  assert.ok(!fs.existsSync(path.join(t.codex, 'retry-args.txt')));
+  assert.match(r.err, /^Note: No VERDICT line; read as BLOCKING with 1 \[P1\] finding\(s\): the P1s count\.$/m);
+  assert.deepEqual(t.state().rounds[0].findings.map((f) => [f.priority, f.id]), [['P1', 'R1-1'], ['P2', undefined]]);
 });
 
 test('both reviewers failing exits 1 without counting the round', () => {
@@ -755,7 +797,7 @@ test('both reviewers failing exits 1 without counting the round', () => {
     FAKE_CODEX_EXIT: '3',
   });
   assert.equal(r.code, 1);
-  assert.match(r.err, /^claude: Could not read findings or a clean verdict \(log: .*round-1\.attempt-1\.log\)/m);
+  assert.match(r.err, /^claude: Could not read findings or a clean verdict \(no VERDICT line\) \(log: .*round-1\.attempt-1\.log\); retrying claude once/m);
   assert.match(r.err, /^codex: exited 3 \(log: .*round-1\.log\)$/m);
   assert.match(r.err, /No reviewer gave a usable verdict; this round does not count\./);
   assert.equal(t.state(), null);

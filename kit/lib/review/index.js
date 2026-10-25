@@ -69,10 +69,16 @@ function parseFindings(verdict, repoRoot = '') {
   }));
 }
 
+// A line that looks like a finding: its first word, after any indent, list
+// marker, heading mark, quote mark or markdown emphasis, is a [P1]/[P2] tag.
+// Reviewers write "- **[P2] title** — `path`" as well as the rubric's form (#132).
+const FINDING_LIKE = /^\s*(?:(?:[-*+]|\d+[.)])\s+|#{1,6}\s+|>\s*)*[*_`~]*\s*\[P\d\]/;
+const isFindingLike = (l) => FINDING_LIKE.test(l);
+
 // Lines that look like findings but do not parse. A round with any of these
 // does not count: a finding must never be lost silently.
 function unparsedFindingLines(verdict) {
-  return verdict.split('\n').filter((l) => /^- \[P\d\]/.test(l) && !new RegExp(FINDING.source).test(l));
+  return verdict.split('\n').filter((l) => isFindingLike(l) && !new RegExp(FINDING.source).test(l));
 }
 
 // Issue #81: only the reviewer's final answer is read. A Codex transcript (its
@@ -161,28 +167,50 @@ function proseBlockerLines(verdict) {
 // rejects prose like "no idea whether these issues matter".
 const isClean = (verdict) => /\bno\s+(?:(?:blocking\s+or\s+non-blocking|[\w-]+)\s+){0,2}(?:issues|findings|defects|problems|bugs)\b/i.test(verdict);
 
-// A reviewer's output is usable when every finding-like line parses and it has
-// findings or says it is clean. Anything else is a failed attempt: { error }.
-// A failed attempt whose only fault is the VERDICT line (missing, or at odds
-// with what was listed) and that has no readable [P1] also carries retry: the
-// CLI asks the same reviewer once more with VERDICT_REMINDER before falling
-// back. A reply with a readable [P1] is never retried, so a retry cannot lose
-// a P1; malformed or reasoning-aloud finding lines are never retried.
+// A reviewer's output is usable when every finding-like line parses, it ends
+// with a VERDICT line, and that line agrees with what was listed. Anything else
+// is a failed attempt: { error }. A failed attempt with no [P1] in sight (no
+// readable [P1] line and no unreadable line tagged [P1]) also carries retry:
+// the CLI asks the same reviewer once more with VERDICT_REMINDER before
+// falling back, so a retry can never lose a P1. Reasoning-aloud finding lines
+// and finding lines after the VERDICT line are never retried.
+// A missing VERDICT line is a retryable failure (#132), except next to a
+// readable [P1]: that reply is read as BLOCKING with a note, never dropped.
+// On the reminded retry ({ reminded: true }) a reply that still has no VERDICT
+// line but whose findings all parse (or that says it is clean, with no prose
+// blocker) is accepted with a note, so well-formed findings are not lost.
 // BLOCKING with only [P2] lines (and no prose blocker) reads as CLEAN with
 // those P2s plus a one-line note: the findings are what count.
-function readVerdict(raw, repoRoot = '') {
+function readVerdict(raw, repoRoot = '', { reminded = false } = {}) {
   if (!raw.trim()) return { error: 'No verdict written' };
   const { body: verdict, after } = splitAtVerdict(finalOutput(raw));
-  const late = after.split('\n').filter((l) => /^- \[P\d\]/.test(l));
+  const late = after.split('\n').filter(isFindingLike);
   if (late.length) return { error: `Found ${late.length} finding line(s) after the VERDICT line:\n${late.join('\n')}` };
-  const unparsed = unparsedFindingLines(verdict);
-  if (unparsed.length) return { error: `Could not parse ${unparsed.length} finding line(s):\n${unparsed.join('\n')}` };
   const reasoning = reasoningFindingLines(verdict);
   if (reasoning.length) return { error: `${reasoning.length} finding line(s) read like reasoning, not a finding:\n${reasoning.join('\n')}` };
   const findings = parseFindings(verdict, repoRoot);
-  const said = verdictLine(verdict);
+  const unparsed = unparsedFindingLines(verdict);
   const hasP1 = findings.some((f) => f.priority === 'P1');
-  const retry = hasP1 ? {} : { retry: true };
+  const retry = hasP1 || unparsed.some((l) => /\[P1\]/.test(l)) ? {} : { retry: true };
+  if (unparsed.length) return { error: `Could not parse ${unparsed.length} finding line(s):\n${unparsed.join('\n')}`, ...retry };
+  const said = verdictLine(verdict);
+  if (said === null) {
+    const n = findings.length;
+    if (hasP1) {
+      const p1 = findings.filter((f) => f.priority === 'P1').length;
+      return { findings, note: `No VERDICT line; read as BLOCKING with ${p1} [P1] finding(s): the P1s count.` };
+    }
+    if (!reminded) {
+      const what = n ? `No VERDICT line after ${n} finding(s)` : isClean(verdict) ? 'No VERDICT line after a clean-sounding reply'
+        : 'Could not read findings or a clean verdict (no VERDICT line)';
+      return { error: what, ...retry };
+    }
+    const prose = proseBlockerLines(verdict);
+    if (prose.length) return { error: `No VERDICT line and ${prose.length} line(s) read like an unformatted blocking finding:\n${prose.join('\n')}` };
+    if (n) return { findings, note: `Still no VERDICT line after the reminder; read as CLEAN with ${n} well-formed non-blocking finding(s).` };
+    if (isClean(verdict)) return { findings, note: 'Still no VERDICT line after the reminder; read as CLEAN from the reply\'s wording.' };
+    return { error: 'Could not read findings or a clean verdict (no VERDICT line)' };
+  }
   // CLEAN next to a [P1] line: the P1 still counts. A blocker written as a
   // prose bullet under CLEAN, or under BLOCKING with no [P1], is never a pass.
   if (said === 'CLEAN' || (said === 'BLOCKING' && !hasP1)) {
@@ -199,14 +227,13 @@ function readVerdict(raw, repoRoot = '') {
     const n = findings.filter((f) => f.priority === 'P1').length;
     return { findings, note: `Verdict said CLEAN but listed ${n} [P1] finding(s); read as BLOCKING: the P1s count.` };
   }
-  if (!findings.length && said !== 'CLEAN' && !isClean(verdict)) return { error: 'Could not read findings or a clean verdict', ...retry };
   return { findings };
 }
 
 // Appended to the reviewer's prompt for its one retry after a retryable failure.
 const VERDICT_REMINDER = 'End with exactly one VERDICT line as the last line of your reply: "VERDICT: CLEAN" if there is no [P1], ' +
-  'or "VERDICT: BLOCKING" if there is at least one. Your previous reply had no VERDICT line, or one that contradicted its findings. ' +
-  'Write every finding as a "- [P1|P2] <title> — <path>:<line>" line.';
+  'or "VERDICT: BLOCKING" if there is at least one. Your previous reply had no VERDICT line, one that contradicted its findings, ' +
+  'or a finding line in another format. Write every finding as a plain "- [P1|P2] <title> — <path>:<line>" line, with no bold or other markup.';
 
 const withVerdictReminder = (prompt) => `${prompt}\n\n${VERDICT_REMINDER}`;
 

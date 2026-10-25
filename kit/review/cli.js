@@ -249,13 +249,14 @@ function main(argv, env = process.env, cwd = process.cwd()) {
     if (result.error) return { error: result.error.code === 'ENOENT' ? 'not found' : result.error.message };
     if (result.status !== 0) return { error: `exited ${result.status}` };
     const verdict = fs.existsSync(verdictPath) ? fs.readFileSync(verdictPath, 'utf8') : '';
-    return { verdict, ...readVerdict(verdict, repoRoot) };
+    return { verdict, ...readVerdict(verdict, repoRoot, { reminded: reminder }) };
   };
 
-  // The preferred reviewer gets one try, plus one retry with a VERDICT reminder
-  // when its only fault was the VERDICT line (readVerdict's retry). Any other
-  // failure hands the round to the other model once, labelled as a same-model
-  // fallback. Each failed attempt's files are kept under .attempt-<n>.
+  // Each reviewer gets one try, plus one retry with a VERDICT reminder when
+  // readVerdict marks the failure retryable (a missing or contradictory VERDICT
+  // line, or a finding line it could not read, with no P1 in sight). A failure
+  // of the preferred reviewer hands the round to the other model once, labelled
+  // as a same-model fallback. Each failed attempt's files are kept under .attempt-<n>.
   const initial = pickReviewer({ trailers, codexAvailable: true, claudeAvailable: true });
   let selection = initial;
   let tries = 1;
@@ -264,19 +265,22 @@ function main(argv, env = process.env, cwd = process.cwd()) {
     for (const file of [verdictPath, logPath]) if (fs.existsSync(file)) fs.renameSync(file, kept(file));
     return kept(logPath);
   };
-  let outcome = attempt(selection.reviewer);
   let retried = false;
-  if (outcome.error && outcome.retry) {
-    console.error(`${selection.reviewer}: ${outcome.error} (log: ${keep()}); retrying ${selection.reviewer} once with a VERDICT reminder.`);
+  const tryReviewer = (reviewer) => {
+    const first = attempt(reviewer);
+    if (!first.error || !first.retry) return first;
+    console.error(`${reviewer}: ${first.error} (log: ${keep()}); retrying ${reviewer} once with a VERDICT reminder.`);
     tries++;
     retried = true;
-    outcome = attempt(selection.reviewer, true);
-  }
+    return attempt(reviewer, true);
+  };
+  let outcome = tryReviewer(selection.reviewer);
   if (outcome.error) {
     const failures = [`${selection.reviewer}: ${outcome.error} (log: ${keep()})`];
+    tries++;
     selection = pickReviewer({ trailers, codexAvailable: initial.reviewer !== 'codex', claudeAvailable: initial.reviewer !== 'claude' });
     console.error(`${failures[0]}; trying ${selection.reviewer} as a same-model fallback.`);
-    outcome = attempt(selection.reviewer);
+    outcome = tryReviewer(selection.reviewer);
     if (outcome.error) {
       failures.push(`${selection.reviewer}: ${outcome.error} (log: ${logPath})`);
       console.error(`${failures.join('\n')}\nNo reviewer gave a usable verdict; this round does not count.`);

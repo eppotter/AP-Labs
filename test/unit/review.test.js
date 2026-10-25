@@ -224,8 +224,10 @@ test('withFallbackLine removal tidies only the blank lines next to the removed l
 });
 
 test('readVerdict accepts findings or a clean verdict and names every other outcome', () => {
-  assert.deepEqual(readVerdict('- [P2] x — a.js:1\n'), { findings: [{ priority: 'P2', title: 'x', file: 'a.js' }] });
-  assert.deepEqual(readVerdict('No blocking findings.\n'), { findings: [] });
+  assert.deepEqual(readVerdict('- [P2] x — a.js:1\nVERDICT: CLEAN\n'), { findings: [{ priority: 'P2', title: 'x', file: 'a.js' }] });
+  assert.deepEqual(readVerdict('No blocking findings.\nVERDICT: CLEAN\n'), { findings: [] });
+  assert.deepEqual(readVerdict('- [P2] x — a.js:1\n'), { error: 'No VERDICT line after 1 finding(s)', retry: true });
+  assert.deepEqual(readVerdict('No blocking findings.\n'), { error: 'No VERDICT line after a clean-sounding reply', retry: true });
   assert.match(readVerdict('').error, /No verdict written/);
   assert.match(readVerdict('  \n').error, /No verdict written/);
   assert.match(readVerdict('Some thoughts.\n').error, /Could not read findings or a clean verdict/);
@@ -516,8 +518,10 @@ test('the prose-finding guard ignores negations, settled P1s, formatted lines an
   }
   assert.deepEqual(readVerdict('- [P2] Nit — kit/a.js:2\nVERDICT: CLEAN\n').findings.length, 1);
   assert.deepEqual(proseBlockerLines('- P1: kit/a.js drops rows'), ['- P1: kit/a.js drops rows']);
-  const noLine = readVerdict('No blocking findings.\n- Blocking: kit/a.js drops rows\n');
-  assert.deepEqual(noLine, { findings: [] }, 'the guard applies only under a VERDICT: CLEAN line');
+  const noLine = 'No blocking findings.\n- Blocking: kit/a.js drops rows\n';
+  assert.equal(readVerdict(noLine).retry, true, 'no VERDICT line: retried first');
+  assert.match(readVerdict(noLine, '', { reminded: true }).error, /No VERDICT line and 1 line\(s\) read like an unformatted blocking finding/,
+    'after the reminder, a prose blocker with no VERDICT line is still never a pass');
 });
 
 test('isClean accepts "defects", "problems" and "bugs" paraphrases (Codex on #57)', () => {
@@ -595,7 +599,7 @@ test('BLOCKING with only [P2] lines and a prose blocker bullet is a retryable fa
 
 test('a reply with no VERDICT line and no readable finding is a retryable failure', () => {
   const r = readVerdict(sample('codex-no-verdict.md'));
-  assert.match(r.error, /Could not read findings or a clean verdict/);
+  assert.match(r.error, /Could not parse 2 finding line\(s\):\n- \*\*\[P2\] Published time/, 'its bold findings are seen, not ignored (#132)');
   assert.equal(r.retry, true);
   assert.equal(readVerdict('Some thoughts.\n').retry, true);
 });
@@ -616,8 +620,10 @@ test('CLEAN with a listed [P1] keeps the P1 and is never retried (a retry could 
   assert.equal(prose.retry, undefined, 'a reply with a readable P1 is never retried');
 });
 
-test('malformed and reasoning-aloud finding lines are never retried: they go straight to the fallback', () => {
+test('reasoning-aloud lines, late lines and unreadable [P1] lines are never retried: they go straight to the fallback', () => {
   assert.equal(readVerdict('- [P1] no path here\n').retry, undefined);
+  assert.equal(readVerdict('- **[P1] Data loss** — `kit/a.js:1`\nVERDICT: BLOCKING\n').retry, undefined, 'an unreadable P1 is not retried either');
+  assert.equal(readVerdict('- [P1] Data loss — kit/a.js:1\n- **[P2] Nit** — `kit/b.js:2`\nVERDICT: BLOCKING\n').retry, undefined, 'nor is a reply with a readable P1');
   assert.equal(readVerdict(`${PR80_LINE}\n`).retry, undefined);
   assert.equal(readVerdict('- [P2] Nit — kit/a.js:2\nVERDICT: CLEAN\n- [P1] Data loss — kit/b.js:1\n').retry, undefined);
   assert.equal(readVerdict('').retry, undefined);
@@ -629,4 +635,49 @@ test('the retry prompt is the round prompt plus the VERDICT reminder', () => {
   assert.ok(reminded.startsWith(promptFor(state)));
   assert.ok(reminded.endsWith(`\n\n${VERDICT_REMINDER}`));
   assert.match(VERDICT_REMINDER, /^End with exactly one VERDICT line/);
+});
+
+// Issue #132: a missing VERDICT line, and finding lines in another format.
+test('finding-like lines in other shapes are seen; prose that mentions a tag is not', () => {
+  const shapes = ['- **[P2] Nit** — `kit/a.js:2`', '* [P2] Nit — kit/a.js:2', '1. [P2] Nit — kit/a.js:2', '### [P2] Nit', '  - [P2] Nit — kit/a.js:2',
+    '[P2] Nit — kit/a.js:2', '**[P1] Data loss**', '> - [P2] Nit — kit/a.js:2', '- `[P2]` Nit — kit/a.js:2'];
+  for (const line of shapes) assert.deepEqual(unparsedFindingLines(`${line}\nVERDICT: CLEAN\n`), [line], line);
+  for (const line of ['No [P1] findings.', '- No [P1] or [P2] issues', '- [P2] Nit — kit/a.js:2', 'Nothing rated [P2] here.']) {
+    assert.deepEqual(unparsedFindingLines(line), [], line);
+  }
+});
+
+test('bold findings, no VERDICT line and "No other issues" are never read as clean (#131 builder note)', () => {
+  const reply = 'Findings:\n- **[P2] Published time is raw UTC** — `examples/a.js:45` — Hard to read.\n\nNo other issues.\n';
+  const r = readVerdict(reply);
+  assert.equal(r.findings, undefined);
+  assert.match(r.error, /^Could not parse 1 finding line\(s\):\n- \*\*\[P2\] Published time/);
+  assert.equal(r.retry, true, 'no P1 in sight: one retry');
+  assert.equal(readVerdict(reply, '', { reminded: true }).findings, undefined, 'still not clean after the reminder');
+  const clean = readVerdict(reply.replace(/$/, 'VERDICT: CLEAN\n'));
+  assert.equal(clean.findings, undefined, 'not clean under a CLEAN line either');
+  assert.equal(clean.retry, true);
+});
+
+test('a missing VERDICT line: retried once; on the reminded retry well-formed findings or a clean reply count, with a note', () => {
+  const p2 = '- [P2] Nit — kit/a.js:2\n- [P2] Tidy — kit/b.js:3\n';
+  assert.deepEqual(readVerdict(p2), { error: 'No VERDICT line after 2 finding(s)', retry: true });
+  assert.deepEqual(readVerdict(p2, '', { reminded: true }), {
+    findings: [{ priority: 'P2', title: 'Nit', file: 'kit/a.js' }, { priority: 'P2', title: 'Tidy', file: 'kit/b.js' }],
+    note: 'Still no VERDICT line after the reminder; read as CLEAN with 2 well-formed non-blocking finding(s).',
+  });
+  assert.deepEqual(readVerdict('No blocking findings.\n', '', { reminded: true }),
+    { findings: [], note: "Still no VERDICT line after the reminder; read as CLEAN from the reply's wording." });
+  assert.match(readVerdict('Some thoughts.\n', '', { reminded: true }).error, /Could not read findings or a clean verdict \(no VERDICT line\)/);
+  assert.equal(readVerdict('Some thoughts.\n', '', { reminded: true }).retry, undefined);
+  assert.deepEqual(readVerdict('- [P2] Nit — kit/a.js:2\nVERDICT: CLEAN\n', '', { reminded: true }), readVerdict('- [P2] Nit — kit/a.js:2\nVERDICT: CLEAN\n'),
+    'a reply with a VERDICT line reads the same either way');
+});
+
+test('a readable [P1] with no VERDICT line is read as BLOCKING with a note: never retried, never dropped', () => {
+  const r = readVerdict('- [P1] Loses rows — kit/a.js:3\n- [P2] Rename — kit/b.js:1\n');
+  assert.deepEqual(r.findings.map((f) => f.priority), ['P1', 'P2']);
+  assert.equal(r.retry, undefined);
+  assert.equal(r.note, 'No VERDICT line; read as BLOCKING with 1 [P1] finding(s): the P1s count.');
+  assert.match(readVerdict(`${PR80_LINE.replace('[P2]', '[P1]')}\n`).error, /read like reasoning/, 'a reasoning-aloud P1 is still never accepted');
 });
