@@ -27,21 +27,25 @@
 //     working. The env is read on every call and again before every request
 //     a write makes, so flipping a switch takes effect at once, even partway
 //     through a push: the requests still to come are refused.
-//   - A live write that stops partway (a kill switch, an outage, a rejected
-//     sign-in) keeps a record of the requests that went: when it stops, each
-//     completed request is stored in the idempotency store, beside the write's slot
+//   - A live write keeps a record of the requests that went, saved after
+//     every request completes and before the next is sent (10.0, DEP-017), in
+//     the idempotency store beside the write's slot
 //     (at "<connector id>\u0000<operation>\u0001progress\u0000<key>"), as
-//     { input, partial: true, batchSize, completed: [{ size, result }] }
-//     (a write that completes stores nothing extra; a process that dies
-//     mid-write records nothing). A store must keep that value whole and
-//     return the latest one set (a mangled one fails closed). A request's
+//     { input, partial: true, batchSize, completed: [{ size, result }] }. So a
+//     write that stops partway (a kill switch, an outage, a rejected sign-in)
+//     or whose process dies or is redeployed mid-write leaves an accurate
+//     record; that needs a durable store (an in-memory one is lost on a
+//     restart). The record stays once the write completes (its done slot wins).
+//     A store must keep that value whole and return the latest one set (a
+//     mangled one fails closed). A request's
 //     answer is kept only when it is nothing but counts, flags and id-shaped
 //     refs; any other answer (contact data, free text) is never stored, the
 //     request is marked opaque, and a retry that reaches it fails closed with
-//     ConnectorFailed, sending nothing more. If the record can't be saved,
-//     details.sent.recorded is false, an error line is logged, and the
-//     person is told the admin should check what arrived before anyone
-//     retries (never that a retry is safe). Only a request that answered is
+//     ConnectorFailed, sending nothing more. If a save fails, the write stops
+//     before its next request (even if the adapter caught the error) with a
+//     ConnectorFailed whose details.sent.recorded is false, an error line is
+//     logged, and the person is told the admin should check what arrived
+//     before anyone retries (never that a retry is safe). Only a request that answered is
 //     recorded: one that timed out after the system had already processed
 //     it can't be, so a retry may send it again; adapters should pass the
 //     system's own dedupe keys (ctx.idempotencyKey per item) where it has them. A retry with the same key and input
@@ -55,9 +59,12 @@
 //     answers. The error that leaves carries details.sent ({ batches, items },
 //     items being the requests' sizes), and the person's message says what
 //     went instead of "nothing was sent". After a PartialFailure a write that
-//     declares perItemIdempotency drops the record, so its retry re-sends and
-//     the system keeps only the items it lacks; any other write keeps it, so
-//     its retry sends nothing twice.
+//     declares perItemIdempotency drops the record: if one was saved on this
+//     or an earlier try, it is overwritten with completed: [] (B3), so its
+//     retry calls the system for every request and the system keeps only the
+//     items it lacks; if that save fails, retrySafe is false. Any other write
+//     keeps it, so its retry sends nothing twice. A key whose write sent a
+//     request is bound to that input, even after a failure.
 //   - Every write needs an idempotencyKey. A repeated key (per operation)
 //     with the same input returns the first result and calls nothing; two
 //     concurrent calls with one key share one apply. The input is fingerprinted
@@ -292,7 +299,7 @@ function inFlightFor(store) {
 // A live write that failed, with what it had sent (or null), carried to the
 // write's catch so a caller joining the same in-flight write gets it too.
 class Stopped {
-  constructor(err, sent) { this.err = err; this.sent = sent; }
+  constructor(err, sent, recorded) { this.err = err; this.sent = sent; this.recorded = recorded; }
 }
 const sentSoFar = (completed) => {
   const done = completed.filter(Boolean);
@@ -425,7 +432,7 @@ function defineConnector(spec) {
     // retry with the same key and input resumes after the requests already
     // sent. Request i that completed on an earlier try is answered from the
     // record without calling the system; each request that completes now is
-    // noted, and the write saves the notes if it stops (#89).
+    // noted and the record saved before the next one is sent (#89, 10.0).
     function context(operation, kind, client, extra = {}, progress = null) {
       async function send(fn, size) {
         for (let attempt = 1; ; attempt += 1) {
@@ -463,6 +470,9 @@ function defineConnector(spec) {
             throw new Error(`batch of ${size} is over the batch size of ${declaration.rateLimit.batchSize}`);
           }
           if (!progress) return send(fn, size);
+          // A save that failed stops the write: nothing more goes out
+          // unrecorded, even if the adapter caught the error (10.0).
+          if (progress.unsaved) throw progress.unsaved;
           const index = progress.next;
           progress.next += 1;
           const done = progress.completed[index];
@@ -477,6 +487,9 @@ function defineConnector(spec) {
           }
           const result = await send(fn, size);
           progress.completed[index] = note(size, result);
+          // Saved after every request, so a process that dies partway leaves
+          // an accurate record and a retry resumes after it (10.0, DEP-017).
+          await progress.save();
           return result;
         },
       });
@@ -485,7 +498,7 @@ function defineConnector(spec) {
     // A write's PartialFailure, rebuilt from its counts alone (the adapter's
     // text is dropped: it may name refs or contact data) with id-shaped refs,
     // or null when its counts don't add up (then it is a plain ConnectorFailed).
-    function partial(err, operation, sent = null) {
+    function partial(err, operation, recorded = true) {
       const { succeeded, failed, failedRefs } = err.details || {};
       if (!isCount(succeeded) || !isCount(failed) || failed < 1 || !Array.isArray(failedRefs) || failedRefs.length !== failed) return null;
       const refs = failedRefs.map((r) => {
@@ -495,7 +508,7 @@ function defineConnector(spec) {
       });
       // Not safe when the write's progress could not be updated: a stale
       // record could make the retry skip what failed (#89).
-      const retrySafe = declaration.perItemIdempotency.includes(operation) && !(sent && sent.recorded === false);
+      const retrySafe = declaration.perItemIdempotency.includes(operation) && recorded;
       log.warn('connector write partly failed', {
         connector: declaration.id, operation, succeeded, failed, failed_refs: refs, retry_safe: retrySafe,
       });
@@ -507,13 +520,14 @@ function defineConnector(spec) {
     // Every error leaving an operation is rebuilt from a redacted message.
     // sent: what a write stopped partway had already sent ({ batches, items }),
     // added to the error's details so its message is honest about it.
-    function rethrow(err, operation, kind, sent = null) {
+    // recorded: false when the write's progress record could not be saved.
+    function rethrow(err, operation, kind, sent = null, recorded = true) {
       if (err instanceof KillSwitchOn) throw sent ? new KillSwitchOn({ ...err.details, sent }) : err;
       if (err instanceof IdempotencyConflict) throw new IdempotencyConflict(clean(err.reason), details(operation));
       // Only a write can partly apply: a read fails whole (fail closed). The
       // adapter's text never leaves with a PartialFailure, valid or not.
       if (err instanceof PartialFailure) {
-        const rebuilt = kind === 'write' ? partial(err, operation, sent) : null;
+        const rebuilt = kind === 'write' ? partial(err, operation, recorded) : null;
         if (rebuilt) throw rebuilt;
         const why = kind === 'write' ? 'counts must be whole numbers, failed at least 1, one ref per failed item' : 'a read cannot partly fail';
         throw new ConnectorFailed(`invalid partial failure (${why})`, details(operation));
@@ -589,47 +603,68 @@ function defineConnector(spec) {
               }
               completed = saved.completed.slice();
             }
+            const unsavedLog = (batches) => log.error('connector write progress could not be recorded: a retry may send again', {
+              connector: declaration.id, operation: name, sent_batches: batches,
+            });
+            const record = (done) => ledger.set(pslot, { input, partial: true, batchSize, completed: done });
             const progress = {
               next: 0,
               completed,
-              save: () => ledger.set(pslot, { input, partial: true, batchSize, completed: progress.completed.slice() }),
+              // Whether the store may hold a record for this key: one from an
+              // earlier try, or one this try saved (or tried to).
+              touched: saved !== undefined,
+              unsaved: null,
+              async save() {
+                progress.touched = true;
+                try {
+                  await record(progress.completed.slice());
+                } catch (_) {
+                  // Unrecorded: a retry would send this request again. The
+                  // write stops here (sent.recorded false) and the person is
+                  // told the admin should check what arrived before anyone retries.
+                  progress.unsaved = new Error('the write\'s progress could not be saved, so it stopped before the next request');
+                  throw progress.unsaved;
+                }
+              },
             };
+            let recorded = true;
             try {
               const { client } = await open(name);
               const result = await op.apply(rest, context(name, 'write', client, { idempotencyKey: key }, progress));
+              // An adapter that caught the failed save must not finish as if
+              // everything went.
+              if (progress.unsaved) throw progress.unsaved;
               const settled = result === undefined ? null : result;
               await ledger.set(slot, { input, result: settled });
               return settled;
-            } catch (err) {
-              const sentAny = progress.completed.some(Boolean);
-              // A write keyed per item re-sends after a PartialFailure (the
-              // system drops the items it has), so its retry must call the
-              // system again: drop the record. Any other write keeps it, so
-              // nothing it sent is sent twice.
-              const resend = err instanceof PartialFailure && declaration.perItemIdempotency.includes(name);
-              const counts = sentAny ? sentSoFar(progress.completed) : null;
-              if (resend) progress.completed = [];
-              let recorded = true;
-              if ((sentAny && !resend) || (resend && saved !== undefined)) {
+            } catch (thrown) {
+              const err = progress.unsaved || thrown;
+              const counts = progress.completed.some(Boolean) ? sentSoFar(progress.completed) : null;
+              if (progress.unsaved) {
+                recorded = false;
+                unsavedLog(counts ? counts.batches : 0);
+              } else if (err instanceof PartialFailure && declaration.perItemIdempotency.includes(name) && progress.touched) {
+                // A write keyed per item re-sends after a PartialFailure (the
+                // system drops the items it has), so its retry must call the
+                // system for every request: the record saved on this or an
+                // earlier try is overwritten with none completed (B3). If that
+                // fails, the retry could skip failed items: not retry-safe.
+                // Any other write keeps its record (every completed request
+                // was saved as it went), so nothing it sent is sent twice.
                 try {
-                  await progress.save();
+                  await record([]);
                 } catch (_) {
-                  // Unrecorded: a retry would send it all again. The error
-                  // says so (sent.recorded false) and the person is told the
-                  // admin should check what arrived before anyone retries.
                   recorded = false;
-                  log.error('connector write progress could not be recorded: a retry may send again', {
-                    connector: declaration.id, operation: name, sent_batches: counts ? counts.batches : 0,
-                  });
+                  unsavedLog(counts ? counts.batches : 0);
                 }
               }
-              throw new Stopped(err, counts ? Object.freeze({ ...counts, recorded }) : null);
+              throw new Stopped(err, counts ? Object.freeze({ ...counts, recorded }) : null, recorded);
             }
           })();
           inFlight.set(slot, { input, run });
           try { return await run; } finally { inFlight.delete(slot); }
         } catch (err) {
-          if (err instanceof Stopped) return rethrow(err.err, name, 'write', err.sent);
+          if (err instanceof Stopped) return rethrow(err.err, name, 'write', err.sent, err.recorded);
           return rethrow(err, name, 'write');
         }
       };

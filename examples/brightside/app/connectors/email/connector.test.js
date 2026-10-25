@@ -2,7 +2,7 @@
 
 // The mock email tool's own test: the shared contract suite, then what its
 // writes leave in the outbox: create, add, a repeated key, a restart, both
-// kill switches and a simulated row failure. Every test writes to its own
+// kill switches, a simulated row failure and a process that dies mid-push. Every test writes to its own
 // temporary outbox, never var/.
 
 const test = require('node:test');
@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const {
   connectorContract, testLog, KillSwitchOn, ConnectorFailed, IdempotencyConflict, PartialFailure,
 } = require('#sdk');
@@ -222,7 +223,8 @@ for (const [what, damage] of [
     fs.appendFileSync(file, damage);
     const before = fs.readFileSync(file, 'utf8');
     await assert.rejects(instance.write.createList({ name: 'l2', idempotencyKey: 'L2', ...live }),
-      (err) => err instanceof ConnectorFailed && /torn or corrupt line 3/.test(err.reason) && /writes are refused/.test(err.reason));
+      // Line 4: the list, its progress record (10.0) and its done record come first.
+      (err) => err instanceof ConnectorFailed && /torn or corrupt line 4/.test(err.reason) && /writes are refused/.test(err.reason));
     await assert.rejects(instance.write.addContacts({ listId, contacts: contacts(1, 9), idempotencyKey: 'L', ...live }), /torn or corrupt line/);
     // After a restart too.
     await assert.rejects(email({ file }).instance.write.addContacts({ listId, contacts: contacts(1, 9), idempotencyKey: 'L', ...live }), /torn or corrupt line/);
@@ -265,7 +267,13 @@ test('email: a contact\'s key carries its list, so a retry with the same key on 
   const b = await instance.write.createList({ name: 'b', idempotencyKey: 'B', ...live });
   await assert.rejects(instance.write.addContacts({ listId: a.listId, contacts: contacts(3), idempotencyKey: 'K', ...live }), ConnectorFailed);
   simulate.failContacts.clear();
-  const res = await email({ file }).instance.write.addContacts({ listId: b.listId, contacts: contacts(3), idempotencyKey: 'K', ...live });
+  // The contract binds the key to its first input once a request went (its
+  // progress record, 10.0), so this reaches the tool with a store that has
+  // never seen the key: the tool's own per-contact keys are what's checked.
+  const m = new Map();
+  const fresh = connector.create({ log: testLog(), env: {}, outboxPath: file, idempotency: { get: (k) => m.get(k), set: (k, v) => { m.set(k, v); } } });
+  await assert.rejects(email({ file }).instance.write.addContacts({ listId: b.listId, contacts: contacts(3), idempotencyKey: 'K', ...live }), IdempotencyConflict);
+  const res = await fresh.write.addContacts({ listId: b.listId, contacts: contacts(3), idempotencyKey: 'K', ...live });
   assert.deepEqual(res, { listId: b.listId, added: 3, alreadyAdded: 0 }, 'nothing on list a counts for list b');
   const onB = lines().filter((l) => l.type === 'contact' && l.payload.listId === b.listId);
   assert.deepEqual(onB.map((l) => l.payload.external_ref), ['1', '2', '3']);
@@ -283,7 +291,7 @@ test('email: a batch of 100 contacts reads the outbox a fixed number of times, n
   });
   // One contact and 100 contacts read the outbox the same few times: the done
   // slot, the stopped-write progress slot (#89), and one transaction each to
-  // add and to record.
+  // add, to save the progress after the request (10.0) and to record.
   const one = await instance.write.addContacts({ listId, contacts: contacts(1), idempotencyKey: 'L1', ...live });
   assert.equal(one.added, 1);
   const forOne = reads.length;
@@ -291,7 +299,7 @@ test('email: a batch of 100 contacts reads the outbox a fixed number of times, n
   const res = await instance.write.addContacts({ listId, contacts: contacts(100), idempotencyKey: 'L', ...live });
   assert.equal(res.added, 100);
   assert.equal(reads.length, forOne, `100 contacts read the outbox ${reads.length} times, 1 contact ${forOne}`);
-  assert.ok(reads.length <= 4, `read the outbox ${reads.length} times`);
+  assert.ok(reads.length <= 5, `read the outbox ${reads.length} times`);
 });
 
 test('email: instances on one outbox share in-flight writes, so a concurrent reused key with another input is refused (DEP-012)', async () => {
@@ -313,4 +321,84 @@ test('email: the outbox records the contract slot with the connector id (DEP-012
   await instance.write.createList({ name: 'l', idempotencyKey: 'K', ...live });
   const done = lines().find((l) => l.type === 'done');
   assert.deepEqual({ slot: done.slot, operation: done.operation, key: done.key }, { slot: 'email\u0000createList\u0000K', operation: 'createList', key: 'K' });
+});
+
+// Story 10.0 (DEP-017): the outbox is a durable store, so a push whose process
+// dies partway resumes after a restart. The dying process is this one: its
+// store answers the k-th progress save never (it stopped there). The restart
+// is a new node process over the same outbox file, with nothing in memory.
+function restartedPush(file, input) {
+  const script = `
+    const { testLog } = require('#sdk');
+    const email = require(${JSON.stringify(path.join(__dirname, 'connector.js'))}).create({
+      log: testLog(), env: {}, outboxPath: process.env.OUTBOX, onRequest: () => { requests += 1; },
+    });
+    let requests = 0;
+    email.write.addContacts(JSON.parse(process.env.INPUT)).then(
+      (result) => console.log(JSON.stringify({ result, requests })),
+      (err) => console.log(JSON.stringify({ error: err.name, reason: err.reason, requests })),
+    );`;
+  const r = spawnSync(process.execPath, ['-e', script], {
+    cwd: __dirname, env: { PATH: process.env.PATH, OUTBOX: file, INPUT: JSON.stringify(input) }, encoding: 'utf8',
+  });
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout.trim().split('\n').pop());
+}
+
+test('email: a push that dies after the first, a middle or the last request resumes after a restart, sending each contact once (10.0)', async () => {
+  // 201 contacts in batches of 100: three requests.
+  for (const k of [1, 2, 3]) {
+    const file = freshPath();
+    const { instance } = email({ file });
+    const { listId } = await instance.write.createList({ name: 'l', idempotencyKey: 'L', ...live });
+    const outbox = openOutbox(file);
+    let saves = 0;
+    const requests = [];
+    const dying = connector.create({
+      log: testLog(), env: {}, outboxPath: file, onRequest: (r) => requests.push(r),
+      // A clock that never waits, so the rate limit doesn't slow the test.
+      now: () => 0,
+      sleep: async () => {},
+      idempotency: {
+        get: (slot) => outbox.ledger.get(slot),
+        set: (slot, value) => {
+          outbox.ledger.set(slot, value);
+          return slot.includes('\u0001progress') && (saves += 1) === k ? new Promise(() => {}) : undefined;
+        },
+      },
+    });
+    const input = { listId, contacts: contacts(201), idempotencyKey: `P${k}`, ...live };
+    dying.write.addContacts(input).catch(() => {});
+    for (let i = 0; i < 1000 && saves < k; i += 1) await new Promise(setImmediate);
+    assert.equal(requests.length, k, `k=${k}: the process died after request ${k}`);
+    const kept = readLines(file).filter((l) => l.type === 'progress' && l.key === `P${k}`);
+    assert.equal(kept.length, k, `k=${k}: one progress record per request`);
+    assert.deepEqual(kept.at(-1).completed.map((c) => c.size), [100, 100, 1].slice(0, k));
+    assert.ok(!JSON.stringify(kept).includes('@home.invalid'), 'no contact data in a progress record');
+
+    const after = restartedPush(file, input);
+    assert.equal(after.error, undefined, `k=${k}: the restart finished, got ${after.error}: ${after.reason}`);
+    assert.equal(after.requests, 3 - k, `k=${k}: the restart sent only requests ${k + 1} to 3`);
+    assert.deepEqual(after.result, { listId, added: 201, alreadyAdded: 0 });
+    const added = readLines(file).filter((l) => l.type === 'contact' && l.key.startsWith(`P${k}:`));
+    assert.equal(added.length, 201, `k=${k}: each contact is in the outbox once`);
+    assert.equal(new Set(added.map((l) => l.key)).size, 201);
+    assert.equal(readLines(file).filter((l) => l.type === 'done' && l.key === `P${k}`).length, 1);
+  }
+});
+
+test('email: a per-item push that partly fails after saving progress drops it, so the retry calls every batch and adds only the failed contact (10.0, B3)', async () => {
+  const simulate = { failContacts: new Set(['150']) };
+  const { instance, file, lines } = email({ simulate });
+  const { listId } = await instance.write.createList({ name: 'l', idempotencyKey: 'L', ...live });
+  const input = { listId, contacts: contacts(201), idempotencyKey: 'B3', ...live };
+  // Batch 1 went and was saved; contact 150 is refused in batch 2.
+  await assert.rejects(instance.write.addContacts(input), (err) => err instanceof PartialFailure && err.details.retrySafe === true);
+  const progress = lines().filter((l) => l.type === 'progress' && l.key === 'B3');
+  assert.deepEqual(progress.at(-1).completed, [], 'the latest record has no completed requests');
+  simulate.failContacts.clear();
+  const retried = email({ file, simulate });
+  assert.deepEqual(await retried.instance.write.addContacts(input), { listId, added: 1, alreadyAdded: 200 });
+  assert.equal(retried.requests.length, 3, 'the retry called every batch');
+  assert.equal(lines().filter((l) => l.type === 'contact' && l.key.startsWith('B3:')).length, 201);
 });

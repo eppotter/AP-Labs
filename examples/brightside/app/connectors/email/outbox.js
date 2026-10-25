@@ -9,7 +9,7 @@
 //   { at, type: 'list',    operation: 'createList',  key, payload: { listId, name } }
 //   { at, type: 'contact', operation: 'addContacts', key, payload: { listId, external_ref, email, first_name } }
 //   { at, type: 'done',    operation, key, slot, input, result }   the contract's ledger (deps.idempotency)
-//   { at, type: 'progress', operation, key, slot, input, batchSize, completed }   a write stopped partway (#89)
+//   { at, type: 'progress', operation, key, slot, input, batchSize, completed }   a write's progress, after every request (#89, 10.0)
 // A contact's key is the write's key, its listId and its external_ref.
 //
 // The file and its directory are created on first write, owner-only: contacts
@@ -216,8 +216,11 @@ function openOutbox(file, { lockWaitMs = 2000, lockStaleMs = 30_000 } = {}) {
   // slot is the contract's "<connector id>\u0000<operation>\u0000<key>" (DEP-012;
   // a 'done' record from before that, with no connector id, is never matched:
   // delete an old var/outbox/email.jsonl rather than rely on it).
-  // A write stopped partway sets { input, partial: true, batchSize, completed }
-  // under its progress slot, once per request sent; the latest one wins (#89).
+  // A live write sets { input, partial: true, batchSize, completed } under its
+  // progress slot after every request it sends (10.0), and a per-item write
+  // that partly failed sets it once more with completed: []. Each is a new
+  // line; the latest one wins, after a restart too, since the file is the
+  // durable store the contract's resume guarantee needs (#89, DEP-017).
   const ledger = Object.freeze({
     get(slot) {
       const all = records();
