@@ -1,6 +1,6 @@
 # Publishing the fixture to MotherDuck (Ely only)
 
-A human step. Agents never run `fixture:publish` or `fixture:status -- --remote`, and never handle the token. CI and tests use a fake connection. The bot never reads MotherDuck: it reads the local fixture only (DEP-011).
+A human step. Agents never run `fixture:publish`, `fixture:status -- --remote` or `fixture:probe`, and never handle a token. CI and tests use a fake connection. The bot never reads MotherDuck: it reads the local fixture only (DEP-011).
 
 ## 1. Store the token once
 
@@ -51,3 +51,27 @@ npm run fixture:status -- --remote   # also compares the shared copy (needs the 
 ## Sharing
 
 After the first publish, share `brightside_fixture` read-only with the teammate from the MotherDuck UI. A re-publish replaces the database, so check that the share still points at it.
+
+## Probe
+
+`npm run fixture:probe` checks that MotherDuck can be locked down as a reader as tightly as the local fixture (plan `motherduck-read`, Story A). Run it before Story B starts, and paste its output into the session.
+
+1. Make a read-scaling token for the read-only service account, which holds only the `brightside_fixture` share. Store it with `security add-generic-password -s aplabs-motherduck-read-token -a aplabs -w`, or set `MOTHERDUCK_READ_TOKEN` for one shell. The probe refuses to start without it, or when it equals the publish token.
+2. Install the MotherDuck extension ahead of time, once per DuckDB version: `npm run fixture:probe -- --install`. This step downloads; the probe itself never installs anything.
+3. Run `npm run fixture:probe`. Pass `-- --database <name>` to probe another database.
+
+It opens an in-memory DuckDB with extension auto-install and auto-load off. Then it runs `LOAD motherduck`, `SET motherduck_token`, `ATTACH 'md:<db>' AS <db> (READ_ONLY)`, `SET enable_external_access = false` and `SET lock_configuration = true`. Every new connection runs `USE <db>`. This is the connection Story B uses. It prints one `PASS`, `FAIL` or `INFO` line per check, then a summary:
+
+| Check | Kind | What it shows |
+|---|---|---|
+| 1 | required | The extension was installed ahead of time and loaded on purpose; auto-install and auto-load are off. |
+| 2 | required | The database attaches read-only with the token as a setting, and a new connection after `USE` sees its tables. |
+| 3 | info | `enable_external_access=false`: the `md:<db>?attach_mode=single&saas_mode=true` form fails with it set at startup, and the sequence above keeps it off. |
+| 4 | required | `lock_configuration` holds: no `SET` can loosen the settings. |
+| 5 | required | Refused, one line each: `ATTACH` (a local file, another MotherDuck database), `COPY`, `read_csv` of a local file and of an http URL (a listener the probe starts must get 0 requests), `INSTALL`/`LOAD httpfs`, `CREATE` and `INSERT` (inside a transaction that is rolled back), and reading `my_db` or `sample_data`. Only `<db>`, `md_information_schema` and `memory` are attached. |
+| 6 | required | A slow query is interrupted after 2 seconds. |
+| 7 | required | The DuckDB and extension versions, against the pinned `@duckdb/node-api`. |
+| 8 | info | Whether a share survives a re-publish. Publish again, then re-run the probe: if it still reads and shows a newer publish time, the reader's share survived. Ask Steven to check his. |
+| 9 | info | The lag. The probe compares the read copy's version and publish time with the local build. After a publish, re-run it until they match. |
+
+Exit 0 means every required check passed. Any `FAIL` exits 1: stop and redesign before Story B. The lockdown is never loosened quietly. Every MotherDuck error is printed first line only, with both tokens masked.

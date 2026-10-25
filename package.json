@@ -31,6 +31,7 @@
     "fixture:validate": "node kit/fixture/validate.js examples/brightside/fixture",
     "fixture:status": "node kit/fixture/status.js examples/brightside/fixture",
     "fixture:publish": "node kit/fixture/publish.js examples/brightside/fixture",
+    "fixture:probe": "node kit/fixture/md-probe.js examples/brightside/fixture",
     "slack:manifest": "node kit/runtime/slack/manifest.js",
     "clean-bones": "bash scripts/clean-bones.sh"
   },
