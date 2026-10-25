@@ -10,7 +10,9 @@
 //   ctx.module   { id, label }      from the manifest
 //   ctx.data     run(sql, params), describe()   the read-only query runner;
 //                describe() is { source, label, available, problem }
-//   ctx.reply    (text) => Promise  a private (ephemeral) reply
+//   ctx.reply    (text) => Promise  a reply only the person sees: rendered in
+//                the module's modal view (appended), or ephemeral when
+//                the click came from a message (kit/runtime/slack/modal)
 // The SDK adds only what a handler or its test needs beyond that, plus what a
 // connector adapter and its test need (kit/templates/connector.md).
 

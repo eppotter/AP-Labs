@@ -47,7 +47,7 @@ The handler gets one argument, `ctx`:
 - `ctx.client`: `{ id, name }`, from the profile.
 - `ctx.module`: `{ id, label }`, from the manifest.
 - `ctx.data.run(sql, params)`: the read-only, guarded query runner. `ctx.data.describe()` says which data it reads.
-- `ctx.reply(text)`: a reply only the person sees.
+- `ctx.reply(text)`: a reply only the person sees. Opened from the hub modal, it renders in the module's own view (pushed onto the menu, "Loading…" until the first reply; each later reply is appended below the earlier ones, up to Slack's 100 blocks). Opened from an old menu message, it is a private (ephemeral) message as before. `ctx.reply({ text, blocks })` works in both.
 
 App code imports engine helpers only from `#sdk` (`kit/runtime/sdk`), never another `kit/` path; a test fails if it does. The module's test uses `testContext()` from `#sdk` to run the handler without Slack or a data file.
 
