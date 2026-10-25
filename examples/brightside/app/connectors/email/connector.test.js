@@ -451,6 +451,22 @@ test('email: pushList creates the list once and adds only the contacts it did no
   assert.equal(lines().length, n, 'the repeat wrote nothing');
 });
 
+test('email: pushList with listKey keys the list and contacts by it, so a retry under another key adds to the same list and never re-adds a contact (Story 10.3, R2-1)', async () => {
+  const { instance, lines, file } = email({ simulate: { failContacts: new Set(['3']) } });
+  const first = { name: 'win-back-north-2026-10-25', contacts: contacts(4), idempotencyKey: 'K1', listKey: 'K1', ...live };
+  await assert.rejects(instance.write.pushList(first), PartialFailure);
+  const listId = lines().find((l) => l.type === 'list').payload.listId;
+  assert.deepEqual(lines().filter((l) => l.type === 'contact').map((l) => l.key), ['1', '2', '4'].map((r) => `K1:${listId}:${r}`));
+  // The retry: its own key, the same list key, every contact (as a fork's
+  // archetype might send): the tool adds only the one it lacked.
+  const { instance: again } = email({ file });
+  const res = await again.write.pushList({ ...first, idempotencyKey: 'K1-retry' });
+  assert.deepEqual(res, { listId, added: 1, alreadyAdded: 3, skipped: 0 });
+  assert.equal(lines().filter((l) => l.type === 'list').length, 1, 'one list');
+  assert.deepEqual(lines().filter((l) => l.type === 'contact').map((l) => l.payload.external_ref).sort(), ['1', '2', '3', '4']);
+  await assert.rejects(again.write.pushList({ ...first, idempotencyKey: 'K2', listKey: '' }), /listKey must be a non-empty string/);
+});
+
 test('email: every pushList request answers only counts and id-shaped refs: { listId }, then { added, alreadyAdded, failedRefs }', async () => {
   const { instance, lines } = email({ simulate: { failContacts: new Set(['150']) } });
   await assert.rejects(instance.write.pushList({ name: 'l', contacts: contacts(201), idempotencyKey: 'R', ...live }), PartialFailure);

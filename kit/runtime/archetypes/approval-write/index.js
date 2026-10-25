@@ -28,8 +28,9 @@
 //             send the entry's own rows once, with honest counts; a failure
 //             is escalated quietly (./escalate).
 //   Retry     "Retry the failed ones", offered only when a PartialFailure
-//             says details.retrySafe === true: the same flow on the same entry
-//             re-stored under a new token (same rows, same key).
+//             says details.retrySafe === true: the same flow on a retry
+//             entry holding only the failed rows, under a key derived from
+//             the first push's (./entry retryEntry, review R2-1).
 //   Cancel    re-checks access and the token, then consumes it and confirms.
 //
 // Startup (checkModule, called by the registry): the resource must be
@@ -127,23 +128,12 @@ function skippedOf(planned, total) {
   return list.slice(0, total);
 }
 
-// The row ids of the skipped rows (as strings), matched through the
-// write.send field that carries the row id: a skipped item's ref is that
-// field's value. null when a skip can't be matched to exactly one row (the
-// row id isn't sent, or a ref names no row or several): the preview then
-// refuses, so nothing it can't account for is ever approved (review R1-1).
+// The row ids of the skipped rows (as strings), or null when a skip can't
+// be matched to exactly one row by its row id (entry.rowIdsForRefs): the
+// preview then refuses, so nothing it can't account for is ever approved
+// (review R1-1).
 function skippedIdsOf(mod, rows, skipped) {
-  if (!skipped.length) return [];
-  // The ref is the sent row id: only meaningful when write.send carries it.
-  if (!Object.values(mod.write.send).includes(mod.row_id)) return null;
-  const ids = [];
-  for (const s of skipped) {
-    const ref = s && s.ref !== undefined && s.ref !== null ? String(s.ref) : null;
-    const hits = ref === null ? [] : rows.filter((r) => String(r[mod.row_id]) === ref);
-    if (hits.length !== 1) return null;
-    ids.push(String(hits[0][mod.row_id]));
-  }
-  return new Set(ids).size === ids.length ? ids : null;
+  return entry.rowIdsForRefs(mod, rows, skipped.map((s) => (s ? s.ref : null)));
 }
 
 // store: the runtime store. connectors: createConnectors()'s registry.
@@ -190,7 +180,7 @@ function createApprovalWrite({
     try {
       // A dry run: the connector plans and sends nothing (AD-15).
       planned = await connector.write[mod.write.operation]({
-        name: listName, contacts: sendItems(mod, rows), idempotencyKey, dryRun: true,
+        name: listName, contacts: sendItems(mod, rows), idempotencyKey, listKey: idempotencyKey, dryRun: true,
       });
     } catch (err) {
       const words = messageFor(err, { admin });

@@ -16,6 +16,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { loadProfile } = require('../../kit/lib/profile');
 const access = require('../../kit/runtime/access');
 const { loadRegistry, createRegistry } = require('../../kit/runtime/registry');
@@ -185,7 +186,7 @@ test('rows the preview skipped never reach the connector, even one whose apply r
   mail.state.failRefs = new Set(['880104']);
   const first = await approve(ctx2, await preview(ctx2));
   const retry = buttons(first).find((b) => b.action_id === approvalWrite.ACTIONS.retry).value;
-  assert.deepEqual([...ctx2.store.get('approval', retry).skippedIds], ['880102']);
+  assert.deepEqual(ctx2.store.get('approval', retry).rows.map((r) => r.person_id), [880104], 'the retry holds only the failed row');
   mail.state.failRefs = new Set();
   await click(ctx2, approvalWrite.ACTIONS.retry, retry);
   assert.ok(!mail.state.received.some((c) => c.ref === 880102));
@@ -290,14 +291,25 @@ test('a partial failure that is safe to retry offers "Retry the failed ones": th
   assert.equal(retry.text.text, 'Retry the failed ones');
   assert.match(retry.value, HEX32);
   assert.notEqual(retry.value, token);
-  // The same entry: same person, rows, list and key (decision 6).
+  // The retry entry: same person, list and first key; only the failed row,
+  // under the derived key (review R2-1).
   const again = ctx.store.get('approval', retry.value);
-  assert.deepEqual({ ...again, rows: [...again.rows], skipped: [...again.skipped] }, { ...stored, rows: [...stored.rows], skipped: [...stored.skipped] });
+  assert.deepEqual({ ...again, rows: [...again.rows], skipped: [...again.skipped], skippedIds: [...again.skippedIds] }, {
+    ...stored,
+    rows: stored.rows.filter((r) => r.person_id === 880104),
+    skipped: [],
+    skippedIds: [],
+    idempotencyKey: crypto.createHash('sha256').update(JSON.stringify([stored.idempotencyKey, 'retry', ['880104']])).digest('hex'),
+    originalKey: stored.idempotencyKey,
+    retry: true,
+  });
+  assert.equal(entry.retryKey(stored.idempotencyKey, [880104]), again.idempotencyKey);
   assert.deepEqual(sentRefs(), SENDABLE.filter((id) => id !== 880104));
   // The tool takes it now; Retry sends the failed one only.
   mail.state.failRefs = new Set();
   const done = await click(ctx, approvalWrite.ACTIONS.retry, retry.value);
-  assert.equal(head(done), '*Pushed 1 to mail tool* (5 were already there), skipped 1, failed 0. List: leads-north-2026-10-25.');
+  assert.equal(head(done), '*Retried 1 that failed: sent 1, failed 0.* List: leads-north-2026-10-25.');
+  assert.ok(!textOf(done).includes('Pushed'));
   assert.deepEqual([...sentRefs()].sort(), [...SENDABLE].sort(), 'every contact once, none twice');
   assert.equal(new Set(sentRefs()).size, sentRefs().length);
   // The retry token is used up too, and tied to the person.
@@ -433,4 +445,149 @@ test('an outage, a rejected sign-in and a reused key with other rows: honest wor
   assert.match(ctx.app.posted.at(-1).text, /the same list key was already used with different rows/);
   assert.equal(new Set(sentRefs()).size, sentRefs().length, 'nothing sent twice');
   assert.equal(ctx.app.posted.length, 3);
+});
+
+// Review R2-1: a connector that declares perItemIdempotency (so the contract
+// says retrySafe) but whose apply ignores the per-item keys and whose system
+// never dedupes. The archetype must not depend on that promise: a retry
+// holds only the failed rows, under its own derived key, so nothing goes twice.
+const { defineConnector } = require('../../kit/runtime/connectors/contract');
+
+function lyingTool() {
+  const system = { received: [], refuse: new Set(), badRef: null };
+  const lying = defineConnector({
+    id: 'lying',
+    system: 'Lying tool',
+    auth: { env: [] },
+    killSwitchEnv: 'LYING_TOOL_OFF',
+    rateLimit: { perSecond: 1000, batchSize: 2 },
+    connect: () => ({
+      // Takes every contact it is given, every time; refuses the refuse set.
+      send(batch) {
+        const failedRefs = [];
+        for (const c of batch) {
+          if (system.refuse.has(String(c.ref))) failedRefs.push(system.badRef ? system.badRef(c) : String(c.ref));
+          else system.received.push(c.ref);
+        }
+        return { taken: batch.length - failedRefs.length, failedRefs };
+      },
+    }),
+    write: {
+      sendList: {
+        perItemIdempotency: true, // the promise it does not keep
+        plan: ({ contacts }) => ({ skipped: contacts.filter((c) => !c.address).map((c) => ({ ref: String(c.ref), reason: 'no address' })) }),
+        async apply({ contacts }, ctx) {
+          let taken = 0;
+          const failedRefs = [];
+          // No filtering, no keys: whatever it is given goes.
+          for (const batch of ctx.batches(contacts)) {
+            const res = await ctx.request(() => ctx.client.send(batch), { size: batch.length });
+            taken += res.taken;
+            failedRefs.push(...res.failedRefs);
+          }
+          if (failedRefs.length) throw new PartialFailure('some failed', { succeeded: taken, failed: failedRefs.length, failedRefs });
+          return { added: taken, alreadyAdded: 0 };
+        },
+      },
+    },
+  });
+  const m = new Map();
+  const instance = lying.create({ log: testLog(), env: {}, idempotency: { get: (k) => m.get(k), set: (k, v) => { m.set(k, v); } } });
+  return { system, instance };
+}
+
+// The archetype over the lying tool, with a preview-shaped entry for ROWS.
+function lyingSetup() {
+  const store = createStore();
+  const log = quietLog();
+  const { system, instance } = lyingTool();
+  const aw = approvalWrite.createApprovalWrite({
+    store, log, connectors: { get: () => instance }, admin: ADMIN,
+  });
+  const ids = ROWS.map((r) => r.person_id);
+  const token = entry.create(store, {
+    person: OWNER.id,
+    module: 'leads',
+    runId: 'r',
+    destination: 'mail tool',
+    listName: 'leads-north-2026-10-25',
+    rows: ROWS,
+    skipped: [{ ref: '880102', reason: 'no address' }],
+    skippedIds: ['880102'],
+    idempotencyKey: entry.idempotencyKey('leads-north-2026-10-25', ids),
+  });
+  const shown = [];
+  const press = async (verb, value, person = OWNER.id) => {
+    await aw.click({
+      verb, value, person, resolve: () => ({ mod: LEADS }), show: async (msg) => { shown.push(msg); },
+    });
+    return shown.at(-1);
+  };
+  return {
+    store, log, system, token, press,
+  };
+}
+
+test('R2-1: through a connector that ignores its per-item keys, the retry sends only the failed row and nothing goes twice', async () => {
+  const ctx = lyingSetup();
+  ctx.system.refuse = new Set(['880104']);
+  const first = await ctx.press('approve', ctx.token);
+  assert.match(head(first), /^Sent 5 of 6 to Lying tool; 1 failed\. Nothing was sent twice/);
+  const retry = buttons(first).find((b) => b.action_id === approvalWrite.ACTIONS.retry).value;
+  const stored = ctx.store.get('approval', retry);
+  assert.deepEqual(stored.rows.map((r) => r.person_id), [880104], 'the retry entry holds only the failed row');
+  assert.equal(stored.idempotencyKey, entry.retryKey(stored.originalKey, ['880104']));
+  assert.equal(stored.retry, true);
+  ctx.system.refuse = new Set();
+  const done = await ctx.press('retry', retry);
+  assert.equal(head(done), '*Retried 1 that failed: sent 1, failed 0.* List: leads-north-2026-10-25.');
+  assert.ok(!JSON.stringify(done).includes('Pushed'), 'never "Pushed 6"');
+  assert.deepEqual([...ctx.system.received].sort(), [...SENDABLE].sort(), 'every row once');
+  assert.equal(ctx.system.received.length, 6, 'nothing twice');
+  assert.deepEqual(buttons(done), []);
+});
+
+test('R2-1: a retry that fails again offers a retry of the rows still failing; the same failed set reuses the same derived key, and nothing goes twice', async () => {
+  const ctx = lyingSetup();
+  ctx.system.refuse = new Set(['880104', '880106']);
+  const first = await ctx.press('approve', ctx.token);
+  const r1 = buttons(first).find((b) => b.action_id === approvalWrite.ACTIONS.retry).value;
+  const key1 = ctx.store.get('approval', r1).idempotencyKey;
+  // Both fail again: the same failed set, so the same derived key.
+  const second = await ctx.press('retry', r1);
+  assert.equal(head(second), 'Retried 2 that failed: sent 0, failed 2. Nothing was sent twice, so trying again is safe: it sends only the ones that still failed. List: leads-north-2026-10-25.');
+  const r2 = buttons(second).find((b) => b.action_id === approvalWrite.ACTIONS.retry).value;
+  assert.notEqual(r2, r1);
+  assert.equal(ctx.store.get('approval', r2).idempotencyKey, key1, 'replay-safe: the same failed set, the same key');
+  // One of them goes: the next retry holds only the other, under its own key.
+  ctx.system.refuse = new Set(['880106']);
+  const third = await ctx.press('retry', r2);
+  assert.match(head(third), /^Retried 2 that failed: sent 1, failed 1\./);
+  const r3 = buttons(third).find((b) => b.action_id === approvalWrite.ACTIONS.retry).value;
+  const s3 = ctx.store.get('approval', r3);
+  assert.deepEqual(s3.rows.map((r) => r.person_id), [880106]);
+  assert.equal(s3.idempotencyKey, entry.retryKey(s3.originalKey, ['880106']));
+  ctx.system.refuse = new Set();
+  assert.equal(head(await ctx.press('retry', r3)), '*Retried 1 that failed: sent 1, failed 0.* List: leads-north-2026-10-25.');
+  assert.deepEqual([...ctx.system.received].sort(), [...SENDABLE].sort());
+  assert.equal(ctx.system.received.length, 6, 'nothing twice across four tries');
+  // Used retry tokens: "already done" for the person, invalid for anyone else
+  // (the archetype shows these as plain text; the hub puts them in a section).
+  assert.match(await ctx.press('retry', r3), /^You already approved this push, so it ran once and I won't send it again\. \*Retried 1 that failed/);
+  assert.equal(await ctx.press('retry', r3, OTHER.id), INVALID);
+  assert.equal(ctx.system.received.length, 6);
+});
+
+test('R2-1: a failed ref that can\'t be matched to exactly one row offers no Retry: the admin message, no button', async () => {
+  // A ref naming no row, and an email (the contract masks it: never id-shaped).
+  for (const badRef of [() => '990999', (c) => `${c.address}`]) {
+    const ctx = lyingSetup();
+    ctx.system.refuse = new Set(['880104']);
+    ctx.system.badRef = badRef;
+    const view = await ctx.press('approve', ctx.token);
+    assert.equal(head(view), `Sent 5 of 6 to Lying tool; 1 failed. Please tell ${ADMIN} before trying again. Skipped 1.`);
+    assert.deepEqual(buttons(view), [], 'no Retry');
+    assert.equal(ctx.store.done('approval', ctx.token).result.retryToken, null);
+    assert.ok(ctx.log.lines.some((l) => l.msg.startsWith('push retry not offered')));
+  }
 });

@@ -132,7 +132,9 @@ const num = (n) => Number(n).toLocaleString('en-US');
 //   sent       the push went: sent new, already there, skipped, failed 0
 //   replayed   the key was already used (the same list sent earlier today):
 //              nothing new sent, never "Pushed n"
-//   partial    some failed (retry: a "Retry the failed ones" is offered)
+//   retried    a retry of the failed rows went (counts describe the retry)
+//   partial    some failed (retry: a "Retry the failed ones" is offered;
+//              retried: this was itself a retry)
 //   stopped    it stopped partway or failed (an outage, a rejected sign-in,
 //              a key reused with other rows, a kill switch flipped partway)
 //   refused    a kill switch refused before anything was sent
@@ -145,9 +147,16 @@ function pushResultText(result, { admin = 'your admin' } = {}) {
   switch (r.outcome) {
     case 'sent':
       return `*Pushed ${num(c.sent || 0)} to ${dest}*${c.already ? ` (${num(c.already)} ${c.already === 1 ? 'was' : 'were'} already there)` : ''}, skipped ${skipped}, failed 0.${list}`;
+    case 'retried':
+      return `*Retried ${num(c.total || 0)} that failed: sent ${num(c.sent || 0)}, failed 0.*${c.already ? ` (${num(c.already)} ${c.already === 1 ? 'was' : 'were'} already there.)` : ''}${list}`;
     case 'replayed':
       return `*Already sent today; nothing new sent.* ${dest} already has this list with these rows, so I didn't send it again (skipped ${skipped}).${list}`;
     case 'partial':
+      if (r.retried) {
+        return `Retried ${num(c.total || 0)} that failed: sent ${num(c.sent || 0)}, failed ${num(c.failed || 0)}. `
+          + (r.retry ? 'Nothing was sent twice, so trying again is safe: it sends only the ones that still failed.' : `Please tell ${admin} before trying again.`)
+          + list;
+      }
       return `Sent ${num(c.sent || 0)} of ${num((c.sent || 0) + (c.failed || 0))} to ${dest}; ${num(c.failed || 0)} failed, skipped ${skipped}. `
         + (r.retry ? 'Nothing was sent twice, so trying again is safe: it sends only the ones that failed.' : `Please tell ${admin} before trying again.`)
         + list;

@@ -5,7 +5,8 @@
 // opaque token: 128 bits from the CSPRNG, the only thing the Approve and
 // Cancel buttons carry.
 //
-//   { person, module, runId, destination, listName, rows, skipped, skippedIds, idempotencyKey }
+//   { person, module, runId, destination, listName, rows, skipped, skippedIds,
+//     idempotencyKey, originalKey, retry }
 //
 //   rows             a COPY of the approved rows' push fields (and the score,
 //                    for a scored list), taken from the run record at preview
@@ -26,11 +27,19 @@
 //                    the rows the preview said will send, whatever the
 //                    connector's apply re-checks (review R1-1).
 //
+//   originalKey      the first push's idempotency key (equal to
+//                    idempotencyKey on a preview's entry).
+//   retry            false on a preview's entry; true on a retry entry.
+//
 // A partly failed push that is safe to retry (details.retrySafe === true) is
-// offered "Retry the failed ones": recreate() stores the SAME entry (person,
-// rows, key, list) under a new token for 30 minutes (decision 6, DEP-013), so
-// the retry sends the same input under the same key and the connector skips
-// what already went.
+// offered "Retry the failed ones" (decision 6, DEP-013, review R2-1):
+// retryEntry() stores, under a new token for 30 minutes, an entry for the
+// same person and list holding ONLY the failed rows, under its own key
+// derived from the first push's: sha256 of the canonical JSON
+// [originalKey, "retry", sortedFailedIds]. So a retry never re-sends a row
+// that went, whether or not the connector honours its per-item keys, and a
+// second retry of the same failed set reuses the same key (replay-safe; the
+// same key with other input would be an IdempotencyConflict).
 //
 // Every function here is synchronous: nothing can run between a check and a
 // consume (AD-7).
@@ -39,7 +48,7 @@ const crypto = require('node:crypto');
 
 const NS = 'approval';
 const TOKEN = /^[0-9a-f]{32}$/;
-const ENTRY_KEYS = Object.freeze(['person', 'module', 'runId', 'destination', 'listName', 'rows', 'skipped', 'skippedIds', 'idempotencyKey']);
+const ENTRY_KEYS = Object.freeze(['person', 'module', 'runId', 'destination', 'listName', 'rows', 'skipped', 'skippedIds', 'idempotencyKey', 'originalKey', 'retry']);
 // The longest skip reason kept (the preview shows the same cut).
 const REASON_MAX = 60;
 
@@ -86,13 +95,43 @@ function create(store, {
     skipped: reasonsOf(skipped),
     skippedIds: Object.freeze(skippedIds.map((id) => String(id))),
     idempotencyKey: key,
+    originalKey: key,
+    retry: false,
   }));
   return token;
 }
 
-// The same entry (same person, rows, list and key) under a new token, for
-// "Retry the failed ones". Returns the new token.
-function recreate(store, stored) {
+// The row ids (as strings) of the rows a connector's refs name, matched by
+// row id: a ref is the value of the write.send field that carries the row
+// id. null when that field isn't sent, or a ref names no row, several rows
+// or the same row twice: the caller then fails closed. Used for the dry
+// run's skipped refs (review R1-1) and a PartialFailure's failedRefs (R2-1).
+function rowIdsForRefs(mod, rows, refs) {
+  if (!refs.length) return [];
+  if (!Object.values(mod.write.send).includes(mod.row_id)) return null;
+  const ids = [];
+  for (const raw of refs) {
+    const ref = raw !== undefined && raw !== null ? String(raw) : null;
+    const hits = ref === null ? [] : rows.filter((r) => String(r[mod.row_id]) === ref);
+    if (hits.length !== 1) return null;
+    ids.push(String(hits[0][mod.row_id]));
+  }
+  return new Set(ids).size === ids.length ? ids : null;
+}
+
+// A retry's key: sha256 of the canonical JSON [originalKey, "retry", ids sorted].
+function retryKey(originalKey, failedIds) {
+  const ids = failedIds.map((id) => String(id)).sort();
+  return crypto.createHash('sha256').update(JSON.stringify([String(originalKey), 'retry', ids])).digest('hex');
+}
+
+// The retry entry for a partly failed push: the same person and list, only
+// the rows whose row ids are failedIds, under the derived retry key. Returns
+// the new token.
+function retryEntry(store, stored, mod, failedIds) {
+  const failed = new Set(failedIds.map((id) => String(id)));
+  const rows = stored.rows.filter((r) => failed.has(String(r[mod.row_id])));
+  if (rows.length !== failed.size) throw new Error('retry rows must match the failed ids one to one');
   const token = newToken();
   store.set(NS, token, Object.freeze({
     person: stored.person,
@@ -100,10 +139,12 @@ function recreate(store, stored) {
     runId: stored.runId,
     destination: stored.destination,
     listName: stored.listName,
-    rows: Object.freeze(copyRows(stored.rows).map(Object.freeze)),
-    skipped: Object.freeze([...stored.skipped]),
-    skippedIds: Object.freeze([...stored.skippedIds]),
-    idempotencyKey: stored.idempotencyKey,
+    rows: Object.freeze(copyRows(rows).map(Object.freeze)),
+    skipped: Object.freeze([]),
+    skippedIds: Object.freeze([]),
+    idempotencyKey: retryKey(stored.originalKey, [...failed]),
+    originalKey: stored.originalKey,
+    retry: true,
   }));
   return token;
 }
@@ -128,5 +169,5 @@ function cancel(store, token, person) {
 const ACTION = Object.freeze({ approve: 'approve', cancel: 'cancel' });
 
 module.exports = {
-  newToken, idempotencyKey, copyRows, create, recreate, lookup, cancel, NS, TOKEN, STATUS, ENTRY_KEYS, ACTION,
+  newToken, idempotencyKey, retryKey, rowIdsForRefs, copyRows, create, retryEntry, lookup, cancel, NS, TOKEN, STATUS, ENTRY_KEYS, ACTION,
 };

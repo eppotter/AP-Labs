@@ -27,12 +27,17 @@
 // concurrent click never sends twice, and a key already used (the same list
 // sent earlier today) is "already sent today; nothing new sent" (N6).
 //
-// Retry (decision 6, DEP-013): a PartialFailure with details.retrySafe ===
-// true re-stores the SAME entry (same person, rows, list and key) under a new
-// token behind "Retry the failed ones"; the retry runs this same flow, so it
-// sends the same input under the same key and only the failed contacts go.
-// Otherwise the person gets the AD-17 message and no button. A sign-in
-// failure is never offered a retry (a setup fault for the admin).
+// Retry (decision 6, DEP-013, review R2-1): a PartialFailure with
+// details.retrySafe === true stores a retry entry behind "Retry the failed
+// ones": the same person and list, ONLY the failed rows (its failedRefs
+// matched to rows by row id, exactly one row each), under a key derived from
+// the first push's (entry.retryKey). The retry runs this same flow, so it can
+// never re-send a row that went, even through a connector that declares
+// perItemIdempotency but ignores its keys; its reply describes the retry
+// ("Retried 1 that failed: sent 1, failed 0"), never the whole list. A
+// failed ref that can't be matched, or retrySafe not true: the AD-17 admin
+// message and no button. A sign-in failure is never offered a retry (a setup
+// fault for the admin).
 //
 // Escalated (./escalate, Q4): PartialFailure, ConnectorFailed,
 // ConnectorAuthFailed, IdempotencyConflict, and a kill switch flipped partway
@@ -142,7 +147,11 @@ function createPush({
     const sendRows = stored.rows.filter((r) => !skippedIds.has(String(r[mod.row_id])));
     const toSend = sendRows.length;
     const base = { destination: mod.write.destination, listName: stored.listName, skippedReasons: stored.skipped };
-    const input = { name: stored.listName, contacts: sendItems(mod, sendRows), idempotencyKey: stored.idempotencyKey };
+    // listKey: the first push's key, the same on every retry, so a connector
+    // keeps a retry's rows on the list the first push made (review R2-1).
+    const input = {
+      name: stored.listName, contacts: sendItems(mod, sendRows), idempotencyKey: stored.idempotencyKey, listKey: stored.originalKey,
+    };
     let result;
     let text;
     let retryToken = null;
@@ -155,7 +164,7 @@ function createPush({
       } else {
         const sent = isCount(r.added) ? r.added : toSend;
         const already = isCount(r.alreadyAdded) ? r.alreadyAdded : 0;
-        result = { ...base, outcome: 'sent', counts: { total, sent, already, skipped, failed: 0 } };
+        result = { ...base, outcome: stored.retry ? 'retried' : 'sent', counts: { total, sent, already, skipped, failed: 0 } };
       }
       text = pushResultText(result, { admin });
       log.info('push finished', { module: mod.id, action, outcome: result.outcome, ...result.counts });
@@ -166,19 +175,32 @@ function createPush({
       }
       reason = escalationReason(err);
       const d = err.details || {};
+      let partialText = null;
       if (err instanceof PartialFailure) {
         const sent = isCount(d.succeeded) ? d.succeeded : 0;
         const failed = isCount(d.failed) ? d.failed : toSend - sent;
-        if (d.retrySafe === true) retryToken = entry.recreate(store, stored);
-        result = { ...base, outcome: 'partial', retry: Boolean(retryToken), counts: { total, sent, already: 0, skipped, failed } };
+        if (d.retrySafe === true) {
+          // Only the failed rows, matched by row id among the rows sent.
+          const failedIds = entry.rowIdsForRefs(mod, sendRows, Array.isArray(d.failedRefs) ? d.failedRefs : []);
+          if (failedIds && failedIds.length && failedIds.length === failed) retryToken = entry.retryEntry(store, stored, mod, failedIds);
+          else log.warn('push retry not offered: the failed refs could not be matched to one row each', { module: mod.id, failed });
+        }
+        result = {
+          ...base, outcome: 'partial', retried: stored.retry, retry: Boolean(retryToken), counts: { total, sent, already: 0, skipped, failed },
+        };
+        if (!retryToken && d.retrySafe === true) {
+          // No button, so never "trying again is safe": the admin message.
+          partialText = messageFor(new PartialFailure('', { ...d, retrySafe: false }), { admin });
+        }
+        if (stored.retry) partialText = pushResultText(result, { admin });
       } else if (err instanceof KillSwitchOn && !d.sent) {
         result = { ...base, outcome: 'refused', counts: { total, sent: 0, already: 0, skipped, failed: toSend } };
       } else {
         const sent = d.sent && isCount(d.sent.items) ? d.sent.items : 0;
         result = { ...base, outcome: 'stopped', counts: { total, sent, already: 0, skipped, failed: Math.max(0, toSend - sent) } };
       }
-      // The AD-17 words for the error, then the counts.
-      text = `${messageFor(err, { admin })} Skipped ${skipped}.`;
+      // The AD-17 words for the error (a retry's own counts), then the skipped.
+      text = partialText && stored.retry ? partialText : `${partialText || messageFor(err, { admin })} Skipped ${skipped}.`;
       log.warn('push did not finish', {
         module: mod.id, action, outcome: result.outcome, reason: err.code || err.name, retry_offered: Boolean(retryToken), ...result.counts,
       });

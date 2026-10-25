@@ -228,12 +228,13 @@ test('a partial failure offers "Retry the failed ones"; the retry adds only the 
   const retry = actionsOf(view).find((b) => b.action_id === 'approval-write:retry');
   assert.equal(retry.text.text, 'Retry the failed ones');
   const again = ctx.store.get('approval', retry.value);
-  assert.equal(again.idempotencyKey, entry.idempotencyKey, 'the same key');
-  assert.deepEqual([...again.rows], [...entry.rows], 'the same rows');
+  assert.equal(again.originalKey, entry.idempotencyKey);
+  assert.notEqual(again.idempotencyKey, entry.idempotencyKey, 'its own derived key (review R2-1)');
+  assert.deepEqual(again.rows.map((r) => String(r.client_id)), [failing], 'only the failed row');
   // The tool takes it now.
   simulate.failContacts.delete(failing);
   await aw.click({ verb: 'retry', value: retry.value, person: ADMIN, resolve, show });
-  assert.equal(head(shown.at(-1)), `*Pushed 1 to email tool* (24 were already there), skipped 0, failed 0. List: win-back-north-${today()}.`);
+  assert.equal(head(shown.at(-1)), `*Retried 1 that failed: sent 1, failed 0.* List: win-back-north-${today()}.`);
   assert.equal(records(ctx.outbox, 'list').length, 1);
   assert.equal(records(ctx.outbox, 'contact').length, 25);
   assert.deepEqual([...contactRefs(ctx.outbox)].sort(), entry.rows.map((r) => String(r.client_id)).sort(), 'each contact once');

@@ -201,6 +201,8 @@ test('the approval entry: the person, the run, the list, its own copy of the row
     skipped: ['no address'],
     skippedIds: ['2'],
     idempotencyKey: crypto.createHash('sha256').update(JSON.stringify([listName, ['1', '10', '2', '3', '4', '5', '6']])).digest('hex'),
+    originalKey: crypto.createHash('sha256').update(JSON.stringify([listName, ['1', '10', '2', '3', '4', '5', '6']])).digest('hex'),
+    retry: false,
   });
   assert.notEqual(stored.rows, record.rows, 'a copy, not the record\'s array');
   assert.notEqual(stored.rows[0], record.rows[0]);
