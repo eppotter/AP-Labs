@@ -202,14 +202,41 @@ async function upload(conn, { db, database, local, now }) {
   return { staging, tables };
 }
 
+// The target's main-schema tables to drop before a re-publish, children
+// first by its own foreign keys, fixture_publish left out. Publish writes
+// only main, so tables in any other schema are never read into this list,
+// dropped or recreated. A foreign key between main and another schema would
+// tie a table publish never wrote to one it drops, so it is refused (DuckDB
+// cannot create one today, but a database can come from elsewhere).
+// duckdb_constraints() names no referenced schema: a key is cross-schema
+// when the table it references does not exist in the key's own schema.
+// Only reads; called before the transaction begins.
+async function mainDropOrder(conn, database) {
+  const here = `database_name = ${remote.sqlString(database)}`;
+  const tables = await conn.run(`SELECT schema_name, table_name FROM duckdb_tables() WHERE ${here} ORDER BY schema_name, table_name`);
+  const fks = await conn.run(`SELECT schema_name, table_name, referenced_table FROM duckdb_constraints() WHERE ${here} AND constraint_type = 'FOREIGN KEY' ORDER BY schema_name, table_name, referenced_table`);
+  const inSchema = (schema, name) => tables.some((t) => t.schema_name === schema && t.table_name === name);
+  const cross = fks.filter((f) => !inSchema(f.schema_name, f.referenced_table));
+  if (cross.length) {
+    const which = cross.map((f) => `${f.schema_name}.${f.table_name} -> ${f.referenced_table}`).join(', ');
+    throw new PublishError(`${database} has foreign keys that cross out of their schema (${which}), so publish cannot rebuild its main tables without touching tables it never wrote; ${database} was not changed. Remove those keys, or pass --database with a new name`);
+  }
+  const main = tables.filter((t) => t.schema_name === 'main' && t.table_name !== remote.PUBLISH_TABLE).map((t) => t.table_name);
+  const edges = fks.filter((f) => f.schema_name === 'main').map((f) => [f.table_name, f.referenced_table]);
+  return parentFirst(main, edges, 'so no drop order works').reverse();
+}
+
 // Step 4 for a re-publish: updates <database> in place from staging, in one
 // transaction, so a share attached to it stays attached. With <database> as
 // the current database (MotherDuck refuses a REFERENCES that names another
 // database):
 //
+//   read the target's catalog (mainDropOrder: refuses a cross-schema
+//     foreign key, sending no write)
 //   BEGIN TRANSACTION
-//   DROP TABLE each of the target's tables except fixture_publish, children
-//     first by the target's own foreign keys
+//   DROP TABLE main.<t> for each of the target's main tables except
+//     fixture_publish, children first by the target's own foreign keys;
+//     tables in other schemas are never touched
 //   CREATE TABLE each of the build's tables from the DDL the upload ran,
 //     parents first, then INSERT INTO it SELECT * FROM <staging>.main.<table>
 //   DROP, CREATE and fill fixture_publish from staging, last, so the version
@@ -228,23 +255,19 @@ async function upload(conn, { db, database, local, now }) {
 // before it returns or throws.
 async function swapInPlace(conn, { database, staging, tables }, setStage) {
   const s = remote.ident(staging);
-  const here = `database_name = ${remote.sqlString(database)}`;
   const [{ d: home }] = await conn.run('SELECT current_database() AS d');
   await conn.run(`USE ${remote.ident(database)}`);
   let stage = 'before';
   const at = (next) => { stage = next; setStage(next); };
   let failure = null;
   try {
+    const childrenFirst = await mainDropOrder(conn, database);
     await conn.run('BEGIN TRANSACTION');
     at('transaction');
-    const old = (await conn.run(`SELECT table_name FROM duckdb_tables() WHERE ${here} AND schema_name = 'main' ORDER BY table_name`))
-      .map((r) => r.table_name).filter((n) => n !== remote.PUBLISH_TABLE);
-    const fks = await conn.run(`SELECT table_name, referenced_table FROM duckdb_constraints() WHERE ${here} AND constraint_type = 'FOREIGN KEY'`);
-    const childrenFirst = parentFirst(old, fks.map((f) => [f.table_name, f.referenced_table]), 'so no drop order works').reverse();
-    for (const name of childrenFirst) await conn.run(`DROP TABLE ${remote.ident(name)}`);
+    for (const name of childrenFirst) await conn.run(`DROP TABLE main.${remote.ident(name)}`);
     for (const t of tables) await conn.run(t.sql);
     for (const t of tables) await conn.run(`INSERT INTO ${remote.ident(t.name)} SELECT * FROM ${s}.main.${remote.ident(t.name)}`);
-    await conn.run(`DROP TABLE ${remote.PUBLISH_TABLE}`);
+    await conn.run(`DROP TABLE main.${remote.PUBLISH_TABLE}`);
     await conn.run(`CREATE TABLE ${remote.PUBLISH_TABLE} (key VARCHAR, value VARCHAR)`);
     await conn.run(`INSERT INTO ${remote.PUBLISH_TABLE} SELECT * FROM ${s}.main.${remote.PUBLISH_TABLE}`);
     at('commit');
