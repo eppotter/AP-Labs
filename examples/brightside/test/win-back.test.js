@@ -9,7 +9,9 @@
 // through the engine with the fake Slack client. Story 9.5: Confirm returns
 // the real list from a temporary build of the fixture (North over 90 days:
 // the 38 known candidates), summarised in the view with the CSV in the
-// admin's DM, and the AI service (a stand-in client) is never called.
+// admin's DM, and the AI service (a stand-in client) is never called. Story
+// 9.4: a typed request fills the form from a stand-in AI reply, and the rows
+// never reach the AI.
 //
 // An example test (architecture carve-out): it reads Brightside's app dir and
 // fixture data, and is deleted with the example in a fork. Its profile and
@@ -106,6 +108,14 @@ function spyAi() {
   return { calls, client: { messages: { create: async (params) => { calls.push(params); throw new Error('no AI call expected'); } } } };
 }
 
+// A stand-in AI client that fills the form with input (Story 9.4), recording
+// every request it gets.
+function fillingAi(input) {
+  const calls = [];
+  const reply = { content: [{ type: 'tool_use', id: 'toolu_1', name: 'fill_parameters', input }], stop_reason: 'tool_use', usage: { input_tokens: 400, output_tokens: 30 } };
+  return { calls, client: { messages: { create: async (params) => { calls.push(params); return reply; } } } };
+}
+
 // Boots the app on the fixture build (or a missing file with noData), with a
 // fake AI key so the AI service is on and its stand-in client is watched.
 async function boot(t, { noData = false, ai = spyAi() } = {}) {
@@ -149,7 +159,7 @@ test('the Win-back list end to end: the admin checks North with the defaults, co
   const formId = `V${app.viewSeq}`;
   assert.equal(form.title.text, 'Win-back list');
   assert.equal(form.submit.text, 'Check values');
-  assert.deepEqual(form.blocks.filter((b) => b.type === 'input').map((b) => b.label.text), ['Zone', 'Lapsed within (days)', 'How many clients']);
+  assert.deepEqual(form.blocks.filter((b) => b.type === 'input' && b.block_id.startsWith('sp-input:')).map((b) => b.label.text), ['Zone', 'Lapsed within (days)', 'How many clients']);
 
   const pick = { values: { 'sp-input:zone': { value: { type: 'static_select', selected_option: { value: 'north' } } } } };
   await app.dispatchView('scoped-pull:form', {
@@ -218,4 +228,43 @@ test('a member without WIN_BACK, or someone not set up, never sees Win-back and 
     await app.dispatchAction('win-back:open', { user: { id: who }, view: MENU });
     assert.equal(last(app).blocks.filter((b) => b.type === 'input').length, 0);
   }
+});
+
+test('Story 9.4: "North zone, lapsed in the last 90 days, top 25" fills zone north, 90 days, limit 25 from a stand-in reply, and Confirm gives the first 25', async (t) => {
+  const ai = fillingAi({ zone: 'north', lapsed_days: 90, limit: 25 });
+  const app = await boot(t, { ai });
+  await app.dispatchAction('win-back:open', { user: { id: ADMIN }, view: MENU });
+  const form = last(app);
+  const formId = `V${app.viewSeq}`;
+  const read = actionsOf(form).find((b) => b.action_id === 'scoped-pull:read');
+  assert.equal(read.text.text, 'Read my request');
+  const request = 'North zone, lapsed in the last 90 days, top 25';
+  await app.dispatchAction('scoped-pull:read', {
+    user: { id: ADMIN },
+    view: { id: formId, hash: `h${app.viewSeq}`, title: form.title, private_metadata: form.private_metadata, state: { values: { 'sp-request': { value: { type: 'plain_text_input', value: request } } } } },
+    value: read.value,
+  });
+  // "Reading your request…", then the values to confirm.
+  assert.equal(app.views.at(-2).args.view.blocks[0].text.text, 'Reading your request…');
+  const confirm = last(app);
+  assert.deepEqual(confirm.blocks.filter((b) => b.fields).map((b) => [b.fields[0].text, b.fields[1].text]), [
+    ['*Zone*', 'north'], ['*Lapsed within (days)*', '90'], ['*How many clients*', '25'],
+  ]);
+  // One call, holding the request and the declarations only.
+  assert.equal(ai.calls.length, 1);
+  assert.equal(ai.calls[0].messages[0].content, `<request>\n${request}\n</request>`);
+  assert.deepEqual(Object.keys(ai.calls[0].tools[0].input_schema.properties), declared);
+  assert.equal(app.uploads.length, 0, 'nothing runs before Confirm');
+
+  const session = actionsOf(confirm)[0].value;
+  await app.dispatchAction('scoped-pull:confirm', {
+    user: { id: ADMIN }, view: { id: formId, hash: `h${app.viewSeq}`, title: confirm.title, private_metadata: confirm.private_metadata, state: { values: {} } }, value: session,
+  });
+  assert.equal(last(app).blocks[0].text.text, '*Win-back list: 25 rows.*');
+  assert.equal(app.uploads.length, 1);
+  // The rows went to the DM, never to the AI.
+  assert.equal(ai.calls.length, 1);
+  const sentToAi = JSON.stringify(ai.calls);
+  const rows = app.uploads[0].content.replace(/^\ufeff/, '').trimEnd().split('\r\n').slice(1);
+  for (const row of rows) assert.ok(!sentToAi.includes(row.split(',')[3]), 'an email from the rows reached the AI');
 });
