@@ -16,6 +16,7 @@ const path = require('node:path');
 
 const probe = require('../../kit/fixture/md-probe');
 const { build } = require('../../kit/fixture/build');
+const { checkSql } = require('../../kit/runtime/sql');
 
 const TOKEN = 'md-fake-read-token-41c9e2'; // not a real token: tests only
 const PUBLISH = 'md-fake-publish-token-9b07aa'; // not a real token: tests only
@@ -105,7 +106,7 @@ async function runMain(argv = ARGS, deps = {}) {
   return { code, out, err, all: [...out, ...err].join('\n'), md };
 }
 
-const lineFor = (all, status, id) => all.split('\n').filter((l) => l.startsWith(`${status.padEnd(4)}  ${id}  `));
+const lineFor = (all, status, id) => all.split('\n').filter((l) => l.startsWith(`${status.padEnd(8)}  ${id}  `));
 
 // --- Check logic, output and exit codes ------------------------------------------
 
@@ -123,6 +124,12 @@ test('a well-locked reader passes every required check and exits 0', async () =>
   assert.match(lineFor(all, 'INFO', 9)[0], /version 3\+abc, published 2026-10-24T10:00:00.000Z/);
   assert.deepEqual(md.state.opts, { database: DB, token: TOKEN }, 'the default database, the read token');
   assert.equal(md.calls.filter((s) => s === probe.SLOW_SQL).length, 1);
+  // The attached databases are listed before any ATTACH is tried.
+  const listed = md.calls.findIndex((s) => s.startsWith('SELECT database_name FROM duckdb_databases()'));
+  const firstAttach = md.calls.findIndex((s) => s.startsWith('ATTACH'));
+  assert.ok(listed !== -1 && listed < firstAttach, 'the database list comes first');
+  assert.ok(!md.calls.some((s) => s.startsWith('DETACH')), 'nothing to detach when every ATTACH is refused');
+  assert.equal(lineFor(all, 'ACCEPTED', 5).length, 0);
   // Writes are only ever attempted inside a transaction that is rolled back.
   const writes = md.calls.map((s, i) => [s, i]).filter(([s]) => /^(CREATE|INSERT)/.test(s));
   assert.equal(writes.length, 2);
@@ -138,6 +145,50 @@ test('a forbidden operation that runs fails check 5 and the probe exits 1', asyn
   assert.equal(code, 1);
   assert.match(lineFor(all, 'FAIL', 5).join('\n'), /COPY to a local file \(it ran: NOT refused\)/);
   assert.match(all, /failed: 5\. Stop: do not start Story B/);
+});
+
+test('an attachable my_db is the accepted exception: ACCEPTED, detached at once, and the run still passes', async () => {
+  const md = fakeMotherDuck({
+    over: [
+      [(s) => s === "ATTACH 'md:my_db' AS aplabs_probe_my_db", () => []],
+      [(s) => s === 'DETACH "aplabs_probe_my_db"', () => []],
+    ],
+  });
+  const { code, all } = await runMain(undefined, { md });
+  assert.equal(code, 0, all);
+  const accepted = lineFor(all, 'ACCEPTED', 5);
+  assert.equal(accepted.length, 1);
+  assert.match(accepted[0], /ATTACH the reader's own MotherDuck database my_db: the reader's own my_db can be attached; the SQL checker refuses ATTACH \(accepted by Ely, 2026-10-24, see docs\/runtime\/motherduck-publish\.md\); detached again$/);
+  const i = md.calls.indexOf("ATTACH 'md:my_db' AS aplabs_probe_my_db");
+  assert.equal(md.calls[i + 1], 'DETACH "aplabs_probe_my_db"');
+  assert.equal(lineFor(all, 'FAIL', '\\d').length, 0);
+  assert.match(all, /all 6 required checks passed \(1, 2, 4, 5, 6, 7\), with 1 accepted exception \(ACCEPTED above\)/);
+});
+
+test('any other MotherDuck database that attaches fails check 5, and is detached again', async () => {
+  const md = fakeMotherDuck({
+    over: [
+      [(s) => s === "ATTACH 'md:sample_data' AS aplabs_probe_md", () => []],
+      [(s) => s.startsWith('DETACH'), () => { throw new Error(`Binder Error: cannot detach ${TOKEN}`); }],
+    ],
+  });
+  const { code, all } = await runMain(undefined, { md });
+  assert.equal(code, 1);
+  assert.match(lineFor(all, 'FAIL', 5)[0], /ATTACH the MotherDuck database sample_data \(it ran: NOT refused; DETACH failed \(Binder Error: cannot detach \[redacted\]\)\)/);
+  assert.ok(md.calls.includes('DETACH "aplabs_probe_md"'));
+  assert.equal(lineFor(all, 'ACCEPTED', 5).length, 0);
+});
+
+test('the SQL checker, the barrier for the accepted exception, refuses ATTACH of md:my_db', () => {
+  for (const sql of ["ATTACH 'md:my_db' AS x", "attach 'md:my_db'", "SELECT 1; ATTACH 'md:my_db' AS x"]) {
+    const verdict = checkSql(sql, { forbiddenColumns: [] });
+    assert.equal(verdict.ok, false, sql);
+  }
+  assert.equal(checkSql("ATTACH 'md:my_db' AS x", { forbiddenColumns: [] }).rule, 'blocked_statement');
+  // ...including the exact statement the probe tries.
+  const op = probe.forbiddenOps({ database: DB, tmp: '/t', url: 'http://x' }).find((o) => o.accepted);
+  assert.equal(op.accepted, probe.MY_DB_EXCEPTION);
+  assert.equal(checkSql(op.sql, { forbiddenColumns: [] }).ok, false);
 });
 
 test('a parser error or a missing table is not counted as a refusal', async () => {
@@ -318,7 +369,7 @@ test('the token is passed as a setting, never in a path or a step label', () => 
   const tricky = "tok'en";
   const steps = probe.readerSteps(DB, tricky);
   assert.deepEqual(steps.map((s) => s.label), [
-    'LOAD motherduck', 'SET motherduck_token', "ATTACH 'md:acme_fixture' AS acme_fixture (READ_ONLY)",
+    'LOAD motherduck', 'SET motherduck_token', "SET motherduck_attach_mode = 'single'", "ATTACH 'md:acme_fixture' AS acme_fixture (READ_ONLY)",
     "read the motherduck extension's version", 'SET enable_external_access = false', 'SET lock_configuration = true',
   ]);
   assert.equal(steps[1].sql, "SET motherduck_token = 'tok''en'");

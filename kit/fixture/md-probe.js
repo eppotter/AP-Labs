@@ -8,7 +8,9 @@
 //   node kit/fixture/md-probe.js <fixture-dir> [--database <name>] [--db <file>] [--name <client>] [--install]
 //
 // It opens MotherDuck as a READER the way Story B's runtime will, and prints
-// one PASS / FAIL / INFO line per check, then a summary. Exit codes: 0 every
+// one PASS / FAIL / INFO line per check (ACCEPTED for the one known
+// exception Ely accepted, which does not fail the run), then a summary. Exit
+// codes: 0 every
 // required check passed; 1 a required check failed, or the probe refused to
 // start (no read token, or it is the publish token); 2 usage, a bad
 // --database or a profile error.
@@ -17,6 +19,7 @@
 //   1. an in-memory DuckDB with extension auto-install and auto-load off;
 //   2. LOAD motherduck (installed ahead of time: --install, or the container
 //      build), SET motherduck_token (the token is a setting, never in a path),
+//      SET motherduck_attach_mode = 'single' (it narrows what can be attached),
 //      ATTACH 'md:<db>' AS <db> (READ_ONLY), SET enable_external_access =
 //      false, SET lock_configuration = true;
 //   3. every new connection runs USE <db>.
@@ -102,11 +105,23 @@ const LOCK_STEPS = Object.freeze([
 const EXTENSION_SQL = `SELECT installed::VARCHAR AS installed, loaded::VARCHAR AS loaded, extension_version AS version, version() AS duckdb FROM duckdb_extensions() WHERE extension_name = '${EXTENSION}'`;
 const EXTENSION_STEP = Object.freeze({ label: `read the ${EXTENSION} extension's version`, sql: EXTENSION_SQL, capture: 'extension' });
 
+// Set before ATTACH. Live (2026-10-24) it refuses ATTACH 'md:' and
+// 'md:sample_data' after the lock, but not 'md:my_db'; see MY_DB_EXCEPTION.
+const ATTACH_MODE_SQL = "SET motherduck_attach_mode = 'single'";
+
+// The known exception Ely accepted on 2026-10-24: under the reader sequence
+// the reader's own my_db can still be attached after the lock (neither
+// motherduck_attach_mode nor saas_mode stops it, and DROP DATABASE my_db is
+// refused). The barrier is the SQL checker (kit/runtime/sql), which refuses
+// ATTACH, writes and multiple statements. Reported as ACCEPTED, never PASS.
+const MY_DB_EXCEPTION = `the reader's own my_db can be attached; the SQL checker refuses ATTACH (accepted by Ely, 2026-10-24, see ${DOC})`;
+
 // The reader's setup, in order. A label never holds the token.
 function readerSteps(database, token) {
   return [
     { label: `LOAD ${EXTENSION}`, sql: `LOAD ${EXTENSION}` },
     { label: 'SET motherduck_token', sql: `SET motherduck_token = ${remote.sqlString(token)}` },
+    { label: ATTACH_MODE_SQL, sql: ATTACH_MODE_SQL },
     { label: `ATTACH 'md:${database}' AS ${database} (READ_ONLY)`, sql: `ATTACH ${remote.sqlString(`md:${database}`)} AS ${remote.ident(database)} (READ_ONLY)` },
     EXTENSION_STEP,
     ...LOCK_STEPS,
@@ -150,15 +165,24 @@ const LOOSEN = Object.freeze([
 // not exist" or a Permission Error proves the database is out of reach (a
 // missing-table error means it is reachable). write: run
 // inside a transaction that is always rolled back. http: the local listener
-// must also have had no request. kind 'attached': passes when only <db> and
-// ALSO_ATTACHED are attached. localCheck: the test suite proves the statement
+// must also have had no request. detach: an ATTACH that ran is detached
+// again at once. accepted: that ATTACH running is the accepted exception
+// (MY_DB_EXCEPTION), reported ACCEPTED rather than FAIL. kind 'attached':
+// passes when only <db> and ALSO_ATTACHED are attached; it runs first, before
+// any ATTACH is tried. localCheck: the test suite proves the statement
 // runs on an unlocked local DuckDB, so only the lockdown can refuse it.
 function forbiddenOps({ database, tmp, url }) {
   const db = remote.ident(database);
   const file = (name) => remote.sqlString(path.join(tmp, name));
   return [
-    { label: 'ATTACH a local database file', sql: `ATTACH ${file('probe-attach.duckdb')} AS aplabs_probe_attach`, localCheck: true },
-    { label: 'ATTACH another MotherDuck database', sql: "ATTACH 'md:my_db' AS aplabs_probe_md" },
+    {
+      label: `only ${database}, ${ALSO_ATTACHED.join(' and ')} are attached`,
+      sql: 'SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY 1',
+      kind: 'attached',
+    },
+    { label: 'ATTACH a local database file', sql: `ATTACH ${file('probe-attach.duckdb')} AS aplabs_probe_attach`, detach: 'aplabs_probe_attach', localCheck: true },
+    { label: 'ATTACH the MotherDuck database sample_data', sql: "ATTACH 'md:sample_data' AS aplabs_probe_md", detach: 'aplabs_probe_md' },
+    { label: "ATTACH the reader's own MotherDuck database my_db", sql: "ATTACH 'md:my_db' AS aplabs_probe_my_db", detach: 'aplabs_probe_my_db', accepted: MY_DB_EXCEPTION },
     { label: 'COPY to a local file', sql: `COPY (SELECT 1 AS n) TO ${file('probe-copy.csv')}`, localCheck: true },
     { label: 'read_csv on a local file', sql: `SELECT count(*)::VARCHAR AS n FROM read_csv(${file(READ_FILE)})`, localCheck: true },
     { label: 'read_csv on an http URL', sql: `SELECT count(*)::VARCHAR AS n FROM read_csv(${remote.sqlString(url)})`, http: true },
@@ -168,11 +192,6 @@ function forbiddenOps({ database, tmp, url }) {
     { label: `INSERT INTO ${database}.${remote.PUBLISH_TABLE}`, sql: `INSERT INTO ${db}.main.${remote.PUBLISH_TABLE} (key, value) VALUES ('aplabs_probe', 'x')`, write: true, needsCatalog: true, localCheck: true },
     { label: 'read the default database my_db', sql: 'SELECT count(*)::VARCHAR AS n FROM my_db.main.aplabs_probe_absent', absentDb: 'my_db' },
     { label: 'read the sample_data database', sql: 'SELECT count(*)::VARCHAR AS n FROM sample_data.main.aplabs_probe_absent', absentDb: 'sample_data' },
-    {
-      label: `only ${database}, ${ALSO_ATTACHED.join(' and ')} are attached`,
-      sql: 'SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY 1',
-      kind: 'attached',
-    },
   ];
 }
 
@@ -182,7 +201,9 @@ const READ_FILE = 'probe-read.csv';
 const firstLine = remote.firstLine;
 const errText = (e) => firstLine(e?.message ?? e);
 
-// One forbidden operation. listener: { hits() } for http ops. Returns { ok, evidence }.
+// One forbidden operation. listener: { hits() } for http ops. Returns
+// { ok, accepted, evidence }: accepted is true only for the accepted
+// exception, which then has ok false.
 async function attempt(conn, op, { database, listener } = {}) {
   if (op.kind === 'attached') {
     try {
@@ -206,7 +227,15 @@ async function attempt(conn, op, { database, listener } = {}) {
   let outcome;
   try {
     await conn.run(op.sql);
-    outcome = { ok: false, evidence: 'it ran: NOT refused' };
+    outcome = op.accepted ? { ok: false, accepted: true, evidence: op.accepted } : { ok: false, evidence: 'it ran: NOT refused' };
+    if (op.detach) {
+      try {
+        await conn.run(`DETACH ${remote.ident(op.detach)}`);
+        outcome.evidence += '; detached again';
+      } catch (e) {
+        outcome.evidence += `; DETACH failed (${errText(e)})`;
+      }
+    }
   } catch (e) {
     const msg = errText(e);
     if (/^Parser Error/i.test(msg)) outcome = { ok: false, evidence: `the statement did not parse, so nothing was proved: ${msg}` };
@@ -293,7 +322,7 @@ async function runProbe({
   const results = [];
   const report = (id, status, text) => {
     results.push({ id, status, text });
-    say(`${status.padEnd(4)}  ${id}  ${text}`);
+    say(`${status.padEnd(8)}  ${id}  ${text}`);
   };
   const notRun = (from, why) => {
     for (let id = from; id <= TOTAL; id += 1) {
@@ -398,8 +427,9 @@ async function runProbe({
 
     // 5: forbidden operations, one line each.
     for (const op of forbiddenOps({ database, tmp, url: listener.url })) {
-      const { ok, evidence } = await attempt(conn, op, { database, listener });
-      report(5, ok ? 'PASS' : 'FAIL', `${op.kind === 'attached' ? '' : 'refused: '}${op.label} (${evidence})`);
+      const { ok, accepted, evidence } = await attempt(conn, op, { database, listener });
+      if (accepted) report(5, 'ACCEPTED', `${op.label}: ${evidence}`);
+      else report(5, ok ? 'PASS' : 'FAIL', `${op.kind === 'attached' ? '' : 'refused: '}${op.label} (${evidence})`);
     }
 
     // 6: a slow query is interrupted.
@@ -664,8 +694,10 @@ async function main(argv, deps = {}) {
 function summarise(results, say) {
   const failed = [...new Set(results.filter((r) => r.status === 'FAIL').map((r) => r.id))];
   const passed = REQUIRED.filter((id) => results.some((r) => r.id === id) && !failed.includes(id));
+  const accepted = results.filter((r) => r.status === 'ACCEPTED').length;
+  const exceptions = accepted ? `, with ${accepted} accepted exception${accepted === 1 ? '' : 's'} (ACCEPTED above)` : '';
   if (!failed.length && passed.length === REQUIRED.length) {
-    say(`fixture:probe: all ${REQUIRED.length} required checks passed (${REQUIRED.join(', ')}); 3, 8 and 9 are findings above. The lockdown holds.`);
+    say(`fixture:probe: all ${REQUIRED.length} required checks passed (${REQUIRED.join(', ')})${exceptions}; 3, 8 and 9 are findings above. The lockdown holds.`);
     return 0;
   }
   say(`fixture:probe: ${passed.length} of ${REQUIRED.length} required checks passed; failed: ${failed.join(', ')}. Stop: do not start Story B. The lockdown is never loosened quietly.`);
@@ -708,6 +740,8 @@ module.exports = {
   INSTANCE_OPTIONS,
   EXTENSION_STEP,
   LOCK_STEPS,
+  ATTACH_MODE_SQL,
+  MY_DB_EXCEPTION,
   LOOSEN,
   ALSO_ATTACHED,
   READ_TOKEN_ENV,
