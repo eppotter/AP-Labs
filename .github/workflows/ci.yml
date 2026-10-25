@@ -24,16 +24,34 @@ jobs:
         run: git ls-files '*.sh' ':(exclude).agents' ':(exclude)_bmad' | xargs --no-run-if-empty shellcheck
       - name: Tests (unit, hook, acceptance)
         run: npm test
+      # The three fixture steps skip only in a fork whose example client was
+      # deleted (Story 11.5, review B10); the template always runs them.
       - name: Fixture seeds match the generator
-        run: npm run fixture:check
+        run: |
+          if [ -f .aplabs/profile.yml ] && [ ! -d examples/brightside ]; then echo "skipped: no example client in this fork"; exit 0; fi
+          npm run fixture:check
       - name: Fixture builds into DuckDB (offline)
-        run: npm run fixture:build
+        run: |
+          if [ -f .aplabs/profile.yml ] && [ ! -d examples/brightside ]; then echo "skipped: no example client in this fork"; exit 0; fi
+          npm run fixture:build
       - name: Fixture checks pass (integrity, synthetic-only)
         # The validator fails closed with no profile (#77). A fork has
         # .aplabs/profile.yml; the template names Brightside's.
         run: |
+          if [ -f .aplabs/profile.yml ] && [ ! -d examples/brightside ]; then echo "skipped: no example client in this fork"; exit 0; fi
           if [ ! -f .aplabs/profile.yml ]; then export APLABS_PROFILE="$PWD/profiles/brightside/profile.yml"; fi
           npm run fixture:validate
+      - name: Engine untouched (forks only)
+        # Story 11.5: fork status comes from the profile, never the record
+        # (review B8), so every fork runs it and a fork with no
+        # .aplabs/template-version fails. Offline: it recomputes the engine
+        # fingerprint and compares it with the record.
+        run: |
+          if [ -f .aplabs/profile.yml ]; then
+            npm run template:check
+          else
+            echo "template:check: not a fork (no .aplabs/profile.yml); skipped"
+          fi
       - name: Verify harness
         # A client fork (governed: .aplabs/profile.yml exists) runs strict, so a
         # skipped check (missing executable), a timeout or zero checks fails CI
