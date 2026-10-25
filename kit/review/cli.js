@@ -326,7 +326,8 @@ function main(argv, env = process.env, cwd = process.cwd()) {
 
   let text = withFallbackLine(withReviewedHeadLine(withRoundsLine(withoutExemptLine(pr.body || ''), round), head), selection.fallback);
   if (state.followup) text = withFollowupLine(text, state.followup);
-  if (p1) text = withRefuterLine(text, state.rounds);
+  // A clean round after a P1 round rewrites the line too, so a fixed P1 stops blocking land.
+  if (state.rounds.some((r) => r.findings.some((f) => f.priority === 'P1'))) text = withRefuterLine(text, state.rounds);
   if (!editBody(withStopLine(text, repeated))) {
     console.error(`Round ${round} counted, but the PR body was not updated. Run: ${ghBin} pr edit ${pr.number} --body-file ${bodyPath}`);
     return 1;

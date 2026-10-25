@@ -10,6 +10,7 @@ const {
   NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, KillSwitchOn,
   ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 } = require('./errors');
+const { SessionExpired, SessionNotYours, AlreadyConfirmed } = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
 function escapeText(s) {
@@ -66,6 +67,12 @@ const MESSAGES = [
     ? `I couldn't finish sending to ${escapeText(system)}: ${sentWords(sent)} before it stopped, and the rest weren't. `
       + (sent.recorded === false ? `I couldn't record that, so please tell ${admin}. ${checkFirst(admin)}` : `Please tell ${admin} before trying again.`)
     : `I couldn't reach ${escapeText(system)} just now. Please try again later, or tell ${admin} if it keeps happening.`)],
+  // Scoped-pull form sessions (Story 9.3).
+  [SessionExpired, () => 'This form has expired (forms close after 30 minutes without use). Go back to the menu and open it again.'],
+  [SessionNotYours, () => "This form belongs to someone else, so I can't act on it. Open your own from the menu."],
+  [AlreadyConfirmed, ({ done }) => (done
+    ? 'You already confirmed this request, so it ran once and I won\'t run it again. Open it again from the menu for a new one.'
+    : 'You already confirmed this request and it\'s still running, so I won\'t run it twice.')],
 ];
 
 // Hub wording (Story 6.4). A hub file may set its own welcome and feedback

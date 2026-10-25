@@ -6,7 +6,8 @@
 //
 // Refuses, with no merge, unless the PR is open against main, its body has a
 // Kind line, the reviewed head is the PR head (or review was exempt), the
-// Refuter line shows nothing confirmed, escalated or pending, and every CI
+// Refuter line shows nothing confirmed, escalated or pending (a P1 fixed and
+// re-reviewed in a later round shows as fixed and does not block), and every CI
 // check on the head passed. Pending checks are polled until --timeout-min
 // (default 15). Then a draft is marked ready, the PR is merged with a merge
 // commit pinned to the checked head, the MERGED state is confirmed with gh, the

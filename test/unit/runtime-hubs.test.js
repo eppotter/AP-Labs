@@ -42,10 +42,11 @@ function setup({ env = 'dev', canUse, views = false, reg = registry } = {}) {
 // The Open buttons, in menu order (the Help button is checked on its own).
 const buttons = (msg) => msg.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
 
-test('each hub file registers its slash command; one listener each handles Open and Help clicks', () => {
+test('each hub file registers its slash command; one listener each handles Open, Help and form clicks', () => {
   const { app } = setup();
   assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
-  assert.equal(app.actionListeners.length, 2);
+  assert.equal(app.actionListeners.length, 3);
+  assert.ok(app.actionListeners[2].pattern.test('scoped-pull:confirm'));
   assert.deepEqual([...app.eventListeners.keys()], ['team_join']);
 });
 

@@ -97,6 +97,23 @@ class PartialFailure extends ConnectorFailed {
   }
 }
 
+// A scoped-pull form click whose session is gone: idle 30 minutes, or never
+// known (Story 9.3). details: {}
+class SessionExpired extends RuntimeRefusal {
+  constructor() { super('form session expired', {}); }
+}
+
+// A form click on a session another person opened (Story 9.3). details: {}
+class SessionNotYours extends RuntimeRefusal {
+  constructor() { super('form session belongs to another person', {}); }
+}
+
+// A second Confirm (a double click or a replay) on a request already confirmed
+// (Story 9.3). details: { done } (false while it is still running)
+class AlreadyConfirmed extends RuntimeRefusal {
+  constructor(details) { super(`request already ${details.done ? 'done' : 'running'}`, details); }
+}
+
 // The AI service refused or failed (Story 9.1), so the module falls back to its
 // typed form. Raised before anything is sent, except 'failed'. reason is one
 // of LLM_REASONS; details.log, when set, is for the log only and never shown.
@@ -114,4 +131,5 @@ class LlmUnavailable extends RuntimeRefusal {
 module.exports = {
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, LLM_REASONS,
   KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
+  SessionExpired, SessionNotYours, AlreadyConfirmed,
 };

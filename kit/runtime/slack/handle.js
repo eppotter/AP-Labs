@@ -74,4 +74,33 @@ function handle(name, work, { log, store }) {
   };
 }
 
-module.exports = { handle, replyPrivately, isDuplicateEvent, PLAIN_ERROR };
+// The one exception to the empty ack: a view_submission listener (Story 9.3)
+// answers Slack in its ack, with { response_action: 'errors', errors } or
+// { response_action: 'update', view }. work(args) must be fast and do no slow
+// I/O (Slack wants the ack within 3 s); it returns the ack payload. If it
+// throws, the error is logged and the ack carries onError(args) (for example
+// a view with the plain error), so the person never sees a silent failure.
+// Every other listener keeps handle() and its empty ack.
+function handleView(name, work, { log, onError }) {
+  return async (args) => {
+    let payload;
+    try {
+      payload = await work(args);
+    } catch (err) {
+      log.error('handler failed', { handler: name, err });
+      try {
+        payload = onError(args);
+      } catch (buildErr) {
+        log.error('could not tell the person about a failure', { handler: name, err: buildErr });
+        payload = undefined;
+      }
+    }
+    try {
+      await args.ack(payload);
+    } catch (ackErr) {
+      log.error('ack failed', { handler: name, err: ackErr });
+    }
+  };
+}
+
+module.exports = { handle, handleView, replyPrivately, isDuplicateEvent, PLAIN_ERROR };
