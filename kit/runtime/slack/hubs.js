@@ -184,7 +184,7 @@ function registerHubs(app, {
   const visibleEntries = (hubId, person) => registry.entries(hubId)
     .filter((m) => isVisible(m, env) && decide(person, m) === 'allowed');
   const notSetUp = (person) => (person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin })));
-  const fellBack = (where, reason, hub) => log.info('hub modal fallback', { where, reason, hub: hub || null });
+  const fellBack = (where, reason, hub, via) => log.info('hub modal fallback', { where, reason, hub: hub || null, ...(via ? { via } : {}) });
   // The runner keeps each result as shown, so "Back to the list" can put it
   // back; Back rebuilds the Push button with the same hook.
   const hooks = keepingResult(pushHooks, store, log);
@@ -234,7 +234,10 @@ function registerHubs(app, {
   // Where a click's replies go. From a hub modal: a view pushed onto it
   // (reply() pushes, then appends; loading() pushes "Loading…" first). From a
   // message: the ephemeral reply, as before. If the first push fails and Slack
-  // gave a response_url, this click falls back to ephemeral replies.
+  // gave a response_url, this click falls back to ephemeral replies. A click
+  // inside a modal has no response_url (#114), so there the reply instead
+  // replaces the view the click came from (views.update on body.view.id),
+  // later replies appended below it, and the fallback is logged.
   const replyTarget = ({ body, respond, client }, { where, title, hubId }) => {
     // A long text reply goes as section blocks, in more than one message if
     // it needs over 50 blocks (kit/runtime/slack/format).
@@ -248,16 +251,42 @@ function registerHubs(app, {
       return { modal: false, loading: async () => {}, reply: viaEphemeral };
     }
     const view = pushedView({ client, triggerId: body.trigger_id, title, hubId });
-    let ephemeralNow = false;
+    const fromId = typeof body.view.id === 'string' && body.view.id ? body.view.id : null;
+    // In place: the replies so far, all shown in the view the click came from.
+    // force: a hash conflict (the view changed since the click) must not drop
+    // the only thing this person will see.
+    const inPlace = fromId ? updatedView({ client, view: body.view, title, hubId }) : null;
+    const shownInPlace = [];
+    const viaUpdate = async (message) => {
+      if (message === undefined) return undefined; // loading(): nothing to show
+      shownInPlace.push(message);
+      const last = shownInPlace.at(-1);
+      const modal = last && typeof last === 'object' ? last.modal : undefined;
+      try {
+        await inPlace.show({ blocks: shownInPlace.flatMap(messageBlocks), ...(modal ? { modal } : {}) }, { force: true });
+      } catch (err) {
+        shownInPlace.pop();
+        throw err;
+      }
+      return undefined;
+    };
+    let fallback = null; // null, or the function every later reply goes to
     const guarded = (fn) => async (message) => {
-      if (ephemeralNow) return message === undefined ? undefined : viaEphemeral(message);
+      if (fallback) return message === undefined ? undefined : fallback(message);
       try {
         return await fn(message);
       } catch (err) {
-        if (view.pushed || typeof respond !== 'function') throw err;
-        ephemeralNow = true;
-        fellBack(where, failureReason(err), hubId);
-        return message === undefined ? undefined : viaEphemeral(message);
+        if (view.pushed) throw err;
+        if (typeof respond === 'function') {
+          fallback = viaEphemeral;
+          fellBack(where, failureReason(err), hubId);
+        } else if (inPlace) {
+          fallback = viaUpdate;
+          fellBack(where, failureReason(err), hubId, 'views.update');
+        } else {
+          throw err;
+        }
+        return message === undefined ? undefined : fallback(message);
       }
     };
     return { modal: true, loading: guarded(() => view.loading()), reply: guarded((m) => view.show(m)) };

@@ -446,6 +446,19 @@ test('if pushing the form fails, the fallback reply says to open it in the hub w
   assert.ok(responded.every((r) => !r.blocks));
 });
 
+test('if pushing the form fails inside a modal (no response_url), the form replaces the menu view in place, with its submit (#114)', async () => {
+  const { app, log } = setup();
+  app.viewsFail.push = Object.assign(new Error('expired_trigger_id'), { data: { error: 'expired_trigger_id' } });
+  await app.dispatchAction('lapsed:open', { view: { ...MENU_VIEW, hash: 'hmenu' } });
+  const [update] = calls(app, 'update');
+  assert.equal(update.view_id, 'VMENU');
+  assert.equal(update.view.callback_id, FORM_CALLBACK);
+  assert.ok(update.view.submit);
+  assert.equal(inputs(update.view).length, PULL.parameters.length);
+  assert.deepEqual(app.responded, []);
+  assert.ok(log.lines.some((l) => l.msg === 'hub modal fallback' && l.fields.via === 'views.update'));
+});
+
 test('modal.updatedView: updates by id with the latest hash, never pushes, and carries a message\'s modal options', async () => {
   const sentArgs = [];
   const client = { views: { update: async (args) => { sentArgs.push(args); return { view: { hash: `n${sentArgs.length}` } }; } } };
