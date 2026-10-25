@@ -40,6 +40,17 @@
 //   dispatchView(callback_id, { user, view })    the view_submission listener
 //       for that callback_id, with an ack that records its payload in
 //       this.viewAcks (undefined for an empty ack). Returns how many ran.
+//
+// Connection events (Story 11.2): like a Bolt socketMode app, the fake has
+// this.receiver.client, an EventEmitter standing in for the Socket Mode
+// client. start() emits "connected" on it, the way Bolt's start() resolves on
+// the first connected event; set this.connectOnStart = false (in a subclass
+// constructor) for an app that starts but never connects.
+//   connect()     emits "connected" (a reconnect succeeded)
+//   disconnect()  emits "reconnecting" (the socket dropped; the client retries)
+//   close()       emits "disconnected" (the client gave up or was stopped)
+
+const { EventEmitter } = require('node:events');
 
 class FakeSlackApp {
   constructor(options) {
@@ -52,6 +63,8 @@ class FakeSlackApp {
     this.eventListeners = new Map();
     this.errorHandler = null;
     this.started = false;
+    this.receiver = { client: new EventEmitter() };
+    this.connectOnStart = true;
     this.said = [];
     this.responded = [];
     this.posted = [];
@@ -142,7 +155,14 @@ class FakeSlackApp {
   async start() {
     if (this.options.failStart) throw this.options.failStart;
     this.started = true;
+    if (this.connectOnStart) this.connect();
   }
+
+  connect() { this.receiver.client.emit('connected'); }
+
+  disconnect() { this.receiver.client.emit('reconnecting'); }
+
+  close() { this.receiver.client.emit('disconnected'); }
 
   async stop() { this.started = false; }
 

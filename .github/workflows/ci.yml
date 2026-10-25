@@ -63,3 +63,30 @@ jobs:
         run: npm ci
       - name: Clean bones
         run: npm run clean-bones
+
+  container:
+    # The app runs in a container (Story 11.2): build the image, then run its
+    # smoke test inside it with no network, a read-only filesystem (only /tmp
+    # and APLABS_VAR_DIR writable) and the test fixtures mounted read-only.
+    # Plain docker build and run: no third-party actions, no secrets, no
+    # build args. Local `npm test` skips the image build (no docker there).
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build --tag aplabs-runtime:ci .
+      - name: Show the image (user, platform, size)
+        run: docker image inspect aplabs-runtime:ci --format 'user={{.Config.User}} platform={{.Os}}/{{.Architecture}} size={{.Size}} bytes'
+      - name: Smoke test inside the image (no network, read-only, fake Slack)
+        run: |
+          docker run --rm \
+            --network none \
+            --read-only \
+            --tmpfs /tmp:rw,mode=1777 \
+            --tmpfs /var/lib/aplabs:rw,mode=1777 \
+            --volume "$PWD/test/fixtures:/app/test/fixtures:ro" \
+            aplabs-runtime:ci \
+            node scripts/container-smoke.js

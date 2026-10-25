@@ -517,3 +517,120 @@ test('jobs: shutdown stops the scheduler before Slack, and does not wait for a r
   assert.equal(exited, 0);
   assert.deepEqual([lines[0].msg, lines[0].signal], ['stopping', 'SIGTERM']);
 });
+
+// --- Story 11.2: the health listener (kit/runtime/app/health) ------------------
+
+const net = require('node:net');
+const http = require('node:http');
+
+// A free local port, found by listening on 0 and closing.
+async function freePort() {
+  const s = net.createServer();
+  await new Promise((r) => s.listen(0, '127.0.0.1', r));
+  const { port } = s.address();
+  await new Promise((r) => s.close(r));
+  return port;
+}
+
+function getHealth(port, urlPath = '/healthz') {
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: urlPath }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    }).on('error', reject);
+  });
+}
+
+test('health: off when APLABS_HEALTH_PORT is unset; the startup line says so', async () => {
+  const { code, health, entries } = await boot(env());
+  assert.equal(code, 0);
+  assert.equal(health, null);
+  assert.equal(entries.find((e) => /bot started/.test(e.msg)).health, 'off');
+});
+
+test('health: on with APLABS_HEALTH_PORT, started before Slack, fed by the connection events', async (t) => {
+  const port = await freePort();
+  let now = 5_000_000;
+  let sawHealthBeforeStart = null;
+  class Watching extends FakeSlackApp {
+    async start() {
+      sawHealthBeforeStart = (await getHealth(port)).status;
+      return super.start();
+    }
+  }
+  const res = await boot(env({ APLABS_HEALTH_PORT: String(port) }), { App: Watching, now: () => now, healthHost: '127.0.0.1' });
+  t.after(() => res.health && res.health.close());
+  assert.equal(res.code, 0);
+  assert.equal(sawHealthBeforeStart, 200, 'the listener answers before Slack connects');
+  assert.equal(res.entries.find((e) => /bot started/.test(e.msg)).health, `on (port ${port})`);
+  now += 91_000;
+  assert.deepEqual(await getHealth(port), { status: 200, body: 'ok' });
+  res.app.disconnect();
+  now += 61_000;
+  assert.deepEqual(await getHealth(port), { status: 503, body: 'down' });
+  res.app.connect();
+  assert.deepEqual(await getHealth(port), { status: 200, body: 'ok' });
+  assert.equal((await getHealth(port, '/')).status, 404);
+});
+
+test('health: an app that never connects gets 503 at 91 seconds', async (t) => {
+  const port = await freePort();
+  let now = 5_000_000;
+  class NeverConnects extends FakeSlackApp {
+    constructor(o) { super(o); this.connectOnStart = false; }
+  }
+  const res = await boot(env({ APLABS_HEALTH_PORT: String(port) }), { App: NeverConnects, now: () => now, healthHost: '127.0.0.1' });
+  t.after(() => res.health && res.health.close());
+  assert.equal(res.code, 0);
+  assert.deepEqual(await getHealth(port), { status: 200, body: 'ok' });
+  now += 91_000;
+  assert.deepEqual(await getHealth(port), { status: 503, body: 'down' });
+});
+
+test('health: a malformed APLABS_HEALTH_PORT refuses to start, naming the variable', async () => {
+  for (const bad of ['0', '70000', 'http']) {
+    const { code, app, entries } = await boot(env({ APLABS_HEALTH_PORT: bad }));
+    assert.equal(code, 1, bad);
+    assert.equal(app, undefined);
+    const refusal = entries.find((e) => e.msg === 'refusing to start');
+    assert.match(refusal.problems.join('\n'), /APLABS_HEALTH_PORT must be a port number from 1 to 65535/);
+  }
+});
+
+test('health: a port already in use (EADDRINUSE) refuses to start, naming the variable, before Slack', async (t) => {
+  const blocker = net.createServer();
+  await new Promise((r) => blocker.listen(0, '127.0.0.1', r));
+  t.after(() => blocker.close());
+  const { port } = blocker.address();
+  const { code, app, entries } = await boot(env({ APLABS_HEALTH_PORT: String(port) }), { healthHost: '127.0.0.1' });
+  assert.equal(code, 1);
+  assert.equal(app, undefined, 'Slack never started');
+  const refusal = entries.find((e) => e.msg === 'refusing to start');
+  assert.match(refusal.problems.join('\n'), /APLABS_HEALTH_PORT: port \d+ is already in use/);
+});
+
+test('health: a failed Slack connection closes the listener', async () => {
+  const port = await freePort();
+  class FailingApp extends FakeSlackApp {
+    async start() { throw new Error('invalid_auth'); }
+  }
+  const { code } = await boot(env({ APLABS_HEALTH_PORT: String(port) }), { App: FailingApp, healthHost: '127.0.0.1' });
+  assert.equal(code, 1);
+  await assert.rejects(getHealth(port), (err) => err.code === 'ECONNREFUSED');
+});
+
+test('health: shutdown closes the listener after Slack stops', async () => {
+  const order = [];
+  const log = createLog({ write: () => {} });
+  await shutdown({
+    app: { stop: async () => { order.push('slack'); } },
+    data: { close: () => order.push('data') },
+    jobs: { stop: () => order.push('jobs') },
+    health: { close: async () => { order.push('health'); } },
+    log,
+    exit: () => order.push('exit'),
+  }, 'SIGTERM');
+  assert.deepEqual(order, ['jobs', 'slack', 'health', 'data', 'exit']);
+});
