@@ -5,12 +5,29 @@
 // computed) wins, and a declaration below the computed floor is a finding.
 //
 // Floor of one path, first match wins:
-//   T3  .aplabs/**, hard-coded: the profile can never lower its own floor
+//   T3  engine floors (ENGINE_T3), hard-coded, so no profile can lower them
+//       (not by tier rows, not by inert, and the write gate never exempts
+//       them through gate.exempt):
+//         .aplabs/**                 the client's profile and context
+//         kit/runtime/access/**, kit/lib/permissions/**, kit/lib/profile/**
+//                                    who can use which tool; the untrusted profile
+//         kit/lib/secrets/**, kit/fixture/{publish,remote,motherduck,md-probe}.js
+//                                    every key; the MotherDuck write key
+//         kit/runtime/data/**, kit/runtime/sql/**
+//                                    the bot's read-only connection; the SQL checker
+//         kit/lib/tier/**, kit/lib/gate/**, kit/hooks/**,
+//         .claude/settings.json, .codex/hooks.json
+//                                    the governance itself and the hook wiring
+//       A path near these but outside them (kit/fixture/build.js,
+//       kit/runtime/slack/**, kit/lib/review/**) keeps its profile tier.
+//       Compute a change's tier with renames as both paths
+//       (git diff --no-renames --name-only), so a move cannot hide a floor.
 //   T3  profile tiers.T3
 //   T2  profile tiers.T2
 //   T1  profile tiers.T1
-//   T1  agent instruction files (CLAUDE.md, AGENTS.md, SKILL.md, .claude/**):
-//       they steer the builder, so they are never inert
+//   T1  agent instruction files (CLAUDE.md, AGENTS.md, SKILL.md, .claude/**;
+//       .claude/settings.json is an engine floor above): they steer the
+//       builder, so they are never inert
 //   T0  profile inert
 //   T1  anything else: code never floors at T0
 // Floor of a change = the highest tier of any path. T0 only when EVERY path is inert.
@@ -22,6 +39,8 @@
 //   - Paths are normalised first, so docs/../billing/x.js is billing/x.js,
 //     but never trimmed: whitespace is part of a filename.
 //     A path that leaves the repo root, or is absolute, floors at T3.
+//   - Symlinks are the caller's job: the write gate resolves each target to
+//     its real path before asking for a tier.
 //   - No paths at all is an error, never T0 (an upstream diff that failed
 //     must not read as "nothing changed").
 //
@@ -33,7 +52,30 @@ const path = require('path');
 
 const TIERS = ['T0', 'T1', 'T2', 'T3'];
 const ORDER = { T0: 0, T1: 1, T2: 2, T3: 3 };
-const ENGINE_T3 = ['.aplabs/**'];
+// Engine floors (#68): always T3 under every profile. Matched like every
+// raise rule (case-insensitive, after normalising); see the header comment.
+const ENGINE_T3 = Object.freeze([
+  '.aplabs/**',
+  // Who can use which tool, and the profile that says so.
+  'kit/runtime/access/**',
+  'kit/lib/permissions/**',
+  'kit/lib/profile/**',
+  // Every key, and the code that holds the MotherDuck write key.
+  'kit/lib/secrets/**',
+  'kit/fixture/publish.js',
+  'kit/fixture/remote.js',
+  'kit/fixture/motherduck.js',
+  'kit/fixture/md-probe.js',
+  // The bot's read-only data connection and the SQL checker.
+  'kit/runtime/data/**',
+  'kit/runtime/sql/**',
+  // The governance itself: tiers, the gate, the hooks and their wiring.
+  'kit/lib/tier/**',
+  'kit/lib/gate/**',
+  'kit/hooks/**',
+  '.claude/settings.json',
+  '.codex/hooks.json',
+]);
 
 // Minimal glob: `**` = any depth (incl. none), `*` = within one segment, every
 // other character literal. Anchored. Profile globs are untrusted (PR-07), so
@@ -99,15 +141,17 @@ function isInstructionFile(p) {
   return /^(claude(\.local)?|agents|skill)\.md$/i.test(segs[segs.length - 1]) || segs.some((s) => /^\.claude$/i.test(s));
 }
 
+const raise = (globs) => (globs || []).map((g) => globMatcher(g, { nocase: true }));
+const engineMatchers = raise(ENGINE_T3);
+
 // Compiled rules, cached per (frozen) profile object.
 const compiled = new WeakMap();
 
 function rulesOf(profile) {
   let rules = compiled.get(profile);
   if (!rules) {
-    const raise = (globs) => (globs || []).map((g) => globMatcher(g, { nocase: true }));
     rules = {
-      engineT3: raise(ENGINE_T3),
+      engineT3: engineMatchers,
       T3: raise(profile.tiers.T3),
       T2: raise(profile.tiers.T2),
       T1: raise(profile.tiers.T1),
@@ -140,6 +184,16 @@ function tierOf(profile, filePath) {
   if (any(p, r.T1) || isInstructionFile(p)) return 'T1';
   if (any(p, r.inert)) return 'T0';
   return 'T1';
+}
+
+/**
+ * True when ONE path is under an engine T3 floor (ENGINE_T3), or leaves the
+ * repo (fail high). No profile is involved: the write gate uses it to refuse
+ * gate.exempt for these paths.
+ */
+function isEngineFloor(filePath) {
+  const p = normalise(filePath);
+  return p === null || any(p, engineMatchers);
 }
 
 /** Floor of a change: the highest tier of any path. Throws on an empty list. */
@@ -176,7 +230,7 @@ function resolveTier(profile, paths, declared) {
   };
 }
 
-module.exports = { tierOf, tierFloor, maxTier, resolveTier, globMatcher, ENGINE_T3, TIERS };
+module.exports = { tierOf, tierFloor, maxTier, resolveTier, globMatcher, isEngineFloor, ENGINE_T3, TIERS };
 
 // CLI: node kit/lib/tier [--declared T1] path…   (or paths on stdin, one per line;
 //      lines are taken verbatim, only empty lines are dropped)
