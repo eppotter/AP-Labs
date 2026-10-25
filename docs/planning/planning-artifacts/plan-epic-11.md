@@ -113,6 +113,8 @@ Tier: T3 (computed: `kit/lib/profile/**` and `kit/lib/tier/**` are engine floors
 - **Architecture docs updated.** AD-13 gains: "The connection state starts down; after the grace period, 200 needs a seen `connected` event (fails closed)." AD-9 adds `scripts/install-duckdb-extensions.js` (image build only) to the files allowed to import `@duckdb/node-api`.
 - **"Done" for 11.2** is the `container` job passing on the PR. A real deploy on a host belongs to the first fork that needs one (proposed ledger row below).
 
+**Changed during the build (2026-10-25):** the MotherDuck acceptance criterion changed from "the extension loads offline" to "the extension is installed and DuckDB finds it offline", because the extension's own start-up calls MotherDuck's API on every `LOAD`, so it can never load with the network off (the first CI run failed on that call). The smoke test now checks the installed files for the pinned DuckDB version and accepts only that network-call failure after DuckDB has found the extension.
+
 **Changed since the epics:** the health listener the epics assumed from 6.1 isn't built yet (Q7). DEP-016 (from #110) adds the MotherDuck extension step. Docker isn't on your Mac, so the image is only built in CI. Size M, not S. The review made health fail closed (B4), the app files read-only (B5), the secret check precise (B6), and moved the extension install into one allow-listed script with an `extensionLoads` proof in the data runner (B7), which raises the tier to T3.
 
 Tier: T3 (computed: `kit/runtime/data/**` is an engine floor, and `Dockerfile`, `.dockerignore` and `.github/workflows/**` are floors from 11.1)

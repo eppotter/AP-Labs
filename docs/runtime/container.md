@@ -10,7 +10,7 @@ The template proves the image in CI only: the `container` job builds it and runs
 - **amd64 only.** The image is built for linux/amd64. An arm64 host (for example AWS Graviton, or an Apple Silicon machine without emulation) is not supported.
 - **Runs as `node`** (uid 1000, from the base image), never root. The command is `node kit/runtime/app` in exec form, so SIGTERM reaches the app's own shutdown.
 - **Dependencies** are installed inside the image with `npm ci` for its platform. `node_modules` is never copied from a laptop.
-- **The MotherDuck extension** is installed at build by `scripts/install-duckdb-extensions.js` for the pinned DuckDB version (DEP-016). The bot itself never installs anything.
+- **The MotherDuck extension** is installed at build by `scripts/install-duckdb-extensions.js` for the pinned DuckDB version (DEP-016): `motherduck` and the `motherduck_impl` part its build-time `LOAD` fetches. The bot itself never installs anything. A real `LOAD motherduck` needs MotherDuck's network: the extension's own start-up calls MotherDuck's API every time it loads. So the CI smoke test, which runs with no network, proves the extension is installed and that DuckDB finds it offline (the load gets past DuckDB's extension lookup and fails only on that API call), not that it loads.
 - **Env only.** The image sets `APLABS_NO_KEYCHAIN=1`: it never looks for the macOS Keychain.
 - **Not in the image** (`.dockerignore`): `node_modules`, `.git`, `var/`, `.env*` files, `*.duckdb` data files, the agent folders (`.claude/`, `.codex/`, `.agents/`, `_bmad/`), `docs/`, `test/` and the profile's context folder (`.aplabs/context/`). No secret is baked into the image.
 
@@ -66,7 +66,7 @@ With `APLABS_HEALTH_PORT` set, the app serves `GET /healthz` on that port on all
 ## Host caveats
 
 - **The extension lives in the runtime user's home.** DuckDB looks for extensions under `$HOME/.duckdb`; the image installs the MotherDuck extension in `/home/node/.duckdb` and sets `HOME=/home/node`. A host that runs the image as a different, arbitrary UID (OpenShift does by default) or changes `HOME` won't find it, and a MotherDuck fork reports the data unavailable. Run it as the image's user (uid 1000), or keep `HOME=/home/node`.
-- **A DuckDB bump needs a rebuilt image.** The extension must match the pinned DuckDB version. The CI smoke test loads it with the network off, so a mismatch fails the PR, not the deploy.
+- **A DuckDB bump needs a rebuilt image.** The extension must match the pinned DuckDB version. The CI smoke test checks that the extension files are in the folder for the pinned DuckDB version and that DuckDB finds them with the network off, so a mismatch fails the PR, not the deploy. A MotherDuck fork still needs the host to reach MotherDuck at run time.
 - **amd64 only** (above).
 
 ## Running it by hand
