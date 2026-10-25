@@ -19,6 +19,12 @@
 //         kit/lib/tier/**, kit/lib/gate/**, kit/hooks/**,
 //         .claude/settings.json, .codex/hooks.json
 //                                    the governance itself and the hook wiring
+//         kit/runtime/jobs/**, kit/runtime/schema/jobs.schema.json
+//                                    scheduled jobs: code that runs with no person asking
+//         Dockerfile, .dockerignore, .github/workflows/**
+//                                    what ships in the image and what CI runs
+//         kit/release/**, kit/lib/template/**, kit/lib/fork/**
+//                                    template releases, updates and the fork comparison
 //       A path near these but outside them (kit/fixture/build.js,
 //       kit/runtime/slack/**, kit/lib/review/**) keeps its profile tier.
 //       Compute a change's tier with renames as both paths
@@ -78,6 +84,16 @@ const ENGINE_T3 = Object.freeze([
   'kit/hooks/**',
   '.claude/settings.json',
   '.codex/hooks.json',
+  // Epic 11 (plan epic-11, Story 11.1): scheduled jobs, the container and CI,
+  // and the template's release, update and fork-comparison engine.
+  'kit/runtime/jobs/**',
+  'kit/runtime/schema/jobs.schema.json',
+  'Dockerfile',
+  '.dockerignore',
+  '.github/workflows/**',
+  'kit/release/**',
+  'kit/lib/template/**',
+  'kit/lib/fork/**',
 ]);
 
 // Minimal glob: `**` = any depth (incl. none), `*` = within one segment, every
