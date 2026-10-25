@@ -301,7 +301,7 @@ flowchart TB
 | CAP-12 jobs | `kit/runtime/jobs`, `<app>/jobs.json` | AD-16 |
 | CAP-13 fixture | `kit/fixture`, `examples/brightside/fixture` | AD-9, AD-18 |
 | CAP-14 demo | Brightside example modules | all |
-| CAP-15 forks | `kit/runtime/paths.js`, acceptance test | AD-1, AD-2 |
+| CAP-15 forks | `kit/runtime/paths.js` (the identical-engine set), `kit/lib/fork` (what may differ between forks: `compareForks`, `packageDelta`), `test/acceptance/two-forks.test.js` | AD-1, AD-2 |
 
 ## Computed tiers
 
