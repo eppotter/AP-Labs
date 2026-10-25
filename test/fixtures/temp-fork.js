@@ -48,9 +48,10 @@ const CLIENTS = Object.freeze({
   }),
 });
 
-// Left out of a copied fork: the example client, and a checkout's own
-// profile and context if it has one.
-const NOT_COPIED = Object.freeze(['examples/brightside', 'profiles/brightside', '.aplabs']);
+// Left out of a copied fork: the example client, a checkout's own profile and
+// context if it has one, and node_modules (linked instead; in a clean-bones
+// copy it is a symlink, which the node_modules/ ignore rule does not match).
+const NOT_COPIED = Object.freeze(['examples/brightside', 'profiles/brightside', '.aplabs', 'node_modules']);
 
 // Git with no user or system config, so the shell running the tests can't leak in.
 const gitEnv = () => ({ PATH: process.env.PATH, HOME: os.tmpdir(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' });
