@@ -1,9 +1,20 @@
 'use strict';
 
-// Wires the registry to Slack (Story 6.2). Each hub's slash command replies
-// privately with its menu; one action listener dispatches every Open click to
-// the module's handler. Both go through handle(), so the ack comes first and
-// any failure becomes a plain private message.
+// Wires the registry to Slack (Story 6.2). Each hub's slash command opens its
+// menu as a modal (kit/runtime/slack/modal); one action listener dispatches
+// every Open click to the module's handler. Both go through handle(), so the
+// ack comes first and any failure becomes a plain private message.
+//
+// Modals: an Open or Help click inside the hub modal pushes a view onto it
+// (Slack's back arrow returns to the menu). A module's view shows "Loading…"
+// until its first ctx.reply, and each later reply is appended below. Refusals,
+// "not available", data-unavailable and the plain error render in the pushed
+// view too. Fallback to the earlier private (ephemeral) replies, exactly as
+// before: when views.open fails (an expired trigger, an API error) or there is
+// no views client, and when a click comes from a message rather than a modal
+// (an old menu still in a channel), or the first push fails and Slack gave a
+// response_url. Each fallback is logged once at info, with the hub and Slack's
+// error code only, never person data.
 //
 // Access (Story 6.3): the Slack id is mapped to a profile user
 // (kit/runtime/access) and each entry's resource key is decided by
@@ -39,11 +50,14 @@ const {
   NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
 } = require('../errors');
 const { messageFor, welcomeText, feedbackText, joinWelcomeText } = require('../messages');
-const { handle } = require('./handle');
+const { handle, PLAIN_ERROR } = require('./handle');
 const {
   buildMenu, buildHelp, moduleIdFromAction, hubIdFromHelpAction, OPEN_ACTION, HELP_ACTION,
 } = require('../registry/menu');
 const { isVisible } = require('../registry');
+const {
+  modalView, pushedView, fromModal, hasViews, failureReason,
+} = require('./modal');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 
@@ -117,29 +131,87 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
   const visibleEntries = (hubId, person) => registry.entries(hubId)
     .filter((m) => isVisible(m, env) && decide(person, m) === 'allowed');
   const notSetUp = (person) => (person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin })));
+  const fellBack = (where, reason, hub) => log.info('hub modal fallback', { where, reason, hub: hub || null });
+
+  // Where a click's replies go. From a hub modal: a view pushed onto it
+  // (reply() pushes, then appends; loading() pushes "Loading…" first). From a
+  // message: the ephemeral reply, as before. If the first push fails and Slack
+  // gave a response_url, this click falls back to ephemeral replies.
+  const replyTarget = ({ body, respond, client }, { where, title, hubId }) => {
+    const viaEphemeral = (message) => respond(ephemeral(message));
+    if (!fromModal(body) || !hasViews(client)) {
+      fellBack(where, fromModal(body) ? 'no views client' : 'not from a modal', hubId);
+      return { modal: false, loading: async () => {}, reply: viaEphemeral };
+    }
+    const view = pushedView({ client, triggerId: body.trigger_id, title, hubId });
+    let ephemeralNow = false;
+    const guarded = (fn) => async (message) => {
+      if (ephemeralNow) return message === undefined ? undefined : viaEphemeral(message);
+      try {
+        return await fn(message);
+      } catch (err) {
+        if (view.pushed || typeof respond !== 'function') throw err;
+        ephemeralNow = true;
+        fellBack(where, failureReason(err), hubId);
+        return message === undefined ? undefined : viaEphemeral(message);
+      }
+    };
+    return { modal: true, loading: guarded(() => view.loading()), reply: guarded((m) => view.show(m)) };
+  };
+
+  // In a modal there is no response_url for handle() to answer through, so a
+  // failure is logged and the plain error is shown in the pushed view.
+  const failInView = async (name, target, err) => {
+    log.error('handler failed', { handler: name, err });
+    try {
+      await target.reply(PLAIN_ERROR);
+    } catch (replyErr) {
+      log.error('could not tell the person about a failure', { handler: name, err: replyErr });
+    }
+  };
 
   for (const hub of registry.hubs) {
-    app.command(hub.command, handle(`hub:${hub.id}`, async ({ command, respond }) => {
+    app.command(hub.command, handle(`hub:${hub.id}`, async ({ command, respond, client }) => {
       const person = personOf(command.user_id);
       const welcome = firstVisit(store, command.user_id, hub.id) ? welcomeText(hub) : undefined;
-      await respond(ephemeral(buildMenu(hub, visibleEntries(hub.id, person), { notice: notSetUp(person), welcome })));
+      const menu = buildMenu(hub, visibleEntries(hub.id, person), { notice: notSetUp(person), welcome });
+      if (!hasViews(client) || typeof command.trigger_id !== 'string' || !command.trigger_id) {
+        fellBack('command', hasViews(client) ? 'no trigger_id' : 'no views client', hub.id);
+      } else {
+        try {
+          // The divider and Help stay at the end of a menu cut to Slack's limit.
+          const view = modalView({ title: hub.name, blocks: menu.blocks, hubId: hub.id, keepTail: 2, callbackId: 'hub:menu' });
+          await client.views.open({ trigger_id: command.trigger_id, view });
+          return;
+        } catch (err) {
+          fellBack('command', failureReason(err), hub.id);
+        }
+      }
+      await respond(ephemeral(menu));
     }, { log, store }));
   }
 
-  app.action(HELP_ACTION, handle('hub:help', async ({ action, body, respond }) => {
+  app.action(HELP_ACTION, handle('hub:help', async (args) => {
+    const { action, body } = args;
     const actionId = action && action.action_id;
     const hubId = hubIdFromHelpAction(actionId);
     const hub = registry.hubs.find((h) => h.id === hubId);
-    if (!hub) {
-      log.warn('hub action refused', { action_id: actionId, reason: 'unknown hub', env });
-      await respond(ephemeral(NOT_AVAILABLE));
-      return;
+    const target = replyTarget(args, { where: 'help', title: hub ? `Help: ${hub.name}` : 'Help', hubId: hub ? hub.id : null });
+    try {
+      if (!hub) {
+        log.warn('hub action refused', { action_id: actionId, reason: 'unknown hub', env });
+        await target.reply(NOT_AVAILABLE);
+        return;
+      }
+      const person = personOf((body.user || {}).id);
+      await target.reply(buildHelp(hub, visibleEntries(hub.id, person), {
+        notice: notSetUp(person),
+        feedback: feedbackText(hub, admin),
+      }));
+    } catch (err) {
+      if (!target.modal) throw err;
+      await failInView('hub:help', target, err);
     }
-    const person = personOf((body.user || {}).id);
-    await respond(ephemeral(buildHelp(hub, visibleEntries(hub.id, person), {
-      notice: notSetUp(person),
-      feedback: feedbackText(hub, admin),
-    })));
   }, { log, store }));
 
   app.event('team_join', handle('team-join', async ({ event, client }) => {
@@ -152,40 +224,50 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
     log.info('join welcome sent', { hubs: hubs.map((h) => h.command), set_up: Boolean(person.user) });
   }, { log, store }));
 
-  app.action(OPEN_ACTION, handle('hub:dispatch', async ({ action, body, respond, client }) => {
+  app.action(OPEN_ACTION, handle('hub:dispatch', async (args) => {
+    const { action, body, client } = args;
     const user = body.user || {};
     const actionId = action && action.action_id;
     const mod = registry.module(moduleIdFromAction(actionId));
-    if (!mod || !isVisible(mod, env)) {
-      log.warn('hub action refused', { action_id: actionId, reason: !mod ? 'unknown module' : 'hidden in this environment', env });
-      await respond(ephemeral(NOT_AVAILABLE));
-      return;
-    }
-    const person = personOf(user.id);
-    const decision = decide(person, mod);
-    if (decision !== 'allowed') {
-      let refusal;
-      if (decision === 'error') refusal = new ConfigFault({ admin });
-      else if (!person.user) refusal = new NotSetUp({ client: profile.client.name, admin });
-      else refusal = new AccessDenied({ label: mod.label, admin });
-      log.warn('hub action refused', { action_id: actionId, reason: refusal.name, user: person.user ? person.user.id : null, env });
-      await respond(ephemeral(messageFor(refusal)));
-      return;
-    }
-    const name = await personName(client, user, log);
-    log.info('module dispatched', { module: mod.id, hub: mod.hub });
+    const shown = mod && isVisible(mod, env);
+    const target = replyTarget(args, { where: 'open', title: shown ? mod.label : 'Not available', hubId: shown ? mod.hub : null });
     try {
-      await mod.run({
-        person: { id: user.id, name },
-        client: { id: profile.client.id, name: profile.client.name },
-        module: { id: mod.id, label: mod.label },
-        data: moduleData(data, mod),
-        reply: (message) => respond(ephemeral(message)),
-      });
+      if (!shown) {
+        log.warn('hub action refused', { action_id: actionId, reason: !mod ? 'unknown module' : 'hidden in this environment', env });
+        await target.reply(NOT_AVAILABLE);
+        return;
+      }
+      const person = personOf(user.id);
+      const decision = decide(person, mod);
+      if (decision !== 'allowed') {
+        let refusal;
+        if (decision === 'error') refusal = new ConfigFault({ admin });
+        else if (!person.user) refusal = new NotSetUp({ client: profile.client.name, admin });
+        else refusal = new AccessDenied({ label: mod.label, admin });
+        log.warn('hub action refused', { action_id: actionId, reason: refusal.name, user: person.user ? person.user.id : null, env });
+        await target.reply(messageFor(refusal));
+        return;
+      }
+      // Push "Loading…" before anything slow: the trigger_id lasts 3 seconds.
+      await target.loading();
+      const name = await personName(client, user, log);
+      log.info('module dispatched', { module: mod.id, hub: mod.hub });
+      try {
+        await mod.run({
+          person: { id: user.id, name },
+          client: { id: profile.client.id, name: profile.client.name },
+          module: { id: mod.id, label: mod.label },
+          data: moduleData(data, mod),
+          reply: (message) => target.reply(message),
+        });
+      } catch (err) {
+        if (!(err instanceof DataUnavailable)) throw err;
+        log.warn('data unavailable', { module: mod.id, reason: err.reason });
+        await target.reply(messageFor(err));
+      }
     } catch (err) {
-      if (!(err instanceof DataUnavailable)) throw err;
-      log.warn('data unavailable', { module: mod.id, reason: err.reason });
-      await respond(ephemeral(messageFor(err)));
+      if (!target.modal) throw err;
+      await failInView('hub:dispatch', target, err);
     }
   }, { log, store }));
 }

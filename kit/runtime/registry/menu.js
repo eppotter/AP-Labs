@@ -39,8 +39,9 @@ function escapeText(s) {
 // hub: a hub file; entries: the modules this person may see, in menu order;
 // notice (optional): mrkdwn shown under the header, for example "you're not
 // set up yet"; welcome (optional): the hub's one-paragraph first-visit welcome
-// (mrkdwn), shown above the entries. Returns { text, blocks } for an ephemeral
-// reply.
+// (mrkdwn), shown above the entries. Returns { text, blocks }: the blocks are
+// the hub modal's (kit/runtime/slack/modal), the whole is the ephemeral
+// fallback reply.
 function buildMenu(hub, entries, { notice, welcome } = {}) {
   const blocks = [{ type: 'header', text: { type: 'plain_text', text: hub.name, emoji: false } }];
   if (welcome) blocks.push({ type: 'section', block_id: 'welcome', text: { type: 'mrkdwn', text: welcome } });
