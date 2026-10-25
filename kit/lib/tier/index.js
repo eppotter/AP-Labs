@@ -23,8 +23,9 @@
 //                                    scheduled jobs: code that runs with no person asking
 //         Dockerfile, .dockerignore, .github/workflows/**
 //                                    what ships in the image and what CI runs
-//         kit/release/**, kit/lib/template/**, kit/lib/fork/**
-//                                    template releases, updates and the fork comparison
+//         kit/release/**, kit/lib/template/**, kit/lib/fork/**, kit/lib/dist/**
+//                                    template releases, updates, the fork comparison
+//                                    and what the distribution tree leaves out
 //         kit/runtime/archetypes/approval-write/**, kit/runtime/connectors/**,
 //         kit/verify/write-path.js, scripts/check-write-path.js,
 //         kit/runtime/slack/channel.js, kit/runtime/store/**,
@@ -101,6 +102,10 @@ const ENGINE_T3 = Object.freeze([
   'kit/release/**',
   'kit/lib/template/**',
   'kit/lib/fork/**',
+  // Plan template-dist (Story D.1): the distribution tree's exclusions, the
+  // ledger transform and the deny-list scan that keep internal files and
+  // reference-client names out of every client fork.
+  'kit/lib/dist/**',
   // Epic 10 (plan epic-10, decision 4, Story 10.2): the write path. The
   // approval-write archetype, the connector contract, the check that keeps
   // writes inside that archetype, the one channel-post function (N9), the

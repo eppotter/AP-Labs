@@ -4,7 +4,7 @@
 // environment, outcome classification, the summary and the exit code. No I/O
 // here; kit/verify/run-all.js loads the profile and spawns the checks.
 //
-// Contract ported from the AI-Governance-Layer harness: checks run in order,
+// Contract ported from the reference platform's harness: checks run in order,
 // the last stdout line is a JSON summary, and a skip or timeout is never a
 // pass. An empty run is not a pass either.
 

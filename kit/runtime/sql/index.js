@@ -8,7 +8,7 @@
 // behind the locked DuckDB settings (Story 7.5), not the only line. It fails
 // closed on anything it cannot classify.
 //
-// Why a tokenizer and not a regex (prior art: Varsity's sql-guardrails): a
+// Why a tokenizer and not a regex (prior art: the reference platform's SQL guardrails): a
 // regex decides what a character means without knowing whether it is inside a
 // string, a comment or code, so `COALESCE(x, '--')` hides the rest of a line
 // from the guard while the database runs it. One left-to-right pass that tracks

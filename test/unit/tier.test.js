@@ -73,6 +73,7 @@ const GUARDED = {
   'kit/release/**': 'kit/release/index.js',
   'kit/lib/template/**': 'kit/lib/template/index.js',
   'kit/lib/fork/**': 'kit/lib/fork/index.js',
+  'kit/lib/dist/**': 'kit/lib/dist/index.js',
   'kit/runtime/archetypes/approval-write/**': 'kit/runtime/archetypes/approval-write/connectors.js',
   'kit/runtime/connectors/**': 'kit/runtime/connectors/contract.js',
   'kit/verify/write-path.js': 'kit/verify/write-path.js',
@@ -118,7 +119,7 @@ test('nearby paths outside the floors keep their current tier', () => {
     '.codex/config.toml', 'docs/kit/hooks/README.md',
     'kit/runtime/schema/module.schema.json', 'kit/runtime/jobs.js', 'kit/runtime/jobsx/x.js',
     'Dockerfile.md', 'docs/Dockerfile', '.github/CODEOWNERS', '.github/workflow/x.yml',
-    'kit/releases/x.js', 'kit/templates/job.md', 'kit/lib/fork.js',
+    'kit/releases/x.js', 'kit/templates/job.md', 'kit/lib/fork.js', 'kit/lib/dist.js', 'kit/lib/distx/x.js',
     'kit/runtime/archetypes/scoped-pull/results.js', 'kit/runtime/archetypes/approval-writer/x.js',
     'kit/verify/run-all.js', 'scripts/check-job-imports.js', 'kit/runtime/slack/hubs.js', 'kit/runtime/stores/x.js',
   ];

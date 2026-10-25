@@ -9,7 +9,7 @@
 1. **The Orchestrator is built first.** It is the scaffolding every other block is built through. This changes PLAN-v1 §4's order, which put it last.
 2. **Use proven tools off the shelf rather than writing our own.** Install BMAD for planning and vendor p3-stack for build → ship, both at pinned versions (BMAD 6.12.4, p3-stack `09909eb`) and unmodified apart from p3 path fixes. A thin AP Labs rules layer decides which skill runs at which stage ([design §4](../orchestrator/DESIGN.md#4-tooling-bmad-plans-p3-builds-decided)).
 3. **Review is cross-model by default:** Claude ↔ Codex, with a P1/P2 rubric, a script-enforced 3-round budget, the Refuter on every P1, and a same-model fallback when a client has no Codex ([design §5](../orchestrator/DESIGN.md#5-review-cross-model-by-default-decided)).
-4. **The roster:** Varsity's specialists plus a new **Onboarder** that trains SQLsmith, Architect and Connector per client. The Leadership Panel is removed.
+4. **The roster:** the reference platform's specialists plus a new **Onboarder** that trains SQLsmith, Architect and Connector per client. The Leadership Panel is removed.
 
 ## Why
 

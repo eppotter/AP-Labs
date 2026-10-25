@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { referencePatterns } = require('../../kit/lib/dist');
 
 const AGENTS_DIR = path.join(__dirname, '../../.claude/agents');
 
@@ -19,14 +20,17 @@ const ROSTER = {
   verifier: ['Read', 'Grep', 'Glob', 'Bash'],
 };
 
-// Reference-implementation specifics that must never reach the template's agents.
+// Generic specifics that must never reach the template's agents: a named
+// warehouse and Slack user ids. The reference client's own names live in the
+// deny list (docs/reference/dist-deny.txt), loaded below, so this file never
+// names them itself.
 const FORBIDDEN = [
-  /varsity/i,
-  /hometown/i,
   /snowflake/i,
-  /ONE_HOMETOWN_REVENUE|CTAOLIT|COMBINED_\w+_TABLE/i,
   /\bU0[A-Z0-9]{6,}\b/, // Slack user ids
 ];
+// null in a distribution copy (no docs/reference/); throws if docs/reference/
+// exists without the deny file, failing this file (fail closed).
+const REFERENCE = referencePatterns(path.join(__dirname, '../..'));
 
 // The subset of YAML frontmatter the agent files use: `key: value` and folded `key: >-` blocks.
 function parseFrontmatter(text) {
@@ -83,8 +87,12 @@ for (const agent of loadAgents()) {
     assert.ok(!('model' in agent.data), 'agents inherit the session model');
   });
 
-  test(`${name}: no reference-implementation specifics`, () => {
+  test(`${name}: no generic specifics (a named warehouse, Slack ids)`, () => {
     for (const re of FORBIDDEN) assert.doesNotMatch(agent.text, re);
+  });
+
+  test(`${name}: no reference-client specifics`, { skip: REFERENCE ? false : 'distribution copy: no docs/reference/' }, () => {
+    for (const p of REFERENCE) assert.ok(!p.re.test(agent.text), `${agent.file} matches deny pattern ${p.n}`);
   });
 
   // The Refuter (Story 1.4) predates the roster and states its limits in its own shape.
