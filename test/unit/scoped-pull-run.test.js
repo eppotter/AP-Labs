@@ -377,7 +377,7 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
   const uses = hubs.replace(/\/\/[^\n]*/g, '').split('\n').filter((l) => /\bllm\b/.test(l)).map((l) => l.trim());
   assert.deepEqual(uses, [
     'registry, profile, env, log, store, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),',
-    'store, log, run: createRunner({ data, log, admin, store, hooks: pushHooks }), read: llm ? createReader({ llm, log }) : null,',
+    'store, log, run: createRunner({ data, log, admin, store, hooks }), read: llm ? createReader({ llm, log }) : null,',
   ]);
   const app = fs.readFileSync(path.join(ROOT, 'kit/runtime/app/index.js'), 'utf8');
   assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, data, llm, connectors \}\)/);

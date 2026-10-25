@@ -38,6 +38,19 @@
 // scoringBlocks: the inputs, weights and ranges, the tie rule and the limit
 // kept). More lines can be passed in `extra` to detailsMessage: each entry is
 // a block, placed before the SQL.
+//
+// Back to the list: the result exactly as it was shown is kept beside the
+// record, under RESULT_KEY(runId) in the same namespace (so it has the same
+// 24-hour lifetime), by the runner's reuse hook (keepingResult, wired by the
+// hub). It is the result message the person already saw, with its headline,
+// values, preview rows and CSV line, and its "How was this made?" button:
+// nothing they were not shown, and the record keeps exactly the AD-15 shape.
+// The details view then carries a "Back to the list" button (BACK_ACTION,
+// the same run id), and a click puts that result back in the view with the
+// hook's buttons (the approval-write Push) rebuilt from the record. Back
+// never runs the query or sends the CSV again; it has the same checks as the
+// details button (the person who ran it only, access re-checked, an expired
+// run says the details are gone).
 
 const crypto = require('node:crypto');
 const { escapeText, messageFor } = require('../messages');
@@ -47,6 +60,10 @@ const { scoringBlocks } = require('../scoring');
 const NS = 'provenance';
 const ACTION = 'provenance:show';
 const BUTTON = 'How was this made?';
+const BACK_ACTION = 'provenance:back';
+const BACK = 'Back to the list';
+// Both buttons, for the hub's one listener.
+const ACTION_PATTERN = /^provenance:(show|back)$/;
 const RUN_ID = /^[0-9a-f]{32}$/;
 const RECORD_KEYS = Object.freeze(['runId', 'person', 'module', 'parameters', 'sql', 'source', 'fixtureVersion', 'ranAt', 'rowIds', 'rows']);
 // The data version, read through the query runner. Names its columns (a
@@ -109,6 +126,41 @@ function save(store, record) {
   return record.runId;
 }
 
+// Where the result as shown is kept, beside the run record. The colon keeps
+// it out of RUN_ID, so no button value can name it.
+const RESULT_KEY = (runId) => `${runId}:result`;
+
+// Keeps the result message as shown ({ text, blocks }, a copy) for Back.
+function keepResult(store, runId, message) {
+  const blocks = Array.isArray(message && message.blocks) ? message.blocks : [];
+  store.set(NS, RESULT_KEY(runId), structuredClone({ text: String((message && message.text) || ''), blocks }));
+}
+
+// The kept result for runId, or null. Only call after lookup() said OK.
+function resultOf(store, runId) {
+  if (typeof runId !== 'string' || !RUN_ID.test(runId)) return null;
+  const kept = store.get(NS, RESULT_KEY(runId));
+  return kept === undefined ? null : structuredClone(kept);
+}
+
+// The runner's reuse hook (kit/runtime/archetypes/scoped-pull/run) with the
+// result kept for Back: decorate first keeps the result as shown (with its
+// "How was this made?" button), then runs hooks.decorate, if any. Keeping it
+// can't cost the person their result: a failure only means no Back button.
+function keepingResult(hooks = {}, store, log) {
+  return Object.freeze({
+    ...hooks,
+    decorate(mod, message, record) {
+      try {
+        keepResult(store, record.runId, message);
+      } catch (err) {
+        if (log) log.warn('result not kept for Back', { module: mod && mod.id, err });
+      }
+      return typeof hooks.decorate === 'function' ? hooks.decorate(mod, message, record) : message;
+    },
+  });
+}
+
 // What a click on runId by person finds: { status, record }.
 function lookup(store, runId, person) {
   if (typeof runId !== 'string' || !RUN_ID.test(runId)) return { status: STATUS.GONE };
@@ -123,6 +175,9 @@ function refusalFor(status) {
 }
 
 const buttonFor = (runId) => ({ type: 'button', action_id: ACTION, value: runId, text: plain(BUTTON) });
+const backBlock = (runId) => ({
+  type: 'actions', block_id: 'provenance-back', elements: [{ type: 'button', action_id: BACK_ACTION, value: runId, text: plain(BACK) }],
+});
 
 // The result message with the button beside its headline (its first
 // section), so the rest of the result keeps its order. A message without a
@@ -182,8 +237,9 @@ function timeText(iso) {
 }
 
 // The details view: a scored module's scoring line, then extra (blocks to
-// add), both before the SQL.
-function detailsMessage(record, { mod, extra = [] } = {}) {
+// add), both before the SQL. back: end with "Back to the list" (when the
+// result was kept).
+function detailsMessage(record, { mod, extra = [], back = false } = {}) {
   const label = escapeText((mod && mod.label) || record.module);
   const params = paramBlocks(mod, record.parameters || {});
   const blocks = [
@@ -198,11 +254,13 @@ function detailsMessage(record, { mod, extra = [] } = {}) {
     ...scoringBlocks(mod, record),
     ...extra,
     ...sqlBlocks(record.sql),
+    ...(back ? [backBlock(record.runId)] : []),
   ];
   return { text: `How ${(mod && mod.label) || record.module} was made.`, blocks };
 }
 
 module.exports = {
   newRunId, sourceOf, readVersion, buildRecord, save, lookup, refusalFor, withButton, detailsMessage, sqlBlocks,
-  NS, ACTION, BUTTON, RUN_ID, RECORD_KEYS, VERSION_SQL, STATUS,
+  keepResult, resultOf, keepingResult, RESULT_KEY,
+  NS, ACTION, BUTTON, BACK_ACTION, BACK, ACTION_PATTERN, RUN_ID, RECORD_KEYS, VERSION_SQL, STATUS,
 };
