@@ -1,4 +1,4 @@
-# Test fixture for the Win-back example test (Story 9.3): the resources the
+# Test fixture for the Win-back and Unpaid invoices example tests (Stories 9.3, 9.5): the resources the
 # Brightside app dir names, one admin with a fake Slack id, and the same
 # forbidden columns as the demo profile. Tests read this, never
 # profiles/brightside/profile.yml. Deleted with the example in a fork.
@@ -9,6 +9,7 @@ resources:
   - { key: DATASET, label: Dataset, open_access: true }
   - { key: OUTBOX, label: Email outbox }
   - { key: WIN_BACK, label: Win-back list }
+  - { key: UNPAID_INVOICES, label: Unpaid invoices }
 users:
   - { id: ada, name: Ada Admin, role: admin, identities: { slack: U0FIXTUREADA } }
   - { id: max, name: Max Member, role: member, identities: { slack: U0FIXTUREMAX } }

@@ -8,7 +8,8 @@
 // Every click re-sets the entry, so the 30-minute TTL counts from the last
 // activity. Confirm consumes it (kit/runtime/store: get and delete in one
 // synchronous call, leaving a `done` marker), so a double click or a replay
-// finds no session and is told the list is running or done.
+// finds no session and is told the list is running, done, or tried and not
+// finished (Story 9.5).
 //
 // Every function here is synchronous: nothing can run between a check and a
 // consume.
@@ -25,6 +26,7 @@ const STATUS = Object.freeze({
   NOT_YOURS: 'not-yours',
   RUNNING: 'running',
   DONE: 'done',
+  FAILED: 'failed',
 });
 
 function newId() {
@@ -49,7 +51,8 @@ function lookup(store, id, person) {
     if (!marker) return { status: STATUS.EXPIRED };
     const owner = marker.person || (marker.result && marker.result.person);
     if (owner !== person) return { status: STATUS.NOT_YOURS };
-    return { status: marker.state === 'done' ? STATUS.DONE : STATUS.RUNNING };
+    if (marker.state !== 'done') return { status: STATUS.RUNNING };
+    return { status: marker.result && marker.result.failed ? STATUS.FAILED : STATUS.DONE };
   }
   if (s.person !== person) return { status: STATUS.NOT_YOURS };
   return { status: STATUS.OK, session: s };
@@ -77,8 +80,12 @@ function consume(store, id, person) {
 }
 
 // Records that a consumed session's run finished, for "already done".
-function finish(store, id, person) {
-  store.finish(NS, id, { person });
+// failed: true when it did not deliver the list (Story 9.5: blocked, failed,
+// data unavailable, or the CSV did not arrive). Either way the session stays
+// used: one Confirm is one attempt, and a replay of that Confirm never runs
+// again. It is told the run did not finish and to open the module again.
+function finish(store, id, person, { failed = false } = {}) {
+  store.finish(NS, id, { person, failed: Boolean(failed) });
 }
 
 module.exports = {

@@ -46,10 +46,16 @@ A `scoped-pull` module has no handler. Its manifest declares its inputs and name
 1. **Open** shows the form in the module's window: one input per parameter, defaults filled in. Its submit button is **Check values** (Slack requires a submit on any window with inputs).
 2. **Check values** reads what was typed and checks it against the declarations. A problem shows beside its input, worded from the input's label. Good values replace the form with the values as plain text and **Confirm** and **Change** buttons.
 3. **Change** returns to the form with the values filled in. **Confirm** runs the request once: a double click or a replay is told it is running or done.
+4. **The results** replace the window: the row count, the values, the first 10 rows, and a link to the CSV of every row, which goes only to the person's DM with the bot (never a channel). The engine stops at 5,000 rows and says "the first 5,000 of N". Zero rows, a refused query, a failed one or the data being unavailable each get a plain message instead. A run that didn't finish still uses up that Confirm: open the module again from the menu to retry.
 
-Each open form is a session bound to the person who opened it. A click by anyone else is refused, and after 30 minutes without use the form expires. Every step updates the same window in place. (Running the query and showing the rows arrives with Story 9.5; until then Confirm shows the confirmed values.)
+Each open form is a session bound to the person who opened it. A click by anyone else is refused, and after 30 minutes without use the form expires. Every step updates the same window in place.
 
-The SQL is a static template with named placeholders (`$zone`, `$limit`), bound as parameters. Never build SQL from text, and never use `${`.
+The SQL is a static template with named placeholders (`$zone`, `$limit`), bound as parameters. Never build SQL from text, and never use `${`. Startup checks it without connecting to the data and stops, naming the module, unless:
+
+- it passes the SQL checker, including the profile's forbidden columns (so a module can't select a barred column, or `*` while any is barred);
+- every `$name` in it is a declared input, and every declared input appears in it. An optional input left empty is bound as `NULL`, so write `($code IS NULL OR code = $code)`.
+
+Select only the columns the person needs: the CSV holds every column the query returns.
 
 ### Declaring inputs
 

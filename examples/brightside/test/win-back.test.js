@@ -6,8 +6,10 @@
 // names exactly the declared inputs and passes the guardrail, it binds and
 // runs on a temporary build of the fixture (38 North candidates over 90 days,
 // the known truth winback-north-90d), and the typed form runs end to end
-// through the engine with the fake Slack client. Running the list for the
-// person arrives with Story 9.5.
+// through the engine with the fake Slack client. Story 9.5: Confirm returns
+// the real list from a temporary build of the fixture (North over 90 days:
+// the 38 known candidates), summarised in the view with the CSV in the
+// admin's DM, and the AI service (a stand-in client) is never called.
 //
 // An example test (architecture carve-out): it reads Brightside's app dir and
 // fixture data, and is deleted with the example in a fork. Its profile and
@@ -15,6 +17,7 @@
 // from profiles/brightside/.
 
 const test = require('node:test');
+const { before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -34,6 +37,16 @@ const profile = loadProfile(PROFILE_PATH);
 const { registry, problems } = loadRegistry({ appDir: APP_DIR, profile });
 const winBack = registry && registry.module('win-back');
 const declared = winBack ? winBack.parameters.map((p) => p.name) : [];
+
+// One temporary build of the fixture, shared by the tests in this file.
+let tmp;
+let FIXTURE;
+before(async () => {
+  tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-win-back-')));
+  FIXTURE = path.join(tmp, 'brightside.duckdb');
+  await build({ fixtureDir: path.join(ROOT, 'examples/brightside/fixture'), out: FIXTURE });
+});
+after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 // The fixture's admin (WIN_BACK through the admin role) and a member without it.
 const ADMIN = profile.users.find((u) => u.role === 'admin').identities.slack;
@@ -61,11 +74,7 @@ test('the Win-back SQL is fixed: no ${, it names exactly the declared inputs, an
 });
 
 test('on the fixture, only the declared inputs bind and North over 90 days gives the 38 known candidates', async (t) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-win-back-')));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const file = path.join(dir, 'brightside.duckdb');
-  await build({ fixtureDir: path.join(ROOT, 'examples/brightside/fixture'), out: file });
-  const data = createData({ file, profile });
+  const data = createData({ file: FIXTURE, profile });
   t.after(() => data.close());
   const all = await data.run(winBack.sql, { zone: 'north', lapsed_days: 90, limit: 500 }, { declared });
   assert.equal(all.length, 38);
@@ -91,7 +100,15 @@ class ViewsSlackApp extends FakeSlackApp {
   constructor(options) { super({ ...options, views: true }); }
 }
 
-async function boot(t) {
+// A stand-in AI client that records every call (none is expected).
+function spyAi() {
+  const calls = [];
+  return { calls, client: { messages: { create: async (params) => { calls.push(params); throw new Error('no AI call expected'); } } } };
+}
+
+// Boots the app on the fixture build (or a missing file with noData), with a
+// fake AI key so the AI service is on and its stand-in client is watched.
+async function boot(t, { noData = false, ai = spyAi() } = {}) {
   const lines = [];
   const res = await main({
     env: {
@@ -99,15 +116,21 @@ async function boot(t) {
       // Fake values, shaped like the real ones; nothing here is a credential.
       SLACK_BOT_TOKEN: 'xoxb-000-111-faketokenvalue',
       SLACK_APP_TOKEN: 'xapp-1-A000-222-fakeappvalue',
+      ANTHROPIC_API_KEY: 'sk-ant-api00-fake-win-back-key-value',
       APLABS_PROFILE: PROFILE_PATH,
       APLABS_APP_DIR: APP_DIR,
-      APLABS_DATA_PATH: path.join(os.tmpdir(), 'aplabs-no-data', 'none.duckdb'),
+      APLABS_DATA_PATH: noData ? path.join(os.tmpdir(), 'aplabs-no-data', 'none.duckdb') : FIXTURE,
     },
     cwd: os.tmpdir(),
-    deps: { App: ViewsSlackApp, write: (line) => lines.push(line), readKeychain: () => assert.fail('no Keychain') },
+    deps: {
+      App: ViewsSlackApp, write: (line) => lines.push(line), readKeychain: () => assert.fail('no Keychain'),
+      llm: { createClient: () => ai.client },
+    },
   });
   assert.equal(res.code, 0, lines.join('\n'));
   t.after(() => res.data.close());
+  res.app.ai = ai;
+  res.app.llmStatus = res.llm.status();
   return res.app;
 }
 
@@ -115,7 +138,7 @@ const MENU = { id: 'VMENU', type: 'modal', private_metadata: 'brightside', title
 const last = (app) => app.views.at(-1).args.view;
 const actionsOf = (view) => view.blocks.filter((b) => b.type === 'actions').flatMap((b) => b.elements);
 
-test('the Win-back form end to end: the admin opens it, checks North with the defaults, and confirms once', async (t) => {
+test('the Win-back list end to end: the admin checks North with the defaults, confirms once, and gets the 38 candidates privately', async (t) => {
   const app = await boot(t);
   await app.dispatchCommand('/brightside', { user_id: ADMIN });
   const menu = app.views[0].args.view;
@@ -141,10 +164,49 @@ test('the Win-back form end to end: the admin opens it, checks North with the de
 
   const shown = (hash) => ({ id: formId, hash, title: confirm.title, private_metadata: confirm.private_metadata, state: { values: {} } });
   await app.dispatchAction('scoped-pull:confirm', { user: { id: ADMIN }, view: shown('hs1'), value: session });
-  assert.match(last(app).blocks[0].text.text, /Confirmed/);
+  // The view: the count (the known truth), the values, the first 10 rows.
+  const result = last(app);
+  assert.equal(result.blocks[0].text.text, '*Win-back list: 38 rows.*');
+  assert.deepEqual(result.blocks.filter((b) => b.fields).map((b) => b.fields[1].text), ['north', '90', '50']);
+  const table = result.blocks.find((b) => b.text && b.text.text.startsWith('*The first 10:*')).text.text;
+  assert.match(table.split('\n')[2], /^client_id +first_name +last_name +email +lapsed_on$/);
+  assert.equal(table.split('\n').length, 2 + 1 + 10 + 1);
+  assert.match(result.blocks.at(-1).elements[0].text, /^The full list \(38 rows\) is a CSV in your DM with me\. <https:\/\/fake\.slack\.test\/files\/F1\|Open the CSV>$/);
+  // The CSV: all 38, in the admin's DM, the same rows the runner gives.
+  assert.deepEqual(app.dms, [{ user: ADMIN, channel: `D${ADMIN.slice(1)}` }]);
+  assert.equal(app.uploads.length, 1);
+  assert.equal(app.uploads[0].channel_id, `D${ADMIN.slice(1)}`);
+  const lines = app.uploads[0].content.replace(/^\ufeff/, '').trimEnd().split('\r\n');
+  assert.equal(lines[0], 'client_id,first_name,last_name,email,lapsed_on');
+  assert.equal(lines.length, 1 + 38);
+  const data = createData({ file: FIXTURE, profile });
+  t.after(() => data.close());
+  const expected = await data.run(winBack.sql, { zone: 'north', lapsed_days: 90, limit: 50 }, { declared });
+  assert.deepEqual(lines.slice(1), expected.map((r) => [r.client_id, r.first_name, r.last_name, r.email, r.lapsed_on].join(',')));
+  assert.deepEqual(app.posted, []);
+  // A replay runs nothing more.
   await app.dispatchAction('scoped-pull:confirm', { user: { id: ADMIN }, view: shown(`h${app.viewSeq}`), value: session });
   assert.match(last(app).blocks[0].text.text, /already confirmed/);
-  assert.deepEqual(app.views.map((v) => v.method), ['open', 'push', 'update', 'update']);
+  assert.equal(app.uploads.length, 1);
+  assert.deepEqual(app.views.map((v) => v.method), ['open', 'push', 'update', 'update', 'update']);
+  // The AI service was on, and the rows never reached it.
+  assert.equal(app.llmStatus.on, true);
+  assert.deepEqual(app.ai.calls, []);
+});
+
+test('with the data unavailable, Confirm shows the standard message in the view and sends nothing', async (t) => {
+  const app = await boot(t, { noData: true });
+  await app.dispatchAction('win-back:open', { user: { id: ADMIN }, view: MENU });
+  const form = last(app);
+  const pick = { values: { 'sp-input:zone': { value: { type: 'static_select', selected_option: { value: 'south' } } } } };
+  await app.dispatchView('scoped-pull:form', {
+    user: { id: ADMIN }, view: { id: `V${app.viewSeq}`, hash: 'h', title: form.title, private_metadata: form.private_metadata, state: pick },
+  });
+  const confirm = app.viewAcks.at(-1).view;
+  const session = actionsOf(confirm)[0].value;
+  await app.dispatchAction('scoped-pull:confirm', { user: { id: ADMIN }, view: { id: `V${app.viewSeq}`, hash: 'hs', title: confirm.title, private_metadata: confirm.private_metadata }, value: session });
+  assert.match(last(app).blocks[0].text.text, /^The data isn't available right now/);
+  assert.deepEqual(app.uploads, []);
 });
 
 test('a member without WIN_BACK, or someone not set up, never sees Win-back and is refused if they click it', async (t) => {
