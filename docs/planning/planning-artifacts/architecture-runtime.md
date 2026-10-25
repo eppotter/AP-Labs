@@ -149,7 +149,7 @@ Dependency rule: arrows point inward only. Engine code never `require`s or names
 - **Binds:** CAP-5, NFR11
 - **Prevents:** an LLM path that can read data, write externally or run up a bill.
 - **Rule:** `kit/runtime/llm` is the only caller of the Anthropic SDK. V1 makes one structured extraction call per request (no tool loop). Any tool registered must declare `effects: "none"`; the registry rejects anything else, so no LLM-callable tool can run SQL or a connector write. Every call: kill switch (`APLABS_LLM_OFF`) checked first, then the per-person rate limit (store `ratelimit`), then the hourly breaker (per process, resets on restart; the console spend cap backs it), with per-call `max_tokens` and a timeout. Cost uses a per-model price table in code; a test fails if the configured model has no price. Context sent to the model is a declared list in code: `org.md` and `data.md` from `contextDirFor(profilePath)`; `guardrails.md` and `connectors.md` are never sent. Before sending, the loader **strips YAML frontmatter and every fenced `truth` block** from each file (chosen over sending only the client name and parameter declarations, because CAP-5 asks for declared context files; the stripping keeps truth SQL and expected figures away from the model). A test asserts no truth block content reaches the prompt. When the LLM is off or refused, the module falls back to its typed form.
-- **Breaker accounting:** at check time the breaker reserves the worst-case cost of the call (`max_tokens` × the model's output price, plus the input tokens × input price) against the hourly limit, so concurrent calls cannot overshoot it; the reservation is replaced by the actual cost when the reply arrives (or released on error).
+- **Breaker accounting:** at check time the breaker reserves the worst-case cost of the call (`max_tokens` × the model's output price, plus the input tokens × input price) against the hourly limit, so concurrent calls cannot overshoot it; the reservation is replaced by the actual cost when the reply arrives. It fails closed (plan epic-9): input is estimated at characters ÷ 3 tokens; a call that errors or times out, or a reply with no usage figures, stays at worst case, never 0; the SDK never retries (`maxRetries: 0`) and has a 20 s limit.
 
 ### AD-12: Secrets come through one library and never reach output
 
@@ -226,12 +226,12 @@ Dependency rule: arrows point inward only. Engine code never `require`s or names
 
 | Name | Version |
 | --- | --- |
-| Node | 20 (repo engine) |
+| Node | 24 LTS (repo engine, `engines.node >=24`) |
 | ajv | 8.20.0 (existing pin) |
 | yaml | 2.9.1 (existing pin) |
 | @slack/bolt | 5.1.0 (Story 6.1: current release on 2026-10-24; Socket Mode app framework, brings `@slack/socket-mode` and `@slack/web-api`) |
 | @duckdb/node-api | 1.5.6-r.2 (Story 7.3: newest 1.x release on 2026-10-24; official DuckDB client with prebuilt platform packages, so no native build. 2.0.0-r.1 (2026-10-21) is a new major: adopt it once Story 7.7 confirms MotherDuck accepts DuckDB 2.0 files) |
-| @anthropic-ai/sdk | exact pin chosen and verified current in Story 9.1 |
+| @anthropic-ai/sdk | 1.3.0 (Story 9.1: newest release on npm on 2026-10-25; the official Anthropic client, loaded only by `kit/runtime/llm`. Built with `maxRetries: 0`, a 20 s timeout, the API's base URL and OpenTelemetry off, so no env var can redirect the key or trace a request) |
 
 Planning ran with no network, so new versions are not pinned here; each story verifies the current release and pins it exactly.
 
@@ -319,11 +319,11 @@ Tiers below were computed with `APLABS_PROFILE=<temp copy of the profile with th
 | 6 | T3 | `kit/lib/secrets/**` (6.1) |
 | 7 | T2 | `.github/workflows/**` (7.1), `kit/runtime/sql/**` (7.4), `kit/runtime/data/**` (7.5) |
 | 8 | T3 | `kit/runtime/connectors/**` (8.1) |
-| 9 | T2 | `kit/runtime/llm/**` (9.1) |
+| 9 | T3 | `profiles/**` and `kit/lib/profile/**` (9.1), `kit/runtime/llm/**` (an engine T3 floor since 9.1, plan epic-9 decision 4), Brightside resource rows (9.3, 9.5, 9.7) |
 | 10 | T3 | `kit/runtime/archetypes/approval-write/**` (10.2, 10.3) |
 | 11 | T2 | `Dockerfile`, `.github/workflows/**` (11.2) |
 
-Per story: T3: 6.1, 8.1, 10.2, 10.3. T2: 7.1, 7.4, 7.5, 9.1, 11.2. T1: the other 20. The Brightside mock adapters (8.2, 8.3) live in `examples/brightside/app/connectors/`, which these rows don't cover; they compute T1 (mock, outbox only). A fork's profile should tier its own `app/connectors/**` at T3 (fork guide, 11.4). The whole phase still sits behind one plan gate (`approve plan runtime-phase`); per-story tiers set each story's review ceremony inside it.
+Per story: T3: 6.1, 8.1, 10.2, 10.3. T2: 7.1, 7.4, 7.5, 9.1, 11.2. T1: the other 20. **Recomputed for Epic 9 (plan epic-9, 2026-10-25):** 9.1, 9.3, 9.4, 9.5 and 9.7 are T3; 9.2 and 9.6 are T1. Since #115 and 9.1, `kit/runtime/data/**`, `kit/runtime/sql/**`, `kit/runtime/llm/**`, `kit/lib/secrets/**` and `kit/lib/profile/**` are engine T3 floors (`ENGINE_T3` in `kit/lib/tier`), whatever the profile rows above say. The Brightside mock adapters (8.2, 8.3) live in `examples/brightside/app/connectors/`, which these rows don't cover; they compute T1 (mock, outbox only). A fork's profile should tier its own `app/connectors/**` at T3 (fork guide, 11.4). The whole phase still sits behind one plan gate (`approve plan runtime-phase`); per-story tiers set each story's review ceremony inside it.
 
 ## Deferred
 

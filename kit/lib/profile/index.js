@@ -35,6 +35,15 @@ class NotGoverningError extends Error {
   }
 }
 
+// The AI settings' defaults (AD-16, Story 9.1). Every model named here must be
+// priced in kit/runtime/llm/prices.js (a test checks).
+const LLM_DEFAULTS = Object.freeze({
+  model: 'claude-sonnet-5-5',
+  extraction_model: 'claude-sonnet-5-5',
+  hourly_usd_limit: 2,
+  max_tokens: 1024,
+});
+
 let _validate = null;
 function schemaValidator() {
   if (!_validate) {
@@ -149,6 +158,7 @@ function validateProfile(profile, file) {
   p.verify = { checks: [], env_allow: [], ...p.verify };
   p.sql = { forbidden_columns: [], ...p.sql };
   p.data = { source: 'local', ...p.data };
+  p.llm = { ...LLM_DEFAULTS, ...p.llm };
   p.verify.checks = p.verify.checks.map((c) => ({ timeout_seconds: 300, ...c }));
   p.users = p.users.map((u) => ({ identities: {}, grants: [], deny: [], ...u }));
 
@@ -194,4 +204,6 @@ function loadProfile(file = findProfilePath()) {
   return validateProfile(parsed, file);
 }
 
-module.exports = { loadProfile, validateProfile, findProfilePath, governingProfilePath, ProfileError, NotGoverningError, PROFILE_REL };
+module.exports = {
+  loadProfile, validateProfile, findProfilePath, governingProfilePath, ProfileError, NotGoverningError, PROFILE_REL, LLM_DEFAULTS,
+};

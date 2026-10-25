@@ -1,7 +1,7 @@
 'use strict';
 
-// Story 7.7: kit/fixture/publish replaces the shared MotherDuck database with
-// the local build, and kit/fixture/status compares the two. Both are run by
+// Story 7.7: kit/fixture/publish publishes the local build to the shared MotherDuck
+// database, and kit/fixture/status compares the two. Both are run by
 // Ely only: every test here injects a fake connection (an in-memory model of
 // MotherDuck over a real in-memory DuckDB, below) and a fake token, and the Keychain reader is always a
 // stub, so no test reaches the network or a real secret. Engine tests: the
@@ -59,21 +59,25 @@ const META_V3 = 'key,value\nas_of,2026-09-30\ngenerator_version,3\nrows_regions,
 // map of table -> row count plus the fixture_publish rows, which the tests
 // read and edit, and which answers the statements kit/fixture/remote issues.
 // The engine: a real in-memory DuckDB (kit/fixture/motherduck connectLocal,
-// no network), where every database publish creates is a real attached
-// database with its foreign keys enforced. Every statement the model does
-// not answer (the upload's ATTACH, catalog reads, CREATE TABLE, INSERT, USE,
-// DETACH) runs on the engine, and the model's row counts are then read back
-// from it, so a load order that breaks a foreign key fails here as it does
-// on MotherDuck.
+// no network), where every database publish creates, and every target a
+// test seeds (seed, below), is a real attached database with its foreign
+// keys enforced and its fixture_publish table. Every statement the model
+// does not answer (the upload's ATTACH, catalog reads, CREATE TABLE, INSERT,
+// USE, DETACH, the swap's transaction and DROP TABLE) runs on the engine,
+// and the model's row counts and fixture_publish rows are then read back
+// from it, so a load order that breaks a foreign key, or a swap that fails
+// mid-copy, behaves here as it does on MotherDuck.
+//
+// `shares` names databases with a share attached: as on MotherDuck
+// (2026-10-25), replacing or dropping one is refused.
 const engines = [];
 test.after(() => { for (const e of engines) e.close(); });
 
-function fakeMotherDuck({ fail = {}, connectError, closeError } = {}) {
+function fakeMotherDuck({ fail = {}, connectError, closeError, shares = [] } = {}) {
   const dbs = new Map();
   const statements = [];
   const tokens = [];
   const closed = [];
-  const copy = (d) => ({ tables: new Map(d.tables), publish: d.publish && new Map(d.publish), foreignKeys: d.foreignKeys });
   let engine = null;
   async function real() {
     if (!engine) {
@@ -87,18 +91,19 @@ function fakeMotherDuck({ fail = {}, connectError, closeError } = {}) {
     `SELECT table_name, referenced_table FROM duckdb_constraints() WHERE database_name = '${name}' AND constraint_type = 'FOREIGN KEY' ORDER BY ALL`,
   )).map((r) => `${r.table_name} -> ${r.referenced_table}`);
 
-  // Row counts for every model database the engine holds, read from the
-  // engine; fixture_publish stays the model's.
+  // Row counts and fixture_publish rows for every model database the engine
+  // holds, read from the engine.
   async function sync() {
     const e = await real();
     const present = await realDatabases();
     for (const [name, d] of dbs) {
       if (!present.has(name)) continue;
       d.tables.clear();
+      d.publish = null;
       for (const { table_name: t } of await e.run(`SELECT table_name FROM duckdb_tables() WHERE database_name = '${name}' AND schema_name = 'main' ORDER BY table_name`)) {
         d.tables.set(t, Number((await e.run(`SELECT count(*)::VARCHAR AS n FROM "${name}".main."${t}"`))[0].n));
+        if (t === 'fixture_publish') d.publish = new Map((await e.run(`SELECT key, value FROM "${name}".main.fixture_publish`)).map((r) => [r.key, r.value]));
       }
-      if (d.publish) d.tables.set('fixture_publish', d.publish.size);
     }
   }
 
@@ -108,10 +113,54 @@ function fakeMotherDuck({ fail = {}, connectError, closeError } = {}) {
     return had;
   }
 
+  // Copies database `from` into a new attached database `to` on the engine,
+  // parents first (DuckDB's own COPY FROM DATABASE ignores foreign keys, as
+  // MotherDuck's whole-database copy does), as CREATE DATABASE ... FROM does.
+  async function copyDatabase(from, to) {
+    const e = await real();
+    const tables = await e.run(`SELECT table_name, sql FROM duckdb_tables() WHERE database_name = '${from}' AND schema_name = 'main'`);
+    const fks = await e.run(`SELECT table_name, referenced_table FROM duckdb_constraints() WHERE database_name = '${from}' AND constraint_type = 'FOREIGN KEY'`);
+    const order = [];
+    while (order.length < tables.length) {
+      const next = tables.find((t) => !order.includes(t) && fks.every((f) => f.table_name !== t.table_name || f.referenced_table === t.table_name || order.some((o) => o.table_name === f.referenced_table)));
+      order.push(next);
+    }
+    await e.run(`ATTACH ':memory:' AS "${to}"`);
+    await e.run(`USE "${to}"`);
+    for (const t of order) await e.run(t.sql);
+    await e.run('USE "memory"');
+    for (const t of order) await e.run(`INSERT INTO "${to}".main."${t.table_name}" SELECT * FROM "${from}".main."${t.table_name}"`);
+  }
+
+  // A target this tool published before, as real tables on the engine:
+  // `ddl` statements run in order with the target current (so REFERENCES
+  // resolve there), then `rows` (table -> VALUES list), then fixture_publish
+  // holding `publish` (key -> value).
+  async function seed(name, { ddl, rows = {}, publish = { fixture_version: 'old' } }) {
+    const e = await real();
+    await e.run(`ATTACH ':memory:' AS "${name}"`);
+    await e.run(`USE "${name}"`);
+    for (const sql of ddl) await e.run(sql);
+    for (const [t, values] of Object.entries(rows)) await e.run(`INSERT INTO "${t}" VALUES ${values}`);
+    await e.run('CREATE TABLE fixture_publish (key VARCHAR, value VARCHAR)');
+    for (const [k, v] of Object.entries(publish)) await e.run(`INSERT INTO fixture_publish VALUES ('${k}', '${v}')`);
+    await e.run('USE "memory"');
+    dbs.set(name, { tables: new Map(), publish: null });
+    await sync();
+  }
+
   async function run(sql) {
     statements.push(sql);
-    for (const [re, message] of Object.entries(fail)) if (new RegExp(re).test(sql)) throw new Error(message);
+    for (const [re, message] of Object.entries(fail)) {
+      if (!new RegExp(re).test(sql)) continue;
+      // A failed COMMIT ends the transaction, as on DuckDB.
+      if (sql === 'COMMIT') await (await real()).run('ROLLBACK');
+      throw new Error(message);
+    }
     let m;
+    if ((m = /^(?:CREATE OR REPLACE DATABASE|DROP DATABASE(?: IF EXISTS)?) "(\w+)"/.exec(sql)) && shares.includes(m[1]) && dbs.has(m[1])) {
+      throw new Error(`Cannot drop or replace database ${m[1]}: it has an attached share`);
+    }
     if ((m = /^SELECT count\(\*\)::VARCHAR AS n FROM duckdb_databases\(\) WHERE database_name = '(\w+)'$/.exec(sql))) {
       return [{ n: dbs.has(m[1]) ? '1' : '0' }];
     }
@@ -122,13 +171,18 @@ function fakeMotherDuck({ fail = {}, connectError, closeError } = {}) {
       dbs.set(m[1], { tables: new Map(), publish: null });
       return [];
     }
+    // staging's fixture_publish: written to the engine too (the swap copies
+    // it from there), and to the model without re-reading the rest, so a
+    // test can still edit staging's model counts before the check.
     if ((m = /^CREATE TABLE "(\w+)"\.main\.fixture_publish \(key VARCHAR, value VARCHAR\)$/.exec(sql))) {
+      await (await real()).run(sql);
       const d = dbs.get(m[1]);
       d.publish = new Map();
       d.tables.set('fixture_publish', 0);
       return [];
     }
     if ((m = /^INSERT INTO "(\w+)"\.main\.fixture_publish VALUES (.+)$/.exec(sql))) {
+      await (await real()).run(sql);
       const d = dbs.get(m[1]);
       for (const [, k, v] of m[2].matchAll(/\('((?:[^']|'')*)', '((?:[^']|'')*)'\)/g)) d.publish.set(k, v.replace(/''/g, "'"));
       d.tables.set('fixture_publish', d.publish.size);
@@ -143,13 +197,11 @@ function fakeMotherDuck({ fail = {}, connectError, closeError } = {}) {
     if ((m = /^SELECT key, value FROM "(\w+)"\.main\.fixture_publish$/.exec(sql))) {
       return [...dbs.get(m[1]).publish].map(([key, value]) => ({ key, value }));
     }
-    if ((m = /^CREATE OR REPLACE DATABASE "(\w+)" FROM "(\w+)"$/.exec(sql))) {
-      // The swap copies the model; the foreign keys staging held on the
-      // engine are recorded, so a test can see the copy kept them.
-      const d = copy(dbs.get(m[2]));
-      if ((await realDatabases()).has(m[2])) d.foreignKeys = await foreignKeysOf(m[2]);
-      await drop(m[1]);
-      dbs.set(m[1], d);
+    if ((m = /^CREATE DATABASE "(\w+)" FROM "(\w+)"$/.exec(sql))) {
+      if (dbs.has(m[1])) throw new Error(`database ${m[1]} already exists`);
+      await copyDatabase(m[2], m[1]);
+      dbs.set(m[1], { tables: new Map(), publish: null });
+      await sync();
       return [];
     }
     if ((m = /^DROP DATABASE "(\w+)"$/.exec(sql))) {
@@ -169,7 +221,9 @@ function fakeMotherDuck({ fail = {}, connectError, closeError } = {}) {
   // The databases attached on the engine right now, the upload's alias for
   // the local build included while it is attached.
   const attached = async () => [...(await realDatabases())].filter((n) => !['memory', 'system', 'temp'].includes(n)).sort();
-  return { connect, dbs, statements, tokens, closed, attached };
+  // A table's rows on the engine, in a stable order, for before/after checks.
+  const rowsOf = async (name, table, schema = 'main') => (await real()).run(`SELECT * FROM "${name}"."${schema}"."${table}" ORDER BY ALL`);
+  return { connect, dbs, statements, tokens, closed, attached, seed, rowsOf, foreignKeys: foreignKeysOf };
 }
 
 function never(name) {
@@ -365,7 +419,7 @@ test('publish: a bad --database is a usage error before anything runs', async (t
 
 // --- fixture:publish, the replace -------------------------------------------
 
-test('publish: uploads to a staging database, records the version, checks it, then replaces the shared one', async (t) => {
+test('publish: uploads to a staging database, records the version, checks it, then copies it whole on a first publish', async (t) => {
   const f = await fixture(t, { meta: META_V3 });
   const md = fakeMotherDuck();
   const r = await pub(f, [], { env: withToken, connect: md.connect });
@@ -390,11 +444,13 @@ test('publish: uploads to a staging database, records the version, checks it, th
     'DETACH "aplabs_publish_local"',
     'CREATE TABLE "acme_fixture__publishing".main.fixture_publish ',
     'INSERT INTO "acme_fixture__publishing".main.fixture_publish',
-    'CREATE OR REPLACE DATABASE "acme_fixture"',
+    'CREATE DATABASE "acme_fixture"',
     'DROP DATABASE "acme_fixture__publishing"',
   ]);
   assert.ok(md.statements.includes(`ATTACH '${f.db}' AS "aplabs_publish_local" (READ_ONLY)`));
   assert.ok(md.statements.includes('INSERT INTO "acme_fixture__publishing".main."shops" SELECT * FROM "aplabs_publish_local".main."shops"'));
+  assert.ok(md.statements.includes('CREATE DATABASE "acme_fixture" FROM "acme_fixture__publishing"'), 'a first publish copies staging whole');
+  assert.ok(!md.statements.some((s) => /^CREATE OR REPLACE DATABASE/.test(s)), 'nothing is ever replaced whole');
 
   assert.deepEqual([...md.dbs.keys()], ['acme_fixture']);
   const shared = md.dbs.get('acme_fixture');
@@ -412,16 +468,230 @@ const published = (tables) => ({
   tables: new Map([...tables, ['fixture_publish', 1]]), publish: new Map([['fixture_version', 'old']]),
 });
 
-test('publish: replaces a database it published before, whole', async (t) => {
-  const f = await fixture(t);
-  const md = fakeMotherDuck();
-  md.dbs.set('acme_fixture', published([['old_table', 99]]));
-  // A staging copy left by an earlier failed drop is cleared first.
+// --- fixture:publish, a re-publish in place (plan publish-in-place) ----------
+//
+// The 2026-10-25 live failure: MotherDuck refuses to replace (or drop) a
+// database while a share is attached, and the bot reads through one. A
+// re-publish now updates the target in place, in one transaction, and the
+// share stays attached. The targets below are real tables on the fake's
+// engine, foreign keys and fixture_publish included, in an older layout:
+// crews has no name column, old_notes is gone from the build and
+// assignments is new.
+const OLD_LAYOUT = {
+  ddl: [
+    'CREATE TABLE fixture_meta (key VARCHAR PRIMARY KEY, value VARCHAR NOT NULL)',
+    'CREATE TABLE zones (zone_id VARCHAR PRIMARY KEY, name VARCHAR NOT NULL)',
+    'CREATE TABLE crews (crew_id INTEGER PRIMARY KEY, zone_id VARCHAR NOT NULL REFERENCES zones (zone_id))',
+    'CREATE TABLE old_notes (note_id INTEGER PRIMARY KEY, crew_id INTEGER REFERENCES crews (crew_id))',
+  ],
+  rows: {
+    fixture_meta: "('generator_version', '0')",
+    zones: "('z9', 'Old zone'), ('z8', 'Older zone')",
+    crews: "(90, 'z9'), (91, 'z8')",
+    old_notes: '(1, 90)',
+  },
+  publish: { fixture_version: '0+old', rows_crews: '2' },
+};
+const OLD_TABLES = ['crews', 'fixture_meta', 'fixture_publish', 'old_notes', 'zones'];
+
+// Every table's rows in `name`, for before/after comparisons.
+async function contents(md, name, tables) {
+  const out = {};
+  for (const t of tables) out[t] = await md.rowsOf(name, t);
+  return out;
+}
+
+// The statements a re-publish sends after the upload, writes and USE only,
+// a CREATE TABLE shortened to its name.
+function swapStatements(md) {
+  const from = md.statements.findIndex((s) => /^INSERT INTO "acme_fixture__publishing"\.main\.fixture_publish VALUES/.test(s));
+  return md.statements.slice(from + 1).filter((s) => !/^SELECT /.test(s)).map((s) => (/^CREATE TABLE \w+\(/.test(s) ? s.split('(')[0] : s));
+}
+
+test('publish: a re-publish with a share attached updates the target in place, in one transaction', async (t) => {
+  const f = await fixture(t, { src: FK_ORDER });
+  const md = fakeMotherDuck({ shares: ['acme_fixture'] });
+  await md.seed('acme_fixture', OLD_LAYOUT);
+  // A staging copy left by an earlier failed publish is cleared first.
   md.dbs.set('acme_fixture__publishing', { tables: new Map([['stale', 1]]), publish: null });
   const r = await pub(f, [], { env: withToken, connect: md.connect });
   assert.equal(r.code, 0, r.all);
-  assert.deepEqual([...md.dbs.keys()], ['acme_fixture']);
-  assert.deepEqual([...md.dbs.get('acme_fixture').tables.keys()].sort(), ['fixture_meta', 'fixture_publish', 'regions', 'shops']);
+
+  const s = '"acme_fixture__publishing"';
+  assert.deepEqual(swapStatements(md), [
+    'USE "acme_fixture"',
+    'BEGIN TRANSACTION',
+    // Children first, by the target's own foreign keys; fixture_publish stays.
+    'DROP TABLE main."old_notes"',
+    'DROP TABLE main."crews"',
+    'DROP TABLE main."zones"',
+    'DROP TABLE main."fixture_meta"',
+    // The build's definitions, parents first, then their rows.
+    'CREATE TABLE fixture_meta',
+    'CREATE TABLE zones',
+    'CREATE TABLE crews',
+    'CREATE TABLE assignments',
+    `INSERT INTO "fixture_meta" SELECT * FROM ${s}.main."fixture_meta"`,
+    `INSERT INTO "zones" SELECT * FROM ${s}.main."zones"`,
+    `INSERT INTO "crews" SELECT * FROM ${s}.main."crews"`,
+    `INSERT INTO "assignments" SELECT * FROM ${s}.main."assignments"`,
+    // The version record last, inside the transaction.
+    'DROP TABLE main.fixture_publish',
+    'CREATE TABLE fixture_publish (key VARCHAR, value VARCHAR)',
+    `INSERT INTO fixture_publish SELECT * FROM ${s}.main.fixture_publish`,
+    'COMMIT',
+    'USE "memory"',
+    `DROP DATABASE ${s}`,
+  ]);
+  assert.ok(!md.statements.some((x) => /^(CREATE OR REPLACE DATABASE|DROP DATABASE "acme_fixture"$|DELETE )/.test(x)), 'never replaced, dropped or row-swapped');
+
+  const snap = await remote.localSnapshot({ fixtureDir: f.dir, db: f.db });
+  const shared = md.dbs.get('acme_fixture');
+  assert.deepEqual(Object.fromEntries(shared.tables), { assignments: 4, crews: 3, fixture_meta: 5, zones: 2, fixture_publish: 9 });
+  assert.equal(shared.publish.get('fixture_version'), snap.version);
+  assert.equal(shared.publish.get('rows_crews'), '3');
+  assert.deepEqual(await md.foreignKeys('acme_fixture'), ['assignments -> crews', 'assignments -> zones', 'crews -> zones']);
+  assert.deepEqual(await md.attached(), ['acme_fixture'], 'the share target stays; the build is detached and staging dropped');
+  assert.match(r.stdout, /published acme_fixture: version 1\+[0-9a-f]{12}, 4 tables, 14 rows/);
+});
+
+test('publish: a re-publish of the same layout rebuilds every table too (no row-only swap)', async (t) => {
+  const f = await fixture(t, { src: FK_ORDER });
+  const md = fakeMotherDuck({ shares: ['acme_fixture'] });
+  assert.equal((await pub(f, [], { env: withToken, connect: md.connect })).code, 0, 'first publish');
+  const first = await contents(md, 'acme_fixture', ['assignments', 'crews', 'zones']);
+  md.statements.length = 0;
+  const r = await pub(f, [], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 0, r.all);
+  const swap = swapStatements(md);
+  assert.deepEqual(swap.filter((x) => /^DROP TABLE main\."/.test(x)), ['DROP TABLE main."assignments"', 'DROP TABLE main."crews"', 'DROP TABLE main."zones"', 'DROP TABLE main."fixture_meta"']);
+  assert.ok(!swap.some((x) => /^DELETE /.test(x)));
+  assert.deepEqual(await contents(md, 'acme_fixture', ['assignments', 'crews', 'zones']), first);
+  assert.deepEqual(await md.foreignKeys('acme_fixture'), ['assignments -> crews', 'assignments -> zones', 'crews -> zones']);
+});
+
+test('publish: a failure mid-copy rolls back, leaves the old tables, rows and version intact, and drops staging', async (t) => {
+  const f = await fixture(t, { src: FK_ORDER });
+  const md = fakeMotherDuck({ shares: ['acme_fixture'], fail: { '^INSERT INTO "crews" SELECT': 'copy interrupted' } });
+  await md.seed('acme_fixture', OLD_LAYOUT);
+  const before = await contents(md, 'acme_fixture', OLD_TABLES);
+  const r = await pub(f, [], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 1, r.all);
+  assert.match(r.stderr, /MotherDuck failed: copy interrupted/);
+  assert.match(r.stderr, /the update was rolled back, so the shared database acme_fixture was not changed\./);
+  const swap = swapStatements(md);
+  assert.deepEqual(swap.slice(swap.indexOf('INSERT INTO "crews" SELECT * FROM "acme_fixture__publishing".main."crews"')), [
+    'INSERT INTO "crews" SELECT * FROM "acme_fixture__publishing".main."crews"',
+    'ROLLBACK',
+    'USE "memory"',
+    'DROP DATABASE IF EXISTS "acme_fixture__publishing"',
+  ]);
+  assert.deepEqual(await contents(md, 'acme_fixture', OLD_TABLES), before);
+  assert.deepEqual(await md.foreignKeys('acme_fixture'), ['crews -> zones', 'old_notes -> crews']);
+  assert.equal(md.dbs.get('acme_fixture').publish.get('fixture_version'), '0+old');
+  assert.deepEqual(await md.attached(), ['acme_fixture']);
+  assert.equal(md.closed.length, 1);
+});
+
+test('publish: a failed rollback says the shared database may be partly changed, and keeps staging', async (t) => {
+  const f = await fixture(t, { src: FK_ORDER });
+  const md = fakeMotherDuck({ fail: { '^INSERT INTO "zones" SELECT': 'copy interrupted', '^ROLLBACK$': 'connection lost' } });
+  await md.seed('acme_fixture', OLD_LAYOUT);
+  const r = await pub(f, [], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 1, r.all);
+  assert.match(r.stderr, /MotherDuck failed: copy interrupted/);
+  assert.match(r.stderr, /the rollback failed too, so the shared database acme_fixture may be partly changed; check with npm run fixture:status -- --remote\./);
+  assert.doesNotMatch(r.stderr, /was not changed/);
+  assert.deepEqual(md.statements.slice(md.statements.indexOf('ROLLBACK')), ['ROLLBACK', 'USE "memory"'], 'staging is kept for the next publish to clear');
+  assert.ok(md.dbs.has('acme_fixture__publishing'));
+});
+
+test('publish: a failed COMMIT reports the outcome as unknown, with no rollback or cleanup after it', async (t) => {
+  const f = await fixture(t, { src: FK_ORDER });
+  const md = fakeMotherDuck({ fail: { '^COMMIT$': 'commit lost' } });
+  await md.seed('acme_fixture', OLD_LAYOUT);
+  const r = await pub(f, [], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 1, r.all);
+  assert.match(r.stderr, /MotherDuck failed: commit lost/);
+  assert.match(r.stderr, /the commit failed, so it is unknown whether the shared database acme_fixture was updated; check with npm run fixture:status -- --remote\./);
+  assert.deepEqual(md.statements.slice(md.statements.indexOf('COMMIT')), ['COMMIT', 'USE "memory"']);
+  assert.ok(md.dbs.has('acme_fixture__publishing'), 'staging is kept for the next publish to clear');
+});
+
+test('publish: a failure on USE of the target, before the transaction, leaves it unchanged and drops staging', async (t) => {
+  const f = await fixture(t, { src: FK_ORDER });
+  const md = fakeMotherDuck({ fail: { '^USE "acme_fixture"$': 'catalog busy' } });
+  await md.seed('acme_fixture', OLD_LAYOUT);
+  const before = await contents(md, 'acme_fixture', OLD_TABLES);
+  const r = await pub(f, [], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 1, r.all);
+  assert.match(r.stderr, /MotherDuck failed: catalog busy\nthe shared database acme_fixture was not changed\./);
+  assert.ok(!md.statements.includes('BEGIN TRANSACTION'));
+  assert.ok(!md.dbs.has('acme_fixture__publishing'));
+  assert.deepEqual(await contents(md, 'acme_fixture', OLD_TABLES), before);
+});
+
+// Publish writes only the main schema. A table in another schema of the
+// target (here audit.crews, which shares a name with a main table, and
+// audit.log, which references it) is something publish never wrote.
+const WITH_AUDIT = {
+  ...OLD_LAYOUT,
+  ddl: [
+    ...OLD_LAYOUT.ddl,
+    'CREATE SCHEMA audit',
+    'CREATE TABLE audit.crews (crew_id INTEGER PRIMARY KEY, note VARCHAR)',
+    'CREATE TABLE audit.log (log_id INTEGER PRIMARY KEY, crew_id INTEGER REFERENCES audit.crews (crew_id))',
+    "INSERT INTO audit.crews VALUES (1, 'kept'), (2, 'also kept')",
+    'INSERT INTO audit.log VALUES (7, 1), (8, 2)',
+  ],
+};
+
+test('publish: a re-publish never touches tables in other schemas of the target', async (t) => {
+  const f = await fixture(t, { src: FK_ORDER });
+  const md = fakeMotherDuck({ shares: ['acme_fixture'] });
+  await md.seed('acme_fixture', WITH_AUDIT);
+  const audit = { crews: await md.rowsOf('acme_fixture', 'crews', 'audit'), log: await md.rowsOf('acme_fixture', 'log', 'audit') };
+  assert.equal(audit.log.length, 2);
+  const r = await pub(f, [], { env: withToken, connect: md.connect });
+  assert.equal(r.code, 0, r.all);
+  assert.deepEqual(swapStatements(md).filter((x) => /^DROP TABLE/.test(x)), [
+    'DROP TABLE main."old_notes"', 'DROP TABLE main."crews"', 'DROP TABLE main."zones"', 'DROP TABLE main."fixture_meta"', 'DROP TABLE main.fixture_publish',
+  ]);
+  assert.ok(!md.statements.some((x) => /audit/.test(x)), 'no statement names the audit schema');
+  assert.deepEqual(await md.rowsOf('acme_fixture', 'crews', 'audit'), audit.crews);
+  assert.deepEqual(await md.rowsOf('acme_fixture', 'log', 'audit'), audit.log);
+  assert.deepEqual(await md.foreignKeys('acme_fixture'), ['assignments -> crews', 'assignments -> zones', 'crews -> zones', 'log -> crews']);
+  assert.deepEqual(Object.fromEntries(md.dbs.get('acme_fixture').tables), { assignments: 4, crews: 3, fixture_meta: 5, zones: 2, fixture_publish: 9 });
+});
+
+// DuckDB refuses to create a foreign key across schemas, so the catalog read
+// gains one, as a database written elsewhere might hold.
+test('publish: a foreign key between main and another schema is refused before the transaction, with no write to the target', async (t) => {
+  const f = await fixture(t, { src: FK_ORDER });
+  const cases = [
+    { row: { schema_name: 'main', table_name: 'crews', referenced_table: 'log' }, shown: 'main.crews -> log' },
+    { row: { schema_name: 'audit', table_name: 'log', referenced_table: 'zones' }, shown: 'audit.log -> zones' },
+  ];
+  for (const { row, shown } of cases) {
+    const md = fakeMotherDuck({ shares: ['acme_fixture'] });
+    await md.seed('acme_fixture', WITH_AUDIT);
+    const before = await contents(md, 'acme_fixture', OLD_TABLES);
+    const connect = async (o) => {
+      const c = await md.connect(o);
+      return { ...c, run: async (sql) => {
+        const rows = await c.run(sql);
+        return /^SELECT schema_name, table_name, referenced_table FROM duckdb_constraints\(\) WHERE database_name = 'acme_fixture'/.test(sql) ? [...rows, row] : rows;
+      } };
+    };
+    const r = await pub(f, [], { env: withToken, connect });
+    assert.equal(r.code, 1, r.all);
+    assert.match(r.stderr, new RegExp(`acme_fixture has foreign keys that cross out of their schema \\(${shown.replace('.', '\\.')}\\), so publish cannot rebuild its main tables`));
+    assert.match(r.stderr, /\nthe shared database acme_fixture was not changed\./);
+    const after = md.statements.slice(md.statements.indexOf('USE "acme_fixture"') + 1).filter((x) => !/^SELECT /.test(x));
+    assert.deepEqual(after, ['USE "memory"', 'DROP DATABASE IF EXISTS "acme_fixture__publishing"'], `${shown}: no write reaches the target`);
+    assert.deepEqual(await contents(md, 'acme_fixture', OLD_TABLES), before);
+    assert.equal(md.dbs.get('acme_fixture').publish.get('fixture_version'), '0+old');
+  }
 });
 
 test('publish: a target that does not exist yet is created (first publish)', async (t) => {
@@ -453,8 +723,8 @@ test('publish: child tables that sort before their parents upload parent-first, 
 
   const shared = md.dbs.get('acme_fixture');
   assert.deepEqual(Object.fromEntries(shared.tables), { assignments: 4, crews: 3, fixture_meta: 5, zones: 2, fixture_publish: 9 });
-  assert.deepEqual(shared.foreignKeys, ['assignments -> crews', 'assignments -> zones', 'crews -> zones']);
-  assert.deepEqual(await md.attached(), [], 'the local build is detached and staging dropped');
+  assert.deepEqual(await md.foreignKeys('acme_fixture'), ['assignments -> crews', 'assignments -> zones', 'crews -> zones']);
+  assert.deepEqual(await md.attached(), ['acme_fixture'], 'the local build is detached and staging dropped');
   assert.match(r.stdout, /published acme_fixture: version 1\+[0-9a-f]{12}, 4 tables, 14 rows/);
 });
 
@@ -584,11 +854,12 @@ test('publish: a connection error that contains the token is redacted', async (t
 
 test('publish: a statement error that contains the token is redacted too, and the token is never recorded', async (t) => {
   const f = await fixture(t);
-  const md = fakeMotherDuck({ fail: { '^CREATE OR REPLACE': `catalog error near ${TOKEN}` } });
+  const md = fakeMotherDuck({ fail: { '^CREATE DATABASE "acme_fixture" FROM': `catalog error near ${TOKEN}` } });
   const r = await pub(f, [], { env: withToken, connect: md.connect });
   assert.equal(r.code, 1);
   assert.ok(!r.all.includes(TOKEN));
   assert.match(r.stderr, /catalog error near \[redacted\]/);
+  assert.match(r.stderr, /the shared database acme_fixture may not have been created; check with npm run fixture:status -- --remote\./);
   assert.ok(!md.statements.some((s) => s.includes(TOKEN)), 'no statement carries the token');
 });
 
@@ -616,7 +887,7 @@ test('publish: a close error after a publish is redacted and exits 1; the publis
 
 test('publish: a close error after a failure keeps exit 1 and both messages, redacted', async (t) => {
   const f = await fixture(t);
-  const md = fakeMotherDuck({ fail: { '^CREATE OR REPLACE': 'swap refused' }, closeError: `close ${TOKEN}` });
+  const md = fakeMotherDuck({ fail: { '^CREATE DATABASE "acme_fixture" FROM': 'swap refused' }, closeError: `close ${TOKEN}` });
   const r = await pub(f, [], { env: withToken, connect: md.connect });
   assert.equal(r.code, 1);
   assert.ok(!r.all.includes(TOKEN));

@@ -114,8 +114,22 @@ class AlreadyConfirmed extends RuntimeRefusal {
   constructor(details) { super(`request already ${details.done ? 'done' : 'running'}`, details); }
 }
 
+// The AI service refused or failed (Story 9.1), so the module falls back to its
+// typed form. Raised before anything is sent, except 'failed'. reason is one
+// of LLM_REASONS; details.log, when set, is for the log only and never shown.
+// details: { reason, log? }
+const LLM_REASONS = Object.freeze(['off', 'no_key', 'config', 'too_long', 'rate_limited', 'over_budget', 'failed']);
+class LlmUnavailable extends RuntimeRefusal {
+  constructor(reason, details = {}) {
+    if (!LLM_REASONS.includes(reason)) throw new TypeError(`unknown LlmUnavailable reason "${reason}"`);
+    super(`AI unavailable: ${reason}`, { ...details, reason });
+    this.code = 'LLM_UNAVAILABLE';
+    this.reason = reason;
+  }
+}
+
 module.exports = {
-  RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
+  RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, LLM_REASONS,
   KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
   SessionExpired, SessionNotYours, AlreadyConfirmed,
 };

@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const YAML = require('yaml');
-const { loadProfile, validateProfile, findProfilePath, ProfileError, PROFILE_REL } = require('../../kit/lib/profile');
+const { loadProfile, validateProfile, findProfilePath, ProfileError, PROFILE_REL, LLM_DEFAULTS } = require('../../kit/lib/profile');
 
 const fixture = (name) => path.join(__dirname, '../fixtures/profiles', `${name}.yml`);
 const parsed = (name) => YAML.parse(fs.readFileSync(fixture(name), 'utf8'));
@@ -59,6 +59,23 @@ test('accepts sql.forbidden_columns as unique lower-case "table.column" strings'
   rejects({ ...parsed('minimal'), sql: { forbidden_columns: ['a.b.c'] } }, /\/sql\/forbidden_columns\/0/);
   rejects({ ...parsed('minimal'), sql: { forbidden_columns: ['a.b', 'a.b'] } }, /\/sql\/forbidden_columns/);
   rejects({ ...parsed('minimal'), sql: { forbidden: [] } }, /\/sql has unknown key "forbidden"/);
+});
+
+test('llm settings are optional, default in code, and refuse unknown keys and bad values', () => {
+  assert.deepEqual(loadProfile(fixture('minimal')).llm, {
+    model: 'claude-sonnet-5-5', extraction_model: 'claude-sonnet-5-5', hourly_usd_limit: 2, max_tokens: 1024,
+  });
+  assert.deepEqual(loadProfile(fixture('minimal')).llm, { ...LLM_DEFAULTS });
+  const set = validateProfile({ ...parsed('minimal'), llm: { model: 'claude-opus-5-5', hourly_usd_limit: 0.5, max_tokens: 8192 } }).llm;
+  assert.deepEqual(set, { model: 'claude-opus-5-5', extraction_model: 'claude-sonnet-5-5', hourly_usd_limit: 0.5, max_tokens: 8192 });
+  const llm = (v) => ({ ...parsed('minimal'), llm: v });
+  rejects(llm({ hourly_usd_limit: 0 }), /\/llm\/hourly_usd_limit must be > 0/);
+  rejects(llm({ hourly_usd_limit: -1 }), /\/llm\/hourly_usd_limit/);
+  rejects(llm({ max_tokens: 0 }), /\/llm\/max_tokens must be >= 1/);
+  rejects(llm({ max_tokens: 8193 }), /\/llm\/max_tokens must be <= 8192/);
+  rejects(llm({ max_tokens: 10.5 }), /\/llm\/max_tokens must be integer/);
+  rejects(llm({ model: 'Claude Sonnet' }), /\/llm\/model must match pattern/);
+  rejects(llm({ api_key: 'x' }), /\/llm has unknown key "api_key"/);
 });
 
 test('data.source defaults to local; motherduck needs data.database, and local refuses it', () => {

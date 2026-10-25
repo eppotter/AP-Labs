@@ -7,7 +7,7 @@
 // knows it, is who to tell in a connector message; else "your admin".
 
 const {
-  NotSetUp, AccessDenied, ConfigFault, DataUnavailable, KillSwitchOn,
+  NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, KillSwitchOn,
   ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 } = require('./errors');
 const { SessionExpired, SessionNotYours, AlreadyConfirmed } = require('./errors');
@@ -22,11 +22,24 @@ const sentWords = ({ items }) => `${items} ${items === 1 ? 'item was' : 'items w
 // it again, so the next step is always a check first, never a retry (#89).
 const checkFirst = (admin, { start = true } = {}) => `${start ? admin.charAt(0).toUpperCase() + admin.slice(1) : admin} should check what arrived before anyone tries again.`;
 
+// The AI service's refusals (Story 9.1). Each points to the typed form, which
+// always works; the module shows it alongside.
+const LLM_WORDS = Object.freeze({
+  off: () => "The AI helper is switched off right now, so I can't read your request. Please use the form instead.",
+  no_key: () => "The AI helper isn't available here, so I can't read your request. Please use the form instead.",
+  config: (admin) => `The AI helper isn't set up correctly, so I can't read your request. I've logged the problem; please tell ${admin}. You can use the form instead.`,
+  too_long: (admin, { maxChars = 500 }) => `That request is too long for me to read (${maxChars} characters at most). Please shorten it, or use the form instead.`,
+  rate_limited: (admin, { perHour = 20 }) => `You've reached the limit of ${perHour} AI requests an hour. Please use the form instead, or try again later.`,
+  over_budget: () => 'The AI helper has reached its spending limit for this hour. Please use the form instead, or try again later.',
+  failed: () => "I couldn't read your request just now. Please use the form instead, or try again in a moment.",
+});
+
 const MESSAGES = [
   [NotSetUp, ({ client, admin }) => `You're not set up in ${escapeText(client)}'s bot yet, so you only see what's open to everyone. Ask ${admin} to add you.`],
   [AccessDenied, ({ label, admin }) => `You don't have access to ${escapeText(label)}; ask ${admin}.`],
   [ConfigFault, ({ admin }) => `That option isn't set up correctly, so I can't open it right now. I've logged the problem; please tell ${admin}.`],
   [DataUnavailable, () => "The data isn't available right now, so I can't answer that. The app is still running; please tell your admin."],
+  [LlmUnavailable, (details, { admin }) => LLM_WORDS[details.reason](admin, details)],
   // A write stopped partway (details.sent: { batches, items, recorded }) says what
   // already went, never "nothing was sent" (#89).
   [KillSwitchOn, ({ system, sent }, { admin }) => (sent
