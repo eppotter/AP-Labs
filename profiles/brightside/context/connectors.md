@@ -1,7 +1,7 @@
 ---
 owner: Dana Reyes          # the named client person who owns this file
-signed_off: pending  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
-signed_off_by: ""  # who signed off: the owner, recorded by a facilitator
+signed_off: 2026-10-25  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
+signed_off_by: "Dana Reyes (Ely as Dana Reyes, 2026-10-25)"  # who signed off: the owner, recorded by a facilitator
 updated: 2026-10-25        # ISO date of the last edit
 ---
 

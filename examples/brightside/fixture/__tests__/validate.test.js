@@ -65,7 +65,7 @@ test('the profile\'s fixture-validate check names no profile: verify passes the 
   assert.deepEqual(check.run, ['node', 'kit/fixture/validate.js', 'examples/brightside/fixture']);
 });
 
-test('data.md holds one truth per planted target: owner Dana Reyes, pending sign-off, tolerance 0', () => {
+test('data.md holds one truth per planted target: owner Dana Reyes, signed off 2026-10-25 (Story 4.3), tolerance 0', () => {
   const entries = loadTruths(contextDirFor(PROFILE_FILE));
   assert.deepEqual(entries.map((e) => e.id).sort(), [...TRUTH_IDS].sort());
   assert.deepEqual(Object.keys(TARGETS).sort(), [...TRUTH_IDS].sort());
@@ -74,7 +74,7 @@ test('data.md holds one truth per planted target: owner Dana Reyes, pending sign
     assert.equal(e.truth.expect, TARGETS[e.id], `${e.id}: expect must be the planted target`);
     assert.deepEqual(e.truth.tolerance, { kind: 'abs', value: 0 }, e.id);
     assert.equal(e.truth.owner, 'Dana Reyes', e.id);
-    assert.equal(e.truth.signedOff, 'pending', e.id);
+    assert.equal(e.truth.signedOff, '2026-10-25', e.id);
     // No --profile: the governing profile applies, so a fork that copies the
     // block enforces its own forbidden columns, never Brightside's (issue #77).
     assert.deepEqual(e.truth.run, ['node', 'kit/fixture/query.js', `examples/brightside/fixture/truths/${e.id}.sql`], e.id);

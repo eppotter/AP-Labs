@@ -1,7 +1,7 @@
 ---
 owner: Dana Reyes          # the named client person who owns this file
-signed_off: pending  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
-signed_off_by: ""  # who signed off: the owner, recorded by a facilitator
+signed_off: 2026-10-25  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
+signed_off_by: "Dana Reyes (Ely as Dana Reyes, 2026-10-25)"  # who signed off: the owner, recorded by a facilitator
 updated: 2026-10-25        # ISO date of the last edit
 ---
 
@@ -126,7 +126,7 @@ show where the rule bites, not rows from the data.
 - rule: cash received in the month. Formula: `SUM(payments.amount_cents)` where `paid_on` is in the
   month. Payments only: never summed across a join to `invoice_lines` (one invoice has many
   lines, so the sum would multiply).
-- audience: open question for Dana: owner and admin only, or everyone with a revenue entry?
+- audience: owner and admin only. Answered by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
 - exclusions: not billed revenue; not invoices issued in the month but paid later.
 - owner: Dana Reyes
 - evidence: `fixture-tables.md` "Paid revenue in month M"; truth `paid-revenue-2026-09`
@@ -138,7 +138,8 @@ show where the rule bites, not rows from the data.
 - type: metric_definition
 - rule: what was invoiced in the month. Formula: `SUM(invoices.total_cents)` where `issued_on` is in
   the month. One invoice per completed visit.
-- audience: same open question as MET-003.
+- audience: owner and admin only, as MET-003. Answered by Dana Reyes (Ely as Dana Reyes,
+  2026-10-25).
 - exclusions: not cash received; not cancelled visits (they have no invoice).
 - owner: Dana Reyes
 - evidence: `fixture-tables.md` "Billed revenue in M"; truth `billed-revenue-2026-09`
@@ -154,6 +155,8 @@ show where the rule bites, not rows from the data.
 - audience: proposed: the "Unpaid invoices" entry (Story 9.5, resource `UNPAID_INVOICES`, not in
   the profile yet). Dana to confirm who gets it.
 - exclusions: not "overdue" (`due_on` plays no part); an overpaid invoice does not reduce the total.
+- invoices issued after as_of: moot. The fixture check `integrity-no-date-after-as-of` guarantees
+  none exist. Answered by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
 - owner: Dana Reyes
 - evidence: `fixture-tables.md` "Outstanding at as_of"; truth `outstanding-at-as-of`
   (19,875,325 cents). Tests: (1) a $260.00 invoice with $100.00 paid adds $160.00; (2) a fully paid
@@ -185,7 +188,9 @@ show where the rule bites, not rows from the data.
 - exclusions: not `staff.hourly_rate_cents`; not payroll taxes, benefits or travel time.
 - failure_modes: joining on `staff.hourly_rate_cents` silently prices history at today's rate (too
   high after raises); a rate join without the date window double-counts a staff member who had a
-  raise. Detected by a planted truth (not yet built). Open: round once at the end or per timesheet?
+  raise. Detected by a planted truth (not yet built).
+- rounding: once, at the end. Sum the exact minutes × cents products, divide by 60 and round only
+  the final figure, never per timesheet. Answered by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
 - owner: Dana Reyes
 - evidence: `fixture-tables.md` "Labour cost of a visit"; Epic 9 plan Story 9.7. Tests: (1) one
   60-minute timesheet at 2,000 cents an hour costs 2,000 cents; (2) a staff member raised from
@@ -238,7 +243,7 @@ run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/clients-tot
 expect: 2000
 tolerance: 0
 owner: Dana Reyes
-signed_off: pending
+signed_off: 2026-10-25
 ```
 
 ```truth
@@ -248,7 +253,7 @@ run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/active-plan
 expect: 815
 tolerance: 0
 owner: Dana Reyes
-signed_off: pending
+signed_off: 2026-10-25
 ```
 
 ```truth
@@ -258,7 +263,7 @@ run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/winback-nor
 expect: 38
 tolerance: 0
 owner: Dana Reyes
-signed_off: pending
+signed_off: 2026-10-25
 ```
 
 ```truth
@@ -268,7 +273,7 @@ run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/winback-nor
 expect: 17
 tolerance: 0
 owner: Dana Reyes
-signed_off: pending
+signed_off: 2026-10-25
 ```
 
 ```truth
@@ -278,7 +283,7 @@ run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/paid-revenu
 expect: 35018640
 tolerance: 0
 owner: Dana Reyes
-signed_off: pending
+signed_off: 2026-10-25
 ```
 
 ```truth
@@ -288,7 +293,7 @@ run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/billed-reve
 expect: 36402350
 tolerance: 0
 owner: Dana Reyes
-signed_off: pending
+signed_off: 2026-10-25
 ```
 
 ```truth
@@ -298,5 +303,5 @@ run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/outstanding
 expect: 19875325
 tolerance: 0
 owner: Dana Reyes
-signed_off: pending
+signed_off: 2026-10-25
 ```
