@@ -37,7 +37,7 @@ Every refusal above happens before the token is read or a connection opens. Once
 
 If anything fails before step 4, the shared database stays as it was. If the final drop fails, the next publish clears the leftover staging copy. To publish under another name, pass `-- --database <name>`: a new name, or one `fixture:publish` wrote before. Names are lower-case letters, digits and `_`.
 
-The **fixture version** is `<generator_version>+<12 hex>`. The hex comes from a hash of `schema.sql` and `seeds/*.csv`, so a seed edit shows even without a generator version bump.
+The **fixture version** is `<generator_version>+<12 hex>`. The hex comes from a hash of `schema.sql` and every seed, so a seed edit shows even without a generator version bump. A seed stored compressed (`seeds/<table>.csv.gz`) is hashed as its unzipped `seeds/<table>.csv`, so compressing a seed never changes the version.
 
 ## 3. Check it
 

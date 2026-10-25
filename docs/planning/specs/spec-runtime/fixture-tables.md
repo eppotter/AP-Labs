@@ -8,7 +8,7 @@ Brightside Home Cleaning is a fictional multi-branch residential cleaner. The da
 - Deterministic. One generator version plus one seed gives byte-identical seed files (own seeded PRNG, no random source from the OS or clock).
 - Money is integer cents. Dates are ISO `DATE` in Brightside's local business calendar (no time zone); the only timestamps are UTC and none drive a period filter.
 - History runs 2024-10-01 to `as_of` = 2026-09-30, recorded in `fixture_meta`. Every "now" in a query is `as_of` from `fixture_meta`, never `CURRENT_DATE`, so known truths never drift.
-- Sizes are Tier 1: about 2,000 clients. Committed seed files stay under 20 MiB (raised from 10 MB on 2026-10-24 (Ely) for labour/homes/scheduling; to be restored by compressing seeds).
+- Sizes are Tier 1: about 2,000 clients. Committed seed files stay under 10 MB. Every seed but `fixture_meta.csv` is stored gzip-compressed as `seeds/<table>.csv.gz`; the size counts the files as stored.
 - Protected columns (Brightside's `sql.forbidden_columns`): `clients.phone`, `properties.street_address`, `properties.postal_code`. Email is allowed: the win-back push needs it. Queries name their columns; `SELECT *` is blocked while any column is forbidden.
 
 ## Tables

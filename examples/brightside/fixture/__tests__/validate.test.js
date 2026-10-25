@@ -13,6 +13,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { build } = require('../../../../kit/fixture/build');
 const { loadChecks, validate } = require('../../../../kit/fixture/validate');
 const { createData } = require('../../../../kit/runtime/data');
@@ -107,13 +108,18 @@ test('active plans at as_of uses the definition (815), never status = active (81
 
 // --- a deliberately broken seed ---
 
+// file is seeds/<table>.csv; the generator stores most seeds as <file>.gz.
 function readCsv(file) {
-  const [header, ...lines] = fs.readFileSync(file, 'utf8').trimEnd().split('\n');
+  const text = fs.existsSync(`${file}.gz`) ? zlib.gunzipSync(fs.readFileSync(`${file}.gz`)).toString('utf8') : fs.readFileSync(file, 'utf8');
+  const [header, ...lines] = text.trimEnd().split('\n');
   const cols = header.split(',');
   return { cols, rows: lines.map((l) => Object.fromEntries(l.split(',').map((v, i) => [cols[i], v]))) };
 }
 
+// Writes the edited seed as plain <file> and deletes <file>.gz, so the build
+// reads the edit and never sees the seed in both forms.
 function writeCsv(file, { cols, rows }) {
+  fs.rmSync(`${file}.gz`, { force: true });
   fs.writeFileSync(file, `${[cols.join(','), ...rows.map((r) => cols.map((c) => r[c]).join(','))].join('\n')}\n`);
 }
 
