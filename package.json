@@ -24,6 +24,8 @@
     "verify": "node kit/verify/run-all.js",
     "engage": "node kit/hooks/engage.js",
     "land": "node kit/land/cli.js",
+    "template:release": "node kit/release/release.js",
+    "template:check": "node kit/release/check.js",
     "onboard": "node kit/onboard/cli.js",
     "fixture:generate": "node examples/brightside/fixture/generate.js",
     "fixture:check": "node examples/brightside/fixture/generate.js --check",

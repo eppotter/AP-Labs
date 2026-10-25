@@ -117,6 +117,7 @@ Scope changes mid-program: `bmad-correct-course`. Do not route to BMAD's build, 
 
 - Merge yourself only when the human driving the session is an approver for the repo. For this template repo, that is Ely.
 - Otherwise stop when the PR is ready, post `npm run notify -- --kind decision` @-mentioning the approver, and wait.
+- Template releases are tagged with `npm run template:release -- vX.Y.Z`; Ely pushes the tag. The Orchestrator never passes `--push` to `template:release` and never runs `git push --tags`.
 
 ### Model roles
 
