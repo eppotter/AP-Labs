@@ -213,3 +213,14 @@ test('a scheduled job that reaches a connector\'s write fails npm run check (Sto
   assert.equal(r.status, 1);
   assert.match(r.stderr, /app\/jobs\/push\.js:2: reaches a connector's write operations/);
 });
+
+test('the approval-write archetype (Story 10.2) passes only because it is the allow-listed folder: the same code anywhere else fails', (t) => {
+  const root = tmpRoot(t);
+  const real = fs.readFileSync(path.join(ROOT, 'kit/runtime/archetypes/approval-write/index.js'), 'utf8');
+  put(root, 'kit/runtime/archetypes/approval-write/index.js', real);
+  assert.deepEqual(writePathProblems(root, {}), [], 'inside the archetype folder');
+  put(root, 'kit/runtime/archetypes/scoped-pull/push.js', real);
+  const problems = writePathProblems(root, {});
+  assert.ok(problems.length > 0, 'the push code outside the archetype is caught');
+  for (const p of problems) assert.match(p, /^kit\/runtime\/archetypes\/scoped-pull\/push\.js:\d+: /, p);
+});

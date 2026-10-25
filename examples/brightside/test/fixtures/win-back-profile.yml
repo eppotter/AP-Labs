@@ -1,6 +1,6 @@
 # Test fixture for the Win-back, Unpaid invoices and Labour cost example tests (Stories 9.3, 9.5,
-# 9.7): the resources the
-# Brightside app dir names, one admin with a fake Slack id, and the same
+# 9.7, 10.2): the resources the
+# Brightside app dir names, one admin (granted WIN_BACK by name: it is owner-only) and one member with fake Slack ids, and the same
 # forbidden columns as the demo profile. Tests read this, never
 # profiles/brightside/profile.yml. Deleted with the example in a fork.
 schema_version: 1
@@ -9,11 +9,11 @@ resources:
   - { key: HELLO_WORLD, label: Say hello, open_access: true }
   - { key: DATASET, label: Dataset, open_access: true }
   - { key: OUTBOX, label: Email outbox }
-  - { key: WIN_BACK, label: Win-back list }
+  - { key: WIN_BACK, label: Win-back list, admin_grantable: false }
   - { key: UNPAID_INVOICES, label: Unpaid invoices }
   - { key: LABOUR_COST, label: Labour cost }
 users:
-  - { id: ada, name: Ada Admin, role: admin, identities: { slack: U0FIXTUREADA } }
+  - { id: ada, name: Ada Admin, role: admin, identities: { slack: U0FIXTUREADA }, grants: [WIN_BACK] }
   - { id: max, name: Max Member, role: member, identities: { slack: U0FIXTUREMAX } }
 sql:
   forbidden_columns: [clients.phone, properties.street_address, properties.postal_code]

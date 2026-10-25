@@ -1086,6 +1086,26 @@ test('two instances of one connector apply a concurrent repeat key once, with th
   }
 });
 
+test('{ report: true } tells a replay from a fresh write: from the store or a concurrent call, replayed is true and nothing was sent (Story 10.3, N6)', async () => {
+  let calls = 0;
+  const connector = defineConnector(spec({
+    write: { put: { plan: (i) => i, apply: async (i, ctx) => ctx.request(async () => { await new Promise((r) => setTimeout(r, 5)); return { put: true }; }) } },
+  }));
+  const c = connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, onRequest: () => { calls += 1; } });
+  const report = { report: true };
+  // Two at once: one applies, the other joins it and is told it sent nothing.
+  const both = await Promise.all([c.write.put({ idempotencyKey: 'rep', dryRun: false }, report), c.write.put({ idempotencyKey: 'rep', dryRun: false }, report)]);
+  assert.deepEqual(both.map((r) => r.replayed).sort(), [false, true]);
+  assert.deepEqual(both.map((r) => r.result), [{ put: true }, { put: true }]);
+  assert.equal(calls, 1);
+  // Later, from the store.
+  assert.deepEqual(await c.write.put({ idempotencyKey: 'rep', dryRun: false }, report), { result: { put: true }, replayed: true });
+  // Without report the result is as before, and the options are not part of the input.
+  assert.deepEqual(await c.write.put({ idempotencyKey: 'rep', dryRun: false }), { put: true });
+  assert.equal(calls, 1);
+  assert.deepEqual(await c.write.put({ idempotencyKey: 'rep2' }, report), { result: { dryRun: true, operation: 'put', wouldWrite: { idempotencyKey: 'rep2' } }, replayed: false });
+});
+
 test('a dry run on one instance does not use up the key for another (DEP-012)', async () => {
   let calls = 0;
   const connector = defineConnector(spec());

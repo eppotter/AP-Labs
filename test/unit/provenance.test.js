@@ -345,8 +345,10 @@ test('a push never reads the run record: only the scoped-pull engine loads the p
     }
   };
   walk(path.join(root, 'kit'));
-  // Epic 10's preview joins this list; a push never does.
-  assert.deepEqual(loaders.sort(), ['kit/runtime/archetypes/scoped-pull/index.js', 'kit/runtime/archetypes/scoped-pull/run.js']);
+  // Epic 10's preview joins this list (Story 10.2); a push never does.
+  assert.deepEqual(loaders.sort(), [
+    'kit/runtime/archetypes/approval-write/preview.js', 'kit/runtime/archetypes/scoped-pull/index.js', 'kit/runtime/archetypes/scoped-pull/run.js',
+  ]);
   assert.deepEqual(named, []);
 });
 

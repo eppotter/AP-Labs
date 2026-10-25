@@ -34,6 +34,30 @@
 // the failed ones. A contact's key carries its list (the write's key, listId
 // and external_ref), so the same key on another list adds the contacts there
 // rather than count them as done. A call that succeeds returns { listId, added, alreadyAdded }.
+//
+// pushList (Story 10.2, plan epic-10 decision 3): the one write the
+// approval-write archetype calls for a Win-back push. It creates the list and
+// adds its contacts in batches, under one idempotency key:
+//
+//   await email.write.pushList({ name, contacts, idempotencyKey, dryRun: false });
+//
+// Its plan (the preview's dry run) lists the contacts the tool would refuse as
+// skipped, with a short reason (no email), and apply sends only the others,
+// so what the person approved is what goes. Every request returns only counts
+// and id-shaped refs, so the contract keeps each answer in its progress
+// record and a push that dies partway resumes (10.0): the list step returns
+// { listId } (never the name), each contact batch { added, alreadyAdded,
+// failedRefs } (no reason text). A list id always has a digit, so it is
+// id-shaped. It declares perItemIdempotency: each contact is keyed (the push's
+// key, the list and the ref), so a retry with the same key and input adds
+// only what failed. createList and addContacts stay for other callers.
+//
+// listKey (optional, Story 10.3 review R2-1): the list's own key, when it
+// differs from the write's. The approval-write archetype retries the failed
+// contacts of a push under a derived key, but they belong on the SAME list:
+// it passes the first push's key as listKey on every push and retry, and the
+// list and each contact are keyed by it (else by idempotencyKey), so a retry
+// adds to the list the first push made and never makes a second one.
 
 const crypto = require('node:crypto');
 const path = require('node:path');
@@ -42,6 +66,10 @@ const { openOutbox, outboxPath } = require('./outbox');
 
 const FIELDS = Object.freeze(['external_ref', 'email', 'first_name']);
 const MAX_NAME = 120;
+
+// A contact the tool would refuse for its data, not its shape: no usable
+// email. Returned by sortContacts as skipped, never sent.
+const SKIP_NO_EMAIL = 'no email';
 
 function checkName(name) {
   if (typeof name !== 'string' || !name.trim() || name.length > MAX_NAME) {
@@ -69,6 +97,41 @@ function checkContacts(contacts) {
   });
 }
 
+// pushList's contacts split into those to send and those the tool would
+// refuse (skipped: [{ ref, reason }]). The shape is checked as in
+// checkContacts (an unknown field or a missing ref throws); a missing or
+// unusable email is a skip, decided the same way by plan and apply.
+function sortContacts(contacts) {
+  if (!Array.isArray(contacts) || !contacts.length) throw new Error('contacts must be a non-empty list');
+  const send = [];
+  const skipped = [];
+  const refs = new Set();
+  contacts.forEach((c, i) => {
+    if (!c || typeof c !== 'object') throw new Error(`contact ${i + 1} is not an object`);
+    const extra = Object.keys(c).filter((k) => !FIELDS.includes(k));
+    if (extra.length) throw new Error(`contact ${i + 1}: fields not allowed: ${extra.join(', ')} (allowed: ${FIELDS.join(', ')})`);
+    const ref = typeof c.external_ref === 'number' ? String(c.external_ref) : c.external_ref;
+    if (typeof ref !== 'string' || !ref.trim()) throw new Error(`contact ${i + 1}: external_ref (the client_id) is required`);
+    if (refs.has(ref)) throw new Error(`contact ${i + 1}: external_ref ${ref} is given twice`);
+    refs.add(ref);
+    if (typeof c.email !== 'string' || !c.email.includes('@')) {
+      skipped.push({ ref, reason: SKIP_NO_EMAIL });
+      return;
+    }
+    const firstName = typeof c.first_name === 'string' ? c.first_name : '';
+    send.push({ external_ref: ref, email: c.email, first_name: firstName });
+  });
+  return { send, skipped };
+}
+
+// A list id from its key: "list-" and 12 hex characters, with a 0 added when
+// those have no digit, so it is always id-shaped (the contract keeps only
+// id-shaped strings in a progress record).
+function listIdFor(key) {
+  const id = `list-${crypto.createHash('sha256').update(key).digest('hex').slice(0, 12)}`;
+  return /[0-9]/.test(id) ? id : `${id}0`;
+}
+
 // The stand-in email tool over the outbox. simulate is test-only (deps.simulate):
 //   failContacts: a Set of external_refs the tool refuses (read on every call)
 function mockEmailTool(outbox, simulate = {}) {
@@ -78,7 +141,7 @@ function mockEmailTool(outbox, simulate = {}) {
       return outbox.transaction((tx) => {
         const seen = tx.find('list', key);
         if (seen) return { listId: seen.payload.listId, name: seen.payload.name };
-        const listId = `list-${crypto.createHash('sha256').update(key).digest('hex').slice(0, 12)}`;
+        const listId = listIdFor(key);
         tx.append({ type: 'list', operation: 'createList', key, payload: { listId, name } });
         return { listId, name };
       });
@@ -163,6 +226,45 @@ function declare(outbox) {
           return { listId, added: total.added, alreadyAdded: total.alreadyAdded };
         },
       },
+      // input: { name, contacts: [{ external_ref, email, first_name }], idempotencyKey }.
+      // One push: the list, then its contacts in batches, under one key.
+      pushList: {
+        perItemIdempotency: true,
+        plan: ({ name, contacts }) => {
+          const { send, skipped } = sortContacts(contacts);
+          return { create: 'list', name: checkName(name), add: send.length, skipped };
+        },
+        async apply({ name, contacts, listKey }, ctx) {
+          checkName(name);
+          if (listKey !== undefined && (typeof listKey !== 'string' || !listKey)) throw new Error('listKey must be a non-empty string');
+          const base = listKey || ctx.idempotencyKey;
+          const { send, skipped } = sortContacts(contacts);
+          // The list step carries no items (size 0) and answers only its id.
+          const { listId } = await ctx.request(async () => {
+            const made = await ctx.client.createList(name, base);
+            return { listId: made.listId };
+          }, { size: 0 });
+          const total = { added: 0, alreadyAdded: 0, failedRefs: [] };
+          for (const batch of ctx.batches(send)) {
+            const keyed = batch.map((c) => ({ ...c, key: `${base}:${listId}:${c.external_ref}` }));
+            // Counts and refs only, never the tool's reason text.
+            const res = await ctx.request(async () => {
+              const out = await ctx.client.addContacts(listId, keyed);
+              return { added: out.added, alreadyAdded: out.alreadyAdded, failedRefs: out.failed.map((f) => f.external_ref) };
+            }, { size: batch.length });
+            total.added += res.added;
+            total.alreadyAdded += res.alreadyAdded;
+            total.failedRefs.push(...res.failedRefs);
+          }
+          if (total.failedRefs.length) {
+            const succeeded = total.added + total.alreadyAdded;
+            throw new PartialFailure(`${succeeded} of ${send.length} contacts added, ${total.failedRefs.length} failed`, {
+              succeeded, failed: total.failedRefs.length, failedRefs: total.failedRefs,
+            });
+          }
+          return { listId, added: total.added, alreadyAdded: total.alreadyAdded, skipped: skipped.length };
+        },
+      },
     },
   });
 }
@@ -190,4 +292,4 @@ function create(deps = {}) {
   return connector.create({ ...deps, idempotency: deps.idempotency || outbox.ledger });
 }
 
-module.exports = Object.freeze({ ...email, create, FIELDS });
+module.exports = Object.freeze({ ...email, create, FIELDS, SKIP_NO_EMAIL });
