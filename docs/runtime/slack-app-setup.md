@@ -2,6 +2,8 @@
 
 A one-time human step for Ely before the live check of Epic 6. Agents never do this: it creates credentials. CI needs none of it; every test uses a fake Slack client.
 
+In a client fork, start from `docs/fork-guide.md` (step 5): the fork writes its own app manifest and hub, then creates the app the same way.
+
 The runtime is its **own** Slack app (architecture AD-5). It is not the "AP Labs Orchestrator" app that `npm run notify` posts through: that one is an incoming webhook and keeps its own credential. Don't add bot scopes to it.
 
 ## 1. Create the app from the manifest
