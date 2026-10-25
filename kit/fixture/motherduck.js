@@ -13,11 +13,14 @@
 // app loads this file.
 //
 // connect({ token }) returns { run(sql) -> rows as JSON-safe objects, close() }.
+// connectLocal() returns the same shape over an in-memory DuckDB with no
+// MotherDuck and no token: the publish tests run the real upload SQL on it,
+// foreign keys enforced, so they need not import DuckDB themselves.
 
 const { DuckDBInstance } = require('@duckdb/node-api');
 
-async function connect({ token }) {
-  const instance = await DuckDBInstance.create('md:', { motherduck_token: token });
+async function open(path, options) {
+  const instance = await DuckDBInstance.create(path, options);
   let conn;
   try {
     conn = await instance.connect();
@@ -34,4 +37,7 @@ async function connect({ token }) {
   };
 }
 
-module.exports = { connect };
+const connect = ({ token }) => open('md:', { motherduck_token: token });
+const connectLocal = () => open(':memory:', {});
+
+module.exports = { connect, connectLocal };

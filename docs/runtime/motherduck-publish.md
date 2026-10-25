@@ -30,7 +30,7 @@ APLABS_PROFILE="$PWD/profiles/brightside/profile.yml" npm run fixture:publish
 
 Every refusal above happens before the token is read or a connection opens. Once connected, publish also refuses when the target database already exists but has no `fixture_publish` table, which means `fixture:publish` did not write it. `--database` can name any MotherDuck database, and publish never replaces one it did not write. That refusal sends only reads: nothing remote is changed or dropped, a leftover staging copy included. A target that doesn't exist yet is fine (the first publish). It then:
 
-1. uploads the build to `brightside_fixture__publishing`,
+1. uploads the build to `brightside_fixture__publishing`, table by table. It attaches the local build read-only, creates each table from its local definition (keys, foreign keys and `NOT NULL` rules kept), parents before the tables that reference them, copies the rows in the same order, and detaches the local build again, also when something fails. It refuses, before creating the staging copy, when the foreign keys form a cycle or the build holds anything besides tables (a view, index, sequence, macro, type or extra schema). A whole-database copy of the file is not used: MotherDuck loads its tables in an order that ignores foreign keys, which broke the first publish,
 2. adds a `fixture_publish` table recording the fixture version, seeds hash, as-of date, publish time and row counts,
 3. checks that copy against the local build,
 4. replaces `brightside_fixture` with it (`CREATE OR REPLACE DATABASE … FROM …`), checks it again, and drops the staging copy.
