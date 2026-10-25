@@ -17,7 +17,9 @@
 //
 // The fixture version is <generator_version>+<first 12 hex of seedsHash>:
 // the generator's own number, plus a hash of schema.sql and seeds/*.csv, so a
-// hand edit or a generator change without a version bump still shows.
+// hand edit or a generator change without a version bump still shows. A seed
+// stored as seeds/<table>.csv.gz is hashed as seeds/<table>.csv with its
+// unzipped content, so compressing a seed never changes the version.
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -28,7 +30,7 @@ const { createData } = require('../runtime/data');
 // The database name check is the runtime's (kit/runtime/data/motherduck), so
 // the runtime never loads fixture code; publish and the bot refuse the same names.
 const mdNames = require('../runtime/data/motherduck');
-const { schemaTables } = require('./build');
+const { schemaTables, listSeeds, readSeed, FixtureBuildError } = require('./build');
 
 const TOKEN_ENV = mdNames.PUBLISH_TOKEN_ENV;
 const TOKEN_KEYCHAIN = mdNames.PUBLISH_TOKEN_KEYCHAIN;
@@ -57,14 +59,19 @@ function databaseNameFor(fixtureDir, { name = null, database = null } = {}) {
 
 const stagingNameFor = (database) => `${database}${STAGING_SUFFIX}`;
 
-// sha256 over schema.sql and seeds/*.csv in name order, each framed by its
-// name and length so moving bytes between files changes the hash.
+// sha256 over schema.sql and every seed in name order, each framed by its
+// name and length so moving bytes between files changes the hash. A seed is
+// named seeds/<table>.csv and hashed unzipped, whichever form it is stored in
+// (build listSeeds), so the hash is the same for a .csv and its .csv.gz.
 function seedsHash(fixtureDir) {
   const dir = path.resolve(fixtureDir);
-  const files = ['schema.sql', ...fs.readdirSync(path.join(dir, 'seeds')).filter((f) => f.endsWith('.csv')).sort().map((f) => `seeds/${f}`)];
+  const files = [
+    { rel: 'schema.sql', read: () => fs.readFileSync(path.join(dir, 'schema.sql')) },
+    ...[...listSeeds(path.join(dir, 'seeds')).values()].map((seed) => ({ rel: seed.rel, read: () => readSeed(seed) })),
+  ];
   const h = crypto.createHash('sha256');
-  for (const rel of files) {
-    const body = fs.readFileSync(path.join(dir, rel));
+  for (const { rel, read } of files) {
+    const body = read();
     h.update(`${rel}\0${body.length}\0`);
     h.update(body);
   }
@@ -73,9 +80,13 @@ function seedsHash(fixtureDir) {
 
 const versionOf = (generatorVersion, sha) => `${generatorVersion || 'unknown'}+${sha.slice(0, 12)}`;
 
-// seeds/fixture_meta.csv as a map. Its values are plain (no quoted commas).
+// seeds/fixture_meta.csv (or .csv.gz) as a map. Its values are plain (no
+// quoted commas).
 function seedMeta(fixtureDir) {
-  const lines = fs.readFileSync(path.join(path.resolve(fixtureDir), 'seeds', `${META_TABLE}.csv`), 'utf8').split(/\r?\n/).slice(1);
+  const seedsDir = path.join(path.resolve(fixtureDir), 'seeds');
+  const seed = listSeeds(seedsDir).get(META_TABLE);
+  if (!seed) throw new FixtureBuildError(`no seeds/${META_TABLE}.csv in ${seedsDir}`);
+  const lines = readSeed(seed).toString('utf8').split(/\r?\n/).slice(1);
   const meta = new Map();
   for (const line of lines) {
     if (!line) continue;
