@@ -9,7 +9,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { compareForks, packageDelta, areaOf, listFiles } = require('../../kit/lib/fork');
+const {
+  compareForks, packageDelta, areaOf, listFiles, deletedRoots, updateRule, UPDATE_RULES,
+} = require('../../kit/lib/fork');
 
 const tmps = [];
 test.after(() => tmps.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
@@ -215,4 +217,45 @@ test('packageDelta: a lockfile entry changed, removed or added with nothing appe
     'package-lock.json: field "lockfileVersion" was changed',
   ]);
   assert.deepEqual(packageDelta(PKG, PKG, { templateLock: LOCK }).problems, ['package-lock.json: is not an object']);
+});
+
+// Story 11.6 (review B9): the path rules a template update applies.
+
+test('UPDATE_RULES: the fork-owned list is the ledger and the planning docs; deleted roots are derived', () => {
+  assert.deepEqual([...UPDATE_RULES.forkOwned], ['docs/ledger.md', 'docs/planning']);
+  assert.equal(typeof UPDATE_RULES.deletedOnPurpose, 'string', 'no fixed list of deleted roots');
+  assert.ok(Object.isFrozen(UPDATE_RULES) && Object.isFrozen(UPDATE_RULES.forkOwned));
+});
+
+test('deletedRoots: lifts each deleted file to the shallowest folder the fork has nothing under', () => {
+  const recorded = [
+    'README.md', 'docs/a.md', 'docs/b.md', 'examples/README.md', 'examples/demo/app/x.js', 'examples/demo/fixture/y.sql',
+    'profiles/_schema/profile.schema.json', 'profiles/demo/profile.yml', 'scripts/old.sh', 'scripts/keep.sh', 'gone/deep/file.txt',
+  ];
+  const fork = ['README.md', 'docs/a.md', 'examples/README.md', 'profiles/_schema/profile.schema.json', 'scripts/keep.sh', '.aplabs/profile.yml'];
+  assert.deepEqual(deletedRoots(recorded, fork), ['docs/b.md', 'examples/demo', 'gone', 'profiles/demo', 'scripts/old.sh']);
+  assert.deepEqual(deletedRoots(recorded, recorded), []);
+});
+
+test('deletedRoots: engine paths never count (the update refuses an engine edit first)', () => {
+  assert.deepEqual(deletedRoots(['kit/lib/a.js', 'kit/lib/b.js', 'README.md'], ['kit/lib/a.js', 'README.md']), []);
+});
+
+test('updateRule: fork, package, fork-owned, deleted and template paths', () => {
+  const opts = { deletedRoots: ['examples/demo', 'profiles/demo'], appDir: 'app' };
+  assert.equal(updateRule('.aplabs/profile.yml', opts), 'fork');
+  assert.equal(updateRule('.aplabs/template-version', opts), 'fork');
+  assert.equal(updateRule('app/hubs/x.json', opts), 'fork');
+  assert.equal(updateRule('apps/x.json', opts), 'template');
+  assert.equal(updateRule('client/app/x.json', { ...opts, appDir: 'client/app' }), 'fork');
+  assert.equal(updateRule('package.json', opts), 'package');
+  assert.equal(updateRule('package-lock.json', opts), 'package');
+  assert.equal(updateRule('docs/ledger.md', opts), 'fork-owned');
+  assert.equal(updateRule('docs/planning/plan.md', opts), 'fork-owned');
+  assert.equal(updateRule('docs/planningish.md', opts), 'template');
+  assert.equal(updateRule('examples/demo/new.md', opts), 'deleted');
+  assert.equal(updateRule('examples/demo2/new.md', opts), 'template');
+  assert.equal(updateRule('profiles/demo/profile.yml', opts), 'deleted');
+  assert.equal(updateRule('kit/lib/a.js', opts), 'template');
+  assert.equal(updateRule('README.md'), 'template');
 });

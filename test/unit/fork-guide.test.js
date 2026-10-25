@@ -8,7 +8,7 @@
 // the template-history stop sign first, cloning at a tag with `upstream`, the
 // list of files a fork never edits (review B10), the profile example's tier
 // rows (app/jobs at T2 or higher, review N2), the "you, not the agent"
-// marks and the pointer to 11.6 for updates.
+// marks and the template update section (Story 11.6).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -181,7 +181,7 @@ test('fork guide: marks every human-only step "you, not the agent"', () => {
   }
 });
 
-test('fork guide: covers the required rules and points to 11.6 for updates', () => {
+test('fork guide: covers the required rules', () => {
   assert.match(GUIDE, /protected-columns/);
   assert.match(GUIDE, /synthetic data only/i);
   assert.match(GUIDE, /durable idempotency store/i);
@@ -189,8 +189,21 @@ test('fork guide: covers the required rules and points to 11.6 for updates', () 
   assert.match(GUIDE, /spend cap/i);
   assert.match(GUIDE, /exactly one replica/i);
   assert.match(GUIDE, /stop-then-start/i);
-  assert.match(section('Taking a template update'), /11\.6/);
   assert.doesNotMatch(GUIDE, /hometown|varsity/i);
+});
+
+test('fork guide: explains template updates with the real command (Story 11.6)', () => {
+  const s = section('Taking a template update');
+  assert.match(s, /npm run template:update -- v\d+\.\d+\.\d+/);
+  assert.match(s, /`upstream`/);
+  assert.match(s, /\*\*adds\*\* to the template and never edits the engine/);
+  assert.doesNotMatch(s, /coming|not built yet/i);
+  for (const p of ['docs/ledger.md', 'docs/planning/', '.aplabs/', 'package.json', 'package-lock.json', '.aplabs/template-version']) {
+    assert.ok(s.includes(`\`${p}\``), `the update section names ${p}`);
+  }
+  assert.match(s, /npm install --package-lock-only --ignore-scripts/);
+  assert.match(s, /schema_version/);
+  assert.match(s, /What a fork must do/);
 });
 
 test('the Slack setup doc links the fork guide', () => {

@@ -240,6 +240,30 @@ npm run template:check
 
 It passes while `kit/` and `profiles/_schema/` match the recorded release. When they don't, it names each changed file if it can reach the tag (here, or on `upstream`); offline it only says the engine changed. Undo the edit and send the fix to the template.
 
-## Taking a template update (coming)
+## Taking a template update
 
-The update command is not built yet: it arrives with Story 11.6, which adds this section in full. In short: a new release is a tag on the template; the update merges that tag into a branch of the fork with a merge commit, keeps the deleted example deleted and the fork's ledger and planning files as they are, re-applies the fork's appended dependencies, and opens a PR in the fork. Until then, don't merge `upstream` by hand.
+**In plain words.** The fork is the client's copy of the template. `upstream` is the git remote that points back at the template (step 1 set it up), and `origin` is the client's own repo. When AP Labs improves the template, it cuts a release: a tag such as `v0.3.0`, with an entry in `CHANGELOG.md` that says what changed and what a fork must do. The client **adds** to the template and never edits the engine, so a release can flow into the fork with one command and no hand-merging.
+
+Run it on a clean, up-to-date `main`:
+
+```bash
+git switch main
+git pull
+npm run template:update -- v0.3.0
+```
+
+It refuses, and says why, unless: this is a fork with a recorded template version (step 4), `upstream` exists, the worktree is clean, you are on `main` and it matches `main` on `origin`, the version is newer than the recorded one, and `npm run template:check` passes. If the fork has edited anything in `kit/` or `profiles/_schema/`, it names each file: undo those edits and send the fix to the template instead.
+
+Then it:
+
+1. Fetches the release from `upstream` and merges it into a new branch, template/v0.3.0, made from `main`, with a merge commit.
+2. Sorts out the paths the release changed:
+   - files the fork deleted on purpose since its recorded release (the example client, step 3) stay deleted, and new template files under those folders stay out;
+   - the fork's own `docs/ledger.md` and `docs/planning/` stay exactly as they are on `main`;
+   - `package.json` becomes the template's, with the fork's appended dependencies added back, and `package-lock.json` is regenerated (`npm install --package-lock-only --ignore-scripts`);
+   - if the release touches the fork's own files (`.aplabs/` or the app dir `app/`), or any other file conflicts, it stops, leaves the fork exactly as it was and back on `main`, and names the files. It also stops if the template now ships a dependency the fork appended: remove the fork's entry on `main` first.
+3. Upgrades `.aplabs/profile.yml` when the release raises the profile's `schema_version`, keeping its comments, using the steps in `kit/lib/template/migrations`. It refuses a fork whose profile is on a newer version than the release.
+4. Updates `.aplabs/template-version`, commits, runs `npm ci` if the lockfile changed, then `npm run check && npm test`. If the checks fail it keeps the branch for you to look at, opens no PR, and goes back to `main`.
+5. Pushes the branch to `origin` and opens a PR in the fork. The PR copies the release's "What a fork must do" lines and lists every path it handled, the package files and any profile change.
+
+Read the PR like any other: do what "What a fork must do" says, check the profile diff if there is one, and merge it through the normal review. `.aplabs/` changes are T3, so the update PR always gets the full review.

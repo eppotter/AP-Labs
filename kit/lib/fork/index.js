@@ -22,7 +22,21 @@
 //       installing an appended dependency adds). An existing entry changed or
 //       removed is a problem naming it.
 //
-// Both are read-only: they never write, spawn or reach the network.
+//   UPDATE_RULES, deletedRoots(recordedFiles, forkFiles) and
+//   updateRule(rel, { deletedRoots, appDir })  how `npm run template:update`
+//       (Story 11.6, review B9) treats each path a template merge changes:
+//         fork        .aplabs/** or the app dir: the update aborts, naming it
+//         package     package.json and package-lock.json: the package rule
+//         fork-owned  UPDATE_RULES.forkOwned (the fork's ledger and planning
+//                     docs): reset to the fork's main
+//         deleted     under a root the fork deleted on purpose: removed again
+//         template    everything else: the template's version is taken (a
+//                     conflict here aborts the update)
+//       The deleted-on-purpose roots are never a fixed list: they are what the
+//       fork deleted since its recorded release (deletedRoots), so the engine
+//       never names the template's example client.
+//
+// All are read-only: they never write, spawn or reach the network.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -167,4 +181,64 @@ function packageDelta(templatePkg, forkPkg, { templateLock, forkLock } = {}) {
   return { appended, problems };
 }
 
-module.exports = { compareForks, packageDelta, areaOf, listFiles, PACKAGE_FILES, DEP_SECTIONS };
+// The two path lists a template update applies after its merge (Q16, B9).
+// forkOwned: files the fork owns although the template ships them too; the
+// update keeps the fork's version (repo-relative roots: a root covers itself
+// and everything under it). deletedOnPurpose: not a list, derived per fork by
+// deletedRoots() from what it deleted since its recorded release.
+const UPDATE_RULES = Object.freeze({
+  forkOwned: Object.freeze(['docs/ledger.md', 'docs/planning']),
+  deletedOnPurpose: 'derived: deletedRoots(files at the recorded release, files on the fork\'s main)',
+});
+
+/**
+ * The roots a fork deleted on purpose: every file at its recorded release
+ * that its main no longer has, lifted to the shallowest folder that main has
+ * nothing under (so a new template file there stays out too), or the file
+ * itself when its folder is still there. Engine paths never count: the
+ * update refuses a fork that changed the engine before it gets here.
+ * recordedFiles, forkFiles: repo-relative file paths. Returns sorted roots.
+ */
+function deletedRoots(recordedFiles, forkFiles) {
+  const fork = new Set(forkFiles);
+  const forkDirs = new Set();
+  for (const rel of fork) {
+    const segs = rel.split('/');
+    for (let i = 1; i < segs.length; i++) forkDirs.add(segs.slice(0, i).join('/'));
+  }
+  const roots = new Set();
+  for (const rel of recordedFiles) {
+    if (fork.has(rel) || isEnginePath(rel)) continue;
+    const segs = rel.split('/');
+    let root = rel;
+    for (let i = 1; i < segs.length; i++) {
+      const dir = segs.slice(0, i).join('/');
+      if (!forkDirs.has(dir)) {
+        root = dir;
+        break;
+      }
+    }
+    roots.add(root);
+  }
+  // Drop a root already covered by a shorter one.
+  const sorted = [...roots].sort();
+  return sorted.filter((r) => !sorted.some((o) => o !== r && under(r, o)));
+}
+
+/**
+ * How a template update treats one path its merge changed (see the header).
+ * deletedRoots: from deletedRoots(); appDir: the fork's app dir, or a list
+ * of them, repo-relative (default app).
+ */
+function updateRule(rel, { deletedRoots: roots = [], appDir = 'app' } = {}) {
+  const appDirs = [].concat(appDir).filter(Boolean);
+  if (FORK_DIRS.some((d) => under(rel, d)) || appDirs.some((d) => under(rel, d))) return 'fork';
+  if (PACKAGE_FILES.includes(rel)) return 'package';
+  if (UPDATE_RULES.forkOwned.some((d) => under(rel, d))) return 'fork-owned';
+  if (roots.some((d) => under(rel, d))) return 'deleted';
+  return 'template';
+}
+
+module.exports = {
+  compareForks, packageDelta, areaOf, listFiles, deletedRoots, updateRule, UPDATE_RULES, PACKAGE_FILES, DEP_SECTIONS,
+};

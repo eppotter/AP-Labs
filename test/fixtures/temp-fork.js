@@ -66,6 +66,36 @@ function repoFiles() {
     .filter((rel) => fs.existsSync(path.join(REPO, rel)));
 }
 
+// Copies the repo's files (repoFiles) into root, which must be empty. Also
+// used for the template in the update tests (Story 11.6).
+function copyRepoFiles(root) {
+  for (const rel of new Set(repoFiles())) {
+    const dest = path.join(root, rel);
+    const src = path.join(REPO, rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    // A tracked symlink (.claude/skills) stays a symlink, as tar keeps it.
+    if (fs.lstatSync(src).isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(src), dest);
+    else fs.copyFileSync(src, dest);
+  }
+  for (const d of NOT_COPIED) fs.rmSync(path.join(root, d), { recursive: true, force: true });
+}
+
+// Adds one client (a CLIENTS key) to a copied root: .aplabs/profile.yml and
+// .aplabs/context/ from its fixture, and app/ with its hub and its module.
+// Returns the app dir.
+function addClient(root, name) {
+  const client = CLIENTS[name];
+  if (!client) throw new Error(`no fixture client "${name}"`);
+  fs.mkdirSync(path.join(root, '.aplabs'));
+  fs.copyFileSync(path.join(client.dir, 'profile.yml'), path.join(root, '.aplabs/profile.yml'));
+  fs.cpSync(path.join(client.dir, 'context'), path.join(root, '.aplabs/context'), { recursive: true });
+  const appDir = path.join(root, 'app');
+  fs.cpSync(path.join(client.dir, 'hubs'), path.join(appDir, 'hubs'), { recursive: true });
+  fs.mkdirSync(path.join(appDir, 'modules'));
+  addModule(appDir, { fields: client.module });
+  return appDir;
+}
+
 // Makes a copied fork for one client (a CLIENTS key).
 // Returns { root, appDir, client, cleanup }.
 function makeCopyFork(name = 'fork') {
@@ -74,22 +104,8 @@ function makeCopyFork(name = 'fork') {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `aplabs-${name}-`)));
   const cleanup = () => fs.rmSync(root, { recursive: true, force: true });
   try {
-    for (const rel of new Set(repoFiles())) {
-      const dest = path.join(root, rel);
-      const src = path.join(REPO, rel);
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      // A tracked symlink (.claude/skills) stays a symlink, as tar keeps it.
-      if (fs.lstatSync(src).isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(src), dest);
-      else fs.copyFileSync(src, dest);
-    }
-    for (const d of NOT_COPIED) fs.rmSync(path.join(root, d), { recursive: true, force: true });
-    fs.mkdirSync(path.join(root, '.aplabs'));
-    fs.copyFileSync(path.join(client.dir, 'profile.yml'), path.join(root, '.aplabs/profile.yml'));
-    fs.cpSync(path.join(client.dir, 'context'), path.join(root, '.aplabs/context'), { recursive: true });
-    const appDir = path.join(root, 'app');
-    fs.cpSync(path.join(client.dir, 'hubs'), path.join(appDir, 'hubs'), { recursive: true });
-    fs.mkdirSync(path.join(appDir, 'modules'));
-    addModule(appDir, { fields: client.module });
+    copyRepoFiles(root);
+    const appDir = addClient(root, name);
     runGit(root, ['init', '-q', '-b', 'main']);
     runGit(root, ['add', '-A']);
     runGit(root, ['-c', 'user.name=two-forks', '-c', 'user.email=two-forks@example.invalid', 'commit', '-q', '--no-verify', '-m', `fork ${name}`]);
@@ -138,4 +154,4 @@ function engineDigest(root = REPO) {
   return out;
 }
 
-module.exports = { makeFork, makeCopyFork, addModule, engineDigest, CLIENTS, FILLED, REPO, TEMPLATE };
+module.exports = { makeFork, makeCopyFork, copyRepoFiles, addClient, addModule, engineDigest, CLIENTS, FILLED, REPO, TEMPLATE };
