@@ -96,12 +96,19 @@ test('every default model is priced, and every price is a positive number', () =
   assert.ok(priceOf(LLM_DEFAULTS.extraction_model), LLM_DEFAULTS.extraction_model);
   assert.equal(LLM_DEFAULTS.model, 'claude-sonnet-5-5');
   for (const [model, price] of Object.entries(PRICES)) {
-    assert.ok(price.inputPerMTok > 0 && price.outputPerMTok > 0, model);
-    assert.ok(price.checked === null || /^\d{4}-\d{2}-\d{2}$/.test(price.checked), `${model}: checked is a date or null`);
+    for (const k of ['inputPerMTok', 'outputPerMTok', 'cacheWritePerMTok', 'cacheReadPerMTok']) assert.ok(price[k] > 0, `${model} ${k}`);
+    assert.equal(price.source, 'https://claude.com/pricing', model);
+    assert.match(price.checked, /^\d{4}-\d{2}-\d{2}$/, `${model}: checked is a date`);
     assert.ok(Object.isFrozen(price));
   }
   assert.ok(Object.isFrozen(PRICES));
   assert.equal(priceOf('toString'), null, 'no prototype key is a price');
+});
+
+test('prices as checked on claude.com/pricing on 2026-10-25', () => {
+  const pick = ({ inputPerMTok, outputPerMTok, cacheWritePerMTok, cacheReadPerMTok, checked }) => ({ inputPerMTok, outputPerMTok, cacheWritePerMTok, cacheReadPerMTok, checked });
+  assert.deepEqual(pick(PRICES['claude-sonnet-5-5']), { inputPerMTok: 2, outputPerMTok: 10, cacheWritePerMTok: 2.5, cacheReadPerMTok: 0.1, checked: '2026-10-25' });
+  assert.deepEqual(pick(PRICES['claude-opus-5-5']), { inputPerMTok: 4, outputPerMTok: 20, cacheWritePerMTok: 5, cacheReadPerMTok: 0.2, checked: '2026-10-25' });
 });
 
 test('a configured model with no price is a problem, and keeps the AI off', () => {
@@ -118,8 +125,9 @@ test('a configured model with no price is a problem, and keeps the AI off', () =
 });
 
 test('costs: tokens ÷ 1e6 × price; worst case is characters ÷ 3 plus a full reply', () => {
-  const price = { inputPerMTok: 3, outputPerMTok: 15 };
-  assert.equal(costUsd(price, { input: 1e6, output: 1e6 }), 18);
+  const price = PRICES['claude-sonnet-5-5'];
+  assert.equal(costUsd(price, { input: 1e6, output: 1e6 }), 12);
+  assert.equal(costUsd(price, { cacheWrite: 1e6, cacheRead: 1e6 }), 2.6);
   const params = { model: 'm', max_tokens: 1024, system: 'x'.repeat(300), messages: [{ role: 'user', content: 'hello' }] };
   const chars = JSON.stringify({ system: params.system, messages: params.messages }).length;
   assert.equal(CHARS_PER_TOKEN, 3);
@@ -130,9 +138,11 @@ test('costs: tokens ÷ 1e6 × price; worst case is characters ÷ 3 plus a full r
 });
 
 test('actual cost: missing or broken usage is null (so the call stays at worst case)', () => {
-  const price = { inputPerMTok: 3, outputPerMTok: 15 };
-  assert.equal(actualCost({ input_tokens: 1e6, output_tokens: 0 }, price), 3);
-  assert.equal(actualCost({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1e6 }, price), 6, 'cache tokens at twice input');
+  const price = PRICES['claude-sonnet-5-5'];
+  assert.equal(actualCost({ input_tokens: 1e6, output_tokens: 0 }, price), 2);
+  assert.equal(actualCost({ input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 1e6 }, price), 2.5, 'cache writes at the cache-write rate');
+  assert.equal(actualCost({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1e6 }, price), 0.1, 'cache reads at the cache-read rate');
+  assert.equal(actualCost({ input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: null }, price), 0, 'a null cache count is no cache');
   for (const bad of [undefined, null, {}, { input_tokens: 5 }, { input_tokens: '5', output_tokens: 1 }, { input_tokens: -1, output_tokens: 1 },
     { input_tokens: 1, output_tokens: NaN }, { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 'x' }]) {
     assert.equal(actualCost(bad, price), null, JSON.stringify(bad));
@@ -366,7 +376,7 @@ test('two calls at once that each fit alone: the second is refused (worst case r
 test('spend older than an hour no longer counts; the breaker is per process (a new service starts at 0)', async () => {
   const { llm, clock } = make({ client: fakeClient({ reply: okReply({ input: 1e6, output: 0 }) }) });
   await llm.ask({ person: MEMBER, resource: 'ASK', request: 'big' });
-  assert.equal(llm.status().spentUsd, 3);
+  assert.equal(llm.status().spentUsd, 2);
   await assert.rejects(llm.ask({ person: MEMBER, resource: 'ASK', request: 'again' }), refusal('over_budget'));
   clock.t += HOUR;
   assert.equal(llm.status().spentUsd, 0);

@@ -48,7 +48,7 @@ const { readSecret } = require('../../lib/secrets');
 const access = require('../access');
 const { LlmUnavailable, AccessDenied, ConfigFault } = require('../errors');
 const { loadContext } = require('./context');
-const { priceOf, costUsd, CACHE_MULTIPLIER } = require('./prices');
+const { priceOf, costUsd } = require('./prices');
 
 const KEY_ENV = 'ANTHROPIC_API_KEY';
 const KEY_KEYCHAIN = 'aplabs-anthropic-key';
@@ -111,13 +111,13 @@ const count = (v) => Number.isFinite(v) && v >= 0;
 function actualCost(usage, price) {
   if (!usage || typeof usage !== 'object') return null;
   if (!count(usage.input_tokens) || !count(usage.output_tokens)) return null;
-  let cached = 0;
-  for (const k of ['cache_creation_input_tokens', 'cache_read_input_tokens']) {
+  const cache = {};
+  for (const [k, field] of [['cache_creation_input_tokens', 'cacheWrite'], ['cache_read_input_tokens', 'cacheRead']]) {
     if (usage[k] === undefined || usage[k] === null) continue;
     if (!count(usage[k])) return null;
-    cached += usage[k];
+    cache[field] = usage[k];
   }
-  return costUsd(price, { input: usage.input_tokens + cached * CACHE_MULTIPLIER, output: usage.output_tokens });
+  return costUsd(price, { input: usage.input_tokens, output: usage.output_tokens, ...cache });
 }
 
 class LlmTimeout extends Error {
