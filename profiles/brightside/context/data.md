@@ -31,9 +31,9 @@ a check, and signed by the owner above. Anything not yet checked or signed is ma
 
 <!-- Each business term mapped to its columns and filters, and what it explicitly excludes. -->
 
-Status of every term below: **draft**, from the fixture's data definitions
+Status of every term below: **approved**, from the fixture's data definitions
 (`docs/planning/specs/spec-runtime/fixture-tables.md`, "Definitions") and the truth queries in
-`examples/brightside/fixture/truths/`. Dana Reyes has not confirmed them yet.
+`examples/brightside/fixture/truths/`. Confirmed by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
 
 - **as_of:** the "today" of every query: `fixture_meta.value` where `key = 'as_of'` (2026-09-30).
   Never `CURRENT_DATE`, so a number does not drift from one day to the next.
@@ -90,21 +90,22 @@ One rule card per metric (docs/reference/05-discovery-process.md §3), types met
 - status: draft | challenged | approved | retired (approved only with the owner's sign-off and date)
 -->
 
-Every card below is **draft**: the definition comes from the fixture's data definitions, and none
-is approved until Dana Reyes signs it with a date. The worked examples are made-up records that
+Every card below is **approved**: the definition comes from the fixture's data definitions, and
+Dana Reyes signed it off on 2026-10-25 (Ely as Dana Reyes). The worked examples are made-up records that
 show where the rule bites, not rows from the data.
 
 ### MET-001: Plans active at as_of
 - type: metric_definition
 - rule: the number of plans that are running on as_of. A plan that ends on as_of still counts.
   Formula: `COUNT(plan_id)` from `plans` where `start_date <= as_of AND (end_date IS NULL OR end_date >= as_of)`.
-- audience: anyone who may use the Dataset entry; not sensitive on its own (draft, Dana to confirm).
+- audience: anyone who may use the Dataset entry; not sensitive on its own. Confirmed by Dana Reyes
+  (Ely as Dana Reyes, 2026-10-25).
 - exclusions: not `status = 'active'`; not plans that start after as_of.
 - owner: Dana Reyes
 - evidence: `fixture-tables.md` "Plan active at date d"; truth `active-plans-at-as-of` (expect 815,
   planted target). Tests: (1) a plan with `end_date` = 2026-09-30 counts, though its status is
   `cancelled`; (2) a plan with `end_date` = 2026-09-29 does not count.
-- status: draft
+- status: approved
 
 ### MET-002: Win-back candidates
 - type: classification
@@ -112,14 +113,14 @@ show where the rule bites, not rows from the data.
   plan running at as_of. One row per client. Formula: see "Win-back candidate" in Terminology.
 - edge_cases: a client whose plan ends on as_of is still active at as_of, so is not a candidate;
   a client with two properties, one plan lapsed and one active, is not a candidate.
-- audience: proposed: whoever runs the win-back push (Epic 10). The list holds names and emails,
-  so not open to everyone. Dana to confirm.
+- audience: whoever runs the win-back push (Epic 10). The list holds names and emails, so not open
+  to everyone. Confirmed by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
 - owner: Dana Reyes
 - evidence: `fixture-tables.md` "Win-back candidate"; truths `winback-north-90d` (38) and
   `winback-north-90d-price-rise` (17), planted targets. Tests: (1) a North client whose only plan
   ended 2026-08-15 is a candidate; (2) a North client whose plan ended 2026-06-01 (more than 90
   days before as_of) is not.
-- status: draft
+- status: approved
 
 ### MET-003: Paid revenue for a month
 - type: metric_definition
@@ -132,7 +133,7 @@ show where the rule bites, not rows from the data.
 - evidence: `fixture-tables.md` "Paid revenue in month M"; truth `paid-revenue-2026-09`
   (35,018,640 cents). Tests: (1) a $140.00 invoice issued 2026-08-30 and paid 2026-09-02 counts in
   September; (2) a $140.00 invoice issued 2026-09-29 and not yet paid adds nothing to September.
-- status: draft
+- status: approved
 
 ### MET-004: Billed revenue for a month
 - type: metric_definition
@@ -145,15 +146,15 @@ show where the rule bites, not rows from the data.
 - evidence: `fixture-tables.md` "Billed revenue in M"; truth `billed-revenue-2026-09`
   (36,402,350 cents). Tests: the same two invoices as MET-003 give the opposite answers: the
   2026-08-30 invoice counts in August, the 2026-09-29 invoice counts in September.
-- status: draft
+- status: approved
 
 ### MET-005: Outstanding at as_of
 - type: metric_definition
 - rule: what clients still owe at as_of. Per invoice: the invoice total minus its payments made on
   or before as_of, counted only when that is above zero; then summed. Payments are summed per
   invoice first, so nothing multiplies.
-- audience: proposed: the "Unpaid invoices" entry (Story 9.5, resource `UNPAID_INVOICES`, not in
-  the profile yet). Dana to confirm who gets it.
+- audience: the "Unpaid invoices" entry (Story 9.5, resource `UNPAID_INVOICES`, not in the profile
+  yet). Confirmed by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
 - exclusions: not "overdue" (`due_on` plays no part); an overpaid invoice does not reduce the total.
 - invoices issued after as_of: moot. The fixture check `integrity-no-date-after-as-of` guarantees
   none exist. Answered by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
@@ -161,19 +162,20 @@ show where the rule bites, not rows from the data.
 - evidence: `fixture-tables.md` "Outstanding at as_of"; truth `outstanding-at-as-of`
   (19,875,325 cents). Tests: (1) a $260.00 invoice with $100.00 paid adds $160.00; (2) a fully paid
   invoice adds $0.
-- status: draft
+- status: approved
 
 ### MET-006: Labour minutes over a date range
 - type: metric_definition
 - rule: total minutes staff were clocked in on visits in the range. Formula:
   `SUM(timesheets.minutes)` joined to `visits` on `visit_id`, where `visits.visit_date` is in the
   range. Every timesheet belongs to a completed visit.
-- audience: owner and admin only, with Labour cost (GRD-006 in guardrails.md). Dana to confirm.
+- audience: owner and admin only, with Labour cost (GRD-006 in guardrails.md). Confirmed by Dana
+  Reyes (Ely as Dana Reyes, 2026-10-25).
 - exclusions: not scheduled minutes, not travel minutes, not cancelled visits.
 - owner: Dana Reyes
 - evidence: `fixture-tables.md` (timesheets grain). Tests: (1) a completed visit with three
   timesheets of 120, 118 and 121 minutes adds 359; (2) a cancelled visit adds 0.
-- status: draft. **unverified:** no known truth yet. A `labour-minutes-2026-09` truth needs a
+- status: approved. **unverified:** no known truth yet. A `labour-minutes-2026-09` truth needs a
   planted generator target first (follow-up story).
 
 ### MET-007: Labour cost over a date range
@@ -183,8 +185,8 @@ show where the rule bites, not rows from the data.
   pay rate on the visit date (Terminology); summed, then divided by 60, in cents.
 - time: dated by `visits.visit_date` in the business calendar; the rate is the one on that date.
 - audience: owner and admin only (resource `LABOUR_COST`, Story 9.7, not in the profile yet).
-  Totals only: never one person's rate or name. Ely's decision on the Epic 9 plan (2026-10-25);
-  Dana to confirm.
+  Totals only: never one person's rate or name. Ely's decision on the Epic 9 plan (2026-10-25).
+  Confirmed by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
 - exclusions: not `staff.hourly_rate_cents`; not payroll taxes, benefits or travel time.
 - failure_modes: joining on `staff.hourly_rate_cents` silently prices history at today's rate (too
   high after raises); a rate join without the date window double-counts a staff member who had a
@@ -196,7 +198,7 @@ show where the rule bites, not rows from the data.
   60-minute timesheet at 2,000 cents an hour costs 2,000 cents; (2) a staff member raised from
   2,000 to 2,075 cents on 2026-09-15 is priced at 2,000 for a 2026-09-14 visit and 2,075 for a
   2026-09-15 visit.
-- status: draft. **unverified:** no known truth yet. A `labour-cost-2026-09` truth needs a planted
+- status: approved. **unverified:** no known truth yet. A `labour-cost-2026-09` truth needs a planted
   generator target first (follow-up story).
 
 ## Deprecated sources
