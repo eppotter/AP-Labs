@@ -52,14 +52,20 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
   const fakeSecret = (name) => `contract-fake-${name.toLowerCase()}-Zq81xW`;
 
   // A fresh instance plus what it did. env overrides the fake env.
-  function harness({ env = {}, credentials = true } = {}) {
+  // idempotency: a store for this instance (else the connector's own);
+  // run: the key suffix, so a second instance can retry the first one's key;
+  // system: another harness's resolved deps, so a second instance reaches the
+  // same system (options.deps getters, such as a fresh outbox, run once).
+  function harness({ env = {}, credentials = true, idempotency, run: suffix, system } = {}) {
+    const resolved = system || { ...deps };
     const clock = fakeClock();
     const requests = [];
     const state = { failWith: null };
     const liveEnv = { ...(credentials ? Object.fromEntries(authEnv.map((n) => [n, fakeSecret(n)])) : {}), ...env };
     const instance = connector.create({
       log: createLog({ write: () => {} }),
-      ...deps,
+      ...resolved,
+      ...(idempotency ? { idempotency } : {}),
       env: liveEnv,
       now: clock.now,
       sleep: clock.sleep,
@@ -73,11 +79,11 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
     // Instances of one connector share its idempotency state for the process
     // (DEP-012), so each harness suffixes its keys: a check never sees the
     // keys another check, or another run of the suite, already used.
-    const run = `~h${(harnesses += 1)}`;
+    const run = suffix || `~h${(harnesses += 1)}`;
     const write = Object.fromEntries(Object.entries(instance.write).map(([n, w]) => [n, (input = {}) => w(
       typeof input.idempotencyKey === 'string' && input.idempotencyKey ? { ...input, idempotencyKey: `${input.idempotencyKey}${run}` } : input,
     )]));
-    return { instance: { ...instance, write }, requests, state, clock, env: liveEnv };
+    return { instance: { ...instance, write }, requests, state, clock, env: liveEnv, deps: resolved };
   }
 
   const writeInput = (name, key, extra = {}) => ({ ...samples.write[name](key), ...extra });
@@ -274,6 +280,56 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
       `X-Api-Key: ${s}`, `Authorization: Token ${s}`, `Authorization: Basic ${s}`,
     ].join(' '),
   ));
+
+  // Story 10.0 (DEP-017): a live write saves its progress after every
+  // request, so a process that dies partway leaves an accurate record. The
+  // suite kills the write after request k (its store never answers the k-th
+  // progress save, as if the process stopped there), then runs the same key
+  // and input on a fresh instance over the same store (a new store object, as
+  // a restarted process would have) and the same system (the same resolved
+  // options.deps), and checks it sends only requests k+1
+  // onwards. k is the first, a middle and the last request. The store is a
+  // map behind JSON, as a durable one is; with an in-memory store a restart
+  // loses the record (kit/templates/connector.md).
+  const PROGRESS = '\u0001progress';
+  const durable = () => {
+    const data = new Map();
+    return (onSet) => ({
+      get: (k) => (data.has(k) ? JSON.parse(data.get(k)) : undefined),
+      set: (k, v) => { data.set(k, JSON.stringify(v)); return onSet ? onSet(k) : undefined; },
+    });
+  };
+  const turns = async (until) => { for (let i = 0; i < 1000 && !until(); i += 1) await new Promise(setImmediate); };
+  test(`${label}: a write whose process dies after request k resumes at request k+1 on a fresh instance over the same store`, { skip: !bulks.length && 'no bulk sample (no write takes a list)' }, async () => {
+    for (const bulk of bulks) {
+      const n = bulk.operation;
+      const count = decl.rateLimit.batchSize * 2 + 1;
+      const ofOp = (h) => h.requests.filter((r) => r.operation === n).length;
+      const probe = harness({ idempotency: durable()() });
+      await probe.instance.write[n]({ ...bulk.input(count, `dies-probe-${n}`), dryRun: false });
+      const total = ofOp(probe);
+      assert.ok(total >= 2, `${n}: a bulk of ${count} takes more than one request`);
+      for (const k of [...new Set([1, Math.ceil(total / 2), total])]) {
+        const store = durable();
+        const run = `~h${(harnesses += 1)}`;
+        let saves = 0;
+        const dying = harness({ run, idempotency: store((slot) => (slot.includes(PROGRESS) && (saves += 1) === k ? new Promise(() => {}) : undefined)) });
+        const input = { ...bulk.input(count, `dies-${n}-${k}`), dryRun: false };
+        const dead = dying.instance.write[n](input);
+        dead.catch(() => {});
+        await turns(() => saves >= k || ofOp(dying) > k);
+        assert.equal(ofOp(dying), k, `${n}: the write was stopped after request ${k} of ${total}`);
+        assert.equal(saves, k, `${n}: its progress was saved after each of the first ${k} requests, not only when it stopped`);
+        const fresh = harness({ run, idempotency: store(), system: dying.deps });
+        const r = await Promise.race([
+          settle(fresh.instance.write[n](input)),
+          new Promise((resolve) => { setTimeout(() => resolve({ error: new Error('the fresh instance never finished') }), 5000).unref(); }),
+        ]);
+        assert.ok(!r.error, `${n} (k=${k}): the retry on a fresh instance finishes, got ${r.error && (r.error.reason || r.error.message)}`);
+        assert.equal(ofOp(fresh), total - k, `${n} (k=${k}): the fresh instance sent only requests ${k + 1} to ${total}`);
+      }
+    }
+  });
 
   // A write that declares perItemIdempotency claims a retry with the same key
   // and input re-sends only what failed (so a partial failure tells the
