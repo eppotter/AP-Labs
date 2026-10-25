@@ -12,7 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { EventEmitter } = require('node:events');
-const { main, installCrashHandlers } = require('../../kit/runtime/app');
+const { main, installCrashHandlers, shutdown } = require('../../kit/runtime/app');
 const { createLog } = require('../../kit/runtime/log');
 const { FakeSlackApp } = require('../fixtures/fake-slack');
 
@@ -438,4 +438,82 @@ test('a profile naming an unpriced model refuses to start, naming the setting', 
   assert.equal(code, 1);
   assert.match(text, /refusing to start/);
   assert.match(text, /llm\.model \\"claude-unpriced-9\\" has no price/);
+});
+
+// Scheduled jobs (Story 11.1).
+const JOBS_PROFILE = path.join(__dirname, '../fixtures/runtime/profile-jobs.yml');
+const JOBS_APP = path.join(__dirname, '../fixtures/runtime/jobs/app');
+const OFF_APP = path.join(__dirname, '../fixtures/runtime/jobs/off-app');
+
+// Fake timers for the scheduler: { set, clear } plus fire() for every pending one.
+function fakeTimers() {
+  const pending = new Set();
+  return {
+    pending,
+    set(fn, ms) { const h = { fn, ms }; pending.add(h); return h; },
+    clear(h) { pending.delete(h); },
+    fire() { const now = [...pending]; pending.clear(); for (const h of now) h.fn(); },
+  };
+}
+
+test('jobs: the startup line says "off (profile)" by default and loads no job file', async () => {
+  const res = await boot(env());
+  assert.equal(res.code, 0);
+  assert.equal(res.entries[0].jobs, 'off (profile)');
+  assert.deepEqual(res.jobs.scheduled(), []);
+});
+
+test('jobs: on with the profile, the startup line counts the enabled jobs and the scheduler runs them', async () => {
+  let t = Date.parse('2026-03-10T08:04:00Z');
+  const timers = fakeTimers();
+  const res = await boot(env({ APLABS_PROFILE: JOBS_PROFILE, APLABS_APP_DIR: JOBS_APP }), { now: () => t, timers });
+  assert.equal(res.code, 0);
+  assert.equal(res.entries.length, 1, 'starting the scheduler logs nothing');
+  assert.equal(res.entries[0].jobs, 'on (1 scheduled)');
+  assert.deepEqual(res.jobs.scheduled().map((j) => [j.name, j.next.toISOString()]), [['heartbeat', '2026-03-10T08:05:00.000Z']]);
+  t = Date.parse('2026-03-10T08:05:00Z');
+  timers.fire();
+  await new Promise((r) => setImmediate(r));
+  const after = res.lines.slice(1).map((l) => JSON.parse(l));
+  assert.deepEqual(after.map((e) => [e.msg, e.job]), [['job started', 'heartbeat'], ['heartbeat ran', 'heartbeat'], ['job finished', 'heartbeat']]);
+  res.jobs.stop();
+});
+
+test('jobs: APLABS_JOBS_OFF (even "0") wins over the profile; a job file that throws on load is never evaluated', async () => {
+  const before = globalThis.__aplabsJobFixtureLoads || 0;
+  for (const value of ['1', '0']) {
+    const res = await boot(env({ APLABS_PROFILE: JOBS_PROFILE, APLABS_APP_DIR: OFF_APP, APLABS_JOBS_OFF: value }), { timers: fakeTimers() });
+    assert.equal(res.code, 0, value);
+    assert.equal(res.entries[0].jobs, 'off (APLABS_JOBS_OFF)');
+    assert.deepEqual(res.jobs.scheduled(), []);
+  }
+  assert.equal(globalThis.__aplabsJobFixtureLoads || 0, before);
+});
+
+test('jobs: a broken jobs.json refuses to start even with jobs off, naming the job and field', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-app-jobs-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'jobs.json'), JSON.stringify([{ name: 'nightly', schedule: '* * * * *', run: '../x.js', enabled: true }]));
+  const { code, text } = await boot(env({ APLABS_APP_DIR: dir }));
+  assert.equal(code, 1);
+  assert.match(text, /refusing to start/);
+  assert.match(text, /app: jobs\.json: job \\"nightly\\": field \\"schedule\\" it can run more often than every 5 minutes/);
+  assert.match(text, /app: jobs\.json: job \\"nightly\\": field \\"run\\" must stay inside jobs\//);
+});
+
+test('jobs: shutdown stops the scheduler before Slack, and does not wait for a running job', async () => {
+  const order = [];
+  const lines = [];
+  const log = createLog({ write: (l) => lines.push(JSON.parse(l)) });
+  let exited = null;
+  await shutdown({
+    app: { stop: async () => { order.push('slack'); } },
+    data: { close: () => order.push('data') },
+    jobs: { stop: () => order.push('jobs') },
+    log,
+    exit: (code) => { exited = code; order.push('exit'); },
+  }, 'SIGTERM');
+  assert.deepEqual(order, ['jobs', 'slack', 'data', 'exit']);
+  assert.equal(exited, 0);
+  assert.deepEqual([lines[0].msg, lines[0].signal], ['stopping', 'SIGTERM']);
 });

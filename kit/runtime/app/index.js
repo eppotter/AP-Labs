@@ -39,6 +39,13 @@
 // service (kit/runtime/llm) is built once here and is engine-internal: it is
 // handed to the hubs only for the scoped-pull reader (Story 9.4).
 //
+// Story 11.1: boot reads <app dir>/jobs.json (kit/runtime/jobs) and refuses
+// on any broken entry, even with jobs off, naming the job and field. Jobs run
+// only with the profile's jobs.enabled, the entry's enabled, and no
+// APLABS_JOBS_OFF; with jobs off no job file is loaded. The startup line says
+// "jobs: on (n scheduled)", "off (profile)" or "off (APLABS_JOBS_OFF)". The
+// scheduler starts after Slack connects and stops first on SIGTERM or SIGINT.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
@@ -56,6 +63,7 @@ const { createStore } = require('../store');
 const { createData, dataPathFor, sourceOf } = require('../data');
 const md = require('../data/motherduck');
 const llm = require('../llm');
+const jobs = require('../jobs');
 
 const REPO = path.resolve(__dirname, '../../..');
 // The startup line's word for why the AI is off.
@@ -92,9 +100,12 @@ function checkMotherDuckKeys({ env, deps, problems, register }) {
   return { token, notes };
 }
 
+// The clock as a Date. deps.now (ms, like the store's) is injected by tests.
+const clockOf = (deps) => () => new Date(deps.now ? deps.now() : Date.now());
+
 // Collects every boot problem. Returns { problems, notes, tokens, profile,
-// profilePath, registry, dataFile, env }. register(value) is called on each
-// MotherDuck key as soon as it is read.
+// profilePath, registry, jobs, jobsState, dataFile, env }. register(value) is
+// called on each MotherDuck key as soon as it is read.
 // Problems name variables and profile errors, never a secret's value.
 function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
   const problems = [];
@@ -135,6 +146,8 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
   // The app dir is checked only with a valid profile: modules are checked
   // against its resources. Paths are not echoed (they may come from env).
   let registry = null;
+  let jobList = [];
+  let jobsState = jobs.jobsSwitch({ profile, env });
   const appDir = env.APLABS_APP_DIR || path.join(REPO, 'app');
   if (!path.isAbsolute(appDir)) {
     problems.push('APLABS_APP_DIR must be an absolute path');
@@ -142,6 +155,10 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
     const loaded = loadRegistry({ appDir, profile });
     problems.push(...loaded.problems.map((p) => `app: ${p}`));
     registry = loaded.registry;
+    const j = jobs.loadJobs({ appDir, profile, env, now: clockOf(deps)() });
+    problems.push(...j.problems.map((p) => `app: ${p}`));
+    jobList = j.jobs;
+    jobsState = j.state;
   }
   if (profile) problems.push(...llm.modelProblems(profile));
   // Read once, here; a missing key is not a problem (the AI stays off).
@@ -158,7 +175,7 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
     if (d.problem) problems.push(d.problem);
     dataFile = d.path || null;
   }
-  return { problems, notes, tokens, profile, profilePath, registry, dataFile, env: runEnv };
+  return { problems, notes, tokens, profile, profilePath, registry, jobs: jobList, jobsState, dataFile, env: runEnv };
 }
 
 // Builds the Bolt app in Socket Mode with the redacting logger. App is
@@ -260,9 +277,15 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     modules: cfg.registry.modules.length,
     data: dataState(data, remote),
     ai: aiStatus.on ? 'on' : `off (${AI_OFF_WORDS[aiStatus.reason]})`,
+    jobs: jobs.jobsWords(cfg.jobsState, cfg.jobs),
     instance: 'single instance',
   });
-  return { code: 0, app, log, data, connecting, llm: ai };
+  // Read-only jobs (Q3): the logger, the query runner and the clock; nothing else.
+  const scheduler = jobs.createScheduler({
+    jobs: cfg.jobsState.on ? cfg.jobs : [], log, data, now: clockOf(deps), ...(deps.timers ? { timers: deps.timers } : {}),
+  });
+  scheduler.start();
+  return { code: 0, app, log, data, connecting, llm: ai, jobs: scheduler };
 }
 
 // Anything that escapes main() is logged through the same redacting logger
@@ -278,25 +301,33 @@ function installCrashHandlers(log, proc = process) {
   return crash('boot failed');
 }
 
-module.exports = { main, checkConfig, checkMotherDuckKeys, createApp, installCrashHandlers, SECRETS };
+// SIGTERM or SIGINT: the scheduler stops scheduling first (a run in progress
+// is not awaited), then Slack stops, the data closes and the process exits.
+function shutdown({ app, data, jobs: scheduler, log, exit = (code) => process.exit(code) }, signal) {
+  log.info('stopping', { signal });
+  if (scheduler) scheduler.stop();
+  return Promise.resolve()
+    .then(() => app.stop())
+    .catch((err) => log.error('could not stop Slack cleanly', { err }))
+    .finally(() => {
+      data.close();
+      exit(0);
+    });
+}
+
+module.exports = { main, checkConfig, checkMotherDuckKeys, createApp, installCrashHandlers, shutdown, SECRETS };
 
 if (require.main === module) {
   const log = createLog();
   const bootFailed = installCrashHandlers(log);
-  main({ deps: { log } }).then(({ code, app, data }) => {
+  main({ deps: { log } }).then(({ code, app, data, jobs: scheduler }) => {
     if (code !== 0) {
       process.exitCode = code;
       // Bolt may hold the process open after a failed start.
       setImmediate(() => process.exit(code));
       return;
     }
-    const stop = (signal) => {
-      log.info('stopping', { signal });
-      Promise.resolve(app.stop()).finally(() => {
-        data.close();
-        process.exit(0);
-      });
-    };
+    const stop = (signal) => shutdown({ app, data, jobs: scheduler, log }, signal);
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
   }).catch(bootFailed);

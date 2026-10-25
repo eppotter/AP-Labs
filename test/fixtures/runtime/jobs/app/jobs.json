@@ -1,0 +1,4 @@
+[
+  { "name": "heartbeat", "schedule": "*/5 * * * *", "run": "heartbeat.js", "enabled": true },
+  { "name": "paused", "schedule": "0 6 * * 1-5", "run": "paused.js", "enabled": false }
+]

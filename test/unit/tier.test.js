@@ -17,7 +17,8 @@ test('profile tiers, highest match wins', () => {
   assert.equal(tier('pay/charge.js'), 'T3');
   assert.equal(tier('secrets.json'), 'T3');
   assert.equal(tier('app/server.js'), 'T2');
-  assert.equal(tier('Dockerfile'), 'T2');
+  assert.equal(tier('Makefile'), 'T2');
+  assert.equal(tier('Dockerfile'), 'T3', 'an engine floor (Story 11.1) beats tiers.T2');
   assert.equal(tier('lib/util.js'), 'T1');
   assert.equal(tier('pay/README.md'), 'T3', 'a tier rule beats inert');
 });
@@ -64,6 +65,14 @@ const GUARDED = {
   'kit/hooks/**': 'kit/hooks/README.md',
   '.claude/settings.json': '.claude/settings.json',
   '.codex/hooks.json': '.codex/hooks.json',
+  'kit/runtime/jobs/**': 'kit/runtime/jobs/schedule.js',
+  'kit/runtime/schema/jobs.schema.json': 'kit/runtime/schema/jobs.schema.json',
+  'Dockerfile': 'Dockerfile',
+  '.dockerignore': '.dockerignore',
+  '.github/workflows/**': '.github/workflows/ci.yml',
+  'kit/release/**': 'kit/release/index.js',
+  'kit/lib/template/**': 'kit/lib/template/index.js',
+  'kit/lib/fork/**': 'kit/lib/fork/index.js',
 };
 
 test('ENGINE_T3 lists exactly the guarded paths, and is frozen', () => {
@@ -100,6 +109,9 @@ test('nearby paths outside the floors keep their current tier', () => {
     'kit/runtime/llm.js', 'kit/runtime/llms/x.js',
     'kit/lib/review/index.js', 'kit/lib/tiers/x.js', 'kit/lib/gateway/x.js', 'kit/hooks.js', 'kit/lib/profile.js',
     '.codex/config.toml', 'docs/kit/hooks/README.md',
+    'kit/runtime/schema/module.schema.json', 'kit/runtime/jobs.js', 'kit/runtime/jobsx/x.js',
+    'Dockerfile.md', 'docs/Dockerfile', '.github/CODEOWNERS', '.github/workflow/x.yml',
+    'kit/releases/x.js', 'kit/templates/job.md', 'kit/lib/fork.js',
   ];
   for (const p of nearby) assert.equal(tierOf(minimal, p), 'T1', p);
   assert.equal(tier('kit/hooksREADME.md'), 'T0', 'a profile can still mark a nearby doc inert');

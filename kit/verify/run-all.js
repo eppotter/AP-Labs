@@ -19,7 +19,9 @@
 // After the profile's checks and truths, the engine's built-in checks
 // (kit/verify/builtins.js) run in process, whatever the profile says (a
 // profile can neither drop nor replace them): engine:write-path (kit/verify/write-path.js, DEP-012), which fails
-// app code that writes live outside the approval-write archetype, scanning
+// app code that writes live outside the approval-write archetype, and
+// engine:job-imports (kit/verify/job-imports.js, Story 11.1), which fails a
+// job under <app dir>/jobs/ that imports Slack, #sdk or a connector, both scanning
 // from the repo root (cwd) with APLABS_APP_DIR from this process's env. They
 // report like any check. A profile with no checks of its own still prints
 // SKIPPED (0 checks) and is never ok, even when the built-ins pass.

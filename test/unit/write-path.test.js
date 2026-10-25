@@ -197,3 +197,19 @@ test('the CLI fails naming the file and why, and passes a clean tree', (t) => {
   assert.equal(ok.status, 0, ok.stderr);
   assert.match(ok.stdout, /check-write-path: ok/);
 });
+
+test('a scheduled job that reaches a connector\'s write fails npm run check (Story 11.1, Q3)', (t) => {
+  const root = tmpRoot(t);
+  put(root, 'app/jobs.json', '[]\n');
+  put(root, 'app/jobs/push.js', [
+    "const crm = require('../connectors/crm/connector');",
+    'module.exports = { run: async (ctx) => { await crm.write.put({ idempotencyKey: ctx.name }); } };',
+  ].join('\n'));
+  put(root, 'app/jobs/fine.js', "module.exports = { run: async (ctx) => { ctx.log.info('read only'); } };\n");
+  const problems = writePathProblems(root, {});
+  assert.deepEqual(problems.map((p) => p.split(': ')[0]), ['app/jobs/push.js:2']);
+  assert.match(problems[0], /reaches a connector's write operations/);
+  const r = run(root);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /app\/jobs\/push\.js:2: reaches a connector's write operations/);
+});
