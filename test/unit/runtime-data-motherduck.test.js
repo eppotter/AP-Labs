@@ -39,6 +39,7 @@ function source(t, fake, opts = {}) {
 const SETUP = [
   'LOAD motherduck',
   `SET motherduck_token = '${TOKEN}'`,
+  "SET motherduck_attach_mode = 'single'",
   `ATTACH 'md:${DB}' AS "${DB}" (READ_ONLY)`,
   'SET enable_external_access = false',
   'SET lock_configuration = true',
@@ -59,7 +60,7 @@ test('MD_LOCKDOWN is one frozen constant: an in-memory instance with extension a
   assert.ok(Object.isFrozen(md.MD_LOCKDOWN.setup) && Object.isFrozen(md.MD_LOCKDOWN.perConnection));
   assert.equal(md.MD_LOCKDOWN.path, ':memory:');
   assert.deepEqual({ ...md.MD_LOCKDOWN.instance }, { autoinstall_known_extensions: 'false', autoload_known_extensions: 'false' });
-  assert.deepEqual(md.setupStatements(DB, TOKEN), SETUP.slice(0, 5));
+  assert.deepEqual(md.setupStatements(DB, TOKEN), SETUP.slice(0, 6));
   assert.deepEqual(md.perConnectionStatements(DB), [`USE "${DB}"`]);
   // The local file's lockdown is untouched.
   assert.deepEqual({ ...LOCKDOWN }, {
@@ -67,15 +68,15 @@ test('MD_LOCKDOWN is one frozen constant: an in-memory instance with extension a
   });
 });
 
-test('opening runs LOAD, the key, ATTACH READ_ONLY, external access off and the lock, in that order, then USE and one check', async (t) => {
+test('opening runs LOAD, the key, attach mode single, ATTACH READ_ONLY, external access off and the lock, in that order, then USE and one check', async (t) => {
   const fake = createFakeMotherDuck();
   const data = source(t, fake);
   await data.open();
   assert.deepEqual(fake.state.created, [{ where: ':memory:', options: { autoinstall_known_extensions: 'false', autoload_known_extensions: 'false' } }]);
   const [setup] = fake.state.instances[0].connections;
-  assert.deepEqual(setup.statements.slice(0, 6), SETUP);
-  assert.equal(setup.statements.length, 7);
-  assert.match(setup.statements[6], /current_database\(\)/);
+  assert.deepEqual(setup.statements.slice(0, 7), SETUP);
+  assert.equal(setup.statements.length, 8);
+  assert.match(setup.statements[7], /current_database\(\)/);
   assert.ok(setup.closed, 'the setup connection is closed');
   assert.ok(!setup.statements.some((s) => /^(INSTALL|CREATE)\b/i.test(s)), 'nothing is installed or created');
   assert.deepEqual(data.describe(), { source: 'MotherDuck', label: DB, available: true, problem: null });

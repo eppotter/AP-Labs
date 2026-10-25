@@ -10,15 +10,19 @@
 // enable_external_access=false the instance cannot be created, and without it
 // a URL read was executed on MotherDuck's side. Instead:
 //   1. an in-memory instance with extension auto-install and auto-load off;
-//   2. on one setup connection: LOAD motherduck, SET motherduck_token, ATTACH
-//      the one database READ_ONLY, SET enable_external_access=false, then
-//      SET lock_configuration=true, so no later SET can loosen it;
+//   2. on one setup connection: LOAD motherduck, SET motherduck_token,
+//      SET motherduck_attach_mode='single' (Story A proved it blocks
+//      attaching md: and other shares), ATTACH the one database READ_ONLY,
+//      SET enable_external_access=false, then SET lock_configuration=true, so
+//      no later SET can loosen it;
 //   3. every connection runs USE <db> before its query (a new connection
 //      starts on `memory`; USE still works after the lock, SET GLOBAL
 //      search_path does not). After USE, open() checks once that
 //      current_database() is the database and that fixture_meta exists.
 // Under it, only <db>, md_information_schema and `memory` are visible; the
-// reader's my_db and sample_data are not. `memory` is a writable in-process
+// reader's my_db and sample_data are not. One accepted exception (Ely,
+// 2026-10-24; Story A documents it): the reader's own my_db can still be
+// attached by name, which the SQL guardrail blocks because it refuses ATTACH. `memory` is a writable in-process
 // scratch database: harmless (nothing leaves the process), and the SQL
 // guardrail refuses DDL and writes anyway.
 //
@@ -79,6 +83,7 @@ const MD_LOCKDOWN = Object.freeze({
   setup: Object.freeze([
     () => 'LOAD motherduck',
     (db, token) => `SET motherduck_token = ${sqlString(token)}`,
+    () => "SET motherduck_attach_mode = 'single'",
     (db) => `ATTACH ${sqlString(`md:${db}`)} AS ${ident(db)} (READ_ONLY)`,
     () => 'SET enable_external_access = false',
     () => 'SET lock_configuration = true',
