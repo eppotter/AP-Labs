@@ -78,6 +78,18 @@ test('llm settings are optional, default in code, and refuse unknown keys and ba
   rejects(llm({ api_key: 'x' }), /\/llm has unknown key "api_key"/);
 });
 
+test('jobs.enabled is optional, defaults to false, and refuses unknown keys and non-booleans (Story 11.1)', () => {
+  assert.deepEqual(loadProfile(fixture('minimal')).jobs, { enabled: false });
+  const jobs = (v) => ({ ...parsed('minimal'), jobs: v });
+  assert.deepEqual(validateProfile(jobs({ enabled: true })).jobs, { enabled: true });
+  assert.deepEqual(validateProfile(jobs({})).jobs, { enabled: false });
+  assert.ok(Object.isFrozen(validateProfile(jobs({ enabled: true })).jobs));
+  rejects(jobs({ enabled: 'yes' }), /\/jobs\/enabled must be boolean/);
+  rejects(jobs({ enabled: 1 }), /\/jobs\/enabled must be boolean/);
+  rejects(jobs({ enabled: true, schedule: '* * * * *' }), /\/jobs has unknown key "schedule"/);
+  rejects(jobs([]), /\/jobs must be object/);
+});
+
 test('data.source defaults to local; motherduck needs data.database, and local refuses it', () => {
   assert.deepEqual(loadProfile(fixture('minimal')).data, { source: 'local' });
   assert.deepEqual(validateProfile({ ...parsed('minimal'), data: { source: 'local' } }).data, { source: 'local' });

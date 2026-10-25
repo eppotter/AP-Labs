@@ -249,13 +249,14 @@ function verify(dir, args = []) {
 
 const PASS_CHECK = { id: 'ok', run: [node, '-e', 'process.exit(0)'] };
 // The engine's built-in check, run last in every verify (DEP-012).
-const BUILTIN = ['engine:write-path', 'pass'];
+// The engine's built-in checks, run last in every verify.
+const BUILTINS = [['engine:write-path', 'pass'], ['engine:job-imports', 'pass']];
 
 test('verify: truths run after the profile checks and appear in the JSON summary', () => {
   const d = repo({ checks: [PASS_CHECK], data: doc(block(), block({ id: 'abs', expect: 10, tolerance: 1 }, '10.9')) });
   const r = verify(d);
   assert.equal(r.code, 0, r.stderr);
-  assert.deepEqual(r.summary.results.map((x) => [x.id, x.outcome]), [['ok', 'pass'], ['truth:revenue-2026-09', 'pass'], ['truth:abs', 'pass'], BUILTIN]);
+  assert.deepEqual(r.summary.results.map((x) => [x.id, x.outcome]), [['ok', 'pass'], ['truth:revenue-2026-09', 'pass'], ['truth:abs', 'pass'], ...BUILTINS]);
   assert.equal(r.summary.ok, true);
   assert.match(r.stdout, /^PASS truth:revenue-2026-09 /m);
 });
@@ -292,7 +293,7 @@ test('verify: a missing command skips and a slow one times out; --strict exits 1
   });
   const r = verify(d);
   assert.equal(r.code, 0);
-  assert.deepEqual(r.summary.results.map((x) => [x.id, x.outcome]), [['truth:gone', 'skip'], ['truth:slow', 'timeout'], BUILTIN]);
+  assert.deepEqual(r.summary.results.map((x) => [x.id, x.outcome]), [['truth:gone', 'skip'], ['truth:slow', 'timeout'], ...BUILTINS]);
   assert.deepEqual([r.summary.skipped, r.summary.timed_out, r.summary.ok], [1, 1, false]);
   assert.equal(verify(d, ['--strict']).code, 1);
 });
@@ -301,7 +302,7 @@ test('verify: no data.md, or no truths in it, runs nothing extra', () => {
   for (const data of [undefined, '# Data canon\n\n## Known truths\n\n<!-- none yet -->\n']) {
     const r = verify(repo({ checks: [PASS_CHECK], data }));
     assert.equal(r.code, 0);
-    assert.deepEqual(r.summary.results.map((x) => x.id), ['ok', BUILTIN[0]]);
+    assert.deepEqual(r.summary.results.map((x) => x.id), ['ok', ...BUILTINS.map((b) => b[0])]);
   }
 });
 
@@ -345,7 +346,7 @@ test('Stop hook: passing truths are one pass line', () => {
   git(d, 'commit', '-q', '-m', 'init');
   fs.writeFileSync(path.join(d, 'work.txt'), 'changed\n');
   const r = stopHook(d);
-  assert.match(r.out.systemMessage, /^AP Labs verify: all 2 checks passed/);
+  assert.match(r.out.systemMessage, /^AP Labs verify: all 3 checks passed/);
 });
 
 // --- last verify result (#45) ---
@@ -364,7 +365,7 @@ test('verify records each run in <git-dir>/aplabs/verify/last.json; outside git 
   assert.equal(rec.source, 'verify');
   assert.equal(rec.head, null);
   assert.ok(Math.abs(Date.parse(rec.at) - Date.now()) < 60000);
-  assert.deepEqual(rec.results, [{ id: 'ok', outcome: 'pass' }, { id: 'truth:off', outcome: 'fail' }, { id: BUILTIN[0], outcome: 'pass' }]);
+  assert.deepEqual(rec.results, [{ id: 'ok', outcome: 'pass' }, { id: 'truth:off', outcome: 'fail' }, ...BUILTINS.map(([id, outcome]) => ({ id, outcome }))]);
   const plain = repo({ checks: [PASS_CHECK] });
   assert.equal(verify(plain).code, 0);
   assert.equal(fs.existsSync(path.join(plain, '.git')), false);
@@ -379,7 +380,7 @@ test('Stop hook records its run in last.json too', () => {
   const rec = readLast(d);
   assert.equal(rec.source, 'stop-hook');
   assert.match(rec.head, /^[0-9a-f]{40}$/);
-  assert.deepEqual(rec.results, [{ id: 'truth:off', outcome: 'fail' }, { id: BUILTIN[0], outcome: 'pass' }]);
+  assert.deepEqual(rec.results, [{ id: 'truth:off', outcome: 'fail' }, ...BUILTINS.map(([id, outcome]) => ({ id, outcome }))]);
 });
 
 test('readLastResult: missing, malformed, future or old records read as null', () => {

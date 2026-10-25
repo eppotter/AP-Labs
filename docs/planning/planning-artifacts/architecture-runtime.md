@@ -194,7 +194,7 @@ Dependency rule: arrows point inward only. Engine code never `require`s or names
   | `llm.hourly_usd_limit` | number > 0 | 2 | 9.1 |
   | `llm.max_tokens` | integer 1–8192 | 1024 | 9.1 |
   | `slack.ops_channel` | channel id string | none: escalation logs only | 10.3 |
-  | `jobs.enabled` | boolean | false | 11.1 |
+  | `jobs.enabled` | boolean; a job runs only with this, its own `enabled` in `jobs.json`, and no `APLABS_JOBS_OFF` [ADOPTED: kit/runtime/jobs] | false | 11.1 |
 
   An `approval-write` module's resource must be declared `admin_grantable: false` in the profile, or boot refuses it (Story 10.2). `kit/lib/permissions` is unchanged.
 
@@ -216,7 +216,7 @@ Dependency rule: arrows point inward only. Engine code never `require`s or names
 | --- | --- |
 | Naming | Module ids and folders are kebab-case slugs; resource keys UPPER_SNAKE (existing schema); action ids `<module-id>:<verb>`; store namespaces as in AD-7 |
 | Data and formats | Money in integer cents; dates ISO `DATE`; timestamps UTC; "now" in data queries is the fixture's `as_of`, never `CURRENT_DATE` |
-| Config | Profile for who/what (no secrets); env for secrets and paths (`APLABS_PROFILE`, `APLABS_APP_DIR`, `APLABS_DATA_PATH`, `APLABS_VAR_DIR`, `APLABS_HEALTH_PORT`, `APLABS_LLM_OFF`, `APLABS_WRITES_OFF` (global write kill switch), `APLABS_NO_KEYCHAIN`); env var names for secrets in code or manifests |
+| Config | Profile for who/what (no secrets); env for secrets and paths (`APLABS_PROFILE`, `APLABS_APP_DIR`, `APLABS_DATA_PATH`, `APLABS_VAR_DIR`, `APLABS_HEALTH_PORT`, `APLABS_LLM_OFF`, `APLABS_WRITES_OFF` (global write kill switch), `APLABS_JOBS_OFF` (every scheduled job off; any non-empty value, including "0"), `APLABS_NO_KEYCHAIN`); env var names for secrets in code or manifests |
 | Logging | `kit/runtime/log` only, one JSON line per event, secrets redacted; never log query rows, prompts or LLM replies |
 | Errors | Typed errors (AD-17); exit non-zero at boot listing every problem at once |
 | Tests | `node:test`, offline: fake Slack client, stub LLM, temp DuckDB per test from seed files, injected clock. Engine tests under `test/**` read client specifics from `test/fixtures/`, never `profiles/brightside/` or `examples/brightside/`. Carve-out: example tests under `examples/brightside/**` may use Brightside's profile and data; they are deleted with the example in a fork |
@@ -298,7 +298,7 @@ flowchart TB
 | CAP-9 scoped pull | `kit/runtime/archetypes/scoped-pull` | AD-6, AD-7, AD-10, AD-14 |
 | CAP-10 approval write | `kit/runtime/archetypes/approval-write` | AD-7, AD-14, AD-15 |
 | CAP-11 Slack basics | `kit/runtime/slack`, `kit/runtime/store` | AD-6, AD-7, AD-14 |
-| CAP-12 jobs | `kit/runtime/jobs`, `<app>/jobs.json` | AD-16 |
+| CAP-12 jobs | `kit/runtime/jobs` (UTC five-field cron, read-only `ctx`: log, data, now, name), `kit/runtime/schema/jobs.schema.json`, `<app>/jobs.json`, `<app>/jobs/`, `kit/templates/job.md` [ADOPTED: Story 11.1] | AD-16 |
 | CAP-13 fixture | `kit/fixture`, `examples/brightside/fixture` | AD-9, AD-18 |
 | CAP-14 demo | Brightside example modules | all |
 | CAP-15 forks | `kit/runtime/paths.js` (the identical-engine set), `kit/lib/fork` (what may differ between forks: `compareForks`, `packageDelta`), `test/acceptance/two-forks.test.js` | AD-1, AD-2 |

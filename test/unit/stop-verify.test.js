@@ -176,7 +176,7 @@ test('wrapper: dirty tree + passing check prints one pass line', () => {
   assert.equal(r.code, 0);
   assert.equal(r.stderr, '');
   assert.deepEqual(Object.keys(r.out), ['systemMessage']);
-  assert.match(r.out.systemMessage, /^AP Labs verify: all 2 checks passed \(\d+\.\ds\)\.$/, 'the check and the built-in engine:write-path');
+  assert.match(r.out.systemMessage, /^AP Labs verify: all 3 checks passed \(\d+\.\ds\)\.$/, 'the check and the built-ins engine:write-path and engine:job-imports');
 });
 
 test('wrapper: a failing check blocks with its id and output tail', () => {
@@ -198,7 +198,7 @@ test('wrapper: skip and timeout are reported, never blocked', () => {
   const r = runWrapper(dir);
   assert.equal(r.code, 0);
   assert.equal(r.out.decision, undefined);
-  assert.match(r.out.systemMessage, /2 of 4 checks passed; SKIP gone \(spawn ENOENT\); TIMEOUT slow after 1s\. Not a pass, not blocked\./);
+  assert.match(r.out.systemMessage, /3 of 5 checks passed; SKIP gone \(spawn ENOENT\); TIMEOUT slow after 1s\. Not a pass, not blocked\./);
 });
 
 test('wrapper: a spent hook budget is reported, never blocked', () => {
@@ -234,7 +234,7 @@ test('wrapper: a commit since session start counts as a change; no commit does n
   fs.writeFileSync(path.join(dir, 'y'), 'y');
   git(dir, 'add', 'y');
   git(dir, 'commit', '-q', '-m', 'y');
-  assert.match(runWrapper(dir).out.systemMessage, /all 2 checks passed/);
+  assert.match(runWrapper(dir).out.systemMessage, /all 3 checks passed/);
   // A different session, with no record, falls back to "ahead of origin/main":
   // there is no origin/main here, so a clean tree is silent.
   silent(runWrapper(dir, { input: { session_id: 'other' } }));
@@ -247,7 +247,7 @@ test('wrapper: without a session record, commits not on origin/main count', () =
   fs.writeFileSync(path.join(dir, 'z'), 'z');
   git(dir, 'add', 'z');
   git(dir, 'commit', '-q', '-m', 'z');
-  assert.match(runWrapper(dir, { input: { session_id: 'none' } }).out.systemMessage, /all 2 checks passed/);
+  assert.match(runWrapper(dir, { input: { session_id: 'none' } }).out.systemMessage, /all 3 checks passed/);
 });
 
 test('wrapper: fails open when the Node entry throws, even after partial output', () => {

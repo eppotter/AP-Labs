@@ -138,9 +138,10 @@ test('cli: runs every check in order and reports each outcome', () => {
   assert.match(r.lines[2], /^SKIP gone \d+\.\d\ds \(spawn ENOENT\)$/);
   assert.match(r.lines[3], /^TIMEOUT slow \d+\.\d\ds$/);
   assert.match(r.stderr, /--- bad stdout \(last lines\) ---\nboom/);
-  assert.deepEqual(r.summary.results.map((x) => x.outcome), ['pass', 'fail', 'skip', 'timeout', 'pass']);
-  assert.match(r.lines[4], /^PASS engine:write-path \d+\.\d\ds$/, 'the built-in runs last');
-  assert.deepEqual([r.summary.ok, r.summary.passed, r.summary.failed, r.summary.skipped, r.summary.timed_out], [false, 2, 1, 1, 1]);
+  assert.deepEqual(r.summary.results.map((x) => x.outcome), ['pass', 'fail', 'skip', 'timeout', 'pass', 'pass']);
+  assert.match(r.lines[4], /^PASS engine:write-path \d+\.\d\ds$/, 'the built-ins run last');
+  assert.match(r.lines[5], /^PASS engine:job-imports \d+\.\d\ds$/);
+  assert.deepEqual([r.summary.ok, r.summary.passed, r.summary.failed, r.summary.skipped, r.summary.timed_out], [false, 3, 1, 1, 1]);
   assert.equal(r.summary.results[2].reason, 'spawn ENOENT');
   assert.ok(r.summary.results[3].seconds < 3, 'timeout killed the check promptly');
 });
@@ -149,7 +150,7 @@ test('cli: all checks passing is ok, exit 0', () => {
   const r = run(repo({ checks: [PASS, { ...PASS, id: 'ok-too' }] }), ['--strict']);
   assert.equal(r.code, 0);
   assert.equal(r.summary.ok, true);
-  assert.equal(r.summary.passed, 3, 'two checks plus the built-in engine:write-path');
+  assert.equal(r.summary.passed, 4, 'two checks plus the built-ins engine:write-path and engine:job-imports');
 });
 
 test('cli: skip and timeout never pass; strict turns them into exit 1', () => {
@@ -265,15 +266,31 @@ test('cli: the built-in engine:write-path check fails a live write in app code, 
   assert.equal(r.code, 1);
   assert.match(r.stdout, /^FAIL engine:write-path \d+\.\d\ds \(\d+ problem\(s\); live writes are allowed only in /m);
   assert.match(r.stderr, /--- engine:write-path stderr \(last lines\) ---\napp\/modules\/m\/handler\.js:1: passes dryRun other than true/);
-  assert.deepEqual(r.summary.results.map((x) => [x.id, x.outcome]), [['ok', 'pass'], ['engine:write-path', 'fail']]);
+  assert.deepEqual(r.summary.results.map((x) => [x.id, x.outcome]), [['ok', 'pass'], ['engine:write-path', 'fail'], ['engine:job-imports', 'pass']]);
+});
+
+// Story 11.1: the job-imports check is a built-in too, so editing
+// package.json's check line can't switch it off.
+test('cli: the built-in engine:job-imports check fails a job that imports Slack, naming the file', () => {
+  const dir = repo({ checks: [PASS] });
+  fs.mkdirSync(path.join(dir, 'app/jobs'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'app/jobs/post.js'), "const { App } = require('@slack/bolt');\nmodule.exports = { run: async () => {} };\n");
+  const r = run(dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stdout, /^FAIL engine:job-imports \d+\.\d\ds \(1 problem\(s\); a job gets only ctx/m);
+  assert.match(r.stderr, /--- engine:job-imports stderr \(last lines\) ---\napp\/jobs\/post\.js:1: imports Slack \("@slack\/bolt"\)/);
+  assert.deepEqual(r.summary.results.map((x) => [x.id, x.outcome]), [['ok', 'pass'], ['engine:write-path', 'pass'], ['engine:job-imports', 'fail']]);
+  // A package.json whose check line drops the script changes nothing.
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', scripts: { check: 'true' } }));
+  assert.equal(run(dir).code, 1);
 });
 
 test('cli: the built-in runs even when the profile declares no checks, and fails a governed repo with no app dir', () => {
   const dir = repo({ checks: [] });
   const fine = run(dir);
   assert.match(fine.stdout, /^verify: SKIPPED \(0 checks\)$/m);
-  assert.deepEqual(fine.summary.results.map((x) => [x.id, x.outcome]), [['engine:write-path', 'pass']]);
-  assert.equal(fine.summary.ok, false, 'the built-in alone is not a pass');
+  assert.deepEqual(fine.summary.results.map((x) => [x.id, x.outcome]), [['engine:write-path', 'pass'], ['engine:job-imports', 'pass']]);
+  assert.equal(fine.summary.ok, false, 'the built-ins alone are not a pass');
   fs.rmSync(path.join(dir, 'app'), { recursive: true });
   const r = run(dir);
   assert.equal(r.code, 1);
