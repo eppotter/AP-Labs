@@ -6,6 +6,7 @@
 //   <app>/hubs/<id>.json                  one hub: a slash command
 //   <app>/modules/<id>/manifest.json      one module: an entry on a hub's menu
 //   <app>/modules/<id>/<handler>.js       its handler (archetype "handler")
+//   <app>/modules/<id>/<query>.sql        its SQL template (archetype "scoped-pull")
 //
 // Both are read sorted by file name, so menu order is folder order. Every
 // problem is collected and returned at once, each naming the file (relative
@@ -14,15 +15,22 @@
 // A module's resource must be declared in the profile: an undeclared key is a
 // configuration fault, never a denial. Who may use it is decided per person at
 // runtime (kit/runtime/access, Story 6.3).
+//
+// Declared parameters (Story 9.3): every module's parameters are checked
+// beyond the schema (kit/runtime/archetypes/scoped-pull/params): each input
+// bounded, each range possible, each default valid. A problem names the
+// module file and the input. A scoped-pull module has no handler: the engine
+// runs its form; its SQL file must exist and is read once at boot.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const Ajv2020 = require('ajv/dist/2020');
+const { checkDeclarations } = require('../archetypes/scoped-pull/params');
 
 const SCHEMA_DIR = path.join(__dirname, '../schema');
-// Archetypes whose engine code exists. The others are valid in a manifest but
-// refused at boot until their stories land (7.x scoped-pull, 10.x approval-write).
-const BUILT_ARCHETYPES = new Set(['handler']);
+// Archetypes whose engine code exists. The other is valid in a manifest but
+// refused at boot until its stories land (10.x approval-write).
+const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull']);
 const ENV_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 let _validators = null;
@@ -44,15 +52,24 @@ function fieldName(instancePath, extra) {
   return parts.reduce((acc, p) => (/^\d+$/.test(p) ? `${acc}[${p}]` : acc ? `${acc}.${p}` : p), '');
 }
 
+// " (input "zone")" for an error inside parameters[i], so a problem names the
+// input as well as its position.
+function inputNote(instancePath, data) {
+  const m = /^\/parameters\/(\d+)(\/|$)/.exec(instancePath);
+  const p = m && data && Array.isArray(data.parameters) ? data.parameters[Number(m[1])] : null;
+  return p && typeof p.name === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(p.name) ? ` (input "${p.name}")` : '';
+}
+
 function schemaProblems(validate, data, file) {
   if (validate(data)) return [];
   return validate.errors
     .filter((e) => e.keyword !== 'if')
     .map((e) => {
-      if (e.keyword === 'additionalProperties') return `${file}: unknown field "${fieldName(e.instancePath, e.params.additionalProperty)}"`;
-      if (e.keyword === 'required') return `${file}: field "${fieldName(e.instancePath, e.params.missingProperty)}" is required`;
+      const note = inputNote(e.instancePath, data);
+      if (e.keyword === 'additionalProperties') return `${file}: unknown field "${fieldName(e.instancePath, e.params.additionalProperty)}"${note}`;
+      if (e.keyword === 'required') return `${file}: field "${fieldName(e.instancePath, e.params.missingProperty)}" is required${note}`;
       const field = fieldName(e.instancePath);
-      return field ? `${file}: field "${field}" ${e.message}` : `${file}: ${e.message}`;
+      return field ? `${file}: field "${field}"${note} ${e.message}` : `${file}: ${e.message}`;
     });
 }
 
@@ -137,6 +154,19 @@ function loadHandler(abs, file, problems) {
   return run;
 }
 
+// A scoped-pull's SQL template, read once. Story 9.5 checks it against the
+// guardrail and the declared parameters before it runs.
+function loadQuery(abs, file, problems) {
+  try {
+    const sql = fs.readFileSync(abs, 'utf8');
+    if (sql.trim()) return sql;
+    problems.push(`${file}: field "query" names an empty file`);
+  } catch (e) {
+    problems.push(`${file}: field "query" names a file that ${e.code === 'ENOENT' ? 'does not exist' : 'cannot be read'}`);
+  }
+  return undefined;
+}
+
 // Reads and validates <app>/modules/*/manifest.json against the hubs and the
 // profile. Returns { modules, problems }.
 function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
@@ -169,7 +199,17 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
     if (!BUILT_ARCHETYPES.has(m.archetype)) {
       problems.push(`${file}: field "archetype" "${m.archetype}" is not available yet`);
     }
+    for (const p of checkDeclarations(m.parameters)) problems.push(`${file}: ${p}`);
+    if (m.archetype === 'scoped-pull' && m.handler !== undefined) {
+      problems.push(`${file}: field "handler" is not used by a scoped-pull module (the engine runs its form)`);
+    }
     if (problems.length > before) continue;
+    if (m.archetype === 'scoped-pull') {
+      const sql = loadQuery(path.join(appDir, 'modules', folder, m.query), file, problems);
+      if (sql === undefined) continue;
+      modules.push(Object.freeze({ ...m, file, sql }));
+      continue;
+    }
     const run = loadHandler(path.join(appDir, 'modules', folder, m.handler), file, problems);
     if (!run) continue;
     modules.push(Object.freeze({ ...m, file, run }));

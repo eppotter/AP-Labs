@@ -44,6 +44,16 @@
 // parameter the manifest does not declare is refused. When the data is
 // unavailable (a DataUnavailable error) the person is told so plainly, worded
 // by kit/runtime/messages, and the app keeps running.
+//
+// Scoped pulls (Story 9.3): Open on a scoped-pull module pushes its typed form
+// as the module's view (kit/runtime/archetypes/scoped-pull), so menu and
+// module stay the only two views. The form's buttons (Check values, Change,
+// Confirm, Read my request) go to one listener, which re-checks access and
+// updates the view the click came from in place (modal.updatedView:
+// views.update with that view's id and hash), never pushing a third view. A
+// hash_conflict means the view changed since the click: the out-of-date
+// result is dropped and logged. A form needs the hub modal; opened from an
+// old message menu, the person is told to open it from the hub window.
 
 const access = require('../access');
 const {
@@ -56,11 +66,14 @@ const {
 } = require('../registry/menu');
 const { isVisible } = require('../registry');
 const {
-  modalView, pushedView, fromModal, hasViews, failureReason,
+  modalView, pushedView, fromModal, hasViews, failureReason, updatedView,
 } = require('./modal');
 const { messageParts } = require('./format');
+const { createScopedPull, verbOf, ACTION_PATTERN: FORM_ACTION } = require('../archetypes/scoped-pull');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
+const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
+const HUB_ID = /^[a-z][a-z0-9-]*$/;
 
 function defaultCanUse(profile) {
   return (person, mod) => access.decide(profile, person.user, mod.resource);
@@ -133,6 +146,20 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
     .filter((m) => isVisible(m, env) && decide(person, m) === 'allowed');
   const notSetUp = (person) => (person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin })));
   const fellBack = (where, reason, hub) => log.info('hub modal fallback', { where, reason, hub: hub || null });
+  const scopedPull = createScopedPull({ store, log });
+
+  // Why this person may not open mod (a message), or null when they may.
+  // The refusal is logged with the click's action id.
+  const refusalFor = (person, mod, actionId) => {
+    const decision = decide(person, mod);
+    if (decision === 'allowed') return null;
+    let refusal;
+    if (decision === 'error') refusal = new ConfigFault({ admin });
+    else if (!person.user) refusal = new NotSetUp({ client: profile.client.name, admin });
+    else refusal = new AccessDenied({ label: mod.label, admin });
+    log.warn('hub action refused', { action_id: actionId, reason: refusal.name, user: person.user ? person.user.id : null, env });
+    return messageFor(refusal);
+  };
 
   // Where a click's replies go. From a hub modal: a view pushed onto it
   // (reply() pushes, then appends; loading() pushes "Loading…" first). From a
@@ -141,8 +168,10 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
   const replyTarget = ({ body, respond, client }, { where, title, hubId }) => {
     // A long text reply goes as section blocks, in more than one message if
     // it needs over 50 blocks (kit/runtime/slack/format).
+    // A message that works only in a view (a form) names what to send instead.
     const viaEphemeral = async (message) => {
-      for (const part of messageParts(message)) await respond(ephemeral(part));
+      const m = message && typeof message === 'object' && message.ephemeralFallback !== undefined ? message.ephemeralFallback : message;
+      for (const part of messageParts(m)) await respond(ephemeral(part));
     };
     if (!fromModal(body) || !hasViews(client)) {
       fellBack(where, fromModal(body) ? 'no views client' : 'not from a modal', hubId);
@@ -243,14 +272,14 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
         return;
       }
       const person = personOf(user.id);
-      const decision = decide(person, mod);
-      if (decision !== 'allowed') {
-        let refusal;
-        if (decision === 'error') refusal = new ConfigFault({ admin });
-        else if (!person.user) refusal = new NotSetUp({ client: profile.client.name, admin });
-        else refusal = new AccessDenied({ label: mod.label, admin });
-        log.warn('hub action refused', { action_id: actionId, reason: refusal.name, user: person.user ? person.user.id : null, env });
-        await target.reply(messageFor(refusal));
+      const refused = refusalFor(person, mod, actionId);
+      if (refused) {
+        await target.reply(refused);
+        return;
+      }
+      if (mod.archetype === 'scoped-pull') {
+        log.info('module dispatched', { module: mod.id, hub: mod.hub });
+        await target.reply(target.modal ? { ...scopedPull.open(mod, user.id), ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
         return;
       }
       // Push "Loading…" before anything slow: the trigger_id lasts 3 seconds.
@@ -275,6 +304,46 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
       await failInView('hub:dispatch', target, err);
     }
   }, { log, store }));
+
+  // A scoped-pull form's buttons. Each click updates the view it came from.
+  app.action(FORM_ACTION, handle('hub:form', async ({ action, body, client, respond }) => {
+    const verb = verbOf(action && action.action_id);
+    const from = body.view;
+    if (!from || typeof from.id !== 'string' || !from.id || !hasViews(client)) {
+      fellBack('form', from ? 'no views client' : 'not from a modal', null);
+      if (typeof respond === 'function') await respond(ephemeral(FORM_NEEDS_WINDOW));
+      return;
+    }
+    const hubId = typeof from.private_metadata === 'string' && HUB_ID.test(from.private_metadata) ? from.private_metadata : null;
+    const view = updatedView({ client, view: from, title: from.title && from.title.text, hubId });
+    const show = async (message, opts) => {
+      const status = await view.show(message, opts);
+      if (status === 'dropped') log.info('stale view result dropped', { action: verb, reason: 'hash_conflict' });
+      if (status === 'forced') log.info('stale view replaced by a confirmed result', { action: verb, reason: 'hash_conflict' });
+      return status;
+    };
+    const person = personOf((body.user || {}).id);
+    // Synchronous, so Confirm can consume with no await after the check.
+    const resolve = (moduleId) => {
+      const mod = registry.module(moduleId);
+      if (!mod || mod.archetype !== 'scoped-pull' || !isVisible(mod, env)) {
+        log.warn('hub action refused', { action_id: action.action_id, reason: !mod ? 'unknown module' : 'not available', env });
+        return { refusal: NOT_AVAILABLE };
+      }
+      const refused = refusalFor(person, mod, action.action_id);
+      return refused ? { refusal: refused } : { mod };
+    };
+    try {
+      await scopedPull.click({ verb, sessionId: action.value, person: person.id, state: from.state, resolve, show });
+    } catch (err) {
+      log.error('handler failed', { handler: 'hub:form', err });
+      try {
+        await view.show(PLAIN_ERROR);
+      } catch (showErr) {
+        log.error('could not tell the person about a failure', { handler: 'hub:form', err: showErr });
+      }
+    }
+  }, { log, store }));
 }
 
-module.exports = { registerHubs, personName, firstVisit, NOT_AVAILABLE };
+module.exports = { registerHubs, personName, firstVisit, NOT_AVAILABLE, FORM_NEEDS_WINDOW };

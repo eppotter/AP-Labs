@@ -31,13 +31,58 @@ The manifest is JSON, checked against `kit/runtime/schema/module.schema.json`. U
 | `label` | yes | The menu button's text, up to 60 characters. |
 | `description` | yes | One line under the button, up to 200 characters. Say what it does for the person. |
 | `resource` | yes | The profile resource key that grants it (`WEEKLY_REPORT`). It must be declared in the profile, or startup fails: a missing key is a setup fault, never shown to a person as a denial. |
-| `archetype` | yes | `handler` (your code replies). `scoped-pull` and `approval-write` are valid in a manifest but refused at startup until their engine lands. |
+| `archetype` | yes | `handler` (your code replies) or `scoped-pull` (a list with a typed form, no code: see below). `approval-write` is valid in a manifest but refused at startup until its engine lands. |
 | `environments` | yes | Where it shows, by `APLABS_ENV` (`["dev"]`, then `["dev", "prod"]` when it is ready). Off the menu, and refused if opened, everywhere else. |
 | `handler` | for `handler` | The handler file in the module's folder (`handler.js`). It exports one async function. |
-| `parameters` | later archetypes | The inputs a person gives: `name`, `type` (`string`, `integer`, `number`, `boolean`, `date`), optional `enum`, `min`, `max`, `default`, `required`, `description`. The query runner refuses a parameter the manifest does not declare. |
-| `query` | later archetypes | A `.sql` file in the module's folder. |
+| `parameters` | for `scoped-pull` | The inputs a person gives (see "Declaring inputs" below). The query runner refuses a parameter the manifest does not declare. |
+| `query` | for `scoped-pull` | A `.sql` file in the module's folder. Startup fails if it is missing or empty. |
 | `scoring` | later archetypes | `inputs` and `weights` for a scored list. |
 | `write` | `approval-write` | `connector`, `operation`, `destination` and the `fields` copied into the approval entry. |
+
+## A scoped pull: a list with a typed form
+
+A `scoped-pull` module has no handler. Its manifest declares its inputs and names a fixed SQL file; the engine does the rest:
+
+1. **Open** shows the form in the module's window: one input per parameter, defaults filled in. There is no Submit button.
+2. **Check values** reads what was typed and checks it against the declarations. A problem shows above the form, worded from the input's label. Good values show back as plain text with **Confirm** and **Change**.
+3. **Change** returns to the form with the values filled in. **Confirm** runs the request once: a double click or a replay is told it is running or done.
+
+Each open form is a session bound to the person who opened it. A click by anyone else is refused, and after 30 minutes without use the form expires. Every click updates the same window in place. (Running the query and showing the rows arrives with Story 9.5; until then Confirm shows the confirmed values. "Read my request", plain English filling the form, arrives with Story 9.4.)
+
+The SQL is a static template with named placeholders (`$zone`, `$limit`), bound as parameters. Never build SQL from text, and never use `${`.
+
+### Declaring inputs
+
+Each entry in `parameters`:
+
+| Field | What it is |
+|---|---|
+| `name` | Lower-case with underscores (`lapsed_days`). The SQL's `$name`. |
+| `label` | The form's label, up to 60 characters. Defaults to the name. |
+| `type` | `string`, `integer`, `number`, `boolean` or `date` (`YYYY-MM-DD`). |
+| `description` | A hint under the input, up to 150 characters. |
+| `enum` | The allowed values (at most 100), shown as a dropdown. |
+| `min`, `max` | The range of an `integer` or `number`. |
+| `pattern`, `max_length` | A `string`'s format (a regular expression the whole value must match) and its length (1 to 500). |
+| `default` | Filled in when the form opens, and used when the input is left empty. It must pass its own declaration. |
+| `required` | `true` when the input must have a value. |
+
+Every input is bounded, or startup stops naming the module and the input:
+
+- A `string` declares `enum`, or both `pattern` and `max_length`. So nothing a person types can reach Slack or the query as unexpected text.
+- An `integer` or `number` declares `max` (and usually `min`), or `enum`.
+- A range must be possible (`min` at most `max`), and bounds must fit the type (no `pattern` on a number).
+
+For example (Brightside's Win-back list):
+
+```json
+"parameters": [
+  { "name": "zone", "label": "Zone", "type": "string", "enum": ["north", "south", "east", "west", "central"], "required": true },
+  { "name": "lapsed_days", "label": "Lapsed within (days)", "type": "integer", "min": 1, "max": 365, "default": 90, "required": true },
+  { "name": "limit", "label": "How many clients", "type": "integer", "min": 1, "max": 500, "default": 25, "required": true }
+],
+"query": "win-back.sql"
+```
 
 ## The handler
 

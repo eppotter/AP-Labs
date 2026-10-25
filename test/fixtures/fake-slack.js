@@ -8,8 +8,9 @@
 //       channel). body carries event_id for de-duplication tests.
 //   dispatchCommand(command, { user_id })        the listener for that slash
 //       command, with ack, respond and a trigger_id.
-//   dispatchAction(action_id, { user, view })    every action listener whose
-//       pattern matches, with ack and respond. With view (a modal the click
+//   dispatchAction(action_id, { user, view, value })  every action listener
+//       whose pattern matches, with ack and respond. value is the button's
+//       value (default: the action id's first part). With view (a modal the click
 //       came from), the body carries it, a container of type view and a
 //       trigger_id, and there is no respond (Slack sends no response_url for a
 //       click inside a modal).
@@ -105,8 +106,8 @@ class FakeSlackApp {
   }
 
   // Returns how many listeners ran (0 = Bolt would find no listener).
-  async dispatchAction(action_id, { user = { id: 'U1', name: 'u1' }, view } = {}) {
-    const action = { type: 'button', action_id, value: action_id.split(':')[0] };
+  async dispatchAction(action_id, { user = { id: 'U1', name: 'u1' }, view, value } = {}) {
+    const action = { type: 'button', action_id, value: value === undefined ? action_id.split(':')[0] : value };
     const body = { type: 'block_actions', user, actions: [action] };
     if (view) Object.assign(body, { view, container: { type: 'view', view_id: view.id }, trigger_id: 'T-action' });
     const matching = this.actionListeners.filter(({ pattern }) => (

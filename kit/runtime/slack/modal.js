@@ -6,7 +6,8 @@
 // "Loading…", the first reply replaces that, and each later reply is appended
 // below the earlier ones (several replies all stay visible, as they did as
 // separate ephemeral messages). Views carry the hub id as private_metadata and
-// nothing else, never person data.
+// nothing else, never person data. A scoped pull's form clicks (Story 9.3)
+// re-render the module view in place (updatedView), never pushing a third.
 //
 // Slack's limits: a modal title is at most 24 characters, a view at most 100
 // blocks, a section's text at most 3000 characters. Titles are cut with "…",
@@ -119,7 +120,51 @@ function pushedView({ client, triggerId, title, hubId }) {
   };
 }
 
+// The view a click came from, updated in place and never pushed (Story 9.3).
+// A form's buttons live in a module view, which is already the second view
+// on the stack (menu, module), so every click re-renders that same view:
+// views.update on its id, with the hash Slack sent in the click. show(message)
+// resolves 'updated', or 'dropped' when Slack answered hash_conflict (the view
+// changed since the click) and the out-of-date result was not shown. With
+// { force: true } a conflict is retried once without the hash and resolves
+// 'forced': only for a result that must not be lost (a consumed Confirm's
+// outcome, which a "still running" notice from a double click may have beaten
+// to the view). Any other failure throws. Calls run one at a time, each with
+// the latest hash. The caller logs a dropped or forced result.
+function updatedView({ client, view, title, hubId }) {
+  let hash = view && typeof view.hash === 'string' ? view.hash : null;
+  const viewId = view && view.id;
+  let queue = Promise.resolve();
+  const send = async (blocks, withHash) => {
+    const res = await client.views.update({
+      view_id: viewId,
+      ...(withHash && hash ? { hash } : {}),
+      view: modalView({ title, hubId, close: 'Back', callbackId: 'hub:module', blocks }),
+    });
+    if (res && res.view && typeof res.view.hash === 'string') hash = res.view.hash;
+  };
+  const show = (message, { force = false } = {}) => {
+    const next = queue.then(async () => {
+      const blocks = messageBlocks(message);
+      try {
+        await send(blocks, true);
+        return 'updated';
+      } catch (err) {
+        if (failureReason(err) !== HASH_CONFLICT) throw err;
+        if (!force) return 'dropped';
+        await send(blocks, false);
+        return 'forced';
+      }
+    });
+    queue = next.catch(() => {});
+    return next;
+  };
+  return { show };
+}
+
+const HASH_CONFLICT = 'hash_conflict';
+
 module.exports = {
   modalTitle, limitBlocks, messageBlocks, modalView, fromModal, hasViews, failureReason, pushedView,
-  MAX_BLOCKS, MAX_TITLE, LOADING,
+  updatedView, MAX_BLOCKS, MAX_TITLE, LOADING, HASH_CONFLICT,
 };
