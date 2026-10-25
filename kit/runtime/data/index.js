@@ -276,10 +276,13 @@ function createData({
     if (!opening) {
       if (remote && inflight) throw new DataUnavailableError('a MotherDuck connect attempt is still running');
       if (remote && now() < retryAt) throw new DataUnavailableError(`waiting to reconnect to MotherDuck (${lastProblem})`);
-      opening = (remote ? openRemote() : openLocked(file).then((inst) => {
+      const attempt = (remote ? openRemote() : openLocked(file).then((inst) => {
         instance = inst;
         lastProblem = null;
-      }, (err) => { throw failed(err); })).finally(() => { opening = null; });
+      }, (err) => { throw failed(err); })).finally(() => {
+        if (opening === attempt) opening = null; // close() may have dropped it already
+      });
+      opening = attempt;
     }
     await opening;
   }
@@ -361,18 +364,28 @@ function createData({
   }
 
   // What the person is told about the data source: its kind, and the file
-  // name (never the full path) or the database name.
+  // name (never the full path) or the database name. Never throws: a local
+  // source built with no file is labelled (no file).
   function describe() {
+    let label = database;
+    if (!remote) label = typeof file === 'string' && file ? path.basename(file) : '(no file)';
     return {
       source: SOURCES[remote ? 'motherduck' : 'local'],
-      label: remote ? database : path.basename(file),
+      label,
       available: Boolean(instance),
       problem: instance ? null : lastProblem,
     };
   }
 
+  // Closing mid-connect (MotherDuck) sets the reconnect wait and drops the
+  // attempt, so a later run() never joins it: it waits, then starts fresh.
   function close() {
     generation += 1;
+    if (remote && opening) {
+      opening = null;
+      lastProblem = 'the data source was closed while connecting';
+      retryAt = now() + retryAfterMs;
+    }
     if (instance) instance.closeSync();
     instance = null;
   }

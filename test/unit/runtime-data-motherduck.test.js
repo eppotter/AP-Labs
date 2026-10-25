@@ -226,6 +226,54 @@ test('close() while connecting: the instance that arrives later is closed, never
   assert.equal(data.describe().available, false);
 });
 
+test('the reconnect wait survives close(): close() then run() still waits until the wait is over (#111)', async (t) => {
+  const c = clock();
+  const fake = createFakeMotherDuck({ rows: () => [{ ok: true }] });
+  const data = source(t, fake, { now: c.now });
+  assert.deepEqual(await data.run('SELECT 1 AS ok'), [{ ok: true }]);
+  fake.revoke('IO Error: network unreachable');
+  await assert.rejects(data.run('SELECT 1 AS ok'), unavailable(/network unreachable/));
+  fake.restore();
+  data.close();
+  await assert.rejects(data.run('SELECT 1 AS ok'), unavailable(/^waiting to reconnect to MotherDuck \(the MotherDuck query failed/));
+  assert.equal(fake.state.created.length, 1, 'no reconnect inside the wait, even after close()');
+  c.advance(md.RETRY_AFTER_MS);
+  assert.deepEqual(await data.run('SELECT 1 AS ok'), [{ ok: true }]);
+  assert.equal(fake.state.created.length, 2);
+});
+
+test('close() during a connect sets the wait and drops the attempt: a later run() never joins it and starts fresh after the wait (#111)', async (t) => {
+  const c = clock();
+  const fake = createFakeMotherDuck({ createDelayMs: 30, rows: () => [{ ok: true }] });
+  const data = source(t, fake, { now: c.now });
+  const opening = data.open().catch((e) => e);
+  data.close();
+  // The old attempt is still running: a run() refuses instead of joining it.
+  await assert.rejects(data.run('SELECT 1 AS ok'), unavailable(/^a MotherDuck connect attempt is still running$/));
+  const first = await opening;
+  assert.ok(first instanceof DataUnavailableError && /closed while connecting/.test(first.reason));
+  assert.ok(fake.state.instances[0].closed, 'the late instance is closed, never adopted');
+  // The attempt is over, but close() set the wait.
+  await assert.rejects(data.run('SELECT 1 AS ok'), unavailable(/^waiting to reconnect to MotherDuck \(the data source was closed while connecting\)$/));
+  assert.equal(fake.state.created.length, 1, 'no reconnect inside the wait');
+  assert.deepEqual(data.describe(), { source: 'MotherDuck', label: DB, available: false, problem: 'the data source was closed while connecting' });
+  c.advance(md.RETRY_AFTER_MS);
+  assert.deepEqual(await data.run('SELECT 1 AS ok'), [{ ok: true }]);
+  assert.equal(fake.state.created.length, 2, 'a fresh attempt after the wait');
+  assert.equal(data.describe().available, true);
+});
+
+test('describe() never throws: a local source with no file or an empty path is labelled (no file) and unavailable (#111)', async () => {
+  const profile = { client: { id: 'x' } };
+  for (const file of [undefined, null, '']) {
+    const data = createData({ file, profile });
+    assert.deepEqual(data.describe(), { source: 'local fixture', label: '(no file)', available: false, problem: null }, `file ${JSON.stringify(file)}`);
+    await assert.rejects(data.open(), unavailable(/does not exist/));
+    assert.deepEqual(data.describe(), { source: 'local fixture', label: '(no file)', available: false, problem: 'the data file does not exist' });
+    data.close();
+  }
+});
+
 test('MotherDuck mode needs the read key and a valid name; the local mode never takes one', () => {
   const fake = createFakeMotherDuck();
   assert.throws(() => createData({ profile: PROFILE, connect: fake.create }), /needs the read key \(MOTHERDUCK_READ_TOKEN\)/);

@@ -110,7 +110,7 @@ test('round 1: read-only codex with stdin closed, verdict and summary printed, P
   assert.doesNotMatch(r.out, /No blocking findings: the review is done/);
 
   assert.equal(t.body(), `What this does: tests.\nKind: infra\n\nReview rounds: 1/3\nReviewed head: ${head}\n\nReview follow-up: #42\n\n` +
-    'Refuter: 0 confirmed, 0 not reproduced, 0 escalated, 1 pending\n');
+    'Refuter: 0 confirmed, 0 fixed, 0 not reproduced, 0 escalated, 1 pending\n');
   assert.match(t.ghCalls(), /^pr edit 7 --body-file /m);
   const s = t.state();
   assert.equal(s.branch, BRANCH);
@@ -272,7 +272,7 @@ test('rounds 2 and 3 ask for P1 only, list earlier findings, update the body in 
   assert.match(prompt2, new RegExp(`commits after ${h1}`));
   assert.match(r2.out, /Same class twice: kit\/a\.js/);
   assert.equal(t.body(), `What this does: tests.\nKind: infra\n\nReview rounds: 2/3\nReviewed head: ${h2}\n\nReview follow-up: #42\n\n` +
-    'Refuter: 0 confirmed, 0 not reproduced, 0 escalated, 2 pending\n\nReview stop: same class twice — kit/a.js\n');
+    'Refuter: 0 confirmed, 1 fixed, 0 not reproduced, 0 escalated, 1 pending\n\nReview stop: same class twice — kit/a.js\n');
 
   const h3 = t.commit('three');
   const r3 = t.review([], { FAKE_CODEX_VERDICT: t.verdict(CLEAN_VERDICT) });
@@ -282,7 +282,8 @@ test('rounds 2 and 3 ask for P1 only, list earlier findings, update the body in 
   assert.match(t.codexArgs(), new RegExp(`commits after ${h2}`));
   assert.match(r3.out, /No blocking findings: the review is done/);
   assert.equal(t.body(), `What this does: tests.\nKind: infra\n\nReview rounds: 3/3\nReviewed head: ${h3}\n\nReview follow-up: #42\n\n` +
-    'Refuter: 0 confirmed, 0 not reproduced, 0 escalated, 2 pending\n\nReview stop: same class twice — kit/a.js\n');
+    'Refuter: 0 confirmed, 2 fixed, 0 not reproduced, 0 escalated, 0 pending\n\nReview stop: same class twice — kit/a.js\n',
+    'a clean round rewrites the Refuter line: the earlier P1s were checked by it');
 
   t.commit('four');
   t.resetCodex();
@@ -518,7 +519,7 @@ test('a failed follow-up issue still counts the round, exits 1 and prints the co
   assert.match(r.err, /add "Review follow-up: #<issue>" to the PR body/);
   assert.match(fs.readFileSync(file, 'utf8'), /- \[ \] Rename var — kit\/b\.js/);
   assert.equal(t.body(), `What this does: tests.\nKind: infra\n\nReview rounds: 1/3\nReviewed head: ${head}\n\n` +
-    'Refuter: 0 confirmed, 0 not reproduced, 0 escalated, 1 pending\n', 'the body is still updated');
+    'Refuter: 0 confirmed, 0 fixed, 0 not reproduced, 0 escalated, 1 pending\n', 'the body is still updated');
 
   const u = setup();
   u.openPr();
@@ -665,7 +666,8 @@ test('a reviewer that fails or gives no usable verdict hands the round to the ot
 });
 
 const sample = (name) => path.join(fixtures, name);
-const RETRY_LINE = /^codex: Could not read findings or a clean verdict \(log: .*round-1\.attempt-1\.log\); retrying codex once with a VERDICT reminder\.$/m;
+// The codex-no-verdict.md sample: bold finding lines the parser cannot read, and no VERDICT line (#132).
+const RETRY_LINE = /^codex: Could not parse 2 finding line\(s\):\n- \*\*\[P2\][^]*?\(log: .*round-1\.attempt-1\.log\); retrying codex once with a VERDICT reminder\.$/m;
 
 test('Codex BLOCKING with only a [P2] counts as CLEAN with that P2: no retry, no fallback, one-line note', () => {
   const t = setup();
@@ -738,11 +740,52 @@ test('an unparseable finding line is not retried: it goes straight to the fallba
   const t = setup();
   t.openPr();
   t.commit('change\n\nAgent: claude-code claude-opus-5-5');
-  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict('- [P1] no path here\nVERDICT: BLOCKING\n'), FAKE_CLAUDE_VERDICT: t.verdict(P2_ONLY) });
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict('- [P1] no path here\nVERDICT: BLOCKING\n'), FAKE_CLAUDE_VERDICT: t.verdict(`${P2_ONLY}VERDICT: CLEAN\n`) });
   assert.equal(r.code, 0, r.err);
   assert.doesNotMatch(r.err, /retrying/);
   assert.ok(!fs.existsSync(path.join(t.codex, 'retry-args.txt')));
   assert.match(r.out, /reviewer: claude, same-model fallback/);
+});
+
+test('#132: well-formed findings with no VERDICT line are retried once; the same reply again counts, with a note', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const reply = '- [P2] Tidy names — kit/c.js:2\n- [P2] Missing test — kit/d.js:4\n';
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict(reply), FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /^codex: No VERDICT line after 2 finding\(s\) \(log: .*attempt-1\.log\); retrying codex once with a VERDICT reminder\.$/m);
+  assert.match(r.err, /^Note: Still no VERDICT line after the reminder; read as CLEAN with 2 well-formed non-blocking finding\(s\)\.$/m);
+  assert.ok(fs.existsSync(path.join(t.codex, 'retry-args.txt')), 'Codex was retried');
+  assert.ok(!t.claudeRan(), 'no fallback');
+  assert.match(r.out, /reviewer: codex\): 0 blocking, 2 non-blocking\./);
+  assert.deepEqual(t.state().rounds[0].findings.map((f) => f.file), ['kit/c.js', 'kit/d.js'], 'no finding is lost');
+  assert.equal(t.state().rounds[0].retried, true);
+});
+
+test('#132: bold findings, no VERDICT line and "No other issues" are never read as clean: retry, then fallback', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const reply = '- **[P2] Published time is raw UTC** — `examples/a.js:45` — Hard to read.\n\nNo other issues.\n';
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict(reply), FAKE_CLAUDE_VERDICT: t.verdict(`${P2_ONLY}VERDICT: CLEAN\n`) });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /^codex: Could not parse 1 finding line\(s\):\n- \*\*\[P2\] Published time[^\n]*\n?[^]*?attempt-1\.log\); retrying codex once/m);
+  assert.match(r.err, /attempt-2\.log\); trying claude as a same-model fallback\.$/m);
+  assert.match(r.out, /reviewer: claude, same-model fallback/);
+  assert.deepEqual(t.state().rounds[0].findings.map((f) => f.file), ['kit/c.js']);
+});
+
+test('#132: a readable [P1] with no VERDICT line is never retried and never dropped', () => {
+  const t = setup();
+  t.openPr();
+  t.commit('change\n\nAgent: claude-code claude-opus-5-5');
+  const r = t.review([], { FAKE_CODEX_VERDICT: t.verdict(P1_VERDICT), FAKE_CLAUDE_VERDICT: t.verdict(CLEAN_VERDICT) });
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.err, /retrying|fallback/);
+  assert.ok(!fs.existsSync(path.join(t.codex, 'retry-args.txt')));
+  assert.match(r.err, /^Note: No VERDICT line; read as BLOCKING with 1 \[P1\] finding\(s\): the P1s count\.$/m);
+  assert.deepEqual(t.state().rounds[0].findings.map((f) => [f.priority, f.id]), [['P1', 'R1-1'], ['P2', undefined]]);
 });
 
 test('both reviewers failing exits 1 without counting the round', () => {
@@ -755,7 +798,7 @@ test('both reviewers failing exits 1 without counting the round', () => {
     FAKE_CODEX_EXIT: '3',
   });
   assert.equal(r.code, 1);
-  assert.match(r.err, /^claude: Could not read findings or a clean verdict \(log: .*round-1\.attempt-1\.log\)/m);
+  assert.match(r.err, /^claude: Could not read findings or a clean verdict \(no VERDICT line\) \(log: .*round-1\.attempt-1\.log\); retrying claude once/m);
   assert.match(r.err, /^codex: exited 3 \(log: .*round-1\.log\)$/m);
   assert.match(r.err, /No reviewer gave a usable verdict; this round does not count\./);
   assert.equal(t.state(), null);
@@ -785,7 +828,7 @@ test('a round with P1s gives each an id, prints the Refuter block and is not don
   assert.match(r.out, /^ {2}R1-2 {2}C — kit\/c\.js$/m);
   assert.ok(r.out.includes(`Delegate each to the Refuter agent (.claude/agents/refuter.md) with the head SHA (${head}), then record the result with ${REFUTE_HINT}`));
   assert.doesNotMatch(r.out, /the review is done/);
-  assert.match(t.body(), /^Refuter: 0 confirmed, 0 not reproduced, 0 escalated, 2 pending$/m);
+  assert.match(t.body(), /^Refuter: 0 confirmed, 0 fixed, 0 not reproduced, 0 escalated, 2 pending$/m);
 
   const clean = setup();
   clean.openPr();
@@ -814,19 +857,19 @@ test('--refute records verdicts without a reviewer run or a round, updates the b
   assert.equal(s.rounds.length, 1, 'no round counted');
   assert.equal(s.rounds[0].findings[0].verdict, 'not-reproduced');
   assert.equal(s.rounds[0].findings[0].note, 'node --test test/a.test.js: 4 pass, 0 fail');
-  assert.equal(t.body().match(/^Refuter: 0 confirmed, 1 not reproduced, 0 escalated, 1 pending$/gm).length, 1);
+  assert.equal(t.body().match(/^Refuter: 0 confirmed, 0 fixed, 1 not reproduced, 0 escalated, 1 pending$/gm).length, 1);
   assert.doesNotMatch(t.ghCalls().slice(calls.length), /issue|label/);
 
   const r2 = t.review(['--refute', 'R1-2', 'not-reproduced']);
   assert.equal(r2.code, 0, r2.err);
   assert.match(r2.out, /No blocking findings: the review is done/);
-  assert.equal(t.body().match(/^Refuter: 0 confirmed, 2 not reproduced, 0 escalated, 0 pending$/gm).length, 1, 'replaced in place');
+  assert.equal(t.body().match(/^Refuter: 0 confirmed, 0 fixed, 2 not reproduced, 0 escalated, 0 pending$/gm).length, 1, 'replaced in place');
 
   const r3 = t.review(['--refute', 'R1-2', 'confirmed']);
   assert.equal(r3.code, 0, r3.err);
   assert.match(r3.out, /Still blocking: R1-2 \(confirmed\)/);
   assert.equal(t.state().rounds[0].findings[1].note, undefined);
-  assert.match(t.body(), /^Refuter: 1 confirmed, 1 not reproduced, 0 escalated, 0 pending$/m);
+  assert.match(t.body(), /^Refuter: 1 confirmed, 0 fixed, 1 not reproduced, 0 escalated, 0 pending$/m);
 });
 
 test('cannot-verify is escalated, keeps blocking after later clean rounds, and works over budget for earlier rounds', () => {
@@ -838,7 +881,7 @@ test('cannot-verify is escalated, keeps blocking after later clean rounds, and w
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /R1-1 is escalated to the human: the Refuter could not verify it\. Tell them; do not drop it\./);
   assert.match(r.out, /Still blocking: R1-1 \(cannot-verify\)/);
-  assert.match(t.body(), /^Refuter: 0 confirmed, 0 not reproduced, 1 escalated, 0 pending$/m);
+  assert.match(t.body(), /^Refuter: 0 confirmed, 0 fixed, 0 not reproduced, 1 escalated, 0 pending$/m);
 
   for (const n of ['two', 'three']) {
     t.commit(n);
@@ -846,6 +889,7 @@ test('cannot-verify is escalated, keeps blocking after later clean rounds, and w
     assert.equal(c.code, 0, c.err);
     assert.doesNotMatch(c.out, /the review is done/);
     assert.match(c.out, /Not done: R1-1 escalated to the human and still open\./);
+    assert.match(t.body(), /^Refuter: 0 confirmed, 0 fixed, 0 not reproduced, 1 escalated, 0 pending$/m, 'never shown as fixed');
   }
   t.commit('four');
   assert.equal(t.review([], { FAKE_CODEX_VERDICT: t.verdict(CLEAN_VERDICT) }).code, 3, 'budget spent');
