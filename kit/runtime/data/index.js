@@ -3,9 +3,16 @@
 // The query runner (Story 7.5, AD-9, AD-10): the only way SQL runs.
 //
 // Only this file, the offline fixture builder (kit/fixture/build.js), the
-// human-run MotherDuck connection (kit/fixture/motherduck.js) and the
-// human-run MotherDuck lockdown probe (kit/fixture/md-probe.js) may import
-// @duckdb/node-api; a test fails on any other importer.
+// human-run MotherDuck connection (kit/fixture/motherduck.js), the human-run
+// MotherDuck lockdown probe (kit/fixture/md-probe.js) and the image-build
+// extension installer (scripts/install-duckdb-extensions.js, Story 11.2) may
+// import @duckdb/node-api; a test fails on any other importer.
+//
+// extensionLoads(name) (Story 11.2) proves an extension installed ahead of
+// time loads: an in-memory instance with extension auto-install and
+// auto-load off (MD_LOCKDOWN's instance settings) runs LOAD <name> and
+// nothing else. No INSTALL, no network, no token. The container smoke test
+// calls it for motherduck with the network off (DEP-016).
 //
 // Every call to run(sql, params) passes the kit/runtime/sql guardrail first,
 // with the profile's forbidden columns. Parameters are bound as prepared-
@@ -109,6 +116,32 @@ async function openLocked(file) {
   } catch (err) {
     if (instance) instance.closeSync();
     throw new DataUnavailableError(`the data file could not be opened (${withoutPaths(firstLine(err.message), file)})`);
+  }
+}
+
+// An extension name as DuckDB spells one: lower-case letters, digits, _.
+const EXTENSION_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+
+// Whether the named extension loads without installing anything. Resolves
+// { loaded: true } or { loaded: false, reason } (DuckDB's first line, with
+// paths reduced to file names). Throws TypeError on a malformed name, which
+// is never spliced into SQL.
+async function extensionLoads(name, { create = (where, options) => DuckDBInstance.create(where, options) } = {}) {
+  if (typeof name !== 'string' || !EXTENSION_NAME.test(name)) throw new TypeError('extension name must be lower-case letters, digits and _');
+  let instance;
+  try {
+    instance = await create(':memory:', { ...md.MD_LOCKDOWN.instance });
+    const conn = await instance.connect();
+    try {
+      await conn.run(`LOAD ${name}`);
+    } finally {
+      closeQuietly(conn);
+    }
+    return { loaded: true };
+  } catch (err) {
+    return { loaded: false, reason: withoutPaths(firstLine(err && err.message), '/') };
+  } finally {
+    if (instance) closeQuietly(instance);
   }
 }
 
@@ -395,6 +428,7 @@ function createData({
 
 module.exports = {
   createData,
+  extensionLoads,
   openLocked,
   openMotherDuck,
   dataPathFor,

@@ -46,6 +46,13 @@
 // "jobs: on (n scheduled)", "off (profile)" or "off (APLABS_JOBS_OFF)". The
 // scheduler starts after Slack connects and stops first on SIGTERM or SIGINT.
 //
+// Story 11.2: with APLABS_HEALTH_PORT set, boot starts the health listener
+// (./health, AD-13) before the data and Slack, so its 90-second grace covers
+// the connect. A malformed port or one in use refuses to start, naming the
+// variable. The Socket Mode client's connection events feed it: it fails
+// closed (never connected, or down over 60 seconds, after the grace: 503).
+// The startup line says "health: on (port n)" or "off"; shutdown closes it.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
@@ -64,6 +71,7 @@ const { createData, dataPathFor, sourceOf } = require('../data');
 const md = require('../data/motherduck');
 const llm = require('../llm');
 const jobs = require('../jobs');
+const health = require('./health');
 
 const REPO = path.resolve(__dirname, '../../..');
 // The startup line's word for why the AI is off.
@@ -104,7 +112,7 @@ function checkMotherDuckKeys({ env, deps, problems, register }) {
 const clockOf = (deps) => () => new Date(deps.now ? deps.now() : Date.now());
 
 // Collects every boot problem. Returns { problems, notes, tokens, profile,
-// profilePath, registry, jobs, jobsState, dataFile, env }. register(value) is
+// profilePath, registry, jobs, jobsState, dataFile, env, healthPort }. register(value) is
 // called on each MotherDuck key as soon as it is read.
 // Problems name variables and profile errors, never a secret's value.
 function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
@@ -142,6 +150,8 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
 
   const runEnv = env.APLABS_ENV || DEFAULT_ENV;
   if (!ENV_PATTERN.test(runEnv)) problems.push('APLABS_ENV must be a lower-case name such as dev or prod');
+  const hp = health.portFrom(env);
+  if (hp.problem) problems.push(hp.problem);
 
   // The app dir is checked only with a valid profile: modules are checked
   // against its resources. Paths are not echoed (they may come from env).
@@ -175,7 +185,7 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
     if (d.problem) problems.push(d.problem);
     dataFile = d.path || null;
   }
-  return { problems, notes, tokens, profile, profilePath, registry, jobs: jobList, jobsState, dataFile, env: runEnv };
+  return { problems, notes, tokens, profile, profilePath, registry, jobs: jobList, jobsState, dataFile, env: runEnv, healthPort: hp.port || null };
 }
 
 // Builds the Bolt app in Socket Mode with the redacting logger. App is
@@ -214,6 +224,19 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   if (cfg.problems.length) {
     log.error('refusing to start', { problems: cfg.problems });
     return { code: 1 };
+  }
+
+  // The health listener, first: its grace covers the data and the connect.
+  let healthCheck = null;
+  let healthState = null;
+  if (cfg.healthPort) {
+    healthState = health.createHealthState({ now: deps.now || Date.now });
+    try {
+      healthCheck = await health.startHealthServer({ port: cfg.healthPort, state: healthState, ...(deps.healthHost ? { host: deps.healthHost } : {}) });
+    } catch (err) {
+      log.error('refusing to start', { problems: [err.message] });
+      return { code: 1 };
+    }
   }
 
   // createApp inside the try: a throw while building the app (it may carry a
@@ -263,9 +286,14 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   let app;
   try {
     app = createApp({ ...cfg, store, data, log, App: deps.App, llm: ai });
+    // Before start(): Bolt's start() resolves on the first connected event.
+    if (healthState && !health.watchConnection(app, healthState)) {
+      log.warn('health: no Socket Mode client to watch, so /healthz reports down after the grace period');
+    }
     await app.start();
   } catch (err) {
     log.error('could not connect to Slack', { err });
+    if (healthCheck) await healthCheck.close();
     return { code: 1, app };
   }
   const client = cfg.profile.client.name;
@@ -278,6 +306,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     data: dataState(data, remote),
     ai: aiStatus.on ? 'on' : `off (${AI_OFF_WORDS[aiStatus.reason]})`,
     jobs: jobs.jobsWords(cfg.jobsState, cfg.jobs),
+    health: healthCheck ? `on (port ${healthCheck.port})` : 'off',
     instance: 'single instance',
   });
   // Read-only jobs (Q3): the logger, the query runner and the clock; nothing else.
@@ -285,7 +314,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     jobs: cfg.jobsState.on ? cfg.jobs : [], log, data, now: clockOf(deps), ...(deps.timers ? { timers: deps.timers } : {}),
   });
   scheduler.start();
-  return { code: 0, app, log, data, connecting, llm: ai, jobs: scheduler };
+  return { code: 0, app, log, data, connecting, llm: ai, jobs: scheduler, health: healthCheck };
 }
 
 // Anything that escapes main() is logged through the same redacting logger
@@ -302,13 +331,16 @@ function installCrashHandlers(log, proc = process) {
 }
 
 // SIGTERM or SIGINT: the scheduler stops scheduling first (a run in progress
-// is not awaited), then Slack stops, the data closes and the process exits.
-function shutdown({ app, data, jobs: scheduler, log, exit = (code) => process.exit(code) }, signal) {
+// is not awaited), then Slack stops, the health listener and the data close
+// and the process exits.
+function shutdown({ app, data, jobs: scheduler, health: healthCheck, log, exit = (code) => process.exit(code) }, signal) {
   log.info('stopping', { signal });
   if (scheduler) scheduler.stop();
   return Promise.resolve()
     .then(() => app.stop())
     .catch((err) => log.error('could not stop Slack cleanly', { err }))
+    .then(() => (healthCheck ? healthCheck.close() : null))
+    .catch((err) => log.error('could not close the health listener', { err }))
     .finally(() => {
       data.close();
       exit(0);
@@ -320,14 +352,14 @@ module.exports = { main, checkConfig, checkMotherDuckKeys, createApp, installCra
 if (require.main === module) {
   const log = createLog();
   const bootFailed = installCrashHandlers(log);
-  main({ deps: { log } }).then(({ code, app, data, jobs: scheduler }) => {
+  main({ deps: { log } }).then(({ code, app, data, jobs: scheduler, health: healthCheck }) => {
     if (code !== 0) {
       process.exitCode = code;
       // Bolt may hold the process open after a failed start.
       setImmediate(() => process.exit(code));
       return;
     }
-    const stop = (signal) => shutdown({ app, data, jobs: scheduler, log }, signal);
+    const stop = (signal) => shutdown({ app, data, jobs: scheduler, health: healthCheck, log }, signal);
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
   }).catch(bootFailed);

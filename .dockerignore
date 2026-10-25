@@ -1,0 +1,19 @@
+# What never goes into the image (Story 11.2). The profile's context folder
+# is mounted at run time with the profile, never baked in.
+node_modules
+**/node_modules
+.git
+.github/
+var/
+.env*
+**/.env*
+*.duckdb
+**/*.duckdb
+.claude/
+.codex/
+.agents/
+_bmad/
+docs/
+.aplabs/context/
+test/
+.DS_Store

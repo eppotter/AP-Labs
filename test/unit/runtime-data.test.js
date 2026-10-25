@@ -14,7 +14,7 @@ const { execFileSync } = require('node:child_process');
 const { build } = require('../../kit/fixture/build');
 const sqlGuard = require('../../kit/runtime/sql');
 const {
-  createData, openLocked, dataPathFor, DataUnavailableError, QueryRefusedError, PARAM_RULES, LOCKDOWN,
+  createData, openLocked, dataPathFor, DataUnavailableError, QueryRefusedError, PARAM_RULES, LOCKDOWN, extensionLoads,
 } = require('../../kit/runtime/data');
 
 const REPO = path.join(__dirname, '..', '..');
@@ -143,13 +143,15 @@ test('a placeholder with no value, a positional placeholder and a non-scalar val
   await assert.rejects(data.run('SELECT 1 AS n', 'not an object'), (err) => err.rule === PARAM_RULES.BAD_VALUE);
 });
 
-test('no file outside kit/runtime/data, kit/fixture/build.js, kit/fixture/motherduck.js and kit/fixture/md-probe.js imports @duckdb/node-api', () => {
+test('no file outside kit/runtime/data, kit/fixture/build.js, kit/fixture/motherduck.js, kit/fixture/md-probe.js and scripts/install-duckdb-extensions.js imports @duckdb/node-api', () => {
   // motherduck.js (Story 7.7) opens the human-run MotherDuck connection for
   // fixture:publish and status --remote. It can't go through kit/runtime/data,
   // whose lockdown forbids the network by design, and the app never loads it.
   // md-probe.js (plan motherduck-read, Story A) is the human-run lockdown
   // probe: it opens MotherDuck as a reader; the app never loads it either.
-  const allowed = new Set(['kit/runtime/data/index.js', 'kit/fixture/build.js', 'kit/fixture/motherduck.js', 'kit/fixture/md-probe.js']);
+  // install-duckdb-extensions.js (Story 11.2, DEP-016): image build only; the
+  // app never loads it (the next test checks nothing under kit/runtime/ does).
+  const allowed = new Set(['kit/runtime/data/index.js', 'kit/fixture/build.js', 'kit/fixture/motherduck.js', 'kit/fixture/md-probe.js', 'scripts/install-duckdb-extensions.js']);
   const pkg = ['@duckdb', 'node-api'].join('/');
   const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '*.js', '*.cjs', '*.mjs'], { cwd: REPO, encoding: 'utf8' })
     .split('\n').filter(Boolean);
@@ -159,6 +161,65 @@ test('no file outside kit/runtime/data, kit/fixture/build.js, kit/fixture/mother
     && importer.test(fs.readFileSync(path.join(REPO, f), 'utf8')));
   assert.deepEqual(offenders, []);
   for (const f of allowed) assert.ok(importer.test(fs.readFileSync(path.join(REPO, f), 'utf8')), `${f} still matches the pattern`);
+});
+
+test('nothing under kit/runtime/ requires the image-build extension installer', () => {
+  const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', 'kit/runtime'], { cwd: REPO, encoding: 'utf8' })
+    .split('\n').filter((f) => /\.(c|m)?js$/.test(f) && fs.existsSync(path.join(REPO, f)));
+  assert.ok(files.length > 20, 'the scan saw kit/runtime');
+  const requires = /(?:require|import)\s*\(?\s*['"`][^'"`]*install-duckdb-extensions|from\s+['"`][^'"`]*install-duckdb-extensions/;
+  assert.ok(requires.test("require('../../scripts/install-duckdb-extensions')"), 'the pattern catches a require');
+  const offenders = files.filter((f) => requires.test(fs.readFileSync(path.join(REPO, f), 'utf8')));
+  assert.deepEqual(offenders, []);
+});
+
+// --- extensionLoads (Story 11.2) ----------------------------------------------
+
+test('extensionLoads: a built-in extension loads; a missing one does not, with its path reduced to a file name', async () => {
+  assert.deepEqual(await extensionLoads('json'), { loaded: true });
+  const missing = await extensionLoads('aplabs_no_such_extension');
+  assert.equal(missing.loaded, false);
+  assert.match(missing.reason, /aplabs_no_such_extension/);
+  assert.doesNotMatch(missing.reason, /[\\/]/, 'no path in the reason');
+});
+
+test('extensionLoads: runs LOAD and nothing else, on an in-memory instance with auto-install and auto-load off', async () => {
+  const calls = [];
+  const create = async (where, options) => {
+    calls.push({ where, options });
+    return {
+      connect: async () => ({ run: async (sql) => { calls.push(sql); }, closeSync: () => calls.push('conn closed') }),
+      closeSync: () => calls.push('instance closed'),
+    };
+  };
+  assert.deepEqual(await extensionLoads('motherduck', { create }), { loaded: true });
+  assert.deepEqual(calls, [
+    { where: ':memory:', options: { autoinstall_known_extensions: 'false', autoload_known_extensions: 'false' } },
+    'LOAD motherduck',
+    'conn closed',
+    'instance closed',
+  ]);
+});
+
+test('extensionLoads: a failed LOAD resolves loaded: false and still closes the instance', async () => {
+  const calls = [];
+  const create = async () => ({
+    connect: async () => ({
+      run: async () => { throw new Error('IO Error: Extension "/home/x/.duckdb/extensions/v1/linux_amd64/motherduck.duckdb_extension" not found.\nmore'); },
+      closeSync: () => calls.push('conn closed'),
+    }),
+    closeSync: () => calls.push('instance closed'),
+  });
+  const r = await extensionLoads('motherduck', { create });
+  assert.deepEqual(r, { loaded: false, reason: 'IO Error: Extension "motherduck.duckdb_extension" not found.' });
+  assert.deepEqual(calls, ['conn closed', 'instance closed']);
+});
+
+test('extensionLoads: a malformed name is refused before DuckDB, never spliced into SQL', async () => {
+  const create = async () => assert.fail('DuckDB must not start');
+  for (const bad of ['', 'MotherDuck', 'json; INSTALL x', "a'b", '1abc', 'md:x', null, 7]) {
+    await assert.rejects(extensionLoads(bad, { create }), TypeError, String(bad));
+  }
 });
 
 // --- Guardrail parity with real DuckDB (open risk from Story 7.4) -------------
