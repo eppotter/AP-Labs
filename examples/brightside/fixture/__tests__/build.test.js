@@ -28,7 +28,7 @@ test('Brightside builds in under 60 seconds with every table at its fixture_meta
 
   const m = meta();
   const expected = Object.fromEntries(Object.entries(m).filter(([k]) => k.startsWith('rows_')).map(([k, v]) => [k.slice(5), Number(v)]));
-  assert.equal(Object.keys(expected).length, 13);
+  assert.equal(Object.keys(expected).length, 16);
   const loaded = Object.fromEntries(result.tables.filter((x) => x.name !== 'fixture_meta').map((x) => [x.name, x.rows]));
   assert.deepEqual(loaded, expected);
 

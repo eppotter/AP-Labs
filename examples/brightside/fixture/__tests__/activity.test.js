@@ -24,7 +24,9 @@ const FIXTURE_DIR = path.join(__dirname, '..');
 const SEEDS = path.join(FIXTURE_DIR, 'seeds');
 const SMALL = { seed: 7, clients: 60 };
 const ruleOpts = { zones: ZONES, historyStart: HISTORY_START, asOf: AS_OF };
-const TEN_MB = 10 * 1024 * 1024;
+// Raised from 10 MB on 2026-10-24 (Ely) for labour/homes/scheduling; to be
+// restored by compressing seeds.
+const SEED_BUDGET = 20 * 1024 * 1024;
 
 // Committed CSVs, typed from lib/tables.js (they never quote: a plain split is a full parse).
 function loadCommitted() {
@@ -153,10 +155,10 @@ test('fixture_meta records the version, seed, as_of and each table\'s row count'
   }
 });
 
-test('the committed seed files total under 10 MB', () => {
+test('the committed seed files total under 20 MiB', () => {
   const files = fs.readdirSync(SEEDS).map((f) => path.join(SEEDS, f)).concat(path.join(FIXTURE_DIR, 'schema.sql'));
   const bytes = files.reduce((sum, f) => sum + fs.statSync(f).size, 0);
-  assert.ok(bytes < TEN_MB, `${bytes} bytes`);
+  assert.ok(bytes < SEED_BUDGET, `${bytes} bytes`);
 });
 
 test('a small seed is deterministic and passes every rule, unplanted', () => {
@@ -277,8 +279,12 @@ test('the rule check catches each broken activity rule once', () => {
   assert.match(problems[0], /fixture_meta: rows_visits is not/);
 });
 
+// Only the columns the reference build writes: the operations build appends
+// columns to crew_memberships and properties (checked in operations.test.js).
+const project = (rows, like) => rows.map((r) => Object.fromEntries(Object.keys(like[0]).map((k) => [k, r[k]])));
+
 test('activity draws come after the reference draws, so the reference rows are unchanged', () => {
   const reference = buildReference(createRng(SMALL.seed), { clients: SMALL.clients });
   const { tables } = generate(SMALL);
-  for (const name of Object.keys(reference)) assert.deepEqual(tables[name], reference[name], name);
+  for (const name of Object.keys(reference)) assert.deepEqual(project(tables[name], reference[name]), reference[name], name);
 });

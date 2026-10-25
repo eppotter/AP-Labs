@@ -344,7 +344,7 @@ So that the demo and the known truths have something real to find.
 **When** the generator runs
 **Then** it writes `plans`, `plan_price_changes`, `visits`, `invoices`, `invoice_lines`, `payments` and `fixture_meta` (generator version, seed, `as_of` = 2026-09-30, row counts), following every definition in `fixture-tables.md`
 **And** the data hits each planted target in the targets file (the known truths in `fixture-tables.md`), checked by the generator's own tests
-**And** committed seed files total under 10 MB, checked by a test
+**And** committed seed files total under 20 MiB (raised from 10 MB on 2026-10-24 (Ely) for labour/homes/scheduling; to be restored by compressing seeds), checked by a test
 **And** regeneration stays byte-identical
 
 ### Story 7.3: The fixture builds into a local DuckDB, offline

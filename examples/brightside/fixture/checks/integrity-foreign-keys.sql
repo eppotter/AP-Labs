@@ -5,6 +5,10 @@ SELECT 'crews.zone_id' AS fk, c.crew_id AS child_id FROM crews c LEFT JOIN zones
 UNION ALL
 SELECT 'crew_memberships.crew_id', m.membership_id FROM crew_memberships m LEFT JOIN crews c ON c.crew_id = m.crew_id WHERE c.crew_id IS NULL
 UNION ALL
+SELECT 'crew_memberships.staff_id', m.membership_id FROM crew_memberships m LEFT JOIN staff s ON s.staff_id = m.staff_id WHERE s.staff_id IS NULL
+UNION ALL
+SELECT 'pay_rates.staff_id', r.rate_id FROM pay_rates r LEFT JOIN staff s ON s.staff_id = r.staff_id WHERE s.staff_id IS NULL
+UNION ALL
 SELECT 'clients.zone_id', c.client_id FROM clients c LEFT JOIN zones z ON z.zone_id = c.zone_id WHERE z.zone_id IS NULL
 UNION ALL
 SELECT 'properties.client_id', p.property_id FROM properties p LEFT JOIN clients c ON c.client_id = p.client_id WHERE c.client_id IS NULL
@@ -34,3 +38,7 @@ UNION ALL
 SELECT 'invoice_lines.add_on_id', l.line_id FROM invoice_lines l LEFT JOIN add_ons a ON a.add_on_id = l.add_on_id WHERE l.add_on_id IS NOT NULL AND a.add_on_id IS NULL
 UNION ALL
 SELECT 'payments.invoice_id', y.payment_id FROM payments y LEFT JOIN invoices i ON i.invoice_id = y.invoice_id WHERE i.invoice_id IS NULL
+UNION ALL
+SELECT 'timesheets.visit_id', t.timesheet_id FROM timesheets t LEFT JOIN visits v ON v.visit_id = t.visit_id WHERE v.visit_id IS NULL
+UNION ALL
+SELECT 'timesheets.staff_id', t.timesheet_id FROM timesheets t LEFT JOIN staff s ON s.staff_id = t.staff_id WHERE s.staff_id IS NULL

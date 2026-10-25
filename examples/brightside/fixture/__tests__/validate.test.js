@@ -2,7 +2,8 @@
 
 // Story 7.6: Brightside's fixture checks pass on its seeds, its known truths
 // match the planted targets through the query runner, and a deliberately
-// broken copy of the seeds fails each check exactly once.
+// broken copy of the generator's output (a smaller run, for speed) fails each
+// check exactly once.
 // Example test (AD-1 carve-out): it reads Brightside's own fixture, profile
 // and context and goes with them in a fork. It builds into temporary
 // directories, never var/.
@@ -21,6 +22,7 @@ const { contextDirFor } = require('../../../../kit/lib/onboard');
 const { runChecks } = require('../../../../kit/lib/verify/runner');
 const { checkEnv } = require('../../../../kit/lib/verify');
 const { TRUTH_IDS } = require('../lib/truths');
+const { generate, writeFiles } = require('../generate');
 
 const REPO = path.resolve(__dirname, '..', '..', '..', '..');
 const FIXTURE_DIR = path.join(__dirname, '..');
@@ -52,7 +54,7 @@ test.after(async () => {
 test('every check in checks/ passes on the committed seeds, with Brightside\'s forbidden columns', async (t) => {
   const { out } = await builtFixture();
   const checks = loadChecks(FIXTURE_DIR);
-  assert.equal(checks.length, 14);
+  assert.equal(checks.length, 23);
   const results = await validate({ checks, db: out, forbiddenColumns: FORBIDDEN });
   assert.deepEqual(results.filter((r) => r.outcome !== 'pass'), []);
 });
@@ -118,7 +120,26 @@ function writeCsv(file, { cols, rows }) {
 // The breaks: one per check, each touching rows no other break touches. A
 // break's pick(t_, take) chooses its rows from the unedited seeds and returns
 // the edit, so it picks the same rows alone or with the others.
-const TABLES = ['crews', 'clients', 'invoices', 'payments', 'visits', 'plans', 'plan_price_changes', 'invoice_lines', 'crew_memberships', 'fixture_meta'];
+const TABLES = ['crews', 'clients', 'invoices', 'payments', 'visits', 'plans', 'plan_price_changes', 'invoice_lines', 'crew_memberships', 'fixture_meta',
+  'staff', 'pay_rates', 'properties', 'timesheets'];
+
+// Local timestamps ("YYYY-MM-DD HH:MM:SS") as whole minutes, and back.
+const toMinute = (ts) => Date.parse(`${ts.replace(' ', 'T')}Z`) / 60000;
+const fromMinute = (m) => new Date(m * 60000).toISOString().replace('T', ' ').slice(0, 19);
+const crewDay = (v) => `${v.crew_id}|${v.visit_date}`;
+const covers = (row, d) => row.start_date <= d && (row.end_date === '' || row.end_date >= d);
+// The role a staff member holds on a date, from pay_rates.
+const roleOn = (t_, staffId, d) => t_.pay_rates.rows.find((r) => r.staff_id === staffId && covers(r, d)).role;
+
+// A cancelled visit that is last on its crew-day route and whose crew has no
+// visit on the day newDate(v) gives: it can move there as route stop 1 without
+// touching the schedule or timesheet checks (it has no timesheets).
+function movableCancelledVisit(t_, used, filter, newDate) {
+  const size = new Map();
+  for (const v of t_.visits.rows) size.set(crewDay(v), (size.get(crewDay(v)) || 0) + 1);
+  return t_.visits.rows.find((v) => v.status === 'cancelled' && filter(v) && !used.visits.has(v.visit_id)
+    && Number(v.route_order) === size.get(crewDay(v)) && !size.has(crewDay({ ...v, visit_date: newDate(v) })));
+}
 const BREAKS = [
   {
     // A crew in a zone that does not exist. DuckDB enforces the schema's
@@ -165,19 +186,25 @@ const BREAKS = [
       const invoicedVisit = new Set(t_.invoices.rows.map((i) => i.visit_id));
       const v = t_.visits.rows.find((x) => invoicedVisit.has(x.visit_id) && !used.visits.has(x.visit_id));
       take('visits', v.visit_id);
-      return () => { v.status = 'cancelled'; };
+      // Its timesheets go too: a cancelled visit has none (integrity-timesheet-visit).
+      return () => {
+        v.status = 'cancelled';
+        t_.timesheets.rows = t_.timesheets.rows.filter((s) => s.visit_id !== v.visit_id);
+        t_.fixture_meta.rows.find((r) => r.key === 'rows_timesheets').value = String(t_.timesheets.rows.length);
+      };
     },
   },
   {
-    // A plan visit the day before its plan starts.
+    // A plan visit the day before its plan starts. A cancelled one, last on
+    // its route, onto a day its crew is free, so only this check sees it.
     check: 'integrity-plan-visits-in-period',
     pick: (t_, take, used) => {
       const planById = new Map(t_.plans.rows.map((p) => [p.plan_id, p]));
-      const early = t_.visits.rows.find((v) => v.plan_id && !used.visits.has(v.visit_id));
+      const dayBefore = (v) => new Date(Date.parse(`${planById.get(v.plan_id).start_date}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+      const early = movableCancelledVisit(t_, used, (v) => v.plan_id !== '' && !used.plans.has(v.plan_id), dayBefore);
       take('visits', early.visit_id);
       take('plans', early.plan_id);
-      const start = new Date(`${planById.get(early.plan_id).start_date}T00:00:00Z`);
-      return () => { early.visit_date = new Date(start.getTime() - 86_400_000).toISOString().slice(0, 10); };
+      return () => { early.visit_date = dayBefore(early); early.route_order = '1'; };
     },
   },
   {
@@ -227,15 +254,121 @@ const BREAKS = [
     },
   },
   {
-    // A staff member's ended period stretched onto their next one.
+    // A staff member's ended period stretched onto their next one. A cleaner
+    // in both, so the extra days add no second crew lead.
     check: 'integrity-crew-membership-overlap',
     pick: (t_) => {
       const byStaff = new Map();
       for (const m of t_.crew_memberships.rows) byStaff.set(m.staff_name, [...(byStaff.get(m.staff_name) || []), m]);
       const pair = [...byStaff.values()].map((ms) => ms.slice().sort((a, b) => a.start_date.localeCompare(b.start_date)))
-        .find((ms) => ms.length >= 2 && ms[0].end_date !== '');
+        .find((ms) => ms.length >= 2 && ms[0].end_date !== ''
+          && roleOn(t_, ms[0].staff_id, ms[0].start_date) === 'cleaner' && roleOn(t_, ms[1].staff_id, ms[1].start_date) === 'cleaner');
       assert.ok(pair, 'the seeds have a staff member with two periods');
       return () => { pair[0].end_date = pair[1].start_date; };
+    },
+  },
+  {
+    // A staff name that differs from their crew memberships'.
+    check: 'integrity-staff',
+    pick: (t_) => () => { t_.staff.rows[0].name = 'Nobody Known'; },
+  },
+  {
+    // A cleaner's earlier pay period below the cleaner minimum.
+    check: 'integrity-pay-rates',
+    pick: (t_) => {
+      const rows = t_.pay_rates.rows;
+      const p = rows.find((r, i) => r.role === 'cleaner' && rows[i + 1] && rows[i + 1].staff_id === r.staff_id);
+      return () => { p.hourly_rate_cents = '1500'; };
+    },
+  },
+  {
+    // A crew lead's pay period recorded as cleaner (rate kept in cleaner
+    // bounds, staff kept in step), so their crew has no lead for a while.
+    check: 'integrity-crew-lead',
+    pick: (t_) => {
+      const ms = t_.crew_memberships.rows;
+      const p = t_.pay_rates.rows.find((r) => {
+        if (r.role !== 'crew_lead') return false;
+        const own = ms.filter((m) => m.staff_id === r.staff_id
+          && m.start_date <= (r.end_date || '9999-12-31') && (m.end_date === '' || m.end_date >= r.start_date));
+        if (new Set(own.map((m) => m.crew_id)).size !== 1) return false;
+        return ms.some((e) => e.crew_id === own[0].crew_id && covers(r, e.start_date) && own.some((m) => covers(m, e.start_date)));
+      });
+      assert.ok(p, 'the seeds have a lead period to demote');
+      const staff = t_.staff.rows.find((s) => s.staff_id === p.staff_id);
+      const last = t_.pay_rates.rows.filter((r) => r.staff_id === p.staff_id).at(-1) === p;
+      return () => {
+        p.role = 'cleaner';
+        p.hourly_rate_cents = String(Math.min(Number(p.hourly_rate_cents), 2400));
+        if (last) { staff.role = 'cleaner'; staff.hourly_rate_cents = p.hourly_rate_cents; }
+      };
+    },
+  },
+  {
+    // A home of 7,000 square feet.
+    check: 'integrity-property-details',
+    pick: (t_) => () => { t_.properties.rows[0].square_feet = '7000'; },
+  },
+  {
+    // A gap in a crew-day's route: its last stop renumbered past the end.
+    check: 'integrity-route-order',
+    pick: (t_, take, used) => {
+      const size = new Map();
+      for (const v of t_.visits.rows) size.set(crewDay(v), (size.get(crewDay(v)) || 0) + 1);
+      const v = t_.visits.rows.find((x) => size.get(crewDay(x)) >= 2 && Number(x.route_order) === size.get(crewDay(x)) && !used.visits.has(x.visit_id));
+      take('visits', v.visit_id);
+      return () => { v.route_order = String(Number(v.route_order) + 3); };
+    },
+  },
+  {
+    // An arrival window that disagrees with the scheduled start.
+    check: 'integrity-visit-schedule',
+    pick: (t_, take, used) => {
+      const v = t_.visits.rows.find((x) => !used.visits.has(x.visit_id));
+      take('visits', v.visit_id);
+      return () => { v.arrival_window = v.arrival_window === 'morning' ? 'afternoon' : 'morning'; };
+    },
+  },
+  {
+    // A timesheet moved onto a cancelled visit.
+    check: 'integrity-timesheet-visit',
+    pick: (t_, take, used) => {
+      const sheet = t_.timesheets.rows.find((s) => !used.visits.has(s.visit_id));
+      const cancelled = t_.visits.rows.find((v) => v.status === 'cancelled' && !used.visits.has(v.visit_id));
+      take('visits', sheet.visit_id);
+      take('visits', cancelled.visit_id);
+      return () => { sheet.visit_id = cancelled.visit_id; };
+    },
+  },
+  {
+    // A timesheet whose clock_out equals its clock_in.
+    check: 'integrity-timesheet-times',
+    pick: (t_, take, used) => {
+      const sheet = t_.timesheets.rows.find((s) => !used.visits.has(s.visit_id));
+      take('visits', sheet.visit_id);
+      return () => { sheet.clock_out = sheet.clock_in; sheet.minutes = '0'; };
+    },
+  },
+  {
+    // A staff member's later timesheet that day pulled back to start a minute
+    // before their earlier one ends (minutes kept consistent).
+    check: 'integrity-timesheet-overlap',
+    pick: (t_, take, used) => {
+      const byStaffDay = new Map();
+      for (const s of t_.timesheets.rows) {
+        const k = `${s.staff_id}|${s.clock_in.slice(0, 10)}`;
+        byStaffDay.set(k, [...(byStaffDay.get(k) || []), s]);
+      }
+      const [first, second] = [...byStaffDay.values()]
+        .map((list) => list.slice().sort((a, b) => a.clock_in.localeCompare(b.clock_in)))
+        .find((list) => list.length >= 2 && list.slice(0, 2).every((s) => !used.visits.has(s.visit_id)));
+      take('visits', first.visit_id);
+      take('visits', second.visit_id);
+      const start = toMinute(first.clock_out) - 1;
+      return () => {
+        second.minutes = String(toMinute(second.clock_out) - start);
+        second.clock_in = fromMinute(start);
+      };
     },
   },
   {
@@ -250,6 +383,29 @@ const BREAKS = [
   },
 ];
 
+// The broken copies start from a smaller run of the same generator (same
+// code and rules, unplanted, about a fifth of the rows), so the thirty-odd
+// broken builds stay fast. The committed seeds are checked whole above.
+const BREAK_BASE = { seed: 11, clients: 400 };
+let breakBase;
+function breakBaseDir() {
+  if (!breakBase) {
+    breakBase = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'brightside-break-base-')));
+    writeFiles(breakBase, generate(BREAK_BASE).files);
+  }
+  return breakBase;
+}
+test.after(() => { if (breakBase) fs.rmSync(breakBase, { recursive: true, force: true }); });
+
+let seedCache;
+function seedTables() {
+  seedCache ??= Object.fromEntries(TABLES.map((name) => [name, readCsv(path.join(breakBaseDir(), 'seeds', `${name}.csv`))]));
+  return seedCache;
+}
+
+const changed = (before, after) => after.rows.length !== before.rows.length
+  || after.rows.some((row, i) => before.cols.some((c) => row[c] !== before.rows[i][c]));
+
 function dayAfterAsOf(t_) {
   const asOf = t_.fixture_meta.rows.find((r) => r.key === 'as_of').value;
   return new Date(Date.parse(`${asOf}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
@@ -260,12 +416,14 @@ function dayAfterAsOf(t_) {
 // can load at all.
 function brokenFixture(t, only = BREAKS.map((b) => b.check), extra = null) {
   const dir = tmpDir(t);
-  fs.cpSync(path.join(FIXTURE_DIR, 'seeds'), path.join(dir, 'seeds'), { recursive: true });
-  const schema = fs.readFileSync(path.join(FIXTURE_DIR, 'schema.sql'), 'utf8').replace(/ REFERENCES \w+ \(\w+\)/g, '');
+  fs.cpSync(path.join(breakBaseDir(), 'seeds'), path.join(dir, 'seeds'), { recursive: true });
+  const schema = fs.readFileSync(path.join(breakBaseDir(), 'schema.sql'), 'utf8').replace(/ REFERENCES \w+ \(\w+\)/g, '');
   assert.doesNotMatch(schema, /REFERENCES/);
   fs.writeFileSync(path.join(dir, 'schema.sql'), schema);
   const file = (name) => path.join(dir, 'seeds', `${name}.csv`);
-  const t_ = Object.fromEntries(TABLES.map((name) => [name, readCsv(file(name))]));
+  // Fresh row copies of the seeds, parsed once per run (the seeds are large).
+  const base = seedTables();
+  const t_ = Object.fromEntries(TABLES.map((name) => [name, { cols: base[name].cols, rows: base[name].rows.map((r) => ({ ...r })) }]));
   const used = { invoices: new Set(), visits: new Set(), plans: new Set() };
   const take = (kind, id) => {
     assert.ok(!used[kind].has(id), `${kind} ${id} broken twice`);
@@ -274,7 +432,8 @@ function brokenFixture(t, only = BREAKS.map((b) => b.check), extra = null) {
   const edits = BREAKS.map((b) => [b.check, b.pick(t_, take, used)]);
   for (const [check, edit] of edits) if (only.includes(check)) edit();
   if (extra) extra(t_);
-  for (const [name, table] of Object.entries(t_)) writeCsv(file(name), table);
+  // The copy already holds the seeds: rewrite only the tables an edit changed.
+  for (const [name, table] of Object.entries(t_)) if (changed(base[name], table)) writeCsv(file(name), table);
   fs.cpSync(path.join(FIXTURE_DIR, 'checks'), path.join(dir, 'checks'), { recursive: true });
   return dir;
 }
@@ -319,7 +478,13 @@ test('with no as_of row in fixture_meta, the as_of check fails on its guard row'
 // are the other three dates, each alone.
 for (const [what, edit] of [
   ['an invoice issued', (t_) => { t_.invoices.rows[0].issued_on = dayAfterAsOf(t_); }],
-  ['a one-off visit', (t_) => { t_.visits.rows.find((v) => v.plan_id === '').visit_date = dayAfterAsOf(t_); }],
+  // A cancelled one-off, last on its route, so it moves as route stop 1 of an
+  // empty day and no schedule or timesheet check sees it.
+  ['a one-off visit', (t_) => {
+    const v = movableCancelledVisit(t_, { visits: new Set() }, (x) => x.plan_id === '', () => dayAfterAsOf(t_));
+    v.visit_date = dayAfterAsOf(t_);
+    v.route_order = '1';
+  }],
   ['a client created', (t_) => { t_.clients.rows[0].created_on = dayAfterAsOf(t_); }],
 ]) {
   test(`${what} after as_of fails integrity-no-date-after-as-of only`, async (t) => {

@@ -109,18 +109,24 @@ test('the CLI: --check passes on the repo, bad flags exit 2, --out writes a smal
 
 test('schema.sql and the seed files agree on tables and columns', () => {
   const schema = schemaColumns();
-  const expected = ['zones', 'packages', 'add_ons', 'crews', 'crew_memberships', 'clients', 'properties',
-    'plans', 'plan_price_changes', 'visits', 'invoices', 'invoice_lines', 'payments', 'fixture_meta'];
+  const expected = ['zones', 'packages', 'add_ons', 'crews', 'staff', 'pay_rates', 'crew_memberships', 'clients', 'properties',
+    'plans', 'plan_price_changes', 'visits', 'invoices', 'invoice_lines', 'payments', 'timesheets', 'fixture_meta'];
   assert.deepEqual(Object.keys(schema), expected, 'load order: referenced tables first');
   assert.deepEqual(fs.readdirSync(path.join(FIXTURE_DIR, 'seeds')).sort(), expected.map((t) => `${t}.csv`).sort());
   for (const table of expected) assert.deepEqual(committed(table).header, schema[table], table);
-  // The columns fixture-tables.md names.
-  assert.deepEqual(schema.crew_memberships, ['membership_id', 'crew_id', 'staff_name', 'start_date', 'end_date']);
+  // The columns fixture-tables.md names. Appended columns come after the
+  // original ones, which keep their order.
+  assert.deepEqual(schema.crew_memberships, ['membership_id', 'crew_id', 'staff_name', 'start_date', 'end_date', 'staff_id']);
   assert.deepEqual(schema.clients, ['client_id', 'zone_id', 'first_name', 'last_name', 'email', 'phone', 'created_on']);
-  assert.deepEqual(schema.properties, ['property_id', 'client_id', 'street_address', 'city', 'postal_code']);
+  assert.deepEqual(schema.properties, ['property_id', 'client_id', 'street_address', 'city', 'postal_code',
+    'home_type', 'square_feet', 'bedrooms', 'bathrooms', 'has_pets', 'access_method']);
+  assert.deepEqual(schema.staff, ['staff_id', 'name', 'role', 'hire_date', 'end_date', 'hourly_rate_cents']);
+  assert.deepEqual(schema.pay_rates, ['rate_id', 'staff_id', 'start_date', 'end_date', 'role', 'hourly_rate_cents']);
+  assert.deepEqual(schema.timesheets, ['timesheet_id', 'visit_id', 'staff_id', 'clock_in', 'clock_out', 'minutes']);
   assert.deepEqual(schema.plans, ['plan_id', 'property_id', 'package_id', 'frequency', 'start_date', 'end_date', 'status', 'start_price_cents', 'price_cents']);
   assert.deepEqual(schema.plan_price_changes, ['change_id', 'plan_id', 'effective_date', 'old_price_cents', 'new_price_cents']);
-  assert.deepEqual(schema.visits, ['visit_id', 'property_id', 'plan_id', 'crew_id', 'package_id', 'visit_date', 'status']);
+  assert.deepEqual(schema.visits, ['visit_id', 'property_id', 'plan_id', 'crew_id', 'package_id', 'visit_date', 'status',
+    'arrival_window', 'scheduled_start', 'scheduled_minutes', 'route_order', 'travel_minutes_from_previous']);
   assert.deepEqual(schema.invoices, ['invoice_id', 'client_id', 'visit_id', 'issued_on', 'due_on', 'total_cents']);
   assert.deepEqual(schema.invoice_lines, ['line_id', 'invoice_id', 'package_id', 'add_on_id', 'quantity', 'amount_cents']);
   assert.deepEqual(schema.payments, ['payment_id', 'invoice_id', 'paid_on', 'amount_cents', 'method']);
