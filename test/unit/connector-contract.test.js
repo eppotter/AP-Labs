@@ -118,7 +118,11 @@ for (const [breach, connector, expected] of [
     return c;
   }), ['a write is a dry run unless dryRun is false, and a dry run calls nothing']],
   ['forgets idempotency keys', broken((c) => c, (d) => ({ ...d, idempotency: { get: () => undefined, set() {} } })),
-    ['a repeated idempotency key changes nothing']],
+    ['a repeated idempotency key changes nothing', 'a write whose process dies after request k resumes at request k+1 on a fresh instance over the same store']],
+  // 10.0: a connector that drops the store it was given keeps its progress in
+  // memory, so a restart loses it.
+  ['ignores the idempotency store it is given', broken((c) => c, (d) => ({ ...d, idempotency: undefined })),
+    ['a write whose process dies after request k resumes at request k+1 on a fresh instance over the same store']],
   ['ignores the rate limit', broken((c) => c, (d) => ({ ...d, now: () => 0, sleep: async () => {} })),
     ['calls are spaced to the rate limit and none is dropped']],
   ['fails open on auth errors', broken((c) => {
@@ -332,7 +336,7 @@ test('the template\'s own test passes once copied into a fork', (t) => {
     cwd: f.root, env: { PATH: process.env.PATH }, encoding: 'utf8',
   });
   assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.match(r.stdout, /pass 13\n/);
+  assert.match(r.stdout, /pass 14\n/);
   assert.match(r.stdout, /fail 0\n/);
 });
 
@@ -717,7 +721,9 @@ test('a progress record that could not be saved is marked unrecorded, logged as 
 test('a per-item PartialFailure whose stale progress could not be cleared is not called safe to retry (#89 round 3)', async () => {
   const store = new Map();
   let broken = false;
-  const idempotency = { get: (k) => store.get(k), set: (k, v) => { if (broken && k.includes('\u0001progress')) throw new Error('disk full'); store.set(k, v); } };
+  // Only the overwrite that clears the record fails: since 10.0 a failed save
+  // after a request stops the write before it could partly fail.
+  const idempotency = { get: (k) => store.get(k), set: (k, v) => { if (broken && k.includes('\u0001progress') && v.completed.length === 0) throw new Error('disk full'); store.set(k, v); } };
   const { connector } = batchedPush({ perItemIdempotency: true, partlyFails: true });
   let n = 0;
   const c = connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, ...fakeClock(), onRequest: () => { n += 1; if (n === 2) throw new Error('HTTP 503'); } });
@@ -765,6 +771,226 @@ test('after a PartialFailure, a per-item idempotent write re-sends on retry; any
   await assert.rejects(u.write.push(input), PartialFailure);
   await assert.rejects(u.write.push(input), PartialFailure);
   assert.equal(unsafe.system.calls, 2, 'the retry sent nothing twice');
+});
+
+// Story 10.0 (DEP-017): progress is saved after every request, not only when
+// a write stops. A durable store is a Map behind JSON (what a file or a
+// database hands back); each view is a new store object, as a new process
+// would have, so a fresh connector never joins the dead one's in-flight write.
+function durableStore() {
+  const data = new Map();
+  const progress = () => [...data.entries()].filter(([k]) => k.includes('\u0001progress')).map(([, v]) => JSON.parse(v));
+  // onSet(slot, value): runs after the value is kept; may return a promise
+  // that never settles (the process died there) or throw (the save failed).
+  const view = (onSet) => ({
+    get: (k) => (data.has(k) ? JSON.parse(data.get(k)) : undefined),
+    set: (k, v) => { data.set(k, JSON.stringify(v)); return onSet ? onSet(k, v) : undefined; },
+  });
+  return { data, progress, view };
+}
+const DIES = () => new Promise(() => {});
+const ticks = async (until, max = 1000) => { for (let i = 0; i < max && !until(); i += 1) await new Promise(setImmediate); };
+
+test('a live batched write saves its progress after every request, so a process that dies after request k resumes at k+1 on a fresh connector (10.0)', async () => {
+  // 5 items in batches of 2: three requests. k = 1 (the first), 2 (a middle
+  // one) and 3 (the last: it died before the write could record its result).
+  for (const k of [1, 2, 3]) {
+    const system = { sent: [], calls: 0 };
+    const make = () => defineConnector(spec({
+      rateLimit: { perSecond: 10, batchSize: 2 },
+      write: {
+        push: {
+          plan: (i) => i,
+          apply: async (input, ctx) => {
+            let n = 0;
+            for (const batch of ctx.batches(input.items)) {
+              n += await ctx.request(() => { system.calls += 1; system.sent.push(...batch.map((x) => x.id)); return { count: batch.length }; }, { size: batch.length }).then((r) => r.count);
+            }
+            return { pushed: n };
+          },
+        },
+      },
+    }));
+    const store = durableStore();
+    let saves = 0;
+    const dying = store.view((slot) => { if (slot.includes('\u0001progress') && (saves += 1) === k) return DIES(); return undefined; });
+    const input = { items: items(5), idempotencyKey: 'k', dryRun: false };
+    make().create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency: dying, ...fakeClock() }).write.push(input);
+    await ticks(() => saves >= k);
+    assert.equal(saves, k, `k=${k}: a save after each of the first ${k} requests`);
+    assert.equal(system.calls, k, `k=${k}: the process died after request ${k}`);
+    // The record: counts and sizes only, bound to the input and batch size.
+    const [record] = store.progress();
+    assert.deepEqual(Object.keys(record).sort(), ['batchSize', 'completed', 'input', 'partial']);
+    assert.equal(record.batchSize, 2);
+    assert.match(record.input, /^[0-9a-f]{64}$/, 'the input is a fingerprint, never the rows');
+    assert.deepEqual(record.completed, [{ size: 2, result: { count: 2 } }, { size: 2, result: { count: 2 } }, { size: 1, result: { count: 1 } }].slice(0, k));
+    assert.doesNotMatch(JSON.stringify(record), /example\.invalid|p[0-9]/, 'no row data in the record');
+    // A fresh connector (a restart) over the same store, same key and input,
+    // sends only requests k+1 onwards and finishes.
+    const before = system.calls;
+    const fresh = make().create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency: store.view(), ...fakeClock() });
+    assert.deepEqual(await fresh.write.push(input), { pushed: 5 });
+    assert.equal(system.calls - before, 3 - k, `k=${k}: the restart sent ${3 - k} requests`);
+    assert.deepEqual(system.sent, ['p0', 'p1', 'p2', 'p3', 'p4'], `k=${k}: each item went once`);
+  }
+});
+
+test('a save that fails mid-write stops the write before the next request, unrecorded, and the admin is told to check first (10.0)', async () => {
+  const store = durableStore();
+  let saves = 0;
+  const idempotency = store.view((slot) => { if (slot.includes('\u0001progress') && (saves += 1) === 2) throw new Error('disk full'); });
+  const { connector, system } = batchedPush();
+  const lines = [];
+  const c = connector.create({ log: createLog({ write: (l) => lines.push(JSON.parse(l)) }), env: { DEMO_TOKEN: TOKEN }, idempotency, ...fakeClock() });
+  const stopped = await settle(c.write.push({ items: items(5), idempotencyKey: 'k', dryRun: false }));
+  assert.ok(stopped.error instanceof ConnectorFailed && !(stopped.error instanceof PartialFailure), `got ${stopped.error && stopped.error.name}`);
+  assert.equal(system.calls, 2, 'the third request was never sent');
+  assert.deepEqual(stopped.error.details.sent, { batches: 2, items: 4, recorded: false });
+  assert.match(stopped.error.reason, /progress could not be saved/);
+  assert.ok(lines.some((l) => l.level === 'error' && /progress could not be recorded/.test(l.msg)), JSON.stringify(lines));
+  const words = messageFor(stopped.error, { admin: 'Dana' });
+  assert.match(words, /\b4 items were sent\b/);
+  assert.match(words, /Dana should check what arrived before anyone tries again/);
+  assert.doesNotMatch(words, /safe/i);
+});
+
+test('an adapter that swallows a failed save still sends nothing more, and the write fails unrecorded (10.0)', async () => {
+  const store = durableStore();
+  const idempotency = store.view((slot) => { if (slot.includes('\u0001progress')) throw new Error('disk full'); });
+  let calls = 0;
+  const connector = defineConnector(spec({
+    write: {
+      push: {
+        plan: (i) => i,
+        apply: async (input, ctx) => {
+          for (let i = 0; i < 3; i += 1) {
+            try { await ctx.request(() => { calls += 1; return 1; }); } catch (_) { /* a careless adapter */ }
+          }
+          return { ok: true };
+        },
+      },
+    },
+  }));
+  const c = connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency, ...fakeClock() });
+  const r = await settle(c.write.push({ idempotencyKey: 'k', dryRun: false }));
+  assert.equal(calls, 1, 'no request after the failed save');
+  assert.ok(r.error instanceof ConnectorFailed, `got ${r.error ? r.error.name : 'a result'}`);
+  assert.deepEqual(r.error.details.sent, { batches: 1, items: 1, recorded: false });
+  assert.equal(store.data.get('demo\u0000push\u0000k'), undefined, 'the write was not recorded as done');
+});
+
+test('the suite\'s "dies after request k" case resumes on the same system, so a write whose later requests need its first one passes (10.0)', async () => {
+  // Request 1 makes a list in the system; every later request needs it. The
+  // system comes from a deps getter, fresh per instance, as the email tool's
+  // outbox does: the restarted instance must reach the dying one's.
+  const connector = defineConnector(spec({
+    auth: { env: [] },
+    rateLimit: { perSecond: 10, batchSize: 2 },
+    connect: ({ data }) => data,
+    read: undefined,
+    write: {
+      pushList: {
+        perItemIdempotency: true,
+        plan: (i) => i,
+        apply: async (input, ctx) => {
+          const { listId } = await ctx.request(() => { ctx.client.lists.add('list-1'); return { listId: 'list-1' }; });
+          let added = 0;
+          for (const batch of ctx.batches(input.items)) {
+            added += (await ctx.request(() => {
+              if (!ctx.client.lists.has(listId)) throw new Error('no such list');
+              return { added: batch.length };
+            }, { size: batch.length })).added;
+          }
+          return { listId, added };
+        },
+      },
+    },
+  }));
+  const cases = [];
+  connectorContract(connector, {
+    read: {},
+    write: { pushList: (idempotencyKey) => ({ items: items(3), idempotencyKey }) },
+    bulk: { operation: 'pushList', input: (count, idempotencyKey) => ({ items: items(count), idempotencyKey }) },
+  }, {
+    test: (name, opts, fn) => cases.push({ name, fn: fn || opts }),
+    deps: { get data() { return { lists: new Set() }; } },
+  });
+  const dies = cases.find((c) => /dies after request k/.test(c.name));
+  await dies.fn(fakeT());
+});
+
+// B3: the saved progress of a per-item write must not survive a
+// PartialFailure, or its retry would skip the batches holding failed items.
+test('a per-item write that saved progress and then partly failed drops its record: the retry calls every batch and the tool adds only the failed items (10.0, B3)', async () => {
+  // A system that keys each item and adds only keys it hasn't seen; refuses
+  // the ids in fail. Each batch answers with counts and id-shaped refs.
+  const tool = { keys: new Set(), calls: 0, fail: new Set(['p3']) };
+  const connector = defineConnector(spec({
+    rateLimit: { perSecond: 10, batchSize: 2 },
+    write: {
+      push: {
+        perItemIdempotency: true,
+        plan: (i) => i,
+        apply: async (input, ctx) => {
+          const total = { added: 0, alreadyAdded: 0, failedRefs: [] };
+          for (const batch of ctx.batches(input.items)) {
+            const res = await ctx.request(() => {
+              tool.calls += 1;
+              const out = { added: 0, alreadyAdded: 0, failedRefs: [] };
+              for (const x of batch) {
+                const key = `${ctx.idempotencyKey}:${x.id}`;
+                if (tool.keys.has(key)) out.alreadyAdded += 1;
+                else if (tool.fail.has(x.id)) out.failedRefs.push(x.id);
+                else { tool.keys.add(key); out.added += 1; }
+              }
+              return out;
+            }, { size: batch.length });
+            total.added += res.added;
+            total.alreadyAdded += res.alreadyAdded;
+            total.failedRefs.push(...res.failedRefs);
+          }
+          if (total.failedRefs.length) {
+            throw new PartialFailure('partly', { succeeded: total.added + total.alreadyAdded, failed: total.failedRefs.length, failedRefs: total.failedRefs });
+          }
+          return { added: total.added, alreadyAdded: total.alreadyAdded };
+        },
+      },
+    },
+  }));
+  const store = durableStore();
+  const make = () => connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency: store.view(), ...fakeClock() });
+  const input = { items: items(5), idempotencyKey: 'k', dryRun: false };
+  // p3 is in batch 2: progress was saved after batch 1, then batch 2 partly failed.
+  const first = await settle(make().write.push(input));
+  assert.ok(first.error instanceof PartialFailure, `got ${first.error && first.error.name}`);
+  assert.equal(first.error.details.retrySafe, true);
+  assert.deepEqual(store.progress(), [{ input: store.progress()[0].input, partial: true, batchSize: 2, completed: [] }], 'the record was overwritten with no completed requests');
+  // The retry (a restart too) calls the system for every batch; only p3 is new.
+  tool.fail.clear();
+  const callsBefore = tool.calls;
+  assert.deepEqual(await make().write.push(input), { added: 1, alreadyAdded: 4 });
+  assert.equal(tool.calls - callsBefore, 3, 'every batch was called again');
+  assert.equal(tool.keys.size, 5);
+});
+
+test('a per-item write resumed from an earlier try\'s record, then partly failing, drops that record too (10.0, B3)', async () => {
+  const store = durableStore();
+  const { connector, system } = batchedPush({ perItemIdempotency: true, partlyFails: true });
+  let outage = true;
+  let n = 0;
+  const c = connector.create({ log: quietLog(), env: { DEMO_TOKEN: TOKEN }, idempotency: store.view(), ...fakeClock(), onRequest: () => { n += 1; if (outage && n === 2) throw new Error('HTTP 503'); } });
+  const input = { items: items(4), idempotencyKey: 'k', dryRun: false };
+  await assert.rejects(c.write.push(input), (e) => e instanceof ConnectorFailed && !(e instanceof PartialFailure));
+  assert.equal(store.progress()[0].completed.length, 1, 'the outage left batch 1 recorded');
+  outage = false;
+  const partly = await settle(c.write.push(input));
+  assert.ok(partly.error instanceof PartialFailure);
+  assert.equal(partly.error.details.retrySafe, true);
+  assert.deepEqual(store.progress()[0].completed, []);
+  const before = system.calls;
+  await assert.rejects(c.write.push(input), PartialFailure);
+  assert.equal(system.calls - before, 2, 'the next retry called every batch');
 });
 
 test('a call waiting in the limiter re-checks a Retry-After hold set while it slept (#89 round 2)', async () => {
@@ -885,7 +1111,12 @@ test('two connectors sharing one injected store keep their keys apart: the slot 
   await defineConnector(spec()).create(opts).write.put({ idempotencyKey: 'same', dryRun: false });
   await defineConnector(spec({ id: 'other' })).create(opts).write.put({ idempotencyKey: 'same', dryRun: false });
   assert.equal(calls, 2, 'the second connector wrote rather than reuse the first one\'s result');
-  assert.deepEqual([...m.keys()].sort(), ['demo\u0000put\u0000same', 'other\u0000put\u0000same']);
+  // Each write's done slot and its progress record (saved after every
+  // request, 10.0) name the connector.
+  assert.deepEqual([...m.keys()].sort(), [
+    'demo\u0000put\u0000same', 'demo\u0000put\u0001progress\u0000same',
+    'other\u0000put\u0000same', 'other\u0000put\u0001progress\u0000same',
+  ]);
 });
 
 // #90: a connector that declares no credential (a mock) can pass the suite.

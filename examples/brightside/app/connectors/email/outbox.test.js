@@ -146,3 +146,18 @@ test('the ledger keeps a stopped write\'s progress record whole, latest first, a
   assert.deepEqual(ledger.get(slot), { input: 'fp', result: { added: 150 } });
   assert.deepEqual(lines(file).map((r) => r.type), ['progress', 'progress', 'done']);
 });
+
+test('the ledger reads a progress record back after a restart, latest wins, saved once per request (10.0)', () => {
+  const file = freshPath();
+  const pslot = 'email\u0000addContacts\u0001progress\u0000k';
+  const steps = [[{ size: 100, result: { added: 100 } }], [{ size: 100, result: { added: 100 } }, { size: 1, opaque: true }]];
+  const first = openOutbox(file);
+  for (const completed of steps) first.ledger.set(pslot, { input: 'fp', partial: true, batchSize: 100, completed });
+  // A new process: a fresh outbox over the same file.
+  const restarted = openOutbox(file);
+  assert.deepEqual(restarted.ledger.get(pslot), { input: 'fp', partial: true, batchSize: 100, completed: steps[1] });
+  // A per-item write that partly failed overwrites it with none completed.
+  restarted.ledger.set(pslot, { input: 'fp', partial: true, batchSize: 100, completed: [] });
+  assert.deepEqual(openOutbox(file).ledger.get(pslot).completed, []);
+  assert.deepEqual(lines(file).map((r) => r.type), ['progress', 'progress', 'progress']);
+});
