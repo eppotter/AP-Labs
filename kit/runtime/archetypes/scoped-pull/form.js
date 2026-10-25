@@ -3,11 +3,14 @@
 // The typed form and the Confirm screen of a scoped pull (Story 9.3), as Block
 // Kit blocks for the module's view in the hub modal.
 //
-// The form has no Submit: a view_submission would close or replace the view.
-// "Check values" is an ordinary button, and the engine reads what was typed
-// from the open view's state (body.view.state). Every button carries the
-// session id as its value; nothing else about the person or the values is in
-// the view's metadata.
+// The form is a modal with input blocks, so Slack requires a submit: its
+// submit is "Check values" and its callback id is FORM_CALLBACK. The engine
+// reads what was typed from the submitted view's state (body.view.state) and
+// answers in the ack: errors beside the inputs, or an update to the Confirm
+// screen (kit/runtime/slack/hubs). The form's private_metadata is
+// "<hub id>:<session id>", never values or person data. The Confirm screen
+// has no inputs and no submit; its Confirm and Change buttons carry the
+// session id as their value.
 //
 // Values are shown back as plain_text, so nothing in them can format or link
 // in Slack. Labels and descriptions come from the reviewed manifest and are
@@ -16,15 +19,18 @@
 const { escapeText } = require('../../messages');
 const { labelOf, displayValue } = require('./params');
 
-// The action ids of the form's buttons. One listener (kit/runtime/slack/hubs)
-// handles all four.
+// The Confirm screen's buttons. One listener (kit/runtime/slack/hubs)
+// handles both.
 const ACTIONS = Object.freeze({
-  check: 'scoped-pull:check',
-  read: 'scoped-pull:read',
   confirm: 'scoped-pull:confirm',
   change: 'scoped-pull:change',
 });
-const ACTION_PATTERN = /^scoped-pull:(check|read|confirm|change)$/;
+const ACTION_PATTERN = /^scoped-pull:(confirm|change)$/;
+// The form's view_submission callback id, and its submit button's text.
+const FORM_CALLBACK = 'scoped-pull:form';
+const SUBMIT = 'Check values';
+const SESSION_PATTERN = /^[0-9a-f]{32}$/;
+const HUB_PATTERN = /^[a-z][a-z0-9-]*$/;
 // Each input's block id is this plus the parameter name; its element's action
 // id is always VALUE_ACTION. Slack keeps what was typed across views.update
 // while both stay the same.
@@ -32,6 +38,20 @@ const INPUT_BLOCK = 'sp-input:';
 const VALUE_ACTION = 'value';
 
 const plain = (text) => ({ type: 'plain_text', text: String(text), emoji: false });
+
+// The form's private_metadata, and back. parseMetadata returns { hubId,
+// sessionId }, each null when missing or malformed.
+function formMetadata(hubId, sessionId) {
+  return `${hubId}:${sessionId}`;
+}
+
+function parseMetadata(text) {
+  const [hub, session, ...rest] = typeof text === 'string' ? text.split(':') : [];
+  return {
+    hubId: HUB_PATTERN.test(hub || '') ? hub : null,
+    sessionId: rest.length === 0 && SESSION_PATTERN.test(session || '') ? session : null,
+  };
+}
 
 function verbOf(actionId) {
   const m = typeof actionId === 'string' ? ACTION_PATTERN.exec(actionId) : null;
@@ -93,29 +113,25 @@ const button = (text, actionId, sessionId, style) => ({
 });
 
 // The form. initial: values to prefill (defaults when opened, the checked
-// values after Change, the valid ones after a failed check). problems: from
-// checkValues, listed above the inputs. note: one mrkdwn line (already
-// escaped) shown under the description.
-function formMessage(mod, { sessionId, initial = {}, problems = [], note } = {}) {
+// values after Change). Its view gets the submit, the callback id and the
+// metadata through message.modal (kit/runtime/slack/modal).
+function formMessage(mod, { sessionId, initial = {} } = {}) {
   const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: escapeText(mod.description) } }];
-  if (note) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: note }] });
-  if (problems.length) {
-    const lines = problems.map((p) => `• ${escapeText(p.message)}`);
-    blocks.push({ type: 'section', block_id: 'sp-problems', text: { type: 'mrkdwn', text: `*Please check:*\n${lines.join('\n')}` } });
-  }
   for (const p of mod.parameters) {
     const start = Object.hasOwn(initial, p.name) ? initial[p.name] : p.default;
     blocks.push(inputBlock(p, start));
   }
-  blocks.push({
-    type: 'actions',
-    block_id: 'sp-actions',
-    elements: [button('Check values', ACTIONS.check, sessionId, 'primary')],
-  });
-  const text = problems.length
-    ? `${mod.label}: please check ${problems.map((p) => p.label).join(', ')}.`
-    : `${mod.label}: fill in the form, then press Check values.`;
-  return { text, blocks };
+  return {
+    text: `${mod.label}: fill in the form, then press ${SUBMIT}.`,
+    blocks,
+    modal: { submit: SUBMIT, callbackId: FORM_CALLBACK, privateMetadata: formMetadata(mod.hub, sessionId) },
+  };
+}
+
+// Slack's errors for a submitted form: each problem beside its input, keyed
+// by block id, worded from the input's label.
+function formErrors(problems) {
+  return Object.fromEntries(problems.map((p) => [`${INPUT_BLOCK}${p.name}`, p.message]));
 }
 
 // One section per value: the label in bold, the value as plain text.
@@ -181,6 +197,6 @@ function readState(parameters, state) {
 }
 
 module.exports = {
-  formMessage, confirmMessage, confirmedMessage, readState, verbOf,
-  ACTIONS, ACTION_PATTERN, INPUT_BLOCK, VALUE_ACTION,
+  formMessage, formErrors, confirmMessage, confirmedMessage, readState, verbOf, formMetadata, parseMetadata,
+  ACTIONS, ACTION_PATTERN, FORM_CALLBACK, SUBMIT, INPUT_BLOCK, VALUE_ACTION,
 };

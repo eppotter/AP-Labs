@@ -8,6 +8,9 @@
 // separate ephemeral messages). Views carry the hub id as private_metadata and
 // nothing else, never person data. A scoped pull's form clicks (Story 9.3)
 // re-render the module view in place (updatedView), never pushing a third.
+// A message may carry modal options (message.modal: { submit, callbackId,
+// privateMetadata }) for the view it renders in: a form has input blocks, and
+// Slack rejects a modal with an input block and no submit.
 //
 // Slack's limits: a modal title is at most 24 characters, a view at most 100
 // blocks, a section's text at most 3000 characters. Titles are cut with "…",
@@ -51,16 +54,34 @@ function messageBlocks(message) {
   return textBlocks((message && message.text) || '');
 }
 
-// A modal with a Close (or Back) button and no Submit.
-function modalView({ title, blocks, hubId, close = 'Close', keepTail = 0, callbackId = 'hub:view' }) {
+// A modal with a Close (or Back) button, and a Submit only when asked (a form:
+// Slack requires one on any view with an input block). private_metadata is
+// the hub id unless privateMetadata says otherwise; never person data.
+function modalView({
+  title, blocks, hubId, close = 'Close', keepTail = 0, callbackId = 'hub:view', submit, privateMetadata,
+}) {
   return {
     type: 'modal',
     callback_id: callbackId,
     title: { type: 'plain_text', text: modalTitle(title), emoji: false },
     close: { type: 'plain_text', text: close, emoji: false },
-    private_metadata: String(hubId || ''),
+    ...(submit ? { submit: { type: 'plain_text', text: modalTitle(submit), emoji: false } } : {}),
+    private_metadata: String(privateMetadata !== undefined ? privateMetadata : (hubId || '')),
     blocks: limitBlocks(blocks, { keepTail }),
   };
+}
+
+// The view a module message renders in: Back, callback hub:module, unless the
+// message carries its own modal options (a form's submit, callback and
+// metadata).
+function moduleView({ title, hubId, blocks, message }) {
+  const opts = (message && typeof message === 'object' && message.modal) || {};
+  return modalView({
+    title, hubId, blocks, close: 'Back',
+    callbackId: opts.callbackId || 'hub:module',
+    submit: opts.submit,
+    privateMetadata: opts.privateMetadata,
+  });
 }
 
 // True when a block action came from inside a modal (a view), so a reply can
@@ -88,9 +109,10 @@ function pushedView({ client, triggerId, title, hubId }) {
   let view = null; // { id, hash } once pushed
   const replies = [];
   let queue = Promise.resolve();
-  const render = () => modalView({
-    title, hubId, close: 'Back', callbackId: 'hub:module',
+  const render = () => moduleView({
+    title, hubId,
     blocks: replies.length ? replies.flatMap(messageBlocks) : textBlocks(LOADING),
+    message: replies.at(-1),
   });
   const push = async () => {
     const res = await client.views.push({ trigger_id: triggerId, view: render() });
@@ -135,24 +157,23 @@ function updatedView({ client, view, title, hubId }) {
   let hash = view && typeof view.hash === 'string' ? view.hash : null;
   const viewId = view && view.id;
   let queue = Promise.resolve();
-  const send = async (blocks, withHash) => {
+  const send = async (message, withHash) => {
     const res = await client.views.update({
       view_id: viewId,
       ...(withHash && hash ? { hash } : {}),
-      view: modalView({ title, hubId, close: 'Back', callbackId: 'hub:module', blocks }),
+      view: moduleView({ title, hubId, blocks: messageBlocks(message), message }),
     });
     if (res && res.view && typeof res.view.hash === 'string') hash = res.view.hash;
   };
   const show = (message, { force = false } = {}) => {
     const next = queue.then(async () => {
-      const blocks = messageBlocks(message);
       try {
-        await send(blocks, true);
+        await send(message, true);
         return 'updated';
       } catch (err) {
         if (failureReason(err) !== HASH_CONFLICT) throw err;
         if (!force) return 'dropped';
-        await send(blocks, false);
+        await send(message, false);
         return 'forced';
       }
     });
@@ -165,6 +186,6 @@ function updatedView({ client, view, title, hubId }) {
 const HASH_CONFLICT = 'hash_conflict';
 
 module.exports = {
-  modalTitle, limitBlocks, messageBlocks, modalView, fromModal, hasViews, failureReason, pushedView,
+  modalTitle, limitBlocks, messageBlocks, modalView, moduleView, fromModal, hasViews, failureReason, pushedView,
   updatedView, MAX_BLOCKS, MAX_TITLE, LOADING, HASH_CONFLICT,
 };

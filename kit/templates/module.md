@@ -43,11 +43,11 @@ The manifest is JSON, checked against `kit/runtime/schema/module.schema.json`. U
 
 A `scoped-pull` module has no handler. Its manifest declares its inputs and names a fixed SQL file; the engine does the rest:
 
-1. **Open** shows the form in the module's window: one input per parameter, defaults filled in. There is no Submit button.
-2. **Check values** reads what was typed and checks it against the declarations. A problem shows above the form, worded from the input's label. Good values show back as plain text with **Confirm** and **Change**.
+1. **Open** shows the form in the module's window: one input per parameter, defaults filled in. Its submit button is **Check values** (Slack requires a submit on any window with inputs).
+2. **Check values** reads what was typed and checks it against the declarations. A problem shows beside its input, worded from the input's label. Good values replace the form with the values as plain text and **Confirm** and **Change** buttons.
 3. **Change** returns to the form with the values filled in. **Confirm** runs the request once: a double click or a replay is told it is running or done.
 
-Each open form is a session bound to the person who opened it. A click by anyone else is refused, and after 30 minutes without use the form expires. Every click updates the same window in place. (Running the query and showing the rows arrives with Story 9.5; until then Confirm shows the confirmed values. "Read my request", plain English filling the form, arrives with Story 9.4.)
+Each open form is a session bound to the person who opened it. A click by anyone else is refused, and after 30 minutes without use the form expires. Every step updates the same window in place. (Running the query and showing the rows arrives with Story 9.5; until then Confirm shows the confirmed values.)
 
 The SQL is a static template with named placeholders (`$zone`, `$limit`), bound as parameters. Never build SQL from text, and never use `${`.
 
@@ -79,7 +79,7 @@ For example (Brightside's Win-back list):
 "parameters": [
   { "name": "zone", "label": "Zone", "type": "string", "enum": ["north", "south", "east", "west", "central"], "required": true },
   { "name": "lapsed_days", "label": "Lapsed within (days)", "type": "integer", "min": 1, "max": 365, "default": 90, "required": true },
-  { "name": "limit", "label": "How many clients", "type": "integer", "min": 1, "max": 500, "default": 25, "required": true }
+  { "name": "limit", "label": "How many clients", "type": "integer", "min": 1, "max": 500, "default": 50, "required": true }
 ],
 "query": "win-back.sql"
 ```

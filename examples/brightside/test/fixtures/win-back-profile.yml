@@ -1,0 +1,16 @@
+# Test fixture for the Win-back example test (Story 9.3): the resources the
+# Brightside app dir names, one admin with a fake Slack id, and the same
+# forbidden columns as the demo profile. Tests read this, never
+# profiles/brightside/profile.yml. Deleted with the example in a fork.
+schema_version: 1
+client: { id: winback-fixture, name: Win-back Fixture Co }
+resources:
+  - { key: HELLO_WORLD, label: Say hello, open_access: true }
+  - { key: DATASET, label: Dataset, open_access: true }
+  - { key: OUTBOX, label: Email outbox }
+  - { key: WIN_BACK, label: Win-back list }
+users:
+  - { id: ada, name: Ada Admin, role: admin, identities: { slack: U0FIXTUREADA } }
+  - { id: max, name: Max Member, role: member, identities: { slack: U0FIXTUREMAX } }
+sql:
+  forbidden_columns: [clients.phone, properties.street_address, properties.postal_code]

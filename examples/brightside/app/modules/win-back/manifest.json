@@ -32,7 +32,7 @@
       "description": "The most recent lapses come first.",
       "min": 1,
       "max": 500,
-      "default": 25,
+      "default": 50,
       "required": true
     }
   ],

@@ -9,8 +9,10 @@
 // through the engine with the fake Slack client. Running the list for the
 // person arrives with Story 9.5.
 //
-// An example test (architecture carve-out): it reads Brightside's profile,
-// app dir and fixture, and is deleted with the example in a fork.
+// An example test (architecture carve-out): it reads Brightside's app dir and
+// fixture data, and is deleted with the example in a fork. Its profile and
+// Slack ids come from a test fixture (fixtures/win-back-profile.yml), never
+// from profiles/brightside/.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -26,15 +28,16 @@ const { checkSql, forbiddenColumnsOf } = require('../../../kit/runtime/sql');
 const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
 
 const ROOT = path.join(__dirname, '../../..');
-const PROFILE_PATH = path.join(ROOT, 'profiles/brightside/profile.yml');
+const PROFILE_PATH = path.join(__dirname, 'fixtures/win-back-profile.yml');
 const APP_DIR = path.join(ROOT, 'examples/brightside/app');
 const profile = loadProfile(PROFILE_PATH);
 const { registry, problems } = loadRegistry({ appDir: APP_DIR, profile });
 const winBack = registry && registry.module('win-back');
 const declared = winBack ? winBack.parameters.map((p) => p.name) : [];
 
-// Dana is Brightside's admin; her Slack id is in the profile.
-const DANA = profile.users.find((u) => u.id === 'dana').identities.slack;
+// The fixture's admin (WIN_BACK through the admin role) and a member without it.
+const ADMIN = profile.users.find((u) => u.role === 'admin').identities.slack;
+const MEMBER = profile.users.find((u) => u.role === 'member').identities.slack;
 
 test('Win-back loads as a scoped pull with three bounded inputs and its SQL', () => {
   assert.deepEqual(problems, []);
@@ -44,7 +47,7 @@ test('Win-back loads as a scoped pull with three bounded inputs and its SQL', ()
   assert.deepEqual(winBack.parameters.map((p) => [p.name, p.enum || [p.min, p.max], p.default]), [
     ['zone', ['north', 'south', 'east', 'west', 'central'], undefined],
     ['lapsed_days', [1, 365], 90],
-    ['limit', [1, 500], 25],
+    ['limit', [1, 500], 50],
   ]);
   assert.match(winBack.sql, /^WITH meta AS/m);
 });
@@ -55,12 +58,6 @@ test('the Win-back SQL is fixed: no ${, it names exactly the declared inputs, an
   const named = [...new Set([...code.matchAll(/\$([a-z][a-z0-9_]*)/g)].map((m) => m[1]))].sort();
   assert.deepEqual(named, [...declared].sort());
   assert.deepEqual(checkSql(winBack.sql, { forbiddenColumns: forbiddenColumnsOf(profile) }), { ok: true });
-});
-
-test('the Win-back profile row gates it: not open to everyone', () => {
-  const row = profile.resources.find((r) => r.key === 'WIN_BACK');
-  assert.ok(row);
-  assert.notEqual(row.open_access, true);
 });
 
 test('on the fixture, only the declared inputs bind and North over 90 days gives the 38 known candidates', async (t) => {
@@ -76,6 +73,9 @@ test('on the fixture, only the declared inputs bind and North over 90 days gives
   assert.ok(all.every((r) => r.email.endsWith('.invalid')));
   const sorted = [...all].sort((a, b) => (a.lapsed_on === b.lapsed_on ? String(a.client_id).localeCompare(String(b.client_id), 'en', { numeric: true }) : (a.lapsed_on < b.lapsed_on ? 1 : -1)));
   assert.deepEqual(all.map((r) => r.client_id), sorted.map((r) => r.client_id));
+  // The default limit (50) shows all 38.
+  const byDefault = await data.run(winBack.sql, { zone: 'north', lapsed_days: 90, limit: 50 }, { declared });
+  assert.deepEqual(byDefault, all);
   const top = await data.run(winBack.sql, { zone: 'north', lapsed_days: 90, limit: 25 }, { declared });
   assert.deepEqual(top, all.slice(0, 25));
   const shorter = await data.run(winBack.sql, { zone: 'north', lapsed_days: 30, limit: 500 }, { declared });
@@ -115,35 +115,45 @@ const MENU = { id: 'VMENU', type: 'modal', private_metadata: 'brightside', title
 const last = (app) => app.views.at(-1).args.view;
 const actionsOf = (view) => view.blocks.filter((b) => b.type === 'actions').flatMap((b) => b.elements);
 
-test('the Win-back form end to end: Dana opens it, checks North with the defaults, and confirms once', async (t) => {
+test('the Win-back form end to end: the admin opens it, checks North with the defaults, and confirms once', async (t) => {
   const app = await boot(t);
-  await app.dispatchCommand('/brightside', { user_id: DANA });
+  await app.dispatchCommand('/brightside', { user_id: ADMIN });
   const menu = app.views[0].args.view;
   assert.ok(menu.blocks.some((b) => b.accessory && b.accessory.action_id === 'win-back:open'));
 
-  await app.dispatchAction('win-back:open', { user: { id: DANA }, view: MENU });
+  await app.dispatchAction('win-back:open', { user: { id: ADMIN }, view: MENU });
   const form = last(app);
+  const formId = `V${app.viewSeq}`;
   assert.equal(form.title.text, 'Win-back list');
+  assert.equal(form.submit.text, 'Check values');
   assert.deepEqual(form.blocks.filter((b) => b.type === 'input').map((b) => b.label.text), ['Zone', 'Lapsed within (days)', 'How many clients']);
-  const session = actionsOf(form)[0].value;
 
-  const view = (state) => ({ id: `V${app.viewSeq}`, hash: `h${app.viewSeq}`, title: form.title, private_metadata: 'brightside', state });
   const pick = { values: { 'sp-input:zone': { value: { type: 'static_select', selected_option: { value: 'north' } } } } };
-  await app.dispatchAction('scoped-pull:check', { user: { id: DANA }, view: view(pick), value: session });
-  const confirm = last(app);
-  assert.deepEqual(confirm.blocks.filter((b) => b.fields).map((b) => b.fields[1].text), ['north', '90', '25']);
+  await app.dispatchView('scoped-pull:form', {
+    user: { id: ADMIN },
+    view: { id: formId, hash: `h${app.viewSeq}`, title: form.title, private_metadata: form.private_metadata, state: pick },
+  });
+  const ack = app.viewAcks.at(-1);
+  assert.equal(ack.response_action, 'update');
+  const confirm = ack.view;
+  assert.deepEqual(confirm.blocks.filter((b) => b.fields).map((b) => b.fields[1].text), ['north', '90', '50']);
+  const session = actionsOf(confirm)[0].value;
 
-  await app.dispatchAction('scoped-pull:confirm', { user: { id: DANA }, view: view({ values: {} }), value: session });
+  const shown = (hash) => ({ id: formId, hash, title: confirm.title, private_metadata: confirm.private_metadata, state: { values: {} } });
+  await app.dispatchAction('scoped-pull:confirm', { user: { id: ADMIN }, view: shown('hs1'), value: session });
   assert.match(last(app).blocks[0].text.text, /Confirmed/);
-  await app.dispatchAction('scoped-pull:confirm', { user: { id: DANA }, view: view({ values: {} }), value: session });
+  await app.dispatchAction('scoped-pull:confirm', { user: { id: ADMIN }, view: shown(`h${app.viewSeq}`), value: session });
   assert.match(last(app).blocks[0].text.text, /already confirmed/);
-  assert.deepEqual(app.views.map((v) => v.method), ['open', 'push', 'update', 'update', 'update']);
+  assert.deepEqual(app.views.map((v) => v.method), ['open', 'push', 'update', 'update']);
 });
 
-test('someone not set up never sees Win-back and is refused if they click it', async (t) => {
+test('a member without WIN_BACK, or someone not set up, never sees Win-back and is refused if they click it', async (t) => {
   const app = await boot(t);
-  await app.dispatchCommand('/brightside', { user_id: 'UNOBODY' });
-  assert.ok(!app.views[0].args.view.blocks.some((b) => b.accessory && b.accessory.action_id === 'win-back:open'));
-  await app.dispatchAction('win-back:open', { user: { id: 'UNOBODY' }, view: MENU });
-  assert.equal(last(app).blocks.filter((b) => b.type === 'input').length, 0);
+  for (const who of [MEMBER, 'UNOBODY']) {
+    const before = app.views.length;
+    await app.dispatchCommand('/brightside', { user_id: who });
+    assert.ok(!app.views[before].args.view.blocks.some((b) => b.accessory && b.accessory.action_id === 'win-back:open'));
+    await app.dispatchAction('win-back:open', { user: { id: who }, view: MENU });
+    assert.equal(last(app).blocks.filter((b) => b.type === 'input').length, 0);
+  }
 });

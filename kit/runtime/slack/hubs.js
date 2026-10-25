@@ -47,8 +47,12 @@
 //
 // Scoped pulls (Story 9.3): Open on a scoped-pull module pushes its typed form
 // as the module's view (kit/runtime/archetypes/scoped-pull), so menu and
-// module stay the only two views. The form's buttons (Check values, Change,
-// Confirm, Read my request) go to one listener, which re-checks access and
+// module stay the only two views. The form has input blocks, so its view has
+// a submit, "Check values" (Slack rejects an input view without one). Its
+// view_submission is handled with handleView, which answers in the ack:
+// { response_action: 'errors' } beside the inputs, or { response_action:
+// 'update' } to the Confirm screen (or a refusal) in the same view. Confirm
+// and Change are buttons on that screen; one listener re-checks access and
 // updates the view the click came from in place (modal.updatedView:
 // views.update with that view's id and hash), never pushing a third view. A
 // hash_conflict means the view changed since the click: the out-of-date
@@ -60,20 +64,21 @@ const {
   NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
 } = require('../errors');
 const { messageFor, welcomeText, feedbackText, joinWelcomeText } = require('../messages');
-const { handle, PLAIN_ERROR } = require('./handle');
+const { handle, handleView, PLAIN_ERROR } = require('./handle');
 const {
   buildMenu, buildHelp, moduleIdFromAction, hubIdFromHelpAction, OPEN_ACTION, HELP_ACTION,
 } = require('../registry/menu');
 const { isVisible } = require('../registry');
 const {
-  modalView, pushedView, fromModal, hasViews, failureReason, updatedView,
+  modalView, moduleView, messageBlocks, pushedView, fromModal, hasViews, failureReason, updatedView,
 } = require('./modal');
 const { messageParts } = require('./format');
-const { createScopedPull, verbOf, ACTION_PATTERN: FORM_ACTION } = require('../archetypes/scoped-pull');
+const {
+  createScopedPull, verbOf, parseMetadata, ACTION_PATTERN: FORM_ACTION, FORM_CALLBACK,
+} = require('../archetypes/scoped-pull');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
-const HUB_ID = /^[a-z][a-z0-9-]*$/;
 
 function defaultCanUse(profile) {
   return (person, mod) => access.decide(profile, person.user, mod.resource);
@@ -159,6 +164,21 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
     else refusal = new AccessDenied({ label: mod.label, admin });
     log.warn('hub action refused', { action_id: actionId, reason: refusal.name, user: person.user ? person.user.id : null, env });
     return messageFor(refusal);
+  };
+
+  // The scoped-pull module a form session names, if this person may still
+  // open it: { mod } or { refusal }. Synchronous, so Confirm can consume with
+  // no await after the check.
+  const resolveForm = (person, actionId) => (moduleId) => {
+    const mod = registry.module(moduleId);
+    if (!mod || mod.archetype !== 'scoped-pull' || !isVisible(mod, env)) {
+      log.warn('hub action refused', {
+        action_id: actionId, reason: !mod ? 'unknown module' : 'not available', user: person.user ? person.user.id : null, env,
+      });
+      return { refusal: NOT_AVAILABLE };
+    }
+    const refused = refusalFor(person, mod, actionId);
+    return refused ? { refusal: refused } : { mod };
   };
 
   // Where a click's replies go. From a hub modal: a view pushed onto it
@@ -305,7 +325,24 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
     }
   }, { log, store }));
 
-  // A scoped-pull form's buttons. Each click updates the view it came from.
+  // A scoped-pull form's submit ("Check values"). The answer goes in the ack:
+  // errors beside the inputs, or the Confirm screen (or a refusal) in place.
+  const submittedView = (view, message) => moduleView({
+    title: view && view.title && view.title.text,
+    hubId: parseMetadata(view && view.private_metadata).hubId,
+    blocks: messageBlocks(message),
+    message,
+  });
+  app.view(FORM_CALLBACK, handleView('hub:form-submit', ({ body }) => {
+    const view = body.view || {};
+    const person = personOf((body.user || {}).id);
+    const { sessionId } = parseMetadata(view.private_metadata);
+    const res = scopedPull.submit({ sessionId, person: person.id, state: view.state, resolve: resolveForm(person, FORM_CALLBACK) });
+    if (res.errors) return { response_action: 'errors', errors: res.errors };
+    return { response_action: 'update', view: submittedView(view, res.message) };
+  }, { log, onError: ({ body }) => ({ response_action: 'update', view: submittedView(body && body.view, PLAIN_ERROR) }) }));
+
+  // The Confirm screen's buttons. Each click updates the view it came from.
   app.action(FORM_ACTION, handle('hub:form', async ({ action, body, client, respond }) => {
     const verb = verbOf(action && action.action_id);
     const from = body.view;
@@ -314,7 +351,7 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
       if (typeof respond === 'function') await respond(ephemeral(FORM_NEEDS_WINDOW));
       return;
     }
-    const hubId = typeof from.private_metadata === 'string' && HUB_ID.test(from.private_metadata) ? from.private_metadata : null;
+    const { hubId } = parseMetadata(from.private_metadata);
     const view = updatedView({ client, view: from, title: from.title && from.title.text, hubId });
     const show = async (message, opts) => {
       const status = await view.show(message, opts);
@@ -323,18 +360,8 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
       return status;
     };
     const person = personOf((body.user || {}).id);
-    // Synchronous, so Confirm can consume with no await after the check.
-    const resolve = (moduleId) => {
-      const mod = registry.module(moduleId);
-      if (!mod || mod.archetype !== 'scoped-pull' || !isVisible(mod, env)) {
-        log.warn('hub action refused', { action_id: action.action_id, reason: !mod ? 'unknown module' : 'not available', env });
-        return { refusal: NOT_AVAILABLE };
-      }
-      const refused = refusalFor(person, mod, action.action_id);
-      return refused ? { refusal: refused } : { mod };
-    };
     try {
-      await scopedPull.click({ verb, sessionId: action.value, person: person.id, state: from.state, resolve, show });
+      await scopedPull.click({ verb, sessionId: action.value, person: person.id, resolve: resolveForm(person, action.action_id), show });
     } catch (err) {
       log.error('handler failed', { handler: 'hub:form', err });
       try {

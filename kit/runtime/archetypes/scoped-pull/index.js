@@ -5,21 +5,23 @@
 // one-shot Confirm from the engine, with no module code.
 //
 //   Open      a session is opened for the person and the form renders in the
-//             module's view (pushed onto the hub menu by the dispatcher).
-//   Check     the typed values are read from the view's state and checked
-//             against the declarations: problems re-render the form, good
-//             values render the Confirm screen.
+//             module's view (pushed onto the hub menu by the dispatcher). The
+//             form's submit is "Check values" (Slack requires a submit on a
+//             view with inputs).
+//   Check     submit(): the typed values are read from the submitted view's
+//             state and checked against the declarations, synchronously, so
+//             the hub can answer in the ack: problems go beside the inputs,
+//             good values replace the form with the Confirm screen.
 //   Change    back to the form, prefilled with the checked values.
 //   Confirm   consumes the session, synchronously, before anything runs, so a
 //             double click or a replay runs once; the second click is told it
 //             is running or done. Story 9.5 runs the query here.
-//   Read      (Story 9.4: plain English fills the form.) Until then it says so
-//             and shows the form.
 //
-// Each click's result is handed to show(message, opts), which the hub wiring
-// turns into a views.update of the view the click came from. A click from
-// anyone but the session's person is refused, and every click re-checks that
-// the person may still open the module (resolve), before any state changes.
+// Change and Confirm are buttons; their result goes to show(message, opts),
+// which the hub wiring turns into a views.update of the view the click came
+// from. A submit or click from anyone but the session's person is refused,
+// and each one re-checks that the person may still open the module
+// (resolve), before any state changes.
 //
 // The engine never logs the values a person typed: only the module and the
 // action.
@@ -29,10 +31,9 @@ const { messageFor } = require('../../messages');
 const session = require('./session');
 const { checkValues, checkDeclarations } = require('./params');
 const {
-  formMessage, confirmMessage, confirmedMessage, readState, verbOf, ACTIONS, ACTION_PATTERN,
+  formMessage, formErrors, confirmMessage, confirmedMessage, readState, verbOf, parseMetadata,
+  ACTIONS, ACTION_PATTERN, FORM_CALLBACK,
 } = require('./form');
-
-const READ_NOT_YET = "Reading a request in plain English isn't switched on yet. Fill in the form instead.";
 
 // The message for a session lookup that found nothing usable.
 function refusalFor(status) {
@@ -55,36 +56,42 @@ function createScopedPull({ store, log, run = async (mod, values) => confirmedMe
     return formMessage(mod, { sessionId });
   }
 
-  // One form click. verb: check | read | confirm | change. resolve(moduleId)
-  // is synchronous and returns { mod } when the person may still use it, or
-  // { refusal } (a message). show(message, { force }) renders into the view.
-  async function click({ verb, sessionId, person, state, resolve, show }) {
+  // The session a submit or click names, checked: { found, mod } or
+  // { message } (a refusal to show). resolve(moduleId) is synchronous and
+  // returns { mod } when the person may still use it, or { refusal }.
+  function check(sessionId, person, resolve, action) {
     const found = session.lookup(store, sessionId, person);
     if (found.status !== session.STATUS.OK) {
-      log.info('form click refused', { action: verb, reason: found.status });
-      return show(refusalFor(found.status));
+      log.info('form click refused', { action, reason: found.status });
+      return { message: refusalFor(found.status) };
     }
     const allowed = resolve(found.session.module);
-    if (!allowed.mod) return show(allowed.refusal);
-    const { mod } = allowed;
-    log.info('form click', { module: mod.id, action: verb });
+    if (!allowed.mod) return { message: allowed.refusal };
+    log.info('form click', { module: allowed.mod.id, action });
+    return { found, mod: allowed.mod };
+  }
 
-    if (verb === 'confirm') {
-      // No await between the lookup above and this consume (AD-7).
-      const c = session.consume(store, sessionId, person);
-      if (!c.consumed) {
-        if (c.status !== session.STATUS.OK) return show(refusalFor(c.status));
-        // Nothing checked yet (a stale Confirm after Change): back to the form.
-        return show(formMessage(mod, { sessionId }));
-      }
-      let result;
-      try {
-        result = await run(mod, c.session.values, person);
-      } finally {
-        session.finish(store, sessionId, person);
-      }
-      return show(result, { force: true });
+  // The form's submit ("Check values"). Synchronous: the hub answers in the
+  // ack. Returns { errors } (block id → message, shown beside the inputs) or
+  // { message } (the Confirm screen, or a refusal) to replace the form with.
+  function submit({ sessionId, person, state, resolve }) {
+    const c = check(sessionId, person, resolve, 'check');
+    if (!c.mod) return { message: c.message };
+    const { values, problems } = checkValues(c.mod.parameters, readState(c.mod.parameters, state));
+    if (problems.length) {
+      session.save(store, sessionId, c.found.session, null);
+      return { errors: formErrors(problems) };
     }
+    session.save(store, sessionId, c.found.session, values);
+    return { message: confirmMessage(c.mod, { sessionId, values }) };
+  }
+
+  // A Confirm screen button. verb: confirm | change. show(message, { force })
+  // renders into the view.
+  async function click({ verb, sessionId, person, resolve, show }) {
+    const c = check(sessionId, person, resolve, verb);
+    if (!c.mod) return show(c.message);
+    const { found, mod } = c;
 
     if (verb === 'change') {
       const initial = found.session.values || {};
@@ -92,24 +99,25 @@ function createScopedPull({ store, log, run = async (mod, values) => confirmedMe
       return show(formMessage(mod, { sessionId, initial }));
     }
 
-    if (verb === 'read') {
-      session.save(store, sessionId, found.session, null);
-      return show(formMessage(mod, { sessionId, note: READ_NOT_YET }));
+    // confirm. No await between the lookup above and this consume (AD-7).
+    const consumed = session.consume(store, sessionId, person);
+    if (!consumed.consumed) {
+      if (consumed.status !== session.STATUS.OK) return show(refusalFor(consumed.status));
+      // Nothing checked yet (a stale Confirm after Change): back to the form.
+      return show(formMessage(mod, { sessionId }));
     }
-
-    // check
-    const { values, problems } = checkValues(mod.parameters, readState(mod.parameters, state));
-    if (problems.length) {
-      session.save(store, sessionId, found.session, null);
-      return show(formMessage(mod, { sessionId, initial: values, problems }));
+    let result;
+    try {
+      result = await run(mod, consumed.session.values, person);
+    } finally {
+      session.finish(store, sessionId, person);
     }
-    session.save(store, sessionId, found.session, values);
-    return show(confirmMessage(mod, { sessionId, values }));
+    return show(result, { force: true });
   }
 
-  return { open, click };
+  return { open, submit, click };
 }
 
 module.exports = {
-  createScopedPull, checkDeclarations, verbOf, ACTIONS, ACTION_PATTERN, READ_NOT_YET,
+  createScopedPull, checkDeclarations, verbOf, parseMetadata, ACTIONS, ACTION_PATTERN, FORM_CALLBACK,
 };
