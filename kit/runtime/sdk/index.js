@@ -12,7 +12,9 @@
 //                describe() is { source, label, available, problem }
 //   ctx.reply    (text) => Promise  a reply only the person sees: rendered in
 //                the module's modal view (appended), or ephemeral when
-//                the click came from a message (kit/runtime/slack/modal)
+//                the click came from a message (kit/runtime/slack/modal).
+//                Text is mrkdwn; a long reply is split into sections Slack
+//                accepts, never cut off (kit/runtime/slack/format)
 // The SDK adds only what a handler or its test needs beyond that, plus what a
 // connector adapter and its test need (kit/templates/connector.md).
 
@@ -20,6 +22,8 @@ const { DataUnavailableError, QueryRefusedError } = require('../data');
 const { createLog } = require('../log');
 // Slack mrkdwn escaping for anything a handler shows from data (AD-17).
 const { escapeText } = require('../messages');
+// Ordinary markdown to Slack mrkdwn, escaped, for text written as markdown.
+const { toMrkdwn } = require('../slack/format');
 const {
   defineConnector, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 } = require('../connectors/contract');
@@ -67,7 +71,7 @@ function testLog() {
 }
 
 module.exports = {
-  testContext, testLog, escapeText, DataUnavailableError, QueryRefusedError,
+  testContext, testLog, escapeText, toMrkdwn, DataUnavailableError, QueryRefusedError,
   defineConnector, connectorContract, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
   PartialFailure,
 };
