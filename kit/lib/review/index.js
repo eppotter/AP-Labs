@@ -162,7 +162,14 @@ function proseBlockerLines(verdict) {
 const isClean = (verdict) => /\bno\s+(?:(?:blocking\s+or\s+non-blocking|[\w-]+)\s+){0,2}(?:issues|findings|defects|problems|bugs)\b/i.test(verdict);
 
 // A reviewer's output is usable when every finding-like line parses and it has
-// findings or says it is clean. Anything else is a failed attempt.
+// findings or says it is clean. Anything else is a failed attempt: { error }.
+// A failed attempt whose only fault is the VERDICT line (missing, or at odds
+// with what was listed) and that has no readable [P1] also carries retry: the
+// CLI asks the same reviewer once more with VERDICT_REMINDER before falling
+// back. A reply with a readable [P1] is never retried, so a retry cannot lose
+// a P1; malformed or reasoning-aloud finding lines are never retried.
+// BLOCKING with only [P2] lines (and no prose blocker) reads as CLEAN with
+// those P2s plus a one-line note: the findings are what count.
 function readVerdict(raw, repoRoot = '') {
   if (!raw.trim()) return { error: 'No verdict written' };
   const { body: verdict, after } = splitAtVerdict(finalOutput(raw));
@@ -174,18 +181,34 @@ function readVerdict(raw, repoRoot = '') {
   if (reasoning.length) return { error: `${reasoning.length} finding line(s) read like reasoning, not a finding:\n${reasoning.join('\n')}` };
   const findings = parseFindings(verdict, repoRoot);
   const said = verdictLine(verdict);
-  // BLOCKING with no parseable [P1] means the blocker was written in prose: a
-  // failed attempt, never a pass. CLEAN next to a [P1] line: the P1 still counts.
-  if (said === 'BLOCKING' && !findings.some((f) => f.priority === 'P1')) {
-    return { error: 'Verdict says BLOCKING but no [P1] line could be read' };
-  }
-  if (said === 'CLEAN') {
+  const hasP1 = findings.some((f) => f.priority === 'P1');
+  const retry = hasP1 ? {} : { retry: true };
+  // CLEAN next to a [P1] line: the P1 still counts. A blocker written as a
+  // prose bullet under CLEAN, or under BLOCKING with no [P1], is never a pass.
+  if (said === 'CLEAN' || (said === 'BLOCKING' && !hasP1)) {
     const prose = proseBlockerLines(verdict);
-    if (prose.length) return { error: `Verdict says CLEAN but ${prose.length} line(s) read like an unformatted blocking finding:\n${prose.join('\n')}` };
+    if (prose.length) {
+      return { error: `Verdict says ${said} but ${prose.length} line(s) read like an unformatted blocking finding:\n${prose.join('\n')}`, ...retry };
+    }
   }
-  if (!findings.length && said !== 'CLEAN' && !isClean(verdict)) return { error: 'Could not read findings or a clean verdict' };
+  if (said === 'BLOCKING' && !hasP1) {
+    if (!findings.length) return { error: 'Verdict says BLOCKING but no [P1] line could be read', ...retry };
+    return { findings, note: `Verdict said BLOCKING but listed only [P2] findings; read as CLEAN with ${findings.length} non-blocking finding(s).` };
+  }
+  if (said === 'CLEAN' && hasP1) {
+    const n = findings.filter((f) => f.priority === 'P1').length;
+    return { findings, note: `Verdict said CLEAN but listed ${n} [P1] finding(s); read as BLOCKING: the P1s count.` };
+  }
+  if (!findings.length && said !== 'CLEAN' && !isClean(verdict)) return { error: 'Could not read findings or a clean verdict', ...retry };
   return { findings };
 }
+
+// Appended to the reviewer's prompt for its one retry after a retryable failure.
+const VERDICT_REMINDER = 'End with exactly one VERDICT line as the last line of your reply: "VERDICT: CLEAN" if there is no [P1], ' +
+  'or "VERDICT: BLOCKING" if there is at least one. Your previous reply had no VERDICT line, or one that contradicted its findings. ' +
+  'Write every finding as a "- [P1|P2] <title> — <path>:<line>" line.';
+
+const withVerdictReminder = (prompt) => `${prompt}\n\n${VERDICT_REMINDER}`;
 
 // Files that drew a blocking finding in each of the last two rounds: the "same
 // class twice" stop. A P1 the Refuter could not reproduce does not count.
@@ -436,6 +459,8 @@ module.exports = {
   isValidState,
   isClean,
   readVerdict,
+  VERDICT_REMINDER,
+  withVerdictReminder,
   verdictLine,
   repeatedBlockingFiles,
   withRoundsLine,
