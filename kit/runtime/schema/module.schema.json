@@ -28,12 +28,15 @@
         "additionalProperties": false,
         "required": ["name", "type"],
         "properties": {
-          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64 },
+          "label": { "description": "The form's label for this input; defaults to the name.", "type": "string", "$ref": "#/$defs/text", "maxLength": 60 },
           "type": { "enum": ["string", "integer", "number", "boolean", "date"] },
-          "description": { "$ref": "#/$defs/text" },
-          "enum": { "type": "array", "minItems": 1, "uniqueItems": true },
+          "description": { "description": "A hint under the input.", "type": "string", "$ref": "#/$defs/text", "maxLength": 150 },
+          "enum": { "description": "The allowed values.", "type": "array", "minItems": 1, "uniqueItems": true },
           "min": { "type": "number" },
           "max": { "type": "number" },
+          "pattern": { "description": "A string input's format: a regular expression the whole value must match.", "type": "string", "minLength": 1, "maxLength": 200 },
+          "max_length": { "description": "A string input's maximum length, in characters.", "type": "integer" },
           "default": {},
           "required": { "type": "boolean" }
         }

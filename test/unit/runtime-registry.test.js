@@ -124,11 +124,12 @@ test('a module on a declared resource that is not open_access registers (access 
 
 test('an archetype whose engine is not built yet is refused', () => {
   const { problems } = loadEdited((d) => editJson(d, 'modules/echo/manifest.json', (m) => {
-    m.archetype = 'scoped-pull';
-    m.parameters = [{ name: 'zone', type: 'string' }];
+    m.archetype = 'approval-write';
+    m.parameters = [{ name: 'zone', type: 'string', enum: ['north'] }];
     m.query = 'query.sql';
+    m.write = { connector: 'crm', operation: 'push', destination: 'A list', fields: ['client_id'] };
   }));
-  assert.deepEqual(problems, ['modules/echo/manifest.json: field "archetype" "scoped-pull" is not available yet']);
+  assert.deepEqual(problems, ['modules/echo/manifest.json: field "archetype" "approval-write" is not available yet']);
 });
 
 test('a handler file that is missing, throws on load or exports no function is refused', () => {

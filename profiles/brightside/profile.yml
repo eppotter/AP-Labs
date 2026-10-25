@@ -53,6 +53,10 @@ resources:
   # (admin_grantable defaults to true); grant it to anyone else who needs it.
   - key: OUTBOX
     label: Email outbox
+  # Runtime: the Win-back list (Story 9.3): client names and emails (client data).
+  # Gated, not open_access: the admin role confers it; grant it to anyone else who needs it.
+  - key: WIN_BACK
+    label: Win-back list
 
 users:
   - id: dana

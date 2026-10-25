@@ -1,0 +1,40 @@
+{
+  "id": "win-back",
+  "hub": "brightside",
+  "label": "Win-back list",
+  "description": "Clients in one zone whose plan lapsed recently and who have no plan now: a list to win back.",
+  "resource": "WIN_BACK",
+  "archetype": "scoped-pull",
+  "environments": ["dev", "prod"],
+  "parameters": [
+    {
+      "name": "zone",
+      "label": "Zone",
+      "type": "string",
+      "description": "The client's home zone.",
+      "enum": ["north", "south", "east", "west", "central"],
+      "required": true
+    },
+    {
+      "name": "lapsed_days",
+      "label": "Lapsed within (days)",
+      "type": "integer",
+      "description": "A plan ended within this many days of the data's as-of date.",
+      "min": 1,
+      "max": 365,
+      "default": 90,
+      "required": true
+    },
+    {
+      "name": "limit",
+      "label": "How many clients",
+      "type": "integer",
+      "description": "The most recent lapses come first.",
+      "min": 1,
+      "max": 500,
+      "default": 50,
+      "required": true
+    }
+  ],
+  "query": "win-back.sql"
+}
