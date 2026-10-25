@@ -42,6 +42,7 @@ const { createData, QueryRefusedError } = require('../../../kit/runtime/data');
 const { runQuery } = require('../../../kit/runtime/archetypes/scoped-pull/run');
 const { checkSql, forbiddenColumnsOf } = require('../../../kit/runtime/sql');
 const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
+const { checkRequest } = require('../../../test/fixtures/fake-anthropic');
 
 const ROOT = path.join(__dirname, '../../..');
 const PROFILE_PATH = path.join(__dirname, 'fixtures/win-back-profile.yml');
@@ -208,11 +209,12 @@ function spyAi() {
 }
 
 // A stand-in AI client that fills the form with input (Story 9.4), recording
-// every request it gets.
+// every request it gets. Like the real API, it refuses a tool_choice of type
+// "tool" or "any" (checkRequest).
 function fillingAi(input) {
   const calls = [];
   const reply = { content: [{ type: 'tool_use', id: 'toolu_1', name: 'fill_parameters', input }], stop_reason: 'tool_use', usage: { input_tokens: 400, output_tokens: 30 } };
-  return { calls, client: { messages: { create: async (params) => { calls.push(params); return reply; } } } };
+  return { calls, client: { messages: { create: async (params) => { calls.push(params); checkRequest(params); return reply; } } } };
 }
 
 // Boots the app on the fixture build (or a missing file with noData), with a
