@@ -25,12 +25,32 @@ CREATE TABLE crews (
   name VARCHAR NOT NULL
 );
 
+CREATE TABLE staff (
+  staff_id INTEGER PRIMARY KEY,
+  name VARCHAR NOT NULL UNIQUE,
+  role VARCHAR NOT NULL,
+  hire_date DATE NOT NULL,
+  end_date DATE,
+  hourly_rate_cents BIGINT NOT NULL
+);
+
+CREATE TABLE pay_rates (
+  rate_id INTEGER PRIMARY KEY,
+  staff_id INTEGER NOT NULL REFERENCES staff (staff_id),
+  start_date DATE NOT NULL,
+  end_date DATE,
+  role VARCHAR NOT NULL,
+  hourly_rate_cents BIGINT NOT NULL,
+  UNIQUE (staff_id, start_date)
+);
+
 CREATE TABLE crew_memberships (
   membership_id INTEGER PRIMARY KEY,
   crew_id INTEGER NOT NULL REFERENCES crews (crew_id),
   staff_name VARCHAR NOT NULL,
   start_date DATE NOT NULL,
-  end_date DATE
+  end_date DATE,
+  staff_id INTEGER NOT NULL REFERENCES staff (staff_id)
 );
 
 CREATE TABLE clients (
@@ -48,7 +68,13 @@ CREATE TABLE properties (
   client_id INTEGER NOT NULL REFERENCES clients (client_id),
   street_address VARCHAR NOT NULL,
   city VARCHAR NOT NULL,
-  postal_code VARCHAR NOT NULL
+  postal_code VARCHAR NOT NULL,
+  home_type VARCHAR NOT NULL,
+  square_feet INTEGER NOT NULL,
+  bedrooms INTEGER NOT NULL,
+  bathrooms DECIMAL(3,1) NOT NULL,
+  has_pets BOOLEAN NOT NULL,
+  access_method VARCHAR NOT NULL
 );
 
 CREATE TABLE plans (
@@ -79,7 +105,12 @@ CREATE TABLE visits (
   crew_id INTEGER NOT NULL REFERENCES crews (crew_id),
   package_id VARCHAR NOT NULL REFERENCES packages (package_id),
   visit_date DATE NOT NULL,
-  status VARCHAR NOT NULL
+  status VARCHAR NOT NULL,
+  arrival_window VARCHAR NOT NULL,
+  scheduled_start TIME NOT NULL,
+  scheduled_minutes INTEGER NOT NULL,
+  route_order INTEGER NOT NULL,
+  travel_minutes_from_previous INTEGER NOT NULL
 );
 
 CREATE TABLE invoices (
@@ -106,6 +137,15 @@ CREATE TABLE payments (
   paid_on DATE NOT NULL,
   amount_cents BIGINT NOT NULL,
   method VARCHAR NOT NULL
+);
+
+CREATE TABLE timesheets (
+  timesheet_id INTEGER PRIMARY KEY,
+  visit_id INTEGER NOT NULL REFERENCES visits (visit_id),
+  staff_id INTEGER NOT NULL REFERENCES staff (staff_id),
+  clock_in TIMESTAMP NOT NULL,
+  clock_out TIMESTAMP NOT NULL,
+  minutes INTEGER NOT NULL
 );
 
 CREATE TABLE fixture_meta (

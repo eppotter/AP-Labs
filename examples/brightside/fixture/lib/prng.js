@@ -69,4 +69,21 @@ function createRng(seed) {
   return rng;
 }
 
-module.exports = { createRng };
+// A seed for a separate, named stream: FNV-1a over the label, mixed with the
+// fixture seed through splitmix32. A new stream (createRng(deriveSeed(seed,
+// 'label'))) draws nothing from the main one, so adding it leaves every
+// earlier draw, and every earlier seed file, unchanged.
+function deriveSeed(seed, label) {
+  if (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffffffff) {
+    throw new TypeError(`seed must be an integer from 0 to ${0xffffffff}, got ${seed}`);
+  }
+  if (typeof label !== 'string' || label === '') throw new TypeError('label must be a non-empty string');
+  let h = 0x811c9dc5;
+  for (let i = 0; i < label.length; i++) {
+    h ^= label.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return splitmix32((seed ^ h) >>> 0)();
+}
+
+module.exports = { createRng, deriveSeed };

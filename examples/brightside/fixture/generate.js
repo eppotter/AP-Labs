@@ -19,15 +19,17 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { createRng } = require('./lib/prng');
+const { createRng, deriveSeed } = require('./lib/prng');
 const { TABLES, schemaSql } = require('./lib/tables');
 const { buildReference, ZONES, HISTORY_START, AS_OF } = require('./lib/reference');
 const { checkRules } = require('./lib/rules');
 const { buildActivity } = require('./lib/activity');
 const { TRUTH_IDS, computeTruths } = require('./lib/truths');
+const { buildOperations, OPERATIONS_STREAM } = require('./lib/operations');
+const { checkOperations } = require('./lib/operations-rules');
 
 // Bump when a change to this code changes the output for the same seed.
-const GENERATOR_VERSION = 2;
+const GENERATOR_VERSION = 3;
 
 const FIXTURE_DIR = __dirname;
 const SEED_FILE = path.join(FIXTURE_DIR, 'seed.json');
@@ -94,8 +96,13 @@ function generate(config) {
   // Reference draws first, so adding activity left the reference files unchanged.
   const tables = buildReference(rng, { clients });
   Object.assign(tables, buildActivity(rng, tables, { asOf: AS_OF, targets }));
+  // Labour, home details and the schedule: their own stream, after everything
+  // above is final, so no earlier draw or value moves.
+  const opsRng = createRng(deriveSeed(seed, OPERATIONS_STREAM));
+  Object.assign(tables, buildOperations(opsRng, tables, { historyStart: HISTORY_START, asOf: AS_OF }));
   tables.fixture_meta = fixtureMeta(config, tables);
-  const problems = checkRules(tables, { zones: ZONES, historyStart: HISTORY_START, asOf: AS_OF });
+  const ruleOpts = { zones: ZONES, historyStart: HISTORY_START, asOf: AS_OF };
+  const problems = checkRules(tables, ruleOpts).concat(checkOperations(tables, ruleOpts));
   if (problems.length > 0) {
     throw new Error(`generated data breaks ${problems.length} rule(s):\n  ${problems.slice(0, 20).join('\n  ')}`);
   }

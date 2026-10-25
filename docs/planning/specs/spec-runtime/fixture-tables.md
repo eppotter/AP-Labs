@@ -8,12 +8,12 @@ Brightside Home Cleaning is a fictional multi-branch residential cleaner. The da
 - Deterministic. One generator version plus one seed gives byte-identical seed files (own seeded PRNG, no random source from the OS or clock).
 - Money is integer cents. Dates are ISO `DATE` in Brightside's local business calendar (no time zone); the only timestamps are UTC and none drive a period filter.
 - History runs 2024-10-01 to `as_of` = 2026-09-30, recorded in `fixture_meta`. Every "now" in a query is `as_of` from `fixture_meta`, never `CURRENT_DATE`, so known truths never drift.
-- Sizes are Tier 1: about 2,000 clients. Committed seed files stay under 10 MB.
+- Sizes are Tier 1: about 2,000 clients. Committed seed files stay under 20 MiB (raised from 10 MB on 2026-10-24 (Ely) for labour/homes/scheduling; to be restored by compressing seeds).
 - Protected columns (Brightside's `sql.forbidden_columns`): `clients.phone`, `properties.street_address`, `properties.postal_code`. Email is allowed: the win-back push needs it. Queries name their columns; `SELECT *` is blocked while any column is forbidden.
 
 ## Tables
 
-Story 7.1 generates the reference tables; Story 7.2 the time series, `fixture_meta` and the size budget.
+Story 7.1 generates the reference tables; Story 7.2 the time series, `fixture_meta` and the size budget. The operations build (labour, home details, scheduling; `lib/operations.js`) adds `staff`, `pay_rates` and `timesheets` and appends columns to `crew_memberships`, `properties` and `visits`. It draws from its own seeded stream (`deriveSeed(seed, 'labour/homes/schedule')`) after everything else is final, so every earlier column keeps its values; appended columns always go last.
 
 | Table | Story | Grain (one row per) | Key columns |
 |---|---|---|---|
@@ -21,15 +21,18 @@ Story 7.1 generates the reference tables; Story 7.2 the time series, `fixture_me
 | `packages` | 7.1 | cleaning package (standard, deep, move-out) | `package_id` PK, `name`, `base_price_cents` |
 | `add_ons` | 7.1 | optional extra (oven, windows) | `add_on_id` PK, `name`, `price_cents` |
 | `crews` | 7.1 | cleaning crew | `crew_id` PK, `zone_id` FK, `name` |
-| `crew_memberships` | 7.1 | one staff member's period in one crew | `membership_id` PK, `crew_id` FK, `staff_name`, `start_date`, `end_date` (inclusive, NULL = current). A staff member's periods never overlap |
+| `staff` | ops | person who has worked on a crew | `staff_id` PK, `name` (unique; the `crew_memberships.staff_name` text), `role` (`cleaner` or `crew_lead`), `hire_date`, `end_date` (last day employed, inclusive; NULL = employed), `hourly_rate_cents`. `role` and rate are the latest `pay_rates` row's |
+| `pay_rates` | ops | one pay period of one staff member | `rate_id` PK, `staff_id` FK, `start_date`, `end_date` (inclusive, NULL = current), `role`, `hourly_rate_cents`; unique (`staff_id`, `start_date`). Periods are contiguous from `hire_date` and never overlap. Cleaners $17.00–24.00, crew leads $22.00–30.00, in 25-cent steps; a 2–5% raise each hire anniversary; moving into a crew's lead slot is a promotion |
+| `crew_memberships` | 7.1 | one staff member's period in one crew | `membership_id` PK, `crew_id` FK, `staff_name`, `start_date`, `end_date` (inclusive, NULL = current), `staff_id` FK (appended). A staff member's periods never overlap. Each crew has three members and exactly one crew lead at a time |
 | `clients` | 7.1 | household account | `client_id` PK, `zone_id` FK (home zone), `first_name`, `last_name`, `email` (unique), `phone` (forbidden), `created_on` (client since) |
-| `properties` | 7.1 | serviced address | `property_id` PK, `client_id` FK, `street_address` (forbidden), `city`, `postal_code` (forbidden). A property is in its client's zone |
+| `properties` | 7.1 | serviced address | `property_id` PK, `client_id` FK, `street_address` (forbidden), `city`, `postal_code` (forbidden). A property is in its client's zone. Appended home details: `home_type` (`house`, `townhouse`, `condo`, `apartment`), `square_feet`, `bedrooms`, `bathrooms` (DECIMAL, halves allowed), `has_pets`, `access_method` (`key`, `lockbox`, `client_home`, `door_code_on_file`; never a code). Size follows the plan price's size factor, with about one home in five a size band off; rooms follow size |
 | `plans` | 7.2 | recurring service plan on one property | `plan_id` PK, `property_id` FK, `package_id` FK, `frequency` (`weekly`, `biweekly`, `monthly`), `start_date`, `end_date` (last active day, inclusive; NULL while active), `status` (`active` iff `end_date` IS NULL, else `cancelled`), `start_price_cents`, `price_cents` (price on `end_date`, or at `as_of` if active) |
 | `plan_price_changes` | 7.2 | one price change on one plan | `change_id` PK, `plan_id` FK, `effective_date`, `old_price_cents`, `new_price_cents`; unique (`plan_id`, `effective_date`) |
-| `visits` | 7.2 | one scheduled visit | `visit_id` PK, `property_id` FK, `plan_id` FK (NULL = one-off), `crew_id` FK, `package_id` FK, `visit_date`, `status` (`completed`, `cancelled`) |
+| `visits` | 7.2 | one scheduled visit | `visit_id` PK, `property_id` FK, `plan_id` FK (NULL = one-off), `crew_id` FK, `package_id` FK, `visit_date`, `status` (`completed`, `cancelled`). Appended schedule (cancelled visits keep theirs): `arrival_window` (`morning` before 12:00, else `afternoon`), `scheduled_start` (TIME), `scheduled_minutes` (the crew's planned time on site, in 15-minute slots, from package, square feet, bathrooms, pets and add-ons), `route_order` (1..n per crew-day, no repeats; checked, not a schema constraint), `travel_minutes_from_previous` (5–35; from the crew's base for stop 1) |
 | `invoices` | 7.2 | one invoice per completed visit | `invoice_id` PK, `client_id` FK, `visit_id` FK (unique, not null), `issued_on`, `due_on`, `total_cents` |
 | `invoice_lines` | 7.2 | one line on an invoice | `line_id` PK, `invoice_id` FK, exactly one of `package_id` / `add_on_id`, `quantity`, `amount_cents` |
 | `payments` | 7.2 | one payment against one invoice (partial payments allowed) | `payment_id` PK, `invoice_id` FK, `paid_on`, `amount_cents`, `method` (`card`, `ach`) |
+| `timesheets` | ops | one staff member on one completed visit | `timesheet_id` PK, `visit_id` FK, `staff_id` FK, `clock_in`, `clock_out` (TIMESTAMP, local business time), `minutes` (= `clock_out - clock_in`); one per (`visit_id`, `staff_id`), checked, not a schema constraint. Every crew member works every completed visit; none for cancelled visits |
 | `fixture_meta` | 7.2 | key/value | `key` PK, `value`: generator version, seed, `as_of`, row count per table |
 
 ## Definitions
@@ -40,13 +43,16 @@ Story 7.1 generates the reference tables; Story 7.2 the time series, `fixture_me
 - **Price change before lapse:** the lapsed plan has a `plan_price_changes` row with `new_price_cents > old_price_cents` and `effective_date` between `end_date - 59 days` and `end_date` (the 60 days up to the lapse).
 - **Paid revenue in month M:** `SUM(payments.amount_cents)` with `paid_on` in M (cash basis). **Billed revenue in M:** `SUM(invoices.total_cents)` with `issued_on` in M. Never sum payments across a join to `invoice_lines` (one-to-many: fans out).
 - **Lifetime paid spend per client:** payments joined to invoices (invoice is unique per payment) up to `as_of`, summed by `invoices.client_id`.
+- **Pay rate on day d:** the one `pay_rates` row with `start_date <= d AND (end_date IS NULL OR end_date >= d)`.
+- **Labour cost of a visit:** `SUM(timesheets.minutes / 60 * rate)` over its timesheets, with the rate on `visit_date`. Labour share of revenue: that over the visit's invoice `total_cents` (median about 45%).
+- **Crew-day:** (`crew_id`, `visit_date`). Its worked span is first `clock_in` to last `clock_out`. Heavy days start earlier (never before 06:00) and run long; a day whose plan cannot fit 06:00–23:00 has every slot squeezed in proportion (30 crew-days with the recorded seed).
 - **Outstanding at `as_of`:** per invoice, `total_cents` minus payments with `paid_on <= as_of`, where positive.
 
 ## Validation (fixture checks, Story 7.6)
 
 Each is a SQL file in `examples/brightside/fixture/checks/` that must return zero rows; `npm run fixture:validate` runs them through the query runner.
 
-- **Integrity:** every foreign key resolves; no orphans; invoice total equals the sum of its lines; every invoice line has exactly one of `package_id` / `add_on_id` (added in #77); payments never exceed their invoice; one invoice per completed visit and none for cancelled visits; plan visits fall inside the plan's active period; `status` agrees with `end_date`; no `end_date` after `as_of`, and no `as_of` row fails (added in #77); no `issued_on`, `paid_on`, `visit_date` or `created_on` after `as_of` (added in #77); `price_cents` equals the latest change's new price (or `start_price_cents` with no change); every price change falls inside its plan's life and its `old_price_cents` is the previous change's `new_price_cents`, or `start_price_cents` for the first (added in #77); crew membership periods don't overlap per staff member.
+- **Integrity:** every foreign key resolves; no orphans; invoice total equals the sum of its lines; every invoice line has exactly one of `package_id` / `add_on_id` (added in #77); payments never exceed their invoice; one invoice per completed visit and none for cancelled visits; plan visits fall inside the plan's active period; `status` agrees with `end_date`; no `end_date` after `as_of`, and no `as_of` row fails (added in #77); no `issued_on`, `paid_on`, `visit_date` or `created_on` after `as_of` (added in #77); `price_cents` equals the latest change's new price (or `start_price_cents` with no change); every price change falls inside its plan's life and its `old_price_cents` is the previous change's `new_price_cents`, or `start_price_cents` for the first (added in #77); crew membership periods don't overlap per staff member. Operations: staff match their memberships (`integrity-staff`); pay periods are contiguous, in role bounds and agree with `staff` (`integrity-pay-rates`); one crew lead per crew (`integrity-crew-lead`); home details in range (`integrity-property-details`); `route_order` contiguous per crew-day (`integrity-route-order`); each visit's schedule holds together (`integrity-visit-schedule`); timesheets only on completed visits, by that day's crew members, on the visit date, and every completed visit has one (`integrity-timesheet-visit`); `clock_out` after `clock_in` and `minutes` matches (`integrity-timesheet-times`); nobody double-booked (`integrity-timesheet-overlap`).
 - **Synthetic-only:** every email ends in `.invalid`; every phone matches 555-01xx.
 
 ## Known truths (Story 7.6, consumed by Orchestrator Story 4.3)
