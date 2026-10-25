@@ -10,15 +10,17 @@
 //
 // Slack's limits: a modal title is at most 24 characters, a view at most 100
 // blocks, a section's text at most 3000 characters. Titles are cut with "…",
-// long text is split into several sections, and a view over 100 blocks keeps
-// its first blocks plus a "more…" note (a menu keeps its Help at the end).
+// long text is split into several sections by the shared splitter
+// (kit/runtime/slack/format), and a view over 100 blocks keeps its first
+// blocks plus a "more…" note (a menu keeps its Help at the end).
 //
 // Text passes through unchanged: it is already escaped by whoever built it
 // (kit/runtime/messages, registry/menu, the module's own escapeText).
 
+const { textBlocks } = require('./format');
+
 const MAX_BLOCKS = 100;
 const MAX_TITLE = 24;
-const MAX_SECTION_TEXT = 3000;
 const LOADING = 'Loading…';
 
 // A plain_text title Slack accepts: at most 24 characters (code points, so an
@@ -40,28 +42,6 @@ function limitBlocks(blocks, { keepTail = 0, max = MAX_BLOCKS } = {}) {
   const note = { type: 'context', elements: [{ type: 'mrkdwn', text: `_more… ${hidden} more not shown here._` }] };
   return [...head, note, ...tail];
 }
-
-// Splits mrkdwn into pieces Slack accepts in one section, preferring a line
-// break, then a space, and never cutting an escape such as &amp; in half.
-function splitText(text, max = MAX_SECTION_TEXT) {
-  const parts = [];
-  let rest = String(text);
-  while (rest.length > max) {
-    let cut = rest.lastIndexOf('\n', max);
-    if (cut <= 0) cut = rest.lastIndexOf(' ', max);
-    if (cut <= 0) {
-      cut = max;
-      const amp = rest.lastIndexOf('&', cut);
-      if (amp > 0 && cut - amp < 6 && !rest.slice(amp, cut).includes(';')) cut = amp;
-    }
-    parts.push(rest.slice(0, cut));
-    rest = rest.slice(cut).replace(/^[\n ]/, '');
-  }
-  if (rest.length || !parts.length) parts.push(rest);
-  return parts;
-}
-
-const textBlocks = (text) => splitText(text).map((t) => ({ type: 'section', text: { type: 'mrkdwn', text: t || ' ' } }));
 
 // The blocks a reply shows in a view: its own blocks, else its text.
 function messageBlocks(message) {
@@ -140,6 +120,6 @@ function pushedView({ client, triggerId, title, hubId }) {
 }
 
 module.exports = {
-  modalTitle, limitBlocks, splitText, messageBlocks, modalView, fromModal, hasViews, failureReason, pushedView,
-  MAX_BLOCKS, MAX_TITLE, MAX_SECTION_TEXT, LOADING,
+  modalTitle, limitBlocks, messageBlocks, modalView, fromModal, hasViews, failureReason, pushedView,
+  MAX_BLOCKS, MAX_TITLE, LOADING,
 };

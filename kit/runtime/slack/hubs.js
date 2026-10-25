@@ -58,6 +58,7 @@ const { isVisible } = require('../registry');
 const {
   modalView, pushedView, fromModal, hasViews, failureReason,
 } = require('./modal');
+const { messageParts } = require('./format');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 
@@ -138,7 +139,11 @@ function registerHubs(app, { registry, profile, env, log, store, data = null, ca
   // message: the ephemeral reply, as before. If the first push fails and Slack
   // gave a response_url, this click falls back to ephemeral replies.
   const replyTarget = ({ body, respond, client }, { where, title, hubId }) => {
-    const viaEphemeral = (message) => respond(ephemeral(message));
+    // A long text reply goes as section blocks, in more than one message if
+    // it needs over 50 blocks (kit/runtime/slack/format).
+    const viaEphemeral = async (message) => {
+      for (const part of messageParts(message)) await respond(ephemeral(part));
+    };
     if (!fromModal(body) || !hasViews(client)) {
       fellBack(where, fromModal(body) ? 'no views client' : 'not from a modal', hubId);
       return { modal: false, loading: async () => {}, reply: viaEphemeral };
