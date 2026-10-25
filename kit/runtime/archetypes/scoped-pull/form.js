@@ -129,8 +129,25 @@ const button = (text, actionId, sessionId, style) => ({
   type: 'button', action_id: actionId, value: sessionId, text: plain(text), ...(style ? { style } : {}),
 });
 
-// The request box and its button (Story 9.4), above the typed inputs.
-function requestBlocks(sessionId) {
+// A typed request made safe to put back in the request box (#149): control
+// characters other than line breaks and tabs dropped, and cut to the box's
+// REQUEST_MAX_CHARS (code points, so a character is never cut in half), since
+// Slack rejects a view whose initial_value is over max_length. The box is a
+// plain_text_input, so the text is never read as mrkdwn: it cannot mention,
+// link or format. '' when nothing is left.
+function requestInitial(text) {
+  if (typeof text !== 'string') return '';
+  const clean = text.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, '');
+  const chars = Array.from(clean);
+  const kept = chars.length > REQUEST_MAX_CHARS ? chars.slice(0, REQUEST_MAX_CHARS).join('') : clean;
+  return kept.trim() ? kept : '';
+}
+
+// The request box and its button (Story 9.4), above the typed inputs. request:
+// what the person typed, put back in the box (a fallback to the form after
+// the AI was off or failed), so they can retry without retyping.
+function requestBlocks(sessionId, request) {
+  const initial = requestInitial(request);
   return [
     {
       type: 'input',
@@ -138,7 +155,10 @@ function requestBlocks(sessionId) {
       optional: true,
       label: plain('Describe what you want'),
       hint: plain(`In your own words, then press ${READ_BUTTON}. Or fill in the form below and press ${SUBMIT}.`),
-      element: { type: 'plain_text_input', action_id: VALUE_ACTION, multiline: true, max_length: REQUEST_MAX_CHARS },
+      element: {
+        type: 'plain_text_input', action_id: VALUE_ACTION, multiline: true, max_length: REQUEST_MAX_CHARS,
+        ...(initial ? { initial_value: initial } : {}),
+      },
     },
     { type: 'actions', block_id: 'sp-read', elements: [button(READ_BUTTON, ACTIONS.read, sessionId)] },
   ];
@@ -147,13 +167,16 @@ function requestBlocks(sessionId) {
 // The form. initial: values to prefill (defaults when opened, the checked
 // values after Change). notice: mrkdwn shown first, already escaped (a
 // fallback's message). ask: true to offer the request box (the AI is wired
-// in). Its view gets the submit, the callback id and the metadata through
-// message.modal (kit/runtime/slack/modal).
-function formMessage(mod, { sessionId, initial = {}, notice, ask = false } = {}) {
+// in). request: text to put back in that box (requestInitial). Its view gets
+// the submit, the callback id and the metadata through message.modal
+// (kit/runtime/slack/modal).
+function formMessage(mod, {
+  sessionId, initial = {}, notice, ask = false, request,
+} = {}) {
   const blocks = [];
   if (notice) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: String(notice) } });
   blocks.push({ type: 'section', text: { type: 'mrkdwn', text: escapeText(mod.description) } });
-  if (ask) blocks.push(...requestBlocks(sessionId));
+  if (ask) blocks.push(...requestBlocks(sessionId, request));
   for (const p of mod.parameters) {
     const start = Object.hasOwn(initial, p.name) ? initial[p.name] : p.default;
     blocks.push(inputBlock(p, start));
@@ -276,7 +299,7 @@ function readState(parameters, state) {
 
 module.exports = {
   formMessage, formErrors, confirmMessage, valueBlocks, readState, verbOf, formMetadata, parseMetadata,
-  readingMessage, questionMessage, answerHint, readRequest, readAnswer,
+  readingMessage, questionMessage, answerHint, readRequest, readAnswer, requestInitial,
   ACTIONS, ACTION_PATTERN, FORM_CALLBACK, SUBMIT, INPUT_BLOCK, VALUE_ACTION,
   REQUEST_BLOCK, REQUEST_MAX_CHARS, READ_BUTTON, ANSWER_BLOCK, ANSWER_CALLBACK, ANSWER_SUBMIT,
 };

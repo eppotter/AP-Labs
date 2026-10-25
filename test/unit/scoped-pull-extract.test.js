@@ -22,7 +22,7 @@ const { LlmUnavailable } = require('../../kit/runtime/errors');
 const { messageFor, READ_WORDS } = require('../../kit/runtime/messages');
 const { ACTIONS, FORM_CALLBACK, ANSWER_CALLBACK, createScopedPull } = require('../../kit/runtime/archetypes/scoped-pull');
 const {
-  INPUT_BLOCK, VALUE_ACTION, REQUEST_BLOCK, REQUEST_MAX_CHARS, ANSWER_BLOCK,
+  INPUT_BLOCK, VALUE_ACTION, REQUEST_BLOCK, REQUEST_MAX_CHARS, ANSWER_BLOCK, requestInitial,
 } = require('../../kit/runtime/archetypes/scoped-pull/form');
 const {
   fillTool, checkGiven, createReader, INSTRUCTIONS, TOOL_NAME,
@@ -383,6 +383,8 @@ async function expectFallback(ctx, words, { calls = 0 } = {}) {
   assert.equal(shown.view.callback_id, FORM_CALLBACK);
   assert.equal(firstText(shown.view), words);
   assert.ok(inputs(shown.view).some((b) => b.block_id === `${INPUT_BLOCK}zone`));
+  // The typed request is back in its box, so a retry needs no retyping (#149).
+  assert.equal(requestBox(shown.view).element.initial_value, 'north, 30 days');
   assert.equal(ctx.model.calls.length, calls);
   await ctx.app.dispatchView(FORM_CALLBACK, {
     user: { id: MEM },
@@ -392,6 +394,7 @@ async function expectFallback(ctx, words, { calls = 0 } = {}) {
 }
 
 const words = (reason, details) => messageFor(new LlmUnavailable(reason, details));
+const requestBox = (view) => inputs(view).find((b) => b.block_id === REQUEST_BLOCK);
 
 test('fallback: the AI switched off', async () => {
   await expectFallback(setup({ env: { APLABS_LLM_OFF: '1' } }), words('off'));
@@ -422,6 +425,45 @@ test('fallback: the person is over their hourly limit', async () => {
 test('fallback: over the hourly spend limit', async () => {
   const p = { ...profile, llm: { ...profile.llm, hourly_usd_limit: 0.000001 } };
   await expectFallback(setup({ p }), words('over_budget'));
+});
+
+test('requestInitial: control characters dropped, line breaks kept, cut to the box\'s limit by code point, blank is nothing', () => {
+  assert.equal(requestInitial('north\r\nlast 90 days\ttop 25'), 'north\nlast 90 days\ttop 25');
+  assert.equal(requestInitial('a\u0000b\u0007c\u001bd\u007fe\u0085f'), 'abcdef');
+  assert.equal(requestInitial('   \n '), '');
+  assert.equal(requestInitial(undefined), '');
+  assert.equal(requestInitial(42), '');
+  const long = '😀'.repeat(REQUEST_MAX_CHARS + 20);
+  const cut = requestInitial(long);
+  assert.equal(Array.from(cut).length, REQUEST_MAX_CHARS);
+  assert.ok(cut.endsWith('😀'));
+  // Slack formatting stays as typed: the box is plain_text, never mrkdwn.
+  assert.equal(requestInitial('<!here> *north* <https://x.invalid|y>'), '<!here> *north* <https://x.invalid|y>');
+});
+
+test('a fallback keeps the request in its box, made safe and cut to the limit, and never shows it as mrkdwn', async () => {
+  const ctx = setup();
+  await openForm(ctx);
+  // Over the AI service's limit: it refuses (too_long) and the form opens.
+  const typed = `<!here> *north*\u0007 ${'x'.repeat(REQUEST_MAX_CHARS + 50)}`;
+  const shown = await readRequest(ctx, typed);
+  assert.equal(shown.view.callback_id, FORM_CALLBACK);
+  assert.equal(firstText(shown.view), words('too_long', { maxChars: REQUEST_MAX_CHARS }));
+  const box = requestBox(shown.view);
+  assert.equal(box.element.type, 'plain_text_input');
+  assert.equal(box.element.initial_value, requestInitial(typed));
+  assert.ok(Array.from(box.element.initial_value).length <= box.element.max_length);
+  assert.ok(!box.element.initial_value.includes('\u0007'));
+  // The request appears nowhere else in the view (no mrkdwn block echoes it).
+  const others = shown.view.blocks.filter((b) => b !== box);
+  assert.ok(!JSON.stringify(others).includes('<!here>'));
+  assert.equal(ctx.model.calls.length, 0);
+});
+
+test('a freshly opened form has an empty request box', async () => {
+  const ctx = setup();
+  const form = await openForm(ctx);
+  assert.equal(requestBox(form.view).element.initial_value, undefined);
 });
 
 test('without the AI service wired in, the form has no box and no button (the 9.3 form)', async () => {

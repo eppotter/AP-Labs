@@ -36,7 +36,8 @@
 // when every value passes its declaration, else one follow-up question (a
 // text box in the same view, its submit answered in the ack), and a second
 // miss opens the form. The AI being off, over a limit or failing shows its
-// plain message above the form. Values the AI or a question fills are held
+// plain message above the form, with the typed request back in its box (made
+// safe and cut to the box's limit, form requestInitial). Values the AI or a question fills are held
 // apart from the checked values (session.pending), so no Confirm can run
 // them unconfirmed. A second Read click while one is reading does nothing.
 //
@@ -189,7 +190,8 @@ function createScopedPull({
       if (refused) return show(refused);
       if (!(err instanceof LlmUnavailable)) log.error('reading a request failed', { module: mod.id, err });
       const notice = messageFor(err instanceof LlmUnavailable ? err : new LlmUnavailable('failed'));
-      return show(form(mod, { sessionId, notice }));
+      // The typed request goes back in its box, so a retry needs no retyping (#149).
+      return show(form(mod, { sessionId, notice, request }));
     }
     const { values, problems } = outcome.checked;
     if (problems.length === 0) {

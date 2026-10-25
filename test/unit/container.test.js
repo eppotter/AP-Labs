@@ -291,6 +291,71 @@ test('install-duckdb-extensions: installs motherduck; its arguments are checked'
   assert.throws(() => parseArgs(['--surprise']), /unknown argument/);
 });
 
+// --- the smoke script's MotherDuck extension checks (DEP-016) --------------------------
+
+// The CI failure text of an offline LOAD motherduck (2026-10-25), and the same
+// line as raw DuckDB prints it, before paths are reduced to file names.
+const INIT_NET_CI = 'Invalid Input Error: Initialization function "motherduck_duckdb_cpp_init" from file "motherduck.duckdb_extension" threw an exception: "Failed to download "http:api.motherduck.com/extension_version" (attempt 5): Could not establish connection"';
+const INIT_NET_RAW = 'Invalid Input Error: Initialization function "motherduck_duckdb_cpp_init" from file "/home/node/.duckdb/extensions/v1.5.6/linux_amd64/motherduck.duckdb_extension" threw an exception: "Failed to download "http://api.motherduck.com/extension_version" (attempt 5): Could not establish connection"';
+
+test('classifyOfflineLoad: accepts only the init failing on MotherDuck\'s network call', () => {
+  const { classifyOfflineLoad } = require('../../scripts/container-smoke');
+  assert.equal(classifyOfflineLoad(INIT_NET_CI), 'needs_network');
+  assert.equal(classifyOfflineLoad(INIT_NET_RAW), 'needs_network');
+  assert.equal(classifyOfflineLoad(INIT_NET_CI.replace('Could not establish connection', 'Could not resolve host: api.motherduck.com')), 'needs_network');
+
+  const cases = [
+    ['IO Error: Extension "motherduck.duckdb_extension" not found.', 'missing'],
+    ['Catalog Error: Extension "motherduck" is not installed', 'missing'],
+    ['IO Error: Failed to install extension "motherduck": autoinstall_known_extensions is disabled', 'install'],
+    ['Extension Autoloading Error: An error occurred while trying to automatically install the required extension \'motherduck\'', 'install'],
+    ['HTTP Error: Failed to download extension "motherduck" at URL "http:extensions.duckdb.org/v1.5.6/linux_amd64/motherduck.duckdb_extension.gz" (HTTP 0)', 'install'],
+    ['IO Error: Failed to download extension from repository "core"', 'install'],
+    ['Invalid Input Error: Initialization function "motherduck_duckdb_cpp_init" from file "motherduck.duckdb_extension" threw an exception: "Failed to download "http:extensions.duckdb.org/x" (attempt 5): Could not establish connection"', 'install'],
+    ['Invalid Input Error: Extension "motherduck.duckdb_extension" was built for DuckDB version v1.4.0, but we can only load extensions built for DuckDB version v1.5.6.', 'other'],
+    ['Invalid Input Error: Initialization function "motherduck_duckdb_cpp_init" from file "motherduck.duckdb_extension" threw an exception: "Invalid token"', 'other'],
+    ['Invalid Input Error: Initialization function "motherduck_duckdb_cpp_init" from file "motherduck.duckdb_extension" threw an exception: "Failed to download "http:api.motherduck.com/extension_version" (attempt 5): HTTP 500"', 'other'],
+    ['Invalid Input Error: Initialization function "other_init" from file "other.duckdb_extension" threw an exception: "Failed to download "http:api.motherduck.com/extension_version" (attempt 5): Could not establish connection"', 'other'],
+    [`${INIT_NET_CI} and then something else`, 'other'],
+    ['Out of Memory Error: failed to allocate', 'other'],
+    ['', 'other'],
+    [undefined, 'other'],
+  ];
+  for (const [reason, kind] of cases) assert.equal(classifyOfflineLoad(reason), kind, String(reason));
+});
+
+test('extensionFolderProblems: both MotherDuck files, in $HOME/.duckdb/extensions/<pinned version>/<platform>', () => {
+  const { extensionFolderProblems } = require('../../scripts/container-smoke');
+  const dir = '/home/node/.duckdb/extensions/v1.5.6/linux_amd64';
+  const good = () => ({
+    version: 'v1.5.6',
+    platform: 'linux_amd64',
+    extensions: [
+      { name: 'motherduck', installed: true, installPath: `${dir}/motherduck.duckdb_extension` },
+      { name: 'motherduck_impl', installed: true, installPath: `${dir}/motherduck_impl.v1.5.6-2026-10-707.duckdb_extension` },
+    ],
+  });
+  const opts = { pinned: '1.5.6-r.2', home: '/home/node', isFile: () => true };
+  assert.deepEqual(extensionFolderProblems(good(), opts), []);
+
+  const wrongVersion = { ...good(), version: 'v1.4.0' };
+  assert.match(extensionFolderProblems(wrongVersion, opts).join('\n'), /not the pinned v1\.5\.6/);
+  const noImpl = good();
+  noImpl.extensions[1] = { name: 'motherduck_impl', installed: false, installPath: '' };
+  assert.deepEqual(extensionFolderProblems(noImpl, opts), ['motherduck_impl is not installed']);
+  const elsewhere = good();
+  elsewhere.extensions[0].installPath = '/root/.duckdb/extensions/v1.5.6/linux_amd64/motherduck.duckdb_extension';
+  assert.match(extensionFolderProblems(elsewhere, opts).join('\n'), /motherduck is at \/root/);
+  const builtIn = good();
+  builtIn.extensions[0].installPath = '(BUILT-IN)';
+  assert.match(extensionFolderProblems(builtIn, opts).join('\n'), /motherduck is at/);
+  assert.deepEqual(extensionFolderProblems(good(), { ...opts, isFile: () => false }), [
+    `motherduck file is missing: ${dir}/motherduck.duckdb_extension`,
+    `motherduck_impl file is missing: ${dir}/motherduck_impl.v1.5.6-2026-10-707.duckdb_extension`,
+  ]);
+  assert.match(extensionFolderProblems(good(), { ...opts, pinned: 'latest' }).join('\n'), /cannot read the pinned/);
+});
+
 // --- the smoke script's boot checks, outside the image --------------------------------
 
 async function freePort() {

@@ -177,9 +177,10 @@ function checkValues(parameters, raw = {}) {
   return { values, problems };
 }
 
-// A value as a person reads it: Yes/No for a boolean, else its text.
+// A value as a person reads it, by the input's declared type: Yes/No only
+// for a boolean input holding a boolean, else its text (a number 0 reads 0).
 function displayValue(p, v) {
-  if (p.type === 'boolean') return v ? 'Yes' : 'No';
+  if (p.type === 'boolean' && typeof v === 'boolean') return v ? 'Yes' : 'No';
   return String(v);
 }
 

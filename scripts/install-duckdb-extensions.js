@@ -9,9 +9,11 @@
 //   node scripts/install-duckdb-extensions.js [--extension-dir <absolute dir>]
 //
 // For each extension: INSTALL it for the pinned @duckdb/node-api version,
-// then LOAD it once. Loading motherduck fetches its implementation part
-// (motherduck_impl) into the same folder, so a later LOAD works with the
-// network off. --extension-dir is the runtime user's $HOME/.duckdb/extensions
+// then LOAD it once. Loading motherduck (the build has network) fetches its
+// implementation part (motherduck_impl) into the same folder; keep the LOAD.
+// A later LOAD still needs MotherDuck's network, because the extension's init
+// calls MotherDuck's API every time; the container smoke test checks both
+// files are installed and that DuckDB finds the extension offline. --extension-dir is the runtime user's $HOME/.duckdb/extensions
 // in the image, written by root so the app can read it but not change it.
 // Without it, DuckDB's default folder for the current user is used.
 // No token is read or needed. Exits 0 when every extension installed and

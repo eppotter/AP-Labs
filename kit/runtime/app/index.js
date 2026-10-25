@@ -46,18 +46,18 @@
 // "jobs: on (n scheduled)", "off (profile)" or "off (APLABS_JOBS_OFF)". The
 // scheduler starts after Slack connects and stops first on SIGTERM or SIGINT.
 //
-// Story 10.2: the registry has checked each approval-write module's connector
-// at boot; main() then makes one instance per connector those modules name,
-// with the app's logger and env (kit/runtime/archetypes/approval-write/
-// connectors.js, the only engine file that loads a connector), and hands them
-// to the hubs. A connector that can't be created refuses to start.
-//
 // Story 11.2: with APLABS_HEALTH_PORT set, boot starts the health listener
 // (./health, AD-13) before the data and Slack, so its 90-second grace covers
 // the connect. A malformed port or one in use refuses to start, naming the
 // variable. The Socket Mode client's connection events feed it: it fails
 // closed (never connected, or down over 60 seconds, after the grace: 503).
 // The startup line says "health: on (port n)" or "off"; shutdown closes it.
+//
+// Story 10.2: the registry has checked each approval-write module's connector
+// at boot; main() then makes one instance per connector those modules name,
+// with the app's logger and env (kit/runtime/archetypes/approval-write/
+// connectors.js, the only engine file that loads a connector), and hands them
+// to the hubs. A connector that can't be created refuses to start.
 //
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
