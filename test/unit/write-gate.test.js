@@ -131,6 +131,62 @@ test('rule: exempt paths allow; a mix of exempt and gated paths does not', () =>
   denied(run({ dir: d, input: write(d, 'Sandbox/a.js') }));
 });
 
+// Engine T3 floors (#68): a hostile fixture profile lists every guarded path
+// under tiers.T1/T2, inert and gate.exempt.
+const LOWERED = fs.readFileSync(path.join(__dirname, '../fixtures/profiles/lowered-floors.yml'), 'utf8');
+const FLOORED = [
+  '.aplabs/context/data.md', 'kit/lib/gate/index.js', 'kit/lib/tier/index.js', 'kit/hooks/README.md',
+  'kit/fixture/publish.js', 'kit/fixture/md-probe.js', 'kit/runtime/data/index.js', 'kit/runtime/sql/index.js',
+  'kit/runtime/access/index.js', 'kit/lib/permissions/index.js', 'kit/lib/profile/index.js', 'kit/lib/secrets/index.js',
+  '.claude/settings.json', '.codex/hooks.json',
+];
+
+test('rule: a target under an engine T3 floor is never exempt, whatever gate.exempt says', () => {
+  const d = repo(LOWERED);
+  for (const rel of FLOORED) {
+    assert.match(denied(run({ dir: d, input: write(d, rel) })), /until the work is routed/, rel);
+  }
+  // Exempt globs match exact case and floors ignore it: KIT/** in the profile does not open KIT/Lib/Gate.
+  denied(run({ dir: d, input: write(d, 'KIT/Lib/Gate/index.js') }));
+  // Nearby paths the profile exempts stay exempt.
+  for (const rel of ['kit/fixture/build.js', 'kit/runtime/slack/handle.js', 'kit/lib/review/index.js', 'sandbox/a.js', '.claude/settings.local.json']) {
+    assert.deepEqual(run({ dir: d, input: write(d, rel) }), SILENT, rel);
+  }
+  // One guarded target in a patch of exempt ones gates the whole patch.
+  const patch = '*** Begin Patch\n*** Add File: sandbox/a.js\n+x\n*** Update File: kit/lib/gate/index.js\n+y\n*** End Patch\n';
+  const r = run({ dir: d, args: ['--harness', 'codex'], input: { hook_event_name: 'PreToolUse', cwd: d, tool_name: 'apply_patch', tool_input: { command: patch } } });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /kit\/lib\/gate\/index\.js/);
+});
+
+test('engine floors reach the plan check as T3 even when the profile lowers them', () => {
+  const d = repo(LOWERED);
+  const e = spawnSync('node', [ENGAGE, '--reason', 'floors'], { cwd: d, encoding: 'utf8', env: cleanEnv() });
+  assert.equal(e.status, 0, e.stderr);
+  for (const rel of FLOORED) {
+    assert.match(denied(run({ dir: d, input: write(d, rel) })), /This is T3 work and no plan is recorded/, rel);
+  }
+  // A nearby path the profile lists under T1 flows with the marker alone.
+  assert.deepEqual(run({ dir: d, input: write(d, 'kit/runtime/slack/handle.js') }), SILENT);
+});
+
+test('an edit through a symlink is judged by the real path, so an exempt link cannot reach a floor', () => {
+  const d = repo(LOWERED);
+  fs.mkdirSync(path.join(d, 'kit/lib/gate'), { recursive: true });
+  fs.writeFileSync(path.join(d, 'kit/lib/gate/index.js'), 'x');
+  fs.mkdirSync(path.join(d, '.claude'));
+  fs.writeFileSync(path.join(d, '.claude/settings.json'), '{}');
+  fs.mkdirSync(path.join(d, 'sandbox'));
+  fs.symlinkSync('../kit/lib/gate', path.join(d, 'sandbox/gate-link'));
+  fs.symlinkSync('../.claude/settings.json', path.join(d, 'sandbox/settings.json'));
+  for (const rel of ['sandbox/gate-link/index.js', 'sandbox/gate-link/new.js', 'sandbox/settings.json']) {
+    const reason = denied(run({ dir: d, input: write(d, rel) }));
+    assert.match(reason, /Blocked: (kit\/lib\/gate|\.claude)\//, rel);
+  }
+  spawnSync('node', [ENGAGE, '--reason', 'floors'], { cwd: d, env: cleanEnv() });
+  assert.match(denied(run({ dir: d, input: write(d, 'sandbox/gate-link/index.js') })), /This is T3 work/);
+});
+
 test('rule: an edit inside a subagent (agent_id) allows', () => {
   const d = repo();
   assert.deepEqual(run({ dir: d, input: write(d, 'src/a.js', { agent_id: 'agent-123', agent_type: 'builder' }) }), SILENT);

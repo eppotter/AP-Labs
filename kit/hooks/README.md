@@ -26,7 +26,7 @@ Decision for one edit, first match wins:
 2. Repo not governed (no `.aplabs/profile.yml`): allow.
 3. Every target is outside the repo: allow.
 4. Profile invalid: **deny** with the validation errors ("fix the profile first"). An edit to the profile file itself is allowed, so it can be fixed.
-5. Every target matches the profile's `gate.exempt` globs (repo-relative, exact case, the `kit/lib/tier` glob dialect): allow.
+5. Every target matches the profile's `gate.exempt` globs (repo-relative, exact case, the `kit/lib/tier` glob dialect): allow. A target under an engine T3 floor (below), `.aplabs/**` included, is never exempt, whatever the profile says.
 6. The edit is not inside a subagent (Claude Code's hook input carries `agent_id`) and no fresh engagement marker exists for this session or this worktree: **deny**, telling the session to route the work to a Builder subagent or run `npm run engage`.
 7. Plan approval, by the tier `kit/lib/tier` computes for the in-repo targets (an edit whose paths cannot be read counts as T3: fail high):
    1. T0/T1, and the worktree marker is not `--kind onboarding`: allow. Deciding and reporting is the session's job.
@@ -36,6 +36,10 @@ Decision for one edit, first match wins:
    5. Otherwise: allow.
 
 Subagent edits go through step 7 too: an edit by a subagent is no longer allowed outright, only past step 6.
+
+**Engine T3 floors (#68).** These paths always score T3 under every profile: `.aplabs/**`, `kit/runtime/access/**`, `kit/lib/permissions/**`, `kit/lib/profile/**`, `kit/lib/secrets/**`, `kit/fixture/publish.js`, `kit/fixture/remote.js`, `kit/fixture/motherduck.js`, `kit/fixture/md-probe.js`, `kit/runtime/data/**`, `kit/runtime/sql/**`, `kit/lib/tier/**`, `kit/lib/gate/**`, `kit/hooks/**` (this README included), `.claude/settings.json` and `.codex/hooks.json`. The list is `ENGINE_T3` in `kit/lib/tier`. A profile cannot lower them through `tiers.T1`/`T2`, `inert` or `gate.exempt`. They match case-insensitively, after normalising, and the gate resolves an edit through a symlink to its real path first. So every edit to the gate, the hooks or their wiring needs an approved, reviewed plan.
+
+**Break glass.** If the gate itself wrongly blocks work (for example a bug in `kit/lib/gate` denies every edit, so the fix cannot be made through it), the human edits the file by hand, or briefly removes the `write-gate.sh` entry from `.claude/settings.json` (or `.codex/hooks.json`) for that change. Then they put it right through a normal PR: the fix, the hook entry restored, and the PR reviewed like any other T3 change. A model never does this on its own.
 
 Allows are silent and not logged. Every deny, every engage and every recorded approval appends one tab-separated line to `<git-dir>/aplabs/gate.log`.
 

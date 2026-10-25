@@ -17,8 +17,9 @@ const ROWS = {
   'kit/runtime/archetypes/approval-write/index.js': 'T3',
   'kit/runtime/connectors/contract.js': 'T3',
   'kit/lib/secrets/index.js': 'T3',
-  'kit/runtime/sql/guardrail.js': 'T2',
-  'kit/runtime/data/index.js': 'T2',
+  // Brightside's T2 rows for sql and data are overridden by the engine's T3 floor (#68).
+  'kit/runtime/sql/guardrail.js': 'T3',
+  'kit/runtime/data/index.js': 'T3',
   'kit/runtime/llm/index.js': 'T2',
 };
 
