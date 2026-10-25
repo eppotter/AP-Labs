@@ -5,12 +5,29 @@
 // computed) wins, and a declaration below the computed floor is a finding.
 //
 // Floor of one path, first match wins:
-//   T3  .aplabs/**, hard-coded: the profile can never lower its own floor
+//   T3  engine floors (ENGINE_T3), hard-coded, so no profile can lower them
+//       (not by tier rows, not by inert, and the write gate never exempts
+//       them through gate.exempt):
+//         .aplabs/**                 the client's profile and context
+//         kit/runtime/access/**, kit/lib/permissions/**, kit/lib/profile/**
+//                                    who can use which tool; the untrusted profile
+//         kit/lib/secrets/**, kit/fixture/{publish,remote,motherduck,md-probe}.js
+//                                    every key; the MotherDuck write key
+//         kit/runtime/data/**, kit/runtime/sql/**
+//                                    the bot's read-only connection; the SQL checker
+//         kit/lib/tier/**, kit/lib/gate/**, kit/hooks/**,
+//         .claude/settings.json, .codex/hooks.json
+//                                    the governance itself and the hook wiring
+//       A path near these but outside them (kit/fixture/build.js,
+//       kit/runtime/slack/**, kit/lib/review/**) keeps its profile tier.
+//       Compute a change's tier with renames as both paths
+//       (git diff --no-renames --name-only), so a move cannot hide a floor.
 //   T3  profile tiers.T3
 //   T2  profile tiers.T2
 //   T1  profile tiers.T1
-//   T1  agent instruction files (CLAUDE.md, AGENTS.md, SKILL.md, .claude/**):
-//       they steer the builder, so they are never inert
+//   T1  agent instruction files (CLAUDE.md, AGENTS.md, SKILL.md, .claude/**;
+//       .claude/settings.json is an engine floor above): they steer the
+//       builder, so they are never inert
 //   T0  profile inert
 //   T1  anything else: code never floors at T0
 // Floor of a change = the highest tier of any path. T0 only when EVERY path is inert.
@@ -22,6 +39,8 @@
 //   - Paths are normalised first, so docs/../billing/x.js is billing/x.js,
 //     but never trimmed: whitespace is part of a filename.
 //     A path that leaves the repo root, or is absolute, floors at T3.
+//   - Symlinks are the caller's job: the write gate resolves each target to
+//     its real path before asking for a tier.
 //   - No paths at all is an error, never T0 (an upstream diff that failed
 //     must not read as "nothing changed").
 //

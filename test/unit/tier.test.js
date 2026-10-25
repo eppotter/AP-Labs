@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { loadProfile, validateProfile } = require('../../kit/lib/profile');
-const { tierOf, tierFloor, maxTier, resolveTier, globMatcher, ENGINE_T3 } = require('../../kit/lib/tier');
+const { tierOf, tierFloor, maxTier, resolveTier, globMatcher, isEngineFloor, ENGINE_T3 } = require('../../kit/lib/tier');
 
 const fixture = path.join(__dirname, '../fixtures/profiles/tiers.yml');
 const profile = loadProfile(fixture);
@@ -78,6 +78,51 @@ test('every engine floor scores T3, under a minimal profile and this one', () =>
     assert.equal(tierFloor(minimal, ['README.md', p]), 'T3', `${p} in a change`);
   }
   assert.equal(tierOf(minimal, 'kit/lib/gate/deep/nested/x.js'), 'T3', '** matches any depth');
+});
+
+const lowered = loadProfile(path.join(__dirname, '../fixtures/profiles/lowered-floors.yml'));
+
+test('a profile cannot lower an engine floor through tiers.T1, tiers.T2 or inert', () => {
+  for (const p of Object.values(GUARDED)) assert.equal(tierOf(lowered, p), 'T3', p);
+  // The fixture's rows do apply to everything else.
+  assert.equal(tierOf(lowered, 'kit/fixture/build.js'), 'T2', 'tiers.T2 kit/fixture/**');
+  assert.equal(tierOf(lowered, 'kit/runtime/slack/handle.js'), 'T1', 'tiers.T1 kit/**');
+  assert.equal(tierOf(lowered, '.claude/settings.local.json'), 'T1');
+  assert.deepEqual(resolveTier(lowered, ['kit/runtime/sql/index.js'], 'T1'), { floor: 'T3', tier: 'T3', belowFloor: true });
+});
+
+test('nearby paths outside the floors keep their current tier', () => {
+  const minimal = validateProfile({ schema_version: 1, client: { id: 'm', name: 'M' }, users: [{ id: 'a', name: 'A', role: 'admin' }] });
+  const nearby = [
+    'kit/fixture/build.js', 'kit/fixture/query.js', 'kit/fixture/publish.test.js', 'kit/fixture/publish.jsx',
+    'kit/runtime/slack/handle.js', 'kit/runtime/sqlite/x.js', 'kit/runtime/database/x.js', 'kit/runtime/connectors/contract.js',
+    'kit/lib/review/index.js', 'kit/lib/tiers/x.js', 'kit/lib/gateway/x.js', 'kit/hooks.js', 'kit/lib/profile.js',
+    '.codex/config.toml', 'docs/kit/hooks/README.md',
+  ];
+  for (const p of nearby) assert.equal(tierOf(minimal, p), 'T1', p);
+  assert.equal(tier('kit/hooksREADME.md'), 'T0', 'a profile can still mark a nearby doc inert');
+  assert.equal(tierOf(minimal, '.claude/agents/x.md'), 'T1', 'the rest of .claude/** is an instruction file, T1');
+});
+
+test('engine floors follow the engine rules: case, normalising, leaving the repo', () => {
+  for (const p of ['KIT/Lib/Gate/index.js', 'Kit/Fixture/Publish.JS', '.CLAUDE/Settings.json', '.Codex/HOOKS.json', 'kit/runtime/SQL/x.js']) {
+    assert.equal(tierOf(lowered, p), 'T3', p);
+  }
+  for (const p of ['./kit/lib/tier/index.js', 'docs/../kit/hooks/x.sh', 'kit\\lib\\secrets\\index.js', 'kit//runtime//data/x.js']) {
+    assert.equal(tierOf(lowered, p), 'T3', p);
+  }
+  for (const p of ['../kit/lib/gate/index.js', '/repo/kit/lib/gate/index.js']) assert.equal(tierOf(lowered, p), 'T3', p);
+});
+
+test('isEngineFloor: guarded paths and paths leaving the repo; no profile involved', () => {
+  for (const p of Object.values(GUARDED)) assert.ok(isEngineFloor(p), p);
+  assert.ok(isEngineFloor('KIT/HOOKS/x.sh'));
+  assert.ok(isEngineFloor('../x.js'));
+  assert.ok(isEngineFloor('/etc/passwd'));
+  assert.ok(isEngineFloor('docs/../.aplabs/profile.yml'));
+  for (const p of ['kit/fixture/build.js', 'kit/runtime/slack/x.js', 'kit/lib/review/x.js', 'sandbox/a.js', '.claude/settings.local.json']) {
+    assert.ok(!isEngineFloor(p), p);
+  }
 });
 
 test('raising rules ignore case; the lowering (inert) rule does not', () => {

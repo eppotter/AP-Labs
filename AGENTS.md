@@ -65,7 +65,7 @@ How every build runs, in Claude Code or Codex. Background and rationale: `docs/o
 
 1. Restate the ask in one or two sentences.
 2. Unless already answered, ask the three intake questions: (1) the goal and who it is for; (2) the context, existing work and data; (3) the constraints, audience and anything off-limits.
-3. Compute the tier with `node kit/lib/tier <paths…>` for every path the work will touch. Never declare a tier by hand.
+3. Compute the tier with `node kit/lib/tier <paths…>` for every path the work will touch. Never declare a tier by hand. List a rename as both its old and new path (`git diff --no-renames --name-only <base> | node kit/lib/tier`), so moving a guarded folder can't hide it. Some engine paths are always T3, whatever the profile says (`ENGINE_T3` in `kit/lib/tier`).
 4. Reuse check: search the repo, `docs/planning/`, `.claude/agents/` and the package scripts. Default to extending what exists, and say so.
 
 ### The 8 core stages
