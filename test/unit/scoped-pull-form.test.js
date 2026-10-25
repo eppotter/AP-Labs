@@ -8,7 +8,9 @@
 // Change are buttons that update the view in place with views.update on its
 // id and hash, and never push. Sessions are bound to the person, close after
 // 30 idle minutes, and Confirm runs once. The module is a fixture, never a
-// client's manifest.
+// client's manifest. Confirm runs the list (Story 9.5) against a stand-in
+// data source that answers two rows; running and delivery are tested in
+// scoped-pull-run.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -78,15 +80,21 @@ function screenOf(app) {
   };
 }
 
-function setup({ canUse = () => true, views = true, modules = [PULL] } = {}) {
+// A stand-in query runner: two rows for any query, each call recorded.
+function fakeData(rows = [{ name: 'Ann', zone: 'north' }, { name: 'Bo', zone: 'north' }]) {
+  const runs = [];
+  return { runs, run: async (sql, params, opts) => { runs.push({ sql, params, opts }); return rows; }, describe: () => ({ available: true }) };
+}
+
+function setup({ canUse = () => true, views = true, modules = [PULL], data = fakeData() } = {}) {
   let t = 1_000_000;
   const clock = { now: () => t, advance: (ms) => { t += ms; } };
   const store = createStore({ now: clock.now });
   const app = new FakeSlackApp({ views });
   const log = quietLog();
   const registry = createRegistry({ hubs: base.hubs, modules: [...base.modules, ...modules] });
-  registerHubs(app, { registry, profile, env: 'dev', log, store, canUse: (person, mod) => canUse(person, mod) });
-  return { app, log, store, clock, screen: screenOf(app) };
+  registerHubs(app, { registry, profile, env: 'dev', log, store, data, canUse: (person, mod) => canUse(person, mod) });
+  return { app, log, store, clock, data, screen: screenOf(app) };
 }
 
 const MENU_VIEW = { id: 'VMENU', type: 'modal', private_metadata: 'alpha', title: { type: 'plain_text', text: 'Alpha tools' } };
@@ -234,13 +242,14 @@ test('Change updates the view in place to the form (with its submit), prefilled;
   assert.equal(ctx.app.views.filter((v) => v.method === 'push').length, 1);
 });
 
-test('Confirm consumes the session and shows the confirmed values; a double Confirm is told it already ran', async () => {
+test('Confirm consumes the session, runs the list and shows the result with its values; a double Confirm is told it already ran', async () => {
   const ctx = setup();
   const form = await openForm(ctx);
   await submit(ctx, { zone: 'north', days: '90' });
   const confirmScreen = ctx.screen.get();
   const done = await click(ctx, 'confirm');
-  assert.match(done.view.blocks[0].text.text, /Confirmed/);
+  assert.equal(done.view.blocks[0].text.text, '*Lapsed list: 2 rows.*');
+  assert.equal(ctx.data.runs.length, 1);
   assert.deepEqual(fieldsOf(done.view), [['*Zone*', 'north'], ['*Days*', '90']]);
   assert.deepEqual(buttonsOf(done.view), []);
   // The replay carries the same session.
@@ -256,7 +265,7 @@ test('a double Confirm while the first is still running runs once and is told it
   let release;
   const gate = new Promise((r) => { release = r; });
   const store = createStore();
-  const sp = createScopedPull({ store, log: quietLog(), run: async (mod, values) => { runs.push(values); await gate; return 'ran'; } });
+  const sp = createScopedPull({ store, log: quietLog(), run: async (mod, values) => { runs.push(values); await gate; return { message: 'ran', failed: false }; } });
   const form = sp.open(PULL, 'U1');
   const id = form.modal.privateMetadata.split(':')[1];
   const shown = [];
@@ -266,6 +275,7 @@ test('a double Confirm while the first is still running runs once and is told it
   const first = sp.click({ verb: 'confirm', sessionId: id, person: 'U1', resolve, show });
   await sp.click({ verb: 'confirm', sessionId: id, person: 'U1', resolve, show });
   assert.equal(shown.at(-1), RUNNING);
+  assert.match(shown[0].text, /running/);
   release();
   await first;
   assert.equal(shown.at(-1), 'ran');
@@ -284,7 +294,7 @@ test('a submission or click by a different person is refused and leaves the owne
   const refused = await click(ctx, 'confirm', { user: { id: 'U2' }, session });
   assert.equal(blockTexts(refused.view)[0], NOT_YOURS);
   const mine = await click(ctx, 'confirm', { session, from: { ...confirmScreen, hash: ctx.screen.get().hash } });
-  assert.match(mine.view.blocks[0].text.text, /Confirmed/);
+  assert.match(mine.view.blocks[0].text.text, /2 rows/);
   // After the owner's Confirm, a replay by someone else is still refused, not told about the run.
   const replay = await click(ctx, 'confirm', { user: { id: 'U2' }, session });
   assert.equal(blockTexts(replay.view)[0], NOT_YOURS);
@@ -340,20 +350,24 @@ test('a confirmed result beaten to the view by a "still running" notice is re-se
   await openForm(ctx);
   await submit(ctx, { zone: 'north' });
   const real = ctx.app.client.views.update;
-  let first = true;
+  // The "Running…" notice and the result's first try both meet a conflict.
+  let conflicts = 2;
   ctx.app.client.views.update = async (args) => {
-    if (first) {
-      first = false;
+    if (conflicts > 0) {
+      conflicts -= 1;
       ctx.app.views.push({ method: 'update', args });
       throw Object.assign(new Error('hash_conflict'), { data: { error: 'hash_conflict' } });
     }
     return real(args);
   };
   await click(ctx, 'confirm');
-  const updates = calls(ctx.app, 'update').slice(-2);
-  assert.equal(typeof updates[0].hash, 'string');
-  assert.equal(updates[1].hash, undefined);
-  assert.match(updates[1].view.blocks[0].text.text, /Confirmed/);
+  const updates = calls(ctx.app, 'update');
+  assert.equal(updates.length, 3);
+  assert.match(updates[0].view.blocks[0].text.text, /Running/);
+  assert.equal(typeof updates[1].hash, 'string');
+  assert.equal(updates[2].hash, undefined);
+  assert.match(updates[2].view.blocks[0].text.text, /2 rows/);
+  assert.ok(ctx.log.lines.some((l) => l.msg === 'stale view result dropped' && l.fields.action === 'confirm'));
   assert.ok(ctx.log.lines.some((l) => l.msg === 'stale view replaced by a confirmed result'));
 });
 

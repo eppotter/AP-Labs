@@ -15,7 +15,13 @@
 //   Change    back to the form, prefilled with the checked values.
 //   Confirm   consumes the session, synchronously, before anything runs, so a
 //             double click or a replay runs once; the second click is told it
-//             is running or done. Story 9.5 runs the query here.
+//             is running or done. Then (Story 9.5) the view shows "Running…",
+//             run() binds the declared inputs into the module's fixed SQL,
+//             runs it through the query runner and sends the CSV to the
+//             person's DM (./run), and the result replaces the view. A run
+//             that did not deliver the list (blocked, failed, data
+//             unavailable, CSV not sent) still uses the session up: a replay
+//             is told it did not finish and to open the module again.
 //
 // Change and Confirm are buttons; their result goes to show(message, opts),
 // which the hub wiring turns into a views.update of the view the click came
@@ -27,13 +33,16 @@
 // action.
 
 const { SessionExpired, SessionNotYours, AlreadyConfirmed } = require('../../errors');
+const { PLAIN_ERROR } = require('../../slack/handle');
 const { messageFor } = require('../../messages');
 const session = require('./session');
 const { checkValues, checkDeclarations } = require('./params');
 const {
-  formMessage, formErrors, confirmMessage, confirmedMessage, readState, verbOf, parseMetadata,
+  formMessage, formErrors, confirmMessage, readState, verbOf, parseMetadata,
   ACTIONS, ACTION_PATTERN, FORM_CALLBACK,
 } = require('./form');
+const { createRunner, checkQuery, ROW_CAP } = require('./run');
+const { runningMessage } = require('./results');
 
 // The message for a session lookup that found nothing usable.
 function refusalFor(status) {
@@ -41,14 +50,16 @@ function refusalFor(status) {
     case session.STATUS.NOT_YOURS: return messageFor(new SessionNotYours());
     case session.STATUS.RUNNING: return messageFor(new AlreadyConfirmed({ done: false }));
     case session.STATUS.DONE: return messageFor(new AlreadyConfirmed({ done: true }));
+    case session.STATUS.FAILED: return messageFor(new AlreadyConfirmed({ done: true, failed: true }));
     default: return messageFor(new SessionExpired());
   }
 }
 
 // store: the runtime store (AD-7). log: the app logger. run(mod, values,
-// person): what a consumed Confirm does; it resolves the message to show.
-// Defaults to the confirmed-values screen until Story 9.5.
-function createScopedPull({ store, log, run = async (mod, values) => confirmedMessage(mod, values) }) {
+// person, { client }): what a consumed Confirm does (./run createRunner); it
+// resolves { message, failed }, or a bare message for a run that finished.
+function createScopedPull({ store, log, run }) {
+  if (typeof run !== 'function') throw new TypeError('createScopedPull needs run (see ./run createRunner)');
   // Opens a session on mod for person (a Slack id). Returns the form.
   function open(mod, person) {
     const sessionId = session.open(store, { person, module: mod.id });
@@ -87,8 +98,8 @@ function createScopedPull({ store, log, run = async (mod, values) => confirmedMe
   }
 
   // A Confirm screen button. verb: confirm | change. show(message, { force })
-  // renders into the view.
-  async function click({ verb, sessionId, person, resolve, show }) {
+  // renders into the view. client: the Slack client the run delivers with.
+  async function click({ verb, sessionId, person, resolve, show, client }) {
     const c = check(sessionId, person, resolve, verb);
     if (!c.mod) return show(c.message);
     const { found, mod } = c;
@@ -106,18 +117,27 @@ function createScopedPull({ store, log, run = async (mod, values) => confirmedMe
       // Nothing checked yet (a stale Confirm after Change): back to the form.
       return show(formMessage(mod, { sessionId }));
     }
-    let result;
+    const values = consumed.session.values;
+    let result = { message: PLAIN_ERROR, failed: true };
     try {
-      result = await run(mod, consumed.session.values, person);
+      try {
+        await show(runningMessage(mod, values));
+      } catch (err) {
+        log.warn('could not show running notice', { module: mod.id, err });
+      }
+      const ran = await run(mod, values, person, { client });
+      result = ran && typeof ran === 'object' && Object.hasOwn(ran, 'message') ? ran : { message: ran, failed: false };
+    } catch (err) {
+      log.error('list run failed', { module: mod.id, err });
     } finally {
-      session.finish(store, sessionId, person);
+      session.finish(store, sessionId, person, { failed: result.failed });
     }
-    return show(result, { force: true });
+    return show(result.message, { force: true });
   }
 
   return { open, submit, click };
 }
 
 module.exports = {
-  createScopedPull, checkDeclarations, verbOf, parseMetadata, ACTIONS, ACTION_PATTERN, FORM_CALLBACK,
+  createScopedPull, createRunner, checkQuery, ROW_CAP, checkDeclarations, verbOf, parseMetadata, ACTIONS, ACTION_PATTERN, FORM_CALLBACK,
 };

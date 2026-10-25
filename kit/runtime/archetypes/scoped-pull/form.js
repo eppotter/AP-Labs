@@ -166,19 +166,6 @@ function confirmMessage(mod, { sessionId, values }) {
   };
 }
 
-// What a confirmed request shows until the query step lands (Story 9.5
-// replaces this with the run and its results).
-function confirmedMessage(mod, values) {
-  return {
-    text: `${mod.label}: your values are confirmed.`,
-    blocks: [
-      { type: 'section', text: { type: 'mrkdwn', text: '*Confirmed.* These are the values you chose:' } },
-      ...valueBlocks(mod, values),
-      { type: 'context', elements: [{ type: 'mrkdwn', text: "Running this list isn't switched on yet, so nothing ran. Open it again from the menu to start over." }] },
-    ],
-  };
-}
-
 // The raw text of each input from a view's state (body.view.state), keyed by
 // parameter name. A field Slack did not send reads as undefined.
 function readState(parameters, state) {
@@ -197,6 +184,6 @@ function readState(parameters, state) {
 }
 
 module.exports = {
-  formMessage, formErrors, confirmMessage, confirmedMessage, readState, verbOf, formMetadata, parseMetadata,
+  formMessage, formErrors, confirmMessage, valueBlocks, readState, verbOf, formMetadata, parseMetadata,
   ACTIONS, ACTION_PATTERN, FORM_CALLBACK, SUBMIT, INPUT_BLOCK, VALUE_ACTION,
 };

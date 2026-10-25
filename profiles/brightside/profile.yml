@@ -57,6 +57,10 @@ resources:
   # Gated, not open_access: the admin role confers it; grant it to anyone else who needs it.
   - key: WIN_BACK
     label: Win-back list
+  # Runtime: Unpaid invoices (Story 9.5): client names with what they owe (client data).
+  # Gated, not open_access: the admin role confers it; grant it to anyone else who needs it.
+  - key: UNPAID_INVOICES
+    label: Unpaid invoices
 
 users:
   - id: dana

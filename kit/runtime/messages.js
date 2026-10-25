@@ -10,7 +10,9 @@ const {
   NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, KillSwitchOn,
   ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 } = require('./errors');
-const { SessionExpired, SessionNotYours, AlreadyConfirmed } = require('./errors');
+const {
+  SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
+} = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
 function escapeText(s) {
@@ -70,9 +72,15 @@ const MESSAGES = [
   // Scoped-pull form sessions (Story 9.3).
   [SessionExpired, () => 'This form has expired (forms close after 30 minutes without use). Go back to the menu and open it again.'],
   [SessionNotYours, () => "This form belongs to someone else, so I can't act on it. Open your own from the menu."],
-  [AlreadyConfirmed, ({ done }) => (done
-    ? 'You already confirmed this request, so it ran once and I won\'t run it again. Open it again from the menu for a new one.'
-    : 'You already confirmed this request and it\'s still running, so I won\'t run it twice.')],
+  [AlreadyConfirmed, ({ done, failed }) => {
+    if (!done) return 'You already confirmed this request and it\'s still running, so I won\'t run it twice.';
+    if (failed) return 'You already confirmed this request and it didn\'t finish, so I won\'t run it again from here. Open it again from the menu to try again.';
+    return 'You already confirmed this request, so it ran once and I won\'t run it again. Open it again from the menu for a new one.';
+  }],
+  // Scoped-pull runs (Story 9.5). Each says nothing partial was passed off.
+  [QueryBlocked, (details, { admin }) => `The safety check refused this list's query, so nothing ran and there are no results. I've logged the problem; please tell ${admin}.`],
+  [QueryFailed, (details, { admin }) => `This list's query failed, so there are no results (nothing partial was kept). I've logged the problem; please tell ${admin} if it keeps happening.`],
+  [CsvNotDelivered, (details, { admin }) => `*The CSV didn't arrive.* I couldn't send the file to your DM, so you have only the first rows shown here, not the whole list. Open it again from the menu to try again, or tell ${admin} if it keeps happening.`],
 ];
 
 // Hub wording (Story 6.4). A hub file may set its own welcome and feedback

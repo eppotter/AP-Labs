@@ -21,11 +21,19 @@
 // bounded, each range possible, each default valid. A problem names the
 // module file and the input. A scoped-pull module has no handler: the engine
 // runs its form; its SQL file must exist and is read once at boot.
+//
+// Story 9.5: each scoped pull's SQL is checked at boot without connecting to
+// the data (kit/runtime/archetypes/scoped-pull/run checkQuery): the SQL
+// checker with the profile's forbidden columns, no "${", and every $name in
+// the SQL matched to a declared input both ways. A problem stops startup,
+// naming the module file.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const Ajv2020 = require('ajv/dist/2020');
 const { checkDeclarations } = require('../archetypes/scoped-pull/params');
+const { checkQuery } = require('../archetypes/scoped-pull/run');
+const { forbiddenColumnsOf } = require('../sql');
 
 const SCHEMA_DIR = path.join(__dirname, '../schema');
 // Archetypes whose engine code exists. The other is valid in a manifest but
@@ -154,8 +162,7 @@ function loadHandler(abs, file, problems) {
   return run;
 }
 
-// A scoped-pull's SQL template, read once. Story 9.5 checks it against the
-// guardrail and the declared parameters before it runs.
+// A scoped-pull's SQL template, read once, then checked (checkQuery).
 function loadQuery(abs, file, problems) {
   try {
     const sql = fs.readFileSync(abs, 'utf8');
@@ -174,6 +181,7 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
   const modules = [];
   const hubIds = new Set(hubs.map((h) => h.id));
   const resources = new Set(((profile && profile.resources) || []).map((r) => r.key));
+  const forbiddenColumns = forbiddenColumnsOf(profile);
   const folders = listSorted(path.join(appDir, 'modules'), (d) => d.isDirectory());
   for (const folder of folders) {
     const file = `modules/${folder}/manifest.json`;
@@ -207,6 +215,11 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
     if (m.archetype === 'scoped-pull') {
       const sql = loadQuery(path.join(appDir, 'modules', folder, m.query), file, problems);
       if (sql === undefined) continue;
+      const sqlProblems = checkQuery(sql, m.parameters || [], { forbiddenColumns });
+      if (sqlProblems.length) {
+        problems.push(...sqlProblems.map((p) => `${file}: field "query" (${m.query}) ${p}`));
+        continue;
+      }
       modules.push(Object.freeze({ ...m, file, sql }));
       continue;
     }

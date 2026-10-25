@@ -20,6 +20,17 @@
 // Replies land in this.said (say and postEphemeral), this.responded
 // (respond) and this.posted (chat.postMessage); this.acks counts acks. users.info answers from this.users.
 //
+// Files (Story 9.5): conversations.open({ users }) opens the bot's DM with one
+// person, recorded in this.dms as { user, channel } (channel "D" + the user
+// id without its "U"). files.uploadV2(args) records args in this.uploads and
+// answers the way the Slack client does ({ files: [{ files: [{ id, permalink
+// }] }] }). Like Slack, it rejects an upload without a filename or without
+// content (invalid_arguments), and, stricter than Slack, one without a
+// channel_id (an unshared file reaches no one) or one using the retired
+// channels / channel arguments. Set this.filesFail (an error) to make the
+// upload throw, or this.dmChannel(user) to answer conversations.open with
+// another channel id.
+//
 // new FakeSlackApp({ views: true }) adds client.views: open, push and update
 // record { method, args } in this.views and answer with a view id and a fresh
 // hash; set this.viewsFail[method] to an error to make that call throw.
@@ -49,7 +60,32 @@ class FakeSlackApp {
     this.views = [];
     this.viewsFail = {};
     this.viewSeq = 0;
+    this.dms = [];
+    this.uploads = [];
+    this.filesFail = null;
+    this.dmChannel = (user) => `D${String(user).replace(/^U/, '')}`;
     this.client = {
+      conversations: {
+        open: async ({ users } = {}) => {
+          if (typeof users !== 'string' || !users || users.includes(',')) throw slackError('invalid_arguments', 'users must name one person');
+          const channel = this.dmChannel(users);
+          this.dms.push({ user: users, channel });
+          return { ok: true, channel: { id: channel } };
+        },
+      },
+      files: {
+        uploadV2: async (args = {}) => {
+          const bad = invalidUpload(args);
+          if (bad) throw slackError('invalid_arguments', bad);
+          this.uploads.push(args);
+          if (this.filesFail) throw this.filesFail;
+          const id = `F${this.uploads.length}`;
+          return {
+            ok: true,
+            files: [{ ok: true, files: [{ id, name: args.filename, title: args.title || args.filename, permalink: `https://fake.slack.test/files/${id}` }] }],
+          };
+        },
+      },
       chat: {
         postEphemeral: async (args) => { this.said.push({ ephemeral: true, ...args }); return { ok: true }; },
         postMessage: async (args) => { this.posted.push(args); return { ok: true }; },
@@ -154,6 +190,22 @@ class FakeSlackApp {
   }
 }
 
+// An error shaped like the Slack client's API errors.
+function slackError(code, why) {
+  return Object.assign(new Error(`An API error occurred: ${code} (${why})`), { data: { ok: false, error: code } });
+}
+
+// Why files.uploadV2 would be rejected, or null (see the top).
+function invalidUpload(args) {
+  if (args.channels !== undefined || args.channel !== undefined) return 'channels and channel are retired; use channel_id';
+  if (typeof args.channel_id !== 'string' || !args.channel_id) return 'channel_id is required';
+  if (typeof args.filename !== 'string' || !args.filename) return 'filename is required';
+  const hasContent = typeof args.content === 'string' && args.content.length > 0;
+  if (!hasContent && args.file === undefined) return 'content or file is required';
+  if (hasContent && args.file !== undefined) return 'give content or file, not both';
+  return null;
+}
+
 // Why Slack would reject this modal view, or null.
 function invalidModal(view) {
   if (!view || view.type !== 'modal') return null;
@@ -162,4 +214,4 @@ function invalidModal(view) {
   return null;
 }
 
-module.exports = { FakeSlackApp, invalidModal };
+module.exports = { FakeSlackApp, invalidModal, invalidUpload };
