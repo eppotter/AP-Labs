@@ -49,6 +49,13 @@
 // time limit (30s): a timer calls conn.interrupt() and run() rejects with a
 // DataUnavailableError ("query timed out"). connect, the DuckDB instance
 // factory, is injectable: tests pass a fake and never reach the network.
+//
+// travelMatrix(fromIds, toIds) (Story 13.2, AD-R9) is the one governed read
+// of coordinate columns, built in createData's closure from ./travel so it
+// shares run()'s guard, time limit and redaction. It drops exactly the
+// profile's declared coordinate columns from the forbidden list for its own
+// static template and returns only { from_node, to_node, minutes }. run()
+// still refuses every forbidden column.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -56,6 +63,7 @@ const { DuckDBInstance } = require('@duckdb/node-api');
 const sqlGuard = require('../sql');
 const { DataUnavailable: DataUnavailableError } = require('../errors');
 const md = require('./motherduck');
+const travel = require('./travel');
 
 const REPO = path.resolve(__dirname, '../../..');
 const SOURCE = 'local fixture';
@@ -275,7 +283,8 @@ const seconds = (ms) => (ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`);
 // Local: file, the DuckDB file. MotherDuck: token, the read key (the caller
 // has registered it with the redactor), and connect, the instance factory
 // (default DuckDB). Time limits (ms) and the clock are injectable for tests.
-// Returns { open, run, describe, close }.
+// Returns the frozen { open, run, travelMatrix, describe, close }: no raw
+// connection and no way to change the forbidden columns (AD-R9).
 function createData({
   file = null,
   profile,
@@ -404,11 +413,13 @@ function createData({
     return { result, query, expired: () => expired };
   }
 
-  // Runs one read-only query. Returns rows as JSON-safe objects (BIGINT as a
-  // string). Rejects with QueryRefusedError (guardrail or parameters),
-  // DataUnavailableError, or (local only) DuckDB's own error.
-  async function run(sql, params = {}, { declared = [] } = {}) {
-    const verdict = sqlGuard.checkSql(sql, { forbiddenColumns });
+  // Runs one read-only query under the given forbidden list. Returns rows as
+  // JSON-safe objects (BIGINT as a string). Rejects with QueryRefusedError
+  // (guardrail or parameters), DataUnavailableError, or (local only) DuckDB's
+  // own error. Closure-private: run() passes the profile's forbidden list,
+  // travelMatrix the one travel.travelForbidden makes; nothing else calls it.
+  async function execute(sql, params, declared, forbidden) {
+    const verdict = sqlGuard.checkSql(sql, { forbiddenColumns: forbidden });
     if (!verdict.ok) throw new QueryRefusedError(verdict.rule, verdict.detail);
     if (!isPlainObject(params)) throw new QueryRefusedError(PARAM_RULES.BAD_VALUE, 'params must be a plain object of named values');
     await open();
@@ -429,6 +440,31 @@ function createData({
       // A query that outlived its limit may still be running: close after it.
       if (pending && pending.expired()) pending.query.catch(() => {}).finally(() => closeQuietly(conn));
       else closeQuietly(conn);
+    }
+  }
+
+  // Runs one read-only query. Always under the profile's forbidden columns:
+  // there is no option that drops one (AD-R9).
+  function run(sql, params = {}, { declared = [] } = {}) {
+    return execute(sql, params, declared, forbiddenColumns);
+  }
+
+  // The one governed coordinate read (Story 13.2, AD-R9; template and checks
+  // in ./travel). Resolves the from x to rectangle of { from_node, to_node,
+  // minutes } in the order asked; rejects only with a fixed-text RoutingFault.
+  // Coordinates never leave DuckDB.
+  async function travelMatrix(fromIds, toIds) {
+    try {
+      const routing = travel.routingOf(profile);
+      travel.checkIds(fromIds, toIds, routing);
+      if (!fromIds.length || !toIds.length) return [];
+      const forbidden = travel.travelForbidden(forbiddenColumns, routing);
+      const sql = travel.matrixSql(routing);
+      travel.checkColumnTypes(await execute(travel.COLUMN_TYPES_SQL, {}, [], forbiddenColumns), routing);
+      const rows = await execute(sql, travel.matrixParams(fromIds, toIds, routing), travel.MATRIX_PARAMS, forbidden);
+      return travel.rectangle(rows, fromIds, toIds);
+    } catch (err) {
+      throw travel.faultFor(err);
     }
   }
 
@@ -459,7 +495,7 @@ function createData({
     instance = null;
   }
 
-  return Object.freeze({ open, run, describe, close });
+  return Object.freeze({ open, run, travelMatrix, describe, close });
 }
 
 module.exports = {
