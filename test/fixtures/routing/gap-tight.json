@@ -1,0 +1,132 @@
+{
+  "_comment": "Synthetic day for Story 12.5: on crew t1 the 10:20 visit y1 cancelled, leaving 80 minutes between s1's end (10:00) and s2's start (11:20). No candidate's drive in, service and drive out fits. Wednesday 2026-11-04. Not client data; minutes are made up.",
+  "input": {
+    "day": "2026-11-04",
+    "asOf": "2026-11-02",
+    "limits": {
+      "earliestStart": 360,
+      "defaultStart": 480,
+      "aimFinish": 1080,
+      "latestFinish": 1380,
+      "startRoundTo": 5
+    },
+    "crews": [
+      {
+        "crewId": "t1",
+        "zoneId": "north",
+        "baseNode": "crew:t1",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      }
+    ],
+    "stops": [
+      {
+        "stopId": "s1",
+        "node": "property:s1",
+        "currentCrewId": "t1",
+        "routeOrder": 1,
+        "labourMinutes": 360,
+        "serviceMinutes": 120,
+        "locked": false,
+        "rules": [],
+        "start": 480
+      },
+      {
+        "stopId": "s2",
+        "node": "property:s2",
+        "currentCrewId": "t1",
+        "routeOrder": 3,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "start": 680
+      }
+    ],
+    "cancelled": [
+      {
+        "stopId": "y1",
+        "node": "property:y1",
+        "currentCrewId": "t1",
+        "start": 620,
+        "serviceMinutes": 45
+      }
+    ],
+    "candidates": [
+      {
+        "stopId": "k1",
+        "node": "property:k1",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-06",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-23",
+        "flexible": true
+      },
+      {
+        "stopId": "k2",
+        "node": "property:k2",
+        "labourMinutes": 135,
+        "serviceMinutes": 45,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-07",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-23",
+        "flexible": true
+      },
+      {
+        "stopId": "k3",
+        "node": "property:k3",
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-08",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-23",
+        "flexible": true
+      }
+    ]
+  },
+  "matrix": [
+    {
+      "from_node": "property:s1",
+      "to_node": "property:s2",
+      "minutes": 15
+    },
+    {
+      "from_node": "property:s1",
+      "to_node": "property:k1",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:k1",
+      "to_node": "property:s2",
+      "minutes": 12
+    },
+    {
+      "from_node": "property:s1",
+      "to_node": "property:k2",
+      "minutes": 20
+    },
+    {
+      "from_node": "property:k2",
+      "to_node": "property:s2",
+      "minutes": 20
+    },
+    {
+      "from_node": "property:s1",
+      "to_node": "property:k3",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:k3",
+      "to_node": "property:s2",
+      "minutes": 5
+    }
+  ]
+}
