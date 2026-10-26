@@ -20,13 +20,27 @@ A fork records the release it is built from in `.aplabs/template-version`
 
 ## Unreleased
 
+Nothing yet.
+
+## v0.2.0
+
+The runtime phase, and the first release client forks can take. It is published to the distribution repo (`aplabs-template`), whose history starts here.
+
 ### What changed
 
-- The runtime phase: the Slack runtime (hubs, modules, scoped pulls, the approval-write archetype and connectors), the AI parameter filler, the fixture tooling, scheduled jobs, the container and its health check, and template releases with the "engine untouched" check.
+- The Slack runtime: hubs, modules, scoped pulls, "How was this made?", the approval-write archetype and connectors with kill switches and idempotency (Epics 8 to 10).
+- The AI parameter filler ("Read my request"), which fills a module's form from a plain-language ask and falls back to the form (Epic 9).
+- The fixture tooling and the MotherDuck read path for the demo data.
+- Scheduled jobs, the container and its health check (Epic 11).
+- Template releases and updates: `template:release`, the "engine untouched" check, `template:update`, and `template:publish` with the distribution repo and its `dist` CI job.
+- The test suite split into `npm test` and `npm run test:slow`.
+- Known gap: Epic 10's write path (push to the email tool) passes its tests and CI, including the whole Win-back demo offline, but has not yet been checked live in Slack. That check comes in a later release.
 
 ### What a fork must do
 
-- Written with the v0.2.0 entry, once Epic 10 is live-checked and Epic 11 has merged.
+- Start the fork from this release: follow `docs/fork-guide.md`. Clone `aplabs-template` at `v0.2.0`, never the AP Labs source repo, and rename the remote to `upstream`.
+- Run the fork guide's day-one checklist: write the client profile, record the engine with `npm run template:check -- --record v0.2.0`, and keep or remove the Brightside example.
+- Before any module writes to a real client system, check the write path live in the client's Slack: a dry run first, then a small real push.
 
 ## v0.1.0
 
