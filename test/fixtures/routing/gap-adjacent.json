@@ -1,0 +1,117 @@
+{
+  "_comment": "Synthetic day for Story 12.5: on crew h1 two visits in a row cancelled (z1 at 09:30, z2 at 11:00), so one gap runs from s1's end (09:00) to s2's start (13:00). q1 (two hours) fits only the merged gap; q2 is z2's property. Wednesday 2026-11-04. Not client data; minutes are made up.",
+  "input": {
+    "day": "2026-11-04",
+    "asOf": "2026-11-02",
+    "limits": {
+      "earliestStart": 360,
+      "defaultStart": 480,
+      "aimFinish": 1080,
+      "latestFinish": 1380,
+      "startRoundTo": 5
+    },
+    "crews": [
+      {
+        "crewId": "h1",
+        "zoneId": "north",
+        "baseNode": "crew:h1",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      }
+    ],
+    "stops": [
+      {
+        "stopId": "s1",
+        "node": "property:s1",
+        "currentCrewId": "h1",
+        "routeOrder": 1,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "start": 480
+      },
+      {
+        "stopId": "s2",
+        "node": "property:s2",
+        "currentCrewId": "h1",
+        "routeOrder": 4,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "start": 780
+      }
+    ],
+    "cancelled": [
+      {
+        "stopId": "z1",
+        "node": "property:z1",
+        "currentCrewId": "h1",
+        "start": 570,
+        "serviceMinutes": 60
+      },
+      {
+        "stopId": "z2",
+        "node": "property:z2",
+        "currentCrewId": "h1",
+        "start": 660,
+        "serviceMinutes": 60
+      }
+    ],
+    "candidates": [
+      {
+        "stopId": "q1",
+        "node": "property:q1",
+        "labourMinutes": 360,
+        "serviceMinutes": 120,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-06",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-23",
+        "flexible": true
+      },
+      {
+        "stopId": "q2",
+        "node": "property:z2",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-11",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-28",
+        "flexible": true
+      }
+    ]
+  },
+  "matrix": [
+    {
+      "from_node": "property:s1",
+      "to_node": "property:s2",
+      "minutes": 20
+    },
+    {
+      "from_node": "property:s1",
+      "to_node": "property:q1",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "property:s2",
+      "minutes": 10
+    },
+    {
+      "from_node": "crew:h1",
+      "to_node": "property:q1",
+      "minutes": 12
+    },
+    {
+      "from_node": "crew:h1",
+      "to_node": "property:s2",
+      "minutes": 20
+    }
+  ]
+}
