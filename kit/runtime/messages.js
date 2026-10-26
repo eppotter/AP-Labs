@@ -60,6 +60,14 @@ const ROUTING_WORDS = Object.freeze({
   unknown_rule: ({ field }) => `"${field}" names a rule that isn't registered`,
   not_overridable: ({ field }) => `"${field}" tries to change a rule that is always hard`,
   not_function: ({ field }) => `"${field}" is not a check the engine can run`,
+  // travelMatrix (Story 13.2): fixed words, never the query's own text.
+  routing_off: ({ field }) => `"${field}" needs a routing block in the profile, and there is none`,
+  too_many_pairs: ({ field }) => `"${field}" asks for more drive times than the profile allows at once`,
+  not_coordinate_column: ({ field }) => `"${field}" is not a whole-number coordinate column in the data`,
+  no_position: ({ field }) => `"${field}" names a place with no position in the data`,
+  data_unavailable: ({ field }) => `"${field}" could not reach the data`,
+  query_refused: ({ field }) => `"${field}" was refused by the query check`,
+  query_failed: ({ field }) => `"${field}" failed while reading the data`,
 });
 
 // The AI service's refusals (Story 9.1). Each points to the typed form, which
