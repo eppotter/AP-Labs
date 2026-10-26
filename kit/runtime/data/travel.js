@@ -1,11 +1,13 @@
 'use strict';
 
 // travelMatrix's template and checks (Story 13.2, AD-R9, data-design §3): the
-// one governed read of coordinate columns. Pure helpers only: this file opens
-// nothing, runs nothing and imports no DuckDB. The query runner
-// (kit/runtime/data/index.js) builds travelMatrix inside createData's closure
-// from these, so it shares run()'s guard, 30 s time limit and redaction; that
-// file is the only one that may require this one (engine-boundary test).
+// first governed read of coordinate columns (mapPoints, ./map, is the second;
+// AD-R13). Pure helpers only: this file opens nothing, runs nothing and
+// imports no DuckDB. The query runner (kit/runtime/data/index.js) builds
+// travelMatrix inside createData's closure from these, so it shares run()'s
+// guard, 30 s time limit and redaction. That file and ./map (which reuses the
+// source, column-type, guard and fault helpers) are the only ones that may
+// require this one (engine-boundary test).
 //
 // The read:
 //   - the profile's routing.coordinates names, per node kind, the table, its id
@@ -142,22 +144,27 @@ function matrixSql(routing) {
   ].join('\n');
 }
 
+// One list of node ids checked, named name in a refusal: a list of kind-
+// prefixed ids of a declared kind, each once. Shared with mapPoints (./map).
+function checkNodeList(name, ids, routing) {
+  const kinds = new Set(nodeSources(routing).map((s) => s.kind));
+  if (!Array.isArray(ids)) throw fault(name, 'not_list');
+  const seen = new Set();
+  ids.forEach((id, i) => {
+    const at = `${name}[${i}]`;
+    if (typeof id !== 'string') throw fault(at, 'not_text');
+    const sep = id.indexOf(':');
+    if (sep === -1 || !kinds.has(id.slice(0, sep)) || !NODE_ID.test(id.slice(sep + 1))) throw fault(at, 'bad_node');
+    if (seen.has(id)) throw fault(at, 'duplicate');
+    seen.add(id);
+  });
+}
+
 // fromIds and toIds checked: lists of kind-prefixed ids of a declared kind,
 // no repeats within a list, at most max_pairs pairs. Returns them as given.
 function checkIds(fromIds, toIds, routing) {
-  const kinds = new Set(nodeSources(routing).map((s) => s.kind));
-  for (const [name, ids] of [['fromIds', fromIds], ['toIds', toIds]]) {
-    if (!Array.isArray(ids)) throw fault(name, 'not_list');
-    const seen = new Set();
-    ids.forEach((id, i) => {
-      const at = `${name}[${i}]`;
-      if (typeof id !== 'string') throw fault(at, 'not_text');
-      const sep = id.indexOf(':');
-      if (sep === -1 || !kinds.has(id.slice(0, sep)) || !NODE_ID.test(id.slice(sep + 1))) throw fault(at, 'bad_node');
-      if (seen.has(id)) throw fault(at, 'duplicate');
-      seen.add(id);
-    });
-  }
+  checkNodeList('fromIds', fromIds, routing);
+  checkNodeList('toIds', toIds, routing);
   if (fromIds.length * toIds.length > routing.max_pairs) throw fault(FIELD, 'too_many_pairs');
 }
 
@@ -198,16 +205,17 @@ function rectangle(rows, fromIds, toIds) {
   return out;
 }
 
-// Any error from the read as a fixed-text RoutingFault. Nothing of the
-// original (DuckDB's text, the SQL, a path, a value) is carried.
-function faultFor(err) {
+// Any error from the read as a fixed-text RoutingFault naming field (the
+// read: travelMatrix here, mapPoints from ./map). Nothing of the original
+// (DuckDB's text, the SQL, a path, a value) is carried.
+function faultFor(err, field = FIELD) {
   if (err instanceof RoutingFault) return err;
-  if (err instanceof DataUnavailable) return fault(FIELD, 'data_unavailable');
-  if (err && err.code === 'QUERY_REFUSED') return fault(FIELD, 'query_refused');
-  return fault(FIELD, 'query_failed');
+  if (err instanceof DataUnavailable) return fault(field, 'data_unavailable');
+  if (err && err.code === 'QUERY_REFUSED') return fault(field, 'query_refused');
+  return fault(field, 'query_failed');
 }
 
 module.exports = {
-  routingOf, coordinateColumns, travelForbidden, checkColumnTypes, matrixSql, checkIds, matrixParams, rectangle, faultFor,
+  routingOf, nodeSources, checkNodeList, coordinateColumns, travelForbidden, checkColumnTypes, matrixSql, checkIds, matrixParams, rectangle, faultFor,
   COLUMN_TYPES_SQL, MATRIX_PARAMS, COORDINATE_TYPES, EARTH_RADIUS_KM, IDENTIFIER,
 };

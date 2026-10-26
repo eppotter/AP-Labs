@@ -2,7 +2,7 @@
 owner: Dana Reyes          # the named client person who owns this file
 signed_off: 2026-10-25  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
 signed_off_by: "Dana Reyes (Ely as Dana Reyes, 2026-10-25)"  # who signed off: the owner, recorded by a facilitator
-updated: 2026-10-25        # ISO date of the last edit
+updated: 2026-10-26        # ISO date of the last edit
 ---
 
 # Data canon
@@ -306,4 +306,62 @@ expect: 19875325
 tolerance: 0
 owner: Dana Reyes
 signed_off: 2026-10-25
+```
+
+The routing truths below (Story 14.4, data-design §5) check the planted routing scenarios. Each
+`expect` is the generator's planted answer in `targets.json` `routing`. The first runs its SQL
+through the query runner; the other four run the scenario through Brightside's routing adapter
+and the routing engine (`examples/brightside/fixture/truths/routing.js`), reading drive times only
+through `travelMatrix`, which returns whole minutes and never a coordinate (GRD-002). "as_of+n"
+is n days after as_of. They are not signed off yet: until Dana Reyes confirms them they are
+`unverified` and SQLsmith must not rely on them.
+
+```truth
+id: scheduled-stops-next-14d
+statement: "825 stops are booked (status scheduled, not cancelled) from the day after as_of through as_of + 14, the 14th day included."
+run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/scheduled-stops-next-14d.sql]
+expect: 825
+tolerance: 0
+owner: Dana Reyes
+signed_off: pending
+```
+
+```truth
+id: route-optimize-s1-drive
+statement: "S1, crew 4 on as_of+1 (seven stops booked back and forth between cities): the booked day drives 139 minutes. The check fails unless the suggested day drives no longer, and neither day breaks a hard rule or leaves a stop unplaced."
+run: [node, examples/brightside/fixture/truths/routing.js, route-optimize-s1-drive]
+expect: 139
+tolerance: 0
+owner: Dana Reyes
+signed_off: pending
+```
+
+```truth
+id: route-change-s2-top
+statement: "S2, the afternoon stop crew 2 lost on as_of+2 to a cancellation: the top-ranked fill is property 762 (same city, next visit 3 days later)."
+run: [node, examples/brightside/fixture/truths/routing.js, route-change-s2-top]
+expect: 762
+tolerance: 0
+owner: Dana Reyes
+signed_off: pending
+```
+
+```truth
+id: route-change-s2-count
+statement: "S2: exactly 2 candidates can fill the gap. The closer morning-only decoy and the decoy visited too recently for its cadence are both left out."
+run: [node, examples/brightside/fixture/truths/routing.js, route-change-s2-count]
+expect: 2
+tolerance: 0
+owner: Dana Reyes
+signed_off: pending
+```
+
+```truth
+id: route-change-s3-crosszone
+statement: "S3, crew 7 out on as_of+3 (its lead and a cleaner absent): of its 6 stops, 5 move to crews in its zone, 1 is recommended to a crew in another zone (a recommendation, not placed), and 0 are left unplaced. Printed as one number, 100 x in-zone + 10 x cross-zone + unplaced: 510."
+run: [node, examples/brightside/fixture/truths/routing.js, route-change-s3-crosszone]
+expect: 510
+tolerance: 0
+owner: Dana Reyes
+signed_off: pending
 ```

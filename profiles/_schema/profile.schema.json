@@ -174,7 +174,7 @@
     },
 
     "routing": {
-      "description": "Route optimization (kit/runtime/routing, travelMatrix in kit/runtime/data). Optional; absent = routing off. coordinates.nodes names where each kind of stop keeps its position, as micro-degree INTEGER columns; every lat_column and lon_column must also be in sql.forbidden_columns (as table.column), so no other query can read them. Travel minutes = straight-line distance x detour_factor / speed_kmh, rounded up, never below min_travel_minutes (default 5). max_pairs caps one travel rectangle (default 10000). limits are minutes after local midnight, in order (earliest_start <= default_start <= aim_finish <= latest_finish), plus slot_minutes, the start-time step. gap_fill: horizon_days (default 14), limit (default 5) and optional weights that override the engine's ranking weights by input name.",
+      "description": "Route optimization (kit/runtime/routing, travelMatrix in kit/runtime/data). Optional; absent = routing off. coordinates.nodes names where each kind of stop keeps its position, as micro-degree INTEGER columns; every lat_column and lon_column must also be in sql.forbidden_columns (as table.column), so no other query can read them. Travel minutes = straight-line distance x detour_factor / speed_kmh, rounded up, never below min_travel_minutes (default 5). max_pairs caps one travel rectangle (default 10000). limits are minutes after local midnight, in order (earliest_start <= default_start <= aim_finish <= latest_finish), plus slot_minutes, the start-time step. gap_fill: horizon_days (default 14), limit (default 5) and optional weights that override the engine's ranking weights by input name. The routing map (mapPoints in kit/runtime/data, AD-R13): max_points (default 500), map_grid_e6 (default 2000, the floor) and map_min_span_km (default 5, the floor); audience (AD-R17) says who sees it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["coordinates", "speed_kmh", "detour_factor", "limits"],
@@ -230,6 +230,32 @@
               "minProperties": 1,
               "propertyNames": { "$ref": "#/$defs/sqlIdentifier" },
               "additionalProperties": { "type": "number" }
+            }
+          }
+        },
+        "max_points": { "description": "The most node ids one map read (mapPoints) takes (default 500).", "type": "integer", "minimum": 1, "maximum": 5000 },
+        "map_grid_e6": { "description": "The map's grid, in micro-degrees: every place is snapped to it before drawing (default 2000, about 220 m north-south). A smaller value is refused: GRD-002 is signed against it.", "type": "integer", "minimum": 2000, "maximum": 1000000 },
+        "map_min_span_km": { "description": "Every map covers at least this many km each way (default 5). A smaller value is refused: GRD-002 is signed against it.", "type": "number", "minimum": 5, "maximum": 1000 },
+        "audience": {
+          "description": "Who sees the routing map (AD-R17). all_crews and own_crew are resource keys (declared in resources, and different); all_crews sees every crew, own_crew plus a crew_leads row sees that crew only. Each crew_leads user is in users, once, and holds the own_crew grant.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["all_crews", "own_crew"],
+          "properties": {
+            "all_crews": { "$ref": "#/$defs/resourceKey" },
+            "own_crew": { "$ref": "#/$defs/resourceKey" },
+            "crew_leads": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["user", "crew_id"],
+                "properties": {
+                  "user": { "type": "string", "pattern": "^[a-z][a-z0-9._-]*$" },
+                  "crew_id": { "description": "The crew's id, without the crew: prefix.", "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" }
+                }
+              }
             }
           }
         }

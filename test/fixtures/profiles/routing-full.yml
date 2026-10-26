@@ -1,8 +1,12 @@
 # A synthetic profile that sets every routing key, none left to defaults.
 schema_version: 1
 client: { id: route-co, name: Route Co }
+resources:
+  - { key: ROUTE_ALL_CREWS, label: Every crew's routing map }
+  - { key: ROUTE_OWN_CREW, label: Own crew's routing map }
 users:
-  - { id: solo, name: Solo, role: admin }
+  - { id: solo, name: Solo, role: admin, grants: [ROUTE_ALL_CREWS] }
+  - { id: lead, name: Lead, role: member, grants: [ROUTE_OWN_CREW] }
 sql:
   forbidden_columns: [sites.pos_lat_e6, sites.pos_lon_e6, sites.phone]
 routing:
@@ -13,8 +17,16 @@ routing:
   detour_factor: 1.25
   min_travel_minutes: 3
   max_pairs: 2500
+  max_points: 120
+  map_grid_e6: 4000
+  map_min_span_km: 7.5
   limits: { earliest_start: 360, default_start: 480, aim_finish: 1080, latest_finish: 1380, slot_minutes: 15 }
   gap_fill:
     horizon_days: 7
     limit: 3
     weights: { extra_drive_minutes: -2, flexible: 1 }
+  audience:
+    all_crews: ROUTE_ALL_CREWS
+    own_crew: ROUTE_OWN_CREW
+    crew_leads:
+      - { user: lead, crew_id: c1 }
