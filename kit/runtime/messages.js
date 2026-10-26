@@ -76,6 +76,7 @@ const ROUTING_WORDS = Object.freeze({
   renderer_unavailable: ({ field }) => `"${field}" can't be drawn: the map drawing tool didn't load`,
   renderer_failed: ({ field }) => `"${field}" couldn't be drawn`,
   image_too_large: ({ field }) => `"${field}" came out larger than 1 MB`,
+  unsafe_svg: ({ field }) => `"${field}" was refused: it names something outside the map`,
 });
 
 // The AI service's refusals (Story 9.1). Each points to the typed form, which

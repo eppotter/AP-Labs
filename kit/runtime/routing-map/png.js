@@ -14,6 +14,12 @@
 // is refused (image_too_large). Same SVG, same bytes on one machine; no
 // cross-platform hash is promised.
 //
+// Defence in depth: the rasterizer's default image loader can read a local
+// file an <image href> names. renderSvg never draws one, and index.js only
+// rasterizes renderSvg's output, but rasterize also refuses (unsafe_svg) any
+// SVG holding a reference or style: <image, href, xlink, url(, <use, <style,
+// @import, foreignObject or <script, in any case.
+//
 // Never log the SVG or the PNG: both are as sensitive as the places they
 // show (AD-R12).
 
@@ -25,6 +31,8 @@ const OPTIONS = Object.freeze({
   font: { loadSystemFonts: false },
   logLevel: 'off',
 });
+
+const UNSAFE = /<image|href|xlink|url\(|<use|<style|@import|foreignObject|<script/i;
 
 const fault = (problem) => new RoutingFault({ field: 'map image', problem });
 const loadResvg = () => require('@resvg/resvg-js');
@@ -52,6 +60,7 @@ function createRasterizer({ load = loadResvg } = {}) {
   // size, at most MAX_PNG_BYTES.
   return function rasterize(svg, size) {
     if (typeof svg !== 'string') throw fault('not_text');
+    if (UNSAFE.test(svg)) throw fault('unsafe_svg');
     const Ctor = resvg();
     let image;
     let png;

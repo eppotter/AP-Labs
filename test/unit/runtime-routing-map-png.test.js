@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const map = require('../../kit/runtime/routing-map');
-const { createRasterizer, pngSize, MAX_PNG_BYTES } = require('../../kit/runtime/routing-map/png');
+const { rasterize: rasterizeSvg, createRasterizer, pngSize, MAX_PNG_BYTES } = require('../../kit/runtime/routing-map/png');
 const { RoutingFault } = require('../../kit/runtime/errors');
 
 const REPO = path.join(__dirname, '..', '..');
@@ -73,8 +73,8 @@ test('each fixture rasterizes twice to the same bytes, at the image size, under 
 });
 
 test('system fonts are off: text in an SVG draws nothing', () => {
-  const blank = map.rasterize(SVG, { width: 300, height: 200 });
-  const withText = map.rasterize(SVG.replace('</svg>', '<text x="20" y="100" font-size="40" fill="#000000">Hello 42</text></svg>'), { width: 300, height: 200 });
+  const blank = rasterizeSvg(SVG, { width: 300, height: 200 });
+  const withText = rasterizeSvg(SVG.replace('</svg>', '<text x="20" y="100" font-size="40" fill="#000000">Hello 42</text></svg>'), { width: 300, height: 200 });
   assert.ok(blank.equals(withText), 'no font was found, so no glyph was drawn');
   const calls = [];
   const rasterize = createRasterizer({ load: () => stubModule(fakePng(300, 200), calls) });
@@ -106,7 +106,7 @@ test('a rasterizer that throws, returns no PNG or the wrong size gives renderer_
     const e = faultOf(() => r(SVG, { width: 300, height: 200 }));
     assert.equal(e.message, FAILED);
   }
-  assert.equal(faultOf(() => map.rasterize(42)).details.problem, 'not_text');
+  assert.equal(faultOf(() => rasterizeSvg(42)).details.problem, 'not_text');
 });
 
 test('a rasterizer that cannot load is a fixed-text RoutingFault, every time, and load is tried once', () => {
@@ -120,6 +120,38 @@ test('a rasterizer that cannot load is a fixed-text RoutingFault, every time, an
   assert.equal(tries, 1);
   const empty = createRasterizer({ load: () => ({}) });
   assert.equal(faultOf(() => empty(SVG)).message, UNAVAILABLE);
+});
+
+test('the public entry rasterizes only what renderSvg drew: no rasterize export', () => {
+  assert.equal('rasterize' in map, false);
+  assert.deepEqual(Object.keys(map).sort(), ['MAX_PNG_BYTES', 'VIEWS', 'imageSize', 'renderPng', 'renderSvg']);
+});
+
+test('an SVG with a reference, a style or foreign content is refused before the rasterizer sees it', () => {
+  const UNSAFE = 'routing input refused: "map image" unsafe_svg';
+  const pieces = [
+    '<image href="/etc/passwd" width="10" height="10"/>',
+    '<IMAGE x="0"/>',
+    '<a href="#x"><rect width="1" height="1"/></a>',
+    '<rect xlink:title="x" width="1" height="1"/>',
+    '<rect fill="url(#g)" width="1" height="1"/>',
+    '<use x="0"/>',
+    '<style>rect{fill:red}</style>',
+    '<rect style="@import \'x.css\'" width="1" height="1"/>',
+    '<foreignObject width="1" height="1"></foreignObject>',
+    '<script>1</script>',
+  ];
+  for (const piece of pieces) {
+    const calls = [];
+    const stubbed = createRasterizer({ load: () => stubModule(fakePng(300, 200), calls) });
+    const svg = SVG.replace('</svg>', `${piece}</svg>`);
+    const e = faultOf(() => stubbed(svg, { width: 300, height: 200 }));
+    assert.deepEqual(e.details, { field: 'map image', problem: 'unsafe_svg' }, piece);
+    assert.equal(e.message, UNSAFE);
+    assert.equal(calls.length, 0, `${piece}: the rasterizer never saw it`);
+    assert.equal(faultOf(() => rasterizeSvg(svg, { width: 300, height: 200 })).message, UNSAFE);
+  }
+  // Every fixture renderSvg draws passes the check (the first test rasterizes them).
 });
 
 // In a child process, so the module cache and the require hook stay there.
@@ -163,7 +195,7 @@ test('when the require itself fails (stubbed), renderPng throws the fixed-text f
 
 test('the error words for the renderer faults are fixed and name no value', () => {
   const { messageFor } = require('../../kit/runtime/messages');
-  for (const problem of ['renderer_unavailable', 'renderer_failed', 'image_too_large', 'unknown_key']) {
+  for (const problem of ['renderer_unavailable', 'renderer_failed', 'image_too_large', 'unsafe_svg', 'unknown_key']) {
     const words = messageFor(new RoutingFault({ field: 'map image', problem }), { admin: 'Sam' });
     assert.match(words, /"map image"/);
     assert.match(words, /please tell Sam/);

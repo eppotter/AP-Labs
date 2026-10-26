@@ -10,7 +10,10 @@
 //   renderSvg(view, model)   the SVG text (svg.js documents the model)
 //   renderPng(view, model)   the PNG bytes, checked against imageSize
 //   imageSize(view, frame)   { width, height } of the image for a frame
-//   rasterize(svg, size)     SVG text to PNG bytes (png.js)
+//
+// rasterize (png.js) is not exported: the rasterizer can read local files an
+// SVG names, so the public entry only rasterizes what renderSvg drew. Only
+// png.js's own tests and the smoke script require png.js directly.
 //
 // The routing-map archetype (Story 15.4) is the one caller; the sdk does not
 // export it.
@@ -23,4 +26,4 @@ function renderPng(view, model) {
   return rasterize(svg, imageSize(view, model.frame));
 }
 
-module.exports = { renderSvg, renderPng, imageSize, rasterize, VIEWS, MAX_PNG_BYTES };
+module.exports = { renderSvg, renderPng, imageSize, VIEWS, MAX_PNG_BYTES };

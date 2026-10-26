@@ -19,7 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const map = require('../kit/runtime/routing-map');
-const { pngSize, MAX_PNG_BYTES } = require('../kit/runtime/routing-map/png');
+const { rasterize, pngSize, MAX_PNG_BYTES } = require('../kit/runtime/routing-map/png');
 
 const FIXTURES = path.join(__dirname, '..', 'test', 'fixtures', 'routing-map');
 
@@ -29,7 +29,7 @@ function smoke(dir = FIXTURES) {
     const { model } = JSON.parse(fs.readFileSync(path.join(dir, `${view}.json`), 'utf8'));
     const want = map.imageSize(view, model.frame);
     const a = map.renderPng(view, model);
-    const b = map.rasterize(map.renderSvg(view, model), want);
+    const b = rasterize(map.renderSvg(view, model), want);
     assert.deepEqual(pngSize(a), want, `${view}: the PNG is ${want.width}x${want.height}`);
     assert.ok(a.equals(b), `${view}: the same bytes twice`);
     assert.ok(a.length <= MAX_PNG_BYTES, `${view}: at most 1 MB`);
