@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-23-2026 22:37
-last_updated: 10-25-2026 18:00
+last_updated: 10-26-2026 12:00
 project: AP-Labs
 project_key: NOKEY
 tracking_system: file-system
@@ -119,8 +119,8 @@ development_status:
   11-5-template-releases-flow-cleanly-into-client-forks: backlog
   epic-11-retrospective: optional
 
-  epic-12: backlog
-  12-1-the-input-contract-and-the-travel-port: backlog
+  epic-12: in-progress
+  12-1-the-input-contract-and-the-travel-port: review
   12-2-the-rule-registry-and-the-v1-rules: backlog
   12-3-optimize-a-day: backlog
   12-4-a-broken-day-place-the-orphans: backlog

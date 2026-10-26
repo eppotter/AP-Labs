@@ -1,0 +1,215 @@
+{
+  "_comment": "Synthetic routing day for Story 12.1 contract and travel tests. Not client data. Times are minutes after local midnight; the day straddles the 2026-11-01 DST change on purpose.",
+  "input": {
+    "day": "2026-11-01",
+    "asOf": "2026-10-30",
+    "limits": {
+      "earliestStart": 360,
+      "defaultStart": 480,
+      "aimFinish": 1080,
+      "latestFinish": 1380,
+      "startRoundTo": 5
+    },
+    "crews": [
+      {
+        "crewId": "c1",
+        "zoneId": "north",
+        "baseNode": "crew:c1",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      },
+      {
+        "crewId": "c2",
+        "zoneId": "north",
+        "baseNode": "crew:c2",
+        "headcountPlanned": 2,
+        "headcountPresent": 2,
+        "available": true
+      }
+    ],
+    "stops": [
+      {
+        "stopId": "v101",
+        "node": "property:p1",
+        "currentCrewId": "c1",
+        "routeOrder": 1,
+        "start": 480,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": true,
+        "rules": [
+          {
+            "ruleId": "time-of-day",
+            "value": {
+              "startFrom": 480,
+              "startBefore": 720
+            }
+          }
+        ]
+      },
+      {
+        "stopId": "v102",
+        "node": "property:p2",
+        "currentCrewId": "c1",
+        "routeOrder": 2,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [
+          {
+            "ruleId": "preferred-crew",
+            "value": "c1"
+          }
+        ]
+      },
+      {
+        "stopId": "v103",
+        "node": "property:p3",
+        "currentCrewId": "c2",
+        "routeOrder": 1,
+        "labourMinutes": 120,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [
+          {
+            "ruleId": "day-of-week",
+            "value": [
+              1,
+              3,
+              7
+            ],
+            "strength": "soft"
+          }
+        ]
+      },
+      {
+        "stopId": "v104",
+        "node": "property:p4",
+        "currentCrewId": "c2",
+        "routeOrder": 2,
+        "labourMinutes": 60,
+        "serviceMinutes": 30,
+        "locked": false,
+        "rules": []
+      }
+    ],
+    "candidates": [
+      {
+        "stopId": "v201",
+        "node": "property:p3",
+        "currentCrewId": "c2",
+        "labourMinutes": 120,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-09",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-26",
+        "flexible": true
+      }
+    ]
+  },
+  "matrix": [
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:p1",
+      "minutes": 13
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:p2",
+      "minutes": 17
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:p3",
+      "minutes": 17
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:p4",
+      "minutes": 21
+    },
+    {
+      "from_node": "crew:c2",
+      "to_node": "property:p1",
+      "minutes": 11
+    },
+    {
+      "from_node": "crew:c2",
+      "to_node": "property:p2",
+      "minutes": 11
+    },
+    {
+      "from_node": "crew:c2",
+      "to_node": "property:p3",
+      "minutes": 15
+    },
+    {
+      "from_node": "crew:c2",
+      "to_node": "property:p4",
+      "minutes": 19
+    },
+    {
+      "from_node": "property:p1",
+      "to_node": "property:p2",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:p1",
+      "to_node": "property:p3",
+      "minutes": 13
+    },
+    {
+      "from_node": "property:p1",
+      "to_node": "property:p4",
+      "minutes": 17
+    },
+    {
+      "from_node": "property:p2",
+      "to_node": "property:p1",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:p2",
+      "to_node": "property:p3",
+      "minutes": 11
+    },
+    {
+      "from_node": "property:p2",
+      "to_node": "property:p4",
+      "minutes": 11
+    },
+    {
+      "from_node": "property:p3",
+      "to_node": "property:p1",
+      "minutes": 13
+    },
+    {
+      "from_node": "property:p3",
+      "to_node": "property:p2",
+      "minutes": 11
+    },
+    {
+      "from_node": "property:p3",
+      "to_node": "property:p4",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:p4",
+      "to_node": "property:p1",
+      "minutes": 17
+    },
+    {
+      "from_node": "property:p4",
+      "to_node": "property:p2",
+      "minutes": 11
+    },
+    {
+      "from_node": "property:p4",
+      "to_node": "property:p3",
+      "minutes": 9
+    }
+  ]
+}
