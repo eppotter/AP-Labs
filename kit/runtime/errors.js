@@ -166,7 +166,7 @@ class ScoringFault extends RuntimeRefusal {
 // or misused (Story 12.2, AD-R4: registration, an unknown rule id, a soft
 // override of an always-hard rule), or travelMatrix (Story 13.2, AD-R9)
 // refused or failed: routing is off, too many pairs, a coordinate column that
-// is missing or not INTEGER/BIGINT, a node with no position, or the query
+// is missing or not INTEGER/BIGINT or whose name another table forbids, a node with no position, or the query
 // refused, unavailable or failed (fixed words: never DuckDB's text, the SQL,
 // a path or a value). A setup fault in the
 // adapter, so no plan is shown. field is a path like "stops[2].node"; the
@@ -177,7 +177,7 @@ const ROUTING_PROBLEMS = Object.freeze([
   'missing', 'not_object', 'not_list', 'not_text', 'not_integer', 'not_true_false', 'out_of_range',
   'bad_id', 'bad_node', 'bad_date', 'bad_strength', 'unknown_crew', 'duplicate', 'no_travel',
   'unknown_rule', 'not_overridable', 'not_function',
-  'routing_off', 'too_many_pairs', 'not_coordinate_column', 'no_position', 'data_unavailable', 'query_refused', 'query_failed',
+  'routing_off', 'too_many_pairs', 'not_coordinate_column', 'shared_column_name', 'no_position', 'data_unavailable', 'query_refused', 'query_failed',
 ]);
 class RoutingFault extends RuntimeRefusal {
   constructor(details) {

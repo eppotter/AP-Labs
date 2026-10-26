@@ -17,6 +17,13 @@ CREATE TABLE vans (
   home_lon_e6 BIGINT NOT NULL
 );
 
+-- Not a node source: a forbidden column with the same name as a declared
+-- coordinate column (sites.pos_lat_e6), to prove travelMatrix never opens it.
+CREATE TABLE depots (
+  depot_id VARCHAR PRIMARY KEY,
+  pos_lat_e6 INTEGER NOT NULL
+);
+
 CREATE TABLE fixture_meta (
   key VARCHAR PRIMARY KEY,
   value VARCHAR NOT NULL

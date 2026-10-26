@@ -2,4 +2,5 @@ key,value
 as_of,2026-09-30
 rows_sites,4
 rows_vans,2
-rows_fixture_meta,4
+rows_depots,1
+rows_fixture_meta,5

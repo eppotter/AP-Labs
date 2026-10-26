@@ -84,9 +84,19 @@ function coordinateColumns(routing) {
 }
 
 // The forbidden list travelMatrix runs under: the profile's, minus exactly the
-// declared coordinate columns. Nothing else is ever dropped.
+// declared coordinate columns (table.column pairs). Nothing else is ever
+// dropped. The guard (kit/runtime/sql) matches a forbidden column by its bare
+// name in any table, so the exception cannot be scoped to a table there: when
+// another table also forbids a column with a declared coordinate column's
+// name, travelMatrix is refused outright (shared_column_name, before any
+// query), so that column stays forbidden everywhere (review finding, PR #200).
 function travelForbidden(forbidden, routing) {
   const drop = new Set(coordinateColumns(routing));
+  for (const s of nodeSources(routing)) {
+    for (const [key, column] of [['lat_column', s.lat], ['lon_column', s.lon]]) {
+      if (forbidden.some((fc) => !drop.has(fc) && fc.split('.')[1] === column)) throw fault(`${s.at}.${key}`, 'shared_column_name');
+    }
+  }
   return forbidden.filter((fc) => !drop.has(fc));
 }
 

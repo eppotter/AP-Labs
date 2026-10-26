@@ -64,6 +64,7 @@ const ROUTING_WORDS = Object.freeze({
   routing_off: ({ field }) => `"${field}" needs a routing block in the profile, and there is none`,
   too_many_pairs: ({ field }) => `"${field}" asks for more drive times than the profile allows at once`,
   not_coordinate_column: ({ field }) => `"${field}" is not a whole-number coordinate column in the data`,
+  shared_column_name: ({ field }) => `"${field}" has the same name as a protected column in another table`,
   no_position: ({ field }) => `"${field}" names a place with no position in the data`,
   data_unavailable: ({ field }) => `"${field}" could not reach the data`,
   query_refused: ({ field }) => `"${field}" was refused by the query check`,

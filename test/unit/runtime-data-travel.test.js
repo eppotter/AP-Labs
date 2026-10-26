@@ -85,8 +85,9 @@ const refused = (field, problem) => (err) => {
   return true;
 };
 
-// Every coordinate value in the seeds, as an integer and as degrees.
-const COORDINATE_TEXT = [...POSITIONS.values()].flat().flatMap((v) => [String(v), String(v / 1e6), (v / 1e6).toFixed(6)]);
+// Every coordinate value in the seeds (the depot's too), as an integer and as degrees.
+const COORDINATE_TEXT = [...[...POSITIONS.values()].flat(), ...seed('depots').map((r) => Number(r.pos_lat_e6))]
+  .flatMap((v) => [String(v), String(v / 1e6), (v / 1e6).toFixed(6)]);
 const ADDRESSES = seed('sites').flatMap((r) => [r.street_address, r.phone]);
 
 // --- The rectangle and the formula -----------------------------------------
@@ -270,6 +271,42 @@ test('checkSql runs with the profile\'s forbidden list minus exactly the declare
   assert.deepEqual(travel.travelForbidden(['a.b', ...COORDINATE_COLUMNS, 'sites.pos_alt_e6'], profile.routing), ['a.b', 'sites.pos_alt_e6']);
 });
 
+// Review finding on PR #200: the guard matches forbidden columns by bare name
+// in any table, so the exception cannot be table-qualified inside checkSql.
+// A declared coordinate column whose name another table also forbids is
+// therefore refused outright, before any query: depots.pos_lat_e6 stays
+// forbidden everywhere, and travelMatrix never runs beside it.
+test('a forbidden column in another table with a declared coordinate column\'s name is refused before any query', async (t) => {
+  const profile = profileWith((p) => { p.sql.forbidden_columns.push('depots.pos_lat_e6'); });
+  const data = await source(t, profile);
+  const checks = t.mock.method(sqlGuard, 'checkSql');
+  await assert.rejects(data.travelMatrix(['site:s1'], ['site:s2']), refused('routing.coordinates.nodes[0].lat_column', 'shared_column_name'));
+  assert.equal(checks.mock.callCount(), 0, 'nothing reached the guard or DuckDB');
+  checks.mock.restore();
+  assert.throws(() => travel.travelForbidden(profile.sql.forbidden_columns, profile.routing), refused('routing.coordinates.nodes[0].lat_column', 'shared_column_name'), 'no reduced list exists to run under');
+  await assert.rejects(data.run('SELECT pos_lat_e6 FROM depots'), (err) => err instanceof QueryRefusedError && err.rule === 'forbidden_column');
+  await assert.rejects(data.run('SELECT depot_id, pos_lat_e6 FROM depots'), (err) => err instanceof QueryRefusedError && err.rule === 'forbidden_column');
+});
+
+test('the shared-name refusal is exact: two declared tables may share a coordinate column name; any undeclared table may not', () => {
+  const routing = profileWith().routing;
+  const nodes = routing.coordinates.nodes.map((n, i) => (i === 1 ? { ...n, lat_column: 'pos_lat_e6', lon_column: 'pos_lon_e6' } : n));
+  const shared = { ...routing, coordinates: { nodes } };
+  const both = ['sites.pos_lat_e6', 'sites.pos_lon_e6', 'vans.pos_lat_e6', 'vans.pos_lon_e6', 'sites.phone'];
+  assert.deepEqual(travel.travelForbidden(both, shared), ['sites.phone']);
+  assert.throws(() => travel.travelForbidden([...both, 'depots.pos_lon_e6'], shared), refused('routing.coordinates.nodes[0].lon_column', 'shared_column_name'));
+  const declared = [...COORDINATE_COLUMNS, 'sites.phone'];
+  assert.deepEqual(travel.travelForbidden([...declared, 'vans.pos_lat_e6x'], routing), ['sites.phone', 'vans.pos_lat_e6x']);
+  assert.throws(() => travel.travelForbidden([...declared, 'other.home_lat_e6'], routing), refused('routing.coordinates.nodes[1].lat_column', 'shared_column_name'));
+});
+
+test('the static template reads only the declared tables (and its own named steps)', () => {
+  const routing = profileWith().routing;
+  const read = new Set([...travel.matrixSql(routing).matchAll(/\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)/g)].map((m) => m[1]));
+  assert.deepEqual([...read].sort(), ['d', 'f', 'nodes', 'sites', 't', 'vans']);
+  assert.deepEqual([...travel.COLUMN_TYPES_SQL.matchAll(/\bFROM\s+([a-z_.]+)/g)].map((m) => m[1]), ['information_schema.columns']);
+});
+
 test('every other forbidden column still applies: an id column the profile forbids is refused', async (t) => {
   const profile = profileWith((p) => { p.sql.forbidden_columns.push('sites.site_id'); });
   const data = await source(t, profile);
@@ -377,7 +414,7 @@ test('MotherDuck: travelMatrix shares the 30 s query limit (interrupted at the l
 });
 
 test('RoutingFault words for travelMatrix name the field and never the value', () => {
-  for (const problem of ['routing_off', 'too_many_pairs', 'not_coordinate_column', 'no_position', 'data_unavailable', 'query_refused', 'query_failed']) {
+  for (const problem of ['routing_off', 'too_many_pairs', 'not_coordinate_column', 'shared_column_name', 'no_position', 'data_unavailable', 'query_refused', 'query_failed']) {
     const words = messageFor(new RoutingFault({ field: 'travelMatrix', problem }), { admin: 'Sam' });
     assert.match(words, /travelMatrix/, problem);
     assert.match(words, /please tell Sam/, problem);
