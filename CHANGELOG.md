@@ -20,7 +20,13 @@ A fork records the release it is built from in `.aplabs/template-version`
 
 ## Unreleased
 
-Nothing yet.
+### What changed
+
+- `THIRD_PARTY_NOTICES.md` carries BMAD-METHOD's MIT licence, which the bundled `_bmad/` copy needs in every copy, and points to p3-stack's.
+
+### What a fork must do
+
+- Nothing: take the update, and keep `THIRD_PARTY_NOTICES.md` in the fork.
 
 ## v0.2.0
 
