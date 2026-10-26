@@ -513,4 +513,9 @@ function constructionPlans(input, opts = {}) {
   return plansOut(m, construct(m).plan);
 }
 
-module.exports = { optimizeDay, constructionPlans, relocations, DEFAULT_BUDGET, BOOKED_BEST };
+// The day model, timing and cost helpers are shared with change.js
+// (placeOrphans, Story 12.4), so both entry points time and cost a route the
+// same way.
+const shared = Object.freeze({ checkOpts, model, bookedPlan, makePlan, withRoutes, compareCost, sub, clock, plural, hardBreakWords, plansOut, costOut, ZERO });
+
+module.exports = { optimizeDay, constructionPlans, relocations, DEFAULT_BUDGET, BOOKED_BEST, shared };
