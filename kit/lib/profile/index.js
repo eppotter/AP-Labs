@@ -44,6 +44,39 @@ const LLM_DEFAULTS = Object.freeze({
   max_tokens: 1024,
 });
 
+// The routing block's defaults (AD-R10, Story 13.1). The block itself has no
+// default: absent means routing is off. Filled only on a copy, so the parsed
+// profile (what the client wrote) is never changed.
+const ROUTING_DEFAULTS = Object.freeze({
+  min_travel_minutes: 5,
+  max_pairs: 10000,
+  gap_fill: Object.freeze({ horizon_days: 14, limit: 5 }),
+});
+
+const LIMIT_ORDER = Object.freeze(['earliest_start', 'default_start', 'aim_finish', 'latest_finish']);
+
+// What the schema cannot say about routing: each coordinate column must also be
+// forbidden to every other query (AD-R9), node kinds are unique (they prefix
+// node ids), a node's lat and lon are two columns, and the day limits are in order.
+function routingProblems(routing, forbidden) {
+  const problems = [];
+  const banned = new Set(forbidden);
+  const nodes = routing.coordinates.nodes;
+  for (const d of duplicates(nodes.map((n) => n.kind))) problems.push(`/routing/coordinates/nodes has duplicate kind "${d}"`);
+  nodes.forEach((n, i) => {
+    if (n.lat_column === n.lon_column) problems.push(`/routing/coordinates/nodes/${i} uses one column for lat_column and lon_column`);
+    for (const key of ['lat_column', 'lon_column']) {
+      const column = `${n.table}.${n[key]}`;
+      if (!banned.has(column)) problems.push(`/routing/coordinates/nodes/${i}/${key} "${column}" is not in sql.forbidden_columns`);
+    }
+  });
+  for (let i = 1; i < LIMIT_ORDER.length; i += 1) {
+    const [before, key] = [LIMIT_ORDER[i - 1], LIMIT_ORDER[i]];
+    if (routing.limits[key] < routing.limits[before]) problems.push(`/routing/limits/${key} must not be before ${before}`);
+  }
+  return problems;
+}
+
 let _validate = null;
 function schemaValidator() {
   if (!_validate) {
@@ -181,6 +214,10 @@ function validateProfile(profile, file) {
     }
   });
   if (!p.users.some((u) => u.role === 'admin')) problems.push('`users` must include at least one admin');
+  if (p.routing) {
+    p.routing = { ...ROUTING_DEFAULTS, ...p.routing, gap_fill: { ...ROUTING_DEFAULTS.gap_fill, ...p.routing.gap_fill } };
+    problems.push(...routingProblems(p.routing, p.sql.forbidden_columns));
+  }
 
   if (problems.length) throw new ProfileError(problems.join('; '), file);
   return deepFreeze(p);
@@ -206,5 +243,5 @@ function loadProfile(file = findProfilePath()) {
 }
 
 module.exports = {
-  loadProfile, validateProfile, findProfilePath, governingProfilePath, ProfileError, NotGoverningError, PROFILE_REL, LLM_DEFAULTS,
+  loadProfile, validateProfile, findProfilePath, governingProfilePath, ProfileError, NotGoverningError, PROFILE_REL, LLM_DEFAULTS, ROUTING_DEFAULTS,
 };

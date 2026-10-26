@@ -173,6 +173,69 @@
       }
     },
 
+    "routing": {
+      "description": "Route optimization (kit/runtime/routing, travelMatrix in kit/runtime/data). Optional; absent = routing off. coordinates.nodes names where each kind of stop keeps its position, as micro-degree INTEGER columns; every lat_column and lon_column must also be in sql.forbidden_columns (as table.column), so no other query can read them. Travel minutes = straight-line distance x detour_factor / speed_kmh, rounded up, never below min_travel_minutes (default 5). max_pairs caps one travel rectangle (default 10000). limits are minutes after local midnight, in order (earliest_start <= default_start <= aim_finish <= latest_finish), plus slot_minutes, the start-time step. gap_fill: horizon_days (default 14), limit (default 5) and optional weights that override the engine's ranking weights by input name.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinates", "speed_kmh", "detour_factor", "limits"],
+      "properties": {
+        "coordinates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nodes"],
+          "properties": {
+            "nodes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "table", "id_column", "lat_column", "lon_column"],
+                "properties": {
+                  "kind": { "description": "The node id prefix (kind:<id>).", "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+                  "table": { "$ref": "#/$defs/sqlIdentifier" },
+                  "id_column": { "$ref": "#/$defs/sqlIdentifier" },
+                  "lat_column": { "$ref": "#/$defs/sqlIdentifier" },
+                  "lon_column": { "$ref": "#/$defs/sqlIdentifier" }
+                }
+              }
+            }
+          }
+        },
+        "speed_kmh": { "type": "number", "exclusiveMinimum": 0, "maximum": 200 },
+        "detour_factor": { "type": "number", "minimum": 1, "maximum": 5 },
+        "min_travel_minutes": { "type": "integer", "minimum": 0, "maximum": 240 },
+        "max_pairs": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["earliest_start", "default_start", "aim_finish", "latest_finish", "slot_minutes"],
+          "properties": {
+            "earliest_start": { "$ref": "#/$defs/minuteOfDay" },
+            "default_start": { "$ref": "#/$defs/minuteOfDay" },
+            "aim_finish": { "$ref": "#/$defs/minuteOfDay" },
+            "latest_finish": { "$ref": "#/$defs/minuteOfDay" },
+            "slot_minutes": { "type": "integer", "minimum": 1, "maximum": 1440 }
+          }
+        },
+        "gap_fill": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "horizon_days": { "type": "integer", "minimum": 1, "maximum": 90 },
+            "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
+            "weights": {
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": { "$ref": "#/$defs/sqlIdentifier" },
+              "additionalProperties": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+
     "verify": {
       "type": "object",
       "additionalProperties": false,
@@ -216,6 +279,8 @@
     "globs": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/glob" } },
     "glob": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "\\S" },
     "modelId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{0,63}$" },
+    "sqlIdentifier": { "description": "A plain lower-case SQL name, never quoted.", "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,62}$" },
+    "minuteOfDay": { "description": "Minutes after local midnight.", "type": "integer", "minimum": 0, "maximum": 1440 },
     "resourceKey": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
     "resourceKeys": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/resourceKey" } }
   }
