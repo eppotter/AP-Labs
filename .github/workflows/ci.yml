@@ -1,13 +1,55 @@
 name: ci
 
+# Minutes (plan ci-save-minutes): every PR runs CI. On main it runs only for
+# a push that changes CHANGELOG.md (a release-prep merge) or by hand
+# (`gh workflow run ci.yml --ref main`): `npm run land` merges only a PR head
+# that passed CI, so a full re-run of every merge is a duplicate, and
+# template:release needs the four jobs green on main's head, which those two
+# give it. Non-PR runs are never narrowed (scripts/ci-changes.js).
 on:
   push:
     branches: [main]
+    paths: [CHANGELOG.md]
   pull_request:
+  workflow_dispatch:
+
+# A new push to a PR cancels its older, superseded run. A run that is not a
+# pull request gets its own group (its run id), so it is never cancelled or
+# replaced.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
+  changes:
+    # Which jobs this run needs. Only a pull request is narrowed: a docs-only
+    # PR (every file under docs/, by the review tool's docs-only rule) skips
+    # test:slow, clean-bones and dist; container runs only when an image
+    # input changed. Any doubt (a git error, no files) runs everything. A
+    # skipped job reports "skipping", which npm run land accepts; a failed
+    # changes job fails the run.
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      code: ${{ steps.plan.outputs.code }}
+      container: ${{ steps.plan.outputs.container }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Changed files
+        id: plan
+        run: node scripts/ci-changes.js >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,9 +67,11 @@ jobs:
       - name: Tests (unit, hook, acceptance)
         run: npm test
       # The long tests (the ci-fork fork copy, the template-update repos) skip
-      # in `npm test` and run here (plan ci-split). No condition: the template
-      # and every fork run it. The runner fails on any skip or zero passes.
+      # in `npm test` and run here (plan ci-split). The template and every fork
+      # run it; only a docs-only PR skips it. The runner fails on any skip or
+      # zero passes.
       - name: Slow tests (fork copy, template update)
+        if: needs.changes.outputs.code == 'true'
         run: npm run test:slow
       # The three fixture steps skip only in a fork whose example client was
       # deleted (Story 11.5, review B10); the template always runs them.
@@ -74,8 +118,13 @@ jobs:
   clean-bones:
     # The template stands alone without its example client (Story 6.5): copy
     # the repo, delete examples/brightside/ and profiles/brightside/, then run
-    # check, test and a boot smoke test against a minimal stub profile.
+    # check, test and a boot smoke test against a minimal stub profile. It
+    # runs the whole suite in that copy, so any code or test can break it:
+    # only a docs-only PR skips it.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -90,12 +139,17 @@ jobs:
   dist:
     # The distribution tree (plan template-dist, Story D.2): what client forks
     # receive, the release minus the internal paths (kit/lib/dist EXCLUDED)
-    # with the ledger's rows emptied. On every PR it builds that tree for
+    # with the ledger's rows emptied. On every code PR it builds that tree for
     # HEAD, scans it with the deny list, checks its engine fingerprint, and
     # runs check, test and test:slow inside it, so a release whose dist tree
     # would break can't be cut (a required job). Skipped in a fork and in the
-    # dist repo itself (neither has docs/reference/). No secrets.
+    # dist repo itself (neither has docs/reference/). No secrets. A docs-only
+    # PR skips it: the fast suite's tripwire already scans the shipped tree
+    # with the deny list.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -117,6 +171,9 @@ jobs:
     # and APLABS_VAR_DIR writable) and the test fixtures mounted read-only.
     # Plain docker build and run: no third-party actions, no secrets, no
     # build args. Local `npm test` skips the image build (no docker there).
+    # Runs only when an image input changed (scripts/ci-changes.js).
+    needs: changes
+    if: needs.changes.outputs.container == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

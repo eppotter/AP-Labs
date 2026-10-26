@@ -1,0 +1,397 @@
+{
+  "_comment": "Synthetic day for Story 12.5: on crew g1 the 13:00 visit x1 cancelled, leaving a gap from a2's end (12:00) to a3's start (16:00). c1 is the planted best fill (3 days ahead, flexible, 2 extra minutes of driving). c2 is closer but its hard window is the morning; c3 is close but its last visit was 4 days ago on a 14-day cadence. c8 is the cancelled property, c9 a property visited today on crew g2, c10 too long for the gap, c11 beyond the 14-day horizon. c6 and c7 tie; c12 prefers crew g2 (soft). Wednesday 2026-11-04. Not client data; minutes are made up.",
+  "input": {
+    "day": "2026-11-04",
+    "asOf": "2026-11-02",
+    "limits": {
+      "earliestStart": 360,
+      "defaultStart": 480,
+      "aimFinish": 1080,
+      "latestFinish": 1380,
+      "startRoundTo": 5
+    },
+    "crews": [
+      {
+        "crewId": "g1",
+        "zoneId": "north",
+        "baseNode": "crew:g1",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      },
+      {
+        "crewId": "g2",
+        "zoneId": "north",
+        "baseNode": "crew:g2",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      }
+    ],
+    "stops": [
+      {
+        "stopId": "a1",
+        "node": "property:a1",
+        "currentCrewId": "g1",
+        "routeOrder": 1,
+        "labourMinutes": 360,
+        "serviceMinutes": 120,
+        "locked": false,
+        "rules": [],
+        "start": 480
+      },
+      {
+        "stopId": "a2",
+        "node": "property:a2",
+        "currentCrewId": "g1",
+        "routeOrder": 2,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": [],
+        "start": 630
+      },
+      {
+        "stopId": "a3",
+        "node": "property:a3",
+        "currentCrewId": "g1",
+        "routeOrder": 4,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "start": 960
+      },
+      {
+        "stopId": "b1",
+        "node": "property:b1",
+        "currentCrewId": "g2",
+        "routeOrder": 1,
+        "labourMinutes": 360,
+        "serviceMinutes": 120,
+        "locked": false,
+        "rules": [],
+        "start": 480
+      },
+      {
+        "stopId": "b2",
+        "node": "property:b2",
+        "currentCrewId": "g2",
+        "routeOrder": 2,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": [],
+        "start": 660
+      }
+    ],
+    "cancelled": [
+      {
+        "stopId": "x1",
+        "node": "property:x1",
+        "currentCrewId": "g1",
+        "start": 780,
+        "serviceMinutes": 120
+      }
+    ],
+    "candidates": [
+      {
+        "stopId": "c1",
+        "node": "property:c1",
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-07",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-24",
+        "flexible": true,
+        "currentCrewId": "g1"
+      },
+      {
+        "stopId": "c2",
+        "node": "property:c2",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [
+          {
+            "ruleId": "time-of-day",
+            "value": {
+              "startFrom": 360,
+              "startBefore": 720
+            }
+          }
+        ],
+        "plannedDate": "2026-11-06",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-21",
+        "flexible": false,
+        "currentCrewId": "g1"
+      },
+      {
+        "stopId": "c3",
+        "node": "property:c3",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-06",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-31",
+        "flexible": true,
+        "currentCrewId": "g2"
+      },
+      {
+        "stopId": "c4",
+        "node": "property:c4",
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": [
+          {
+            "ruleId": "day-of-week",
+            "value": [
+              3,
+              5
+            ]
+          }
+        ],
+        "plannedDate": "2026-11-12",
+        "cadenceDays": 28,
+        "prevVisitDate": "2026-10-15",
+        "flexible": false,
+        "currentCrewId": "g2"
+      },
+      {
+        "stopId": "c5",
+        "node": "property:c5",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-15",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-20",
+        "flexible": true
+      },
+      {
+        "stopId": "c6",
+        "node": "property:c6",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-09",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-26",
+        "flexible": true
+      },
+      {
+        "stopId": "c7",
+        "node": "property:c7",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-09",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-26",
+        "flexible": true
+      },
+      {
+        "stopId": "c8",
+        "node": "property:x1",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-18",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-21",
+        "flexible": true
+      },
+      {
+        "stopId": "c9",
+        "node": "property:b2",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-08",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-25",
+        "flexible": true
+      },
+      {
+        "stopId": "c10",
+        "node": "property:c10",
+        "labourMinutes": 900,
+        "serviceMinutes": 300,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-08",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-25",
+        "flexible": true
+      },
+      {
+        "stopId": "c11",
+        "node": "property:c11",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-19",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-25",
+        "flexible": true
+      },
+      {
+        "stopId": "c12",
+        "node": "property:c12",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [
+          {
+            "ruleId": "preferred-crew",
+            "value": "g2",
+            "strength": "soft"
+          }
+        ],
+        "plannedDate": "2026-11-10",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-27",
+        "flexible": true
+      }
+    ]
+  },
+  "matrix": [
+    {
+      "from_node": "property:a2",
+      "to_node": "property:a3",
+      "minutes": 20
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:c1",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:c1",
+      "to_node": "property:a3",
+      "minutes": 12
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:c2",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:c2",
+      "to_node": "property:a3",
+      "minutes": 6
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:c3",
+      "minutes": 6
+    },
+    {
+      "from_node": "property:c3",
+      "to_node": "property:a3",
+      "minutes": 8
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:c4",
+      "minutes": 20
+    },
+    {
+      "from_node": "property:c4",
+      "to_node": "property:a3",
+      "minutes": 25
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:c5",
+      "minutes": 30
+    },
+    {
+      "from_node": "property:c5",
+      "to_node": "property:a3",
+      "minutes": 30
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:c6",
+      "minutes": 15
+    },
+    {
+      "from_node": "property:c6",
+      "to_node": "property:a3",
+      "minutes": 15
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:c7",
+      "minutes": 15
+    },
+    {
+      "from_node": "property:c7",
+      "to_node": "property:a3",
+      "minutes": 15
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:x1",
+      "minutes": 8
+    },
+    {
+      "from_node": "property:x1",
+      "to_node": "property:a3",
+      "minutes": 8
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:b2",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:b2",
+      "to_node": "property:a3",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:c10",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:c10",
+      "to_node": "property:a3",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:c11",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:c11",
+      "to_node": "property:a3",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:a2",
+      "to_node": "property:c12",
+      "minutes": 18
+    },
+    {
+      "from_node": "property:c12",
+      "to_node": "property:a3",
+      "minutes": 18
+    }
+  ]
+}
