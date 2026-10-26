@@ -141,9 +141,9 @@ development_status:
   14-5-a-read-only-cli-for-the-dispatcher: backlog
   epic-14-retrospective: optional
 
-  epic-15: backlog
+  epic-15: in-progress
   15-1-spike-a-private-image-in-a-modal-live-check: backlog
-  15-2-mappoints-snapped-pixel-positions-for-the-map-and-the: backlog
+  15-2-mappoints-snapped-pixel-positions-for-the-map-and-the: review
   15-3-the-map-renderer-four-views-svg-to-png: backlog
   15-4-the-routing-map-archetype-modal-view-switching-audience: backlog
   15-5-brightside-s-routing-module-its-audience-and-the-guardrail: backlog
