@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const routing = require('../../kit/runtime/routing');
-const { constructionPlans, DEFAULT_BUDGET, BOOKED_BEST } = require('../../kit/runtime/routing/optimize');
+const { constructionPlans, relocations, DEFAULT_BUDGET, BOOKED_BEST } = require('../../kit/runtime/routing/optimize');
 const { RoutingFault } = require('../../kit/runtime/errors');
 
 const DIR = path.join(__dirname, '../fixtures/routing');
@@ -349,4 +349,107 @@ test('optimize output is identical under two TZ values across 2026-11-01', () =>
     return optimize(day);
   });
   assert.equal(outputs[0], JSON.stringify(here));
+});
+
+// Review of PR #198, finding 1: every relocation within a route is in the
+// move set, forward (to a later index) as well as backward, and none is the
+// route unchanged.
+test('the within-crew relocations hold every forward and backward move of one stop, never the route unchanged', () => {
+  for (let n = 2; n <= 6; n += 1) {
+    const order = [...Array(n).keys()];
+    const got = [...relocations(order)].map((r) => r.join(','));
+    assert.ok(!got.includes(order.join(',')), `n=${n}: a relocation left the route unchanged`);
+    for (let i = 0; i < n; i += 1) {
+      for (let t = 0; t < n; t += 1) {
+        if (t === i) continue;
+        const want = order.filter((x) => x !== i);
+        want.splice(t, 0, i);
+        assert.ok(got.includes(want.join(',')), `n=${n}: stop ${i} to index ${t} is missing`);
+      }
+    }
+  }
+  assert.deepEqual([...relocations(['a', 'b', 'c'])][0], ['b', 'a', 'c'], 'the first move is a forward one');
+  assert.deepEqual([...relocations(['a', 'b', 'c'])][1], ['b', 'c', 'a'], 'stop a to the last index');
+});
+
+// A soft rule on every stop that always passes and records each slot the
+// solver tries, so a test can watch the slot search.
+function spyRegistry(seen) {
+  return routing.rules.v1Registry().register({
+    id: 'spy',
+    label: 'spy',
+    defaultStrength: 'soft',
+    weight: 1,
+    everyStop: true,
+    check: (stop, slot) => {
+      seen.push({ stopId: stop.stopId, start: slot.start, finish: slot.finish });
+      return { ok: true, reason: 'seen' };
+    },
+  });
+}
+
+// Review of PR #198, finding 2: the slot search never tries a start that
+// cannot finish by latestFinish (and, with returnToBase, get back to base).
+test('the slot search never tries an unlocked stop\'s start past the latest one that can finish in the day', () => {
+  for (const name of ['contradictory-rules', 'zigzag', 'known-optimal']) {
+    for (const returnToBase of [false, true]) {
+      const day = load(name);
+      const travel = routing.travel.fromMatrix(day.matrix);
+      const seen = [];
+      optimize(day, { rules: spyRegistry(seen), returnToBase });
+      const { latestFinish } = day.input.limits;
+      const byId = new Map(day.input.stops.map((s) => [s.stopId, s]));
+      const zoneOf = new Map(day.input.crews.map((c) => [c.crewId, c.zoneId]));
+      for (const { stopId, start, finish } of seen) {
+        const stop = byId.get(stopId);
+        if (stop.locked) continue;
+        const crews = day.input.crews.filter((c) => c.zoneId === zoneOf.get(stop.currentCrewId));
+        const home = returnToBase ? Math.min(...crews.map((c) => travel(stop.node, c.baseNode))) : 0;
+        assert.ok(finish + home <= latestFinish, `${name} returnToBase=${returnToBase}: ${stopId} tried at ${start}, finishing ${finish}`);
+      }
+    }
+  }
+});
+
+test('with returnToBase, a crew that could not get back to base by the latest finish is never returned', () => {
+  const day = load('known-optimal');
+  const rows = optimize(day).plans[0].stops;
+  const last = day.input.stops.find((s) => s.stopId === rows[rows.length - 1].stopId);
+  const lastFinish = rows[rows.length - 1].start + last.serviceMinutes;
+  Object.assign(day.input.limits, { aimFinish: lastFinish, latestFinish: lastFinish });
+  assert.deepEqual(optimize(day).unplaced, [], 'without the return leg every stop still fits');
+  const home = optimize(day, { returnToBase: true });
+  assert.ok(home.unplaced.length > 0, 'a stop gives way so the crew gets home in time');
+  for (const u of home.unplaced) assert.match(u.reason, /^no slot on crew k1 keeps every hard rule \(.+\)$/);
+  const travel = routing.travel.fromMatrix(day.matrix);
+  const kept = home.plans[0].stops;
+  const end = day.input.stops.find((s) => s.stopId === kept[kept.length - 1].stopId);
+  assert.ok(kept[kept.length - 1].start + end.serviceMinutes + travel(end.node, 'crew:k1') <= lastFinish);
+  assert.equal(home.cost.hardBreaks, 0);
+});
+
+// AD-R5: no returned plan ever breaks a hard rule or runs past the crew day,
+// whatever the fixture, budget or return leg.
+test('no returned plan ever has a hard break or a stop finishing after the latest finish', () => {
+  for (const name of ['known-optimal', 'zigzag', 'locked', 'contradictory-rules']) {
+    for (const returnToBase of [false, true]) {
+      for (const budget of [0, 3, DEFAULT_BUDGET]) {
+        const day = load(name);
+        const travel = routing.travel.fromMatrix(day.matrix);
+        const result = optimize(day, { returnToBase, budget });
+        const at = `${name} returnToBase=${returnToBase} budget=${budget}`;
+        assert.equal(result.cost.hardBreaks, 0, at);
+        assertNoHardBreak(day, result);
+        const byId = new Map(day.input.stops.map((s) => [s.stopId, s]));
+        for (const plan of result.plans) {
+          const base = day.input.crews.find((c) => c.crewId === plan.crewId).baseNode;
+          plan.stops.forEach((row, k) => {
+            const stop = byId.get(row.stopId);
+            const back = returnToBase && k === plan.stops.length - 1 ? travel(stop.node, base) : 0;
+            assert.ok(row.start + stop.serviceMinutes + back <= day.input.limits.latestFinish, `${at}: ${row.stopId}`);
+          });
+        }
+      }
+    }
+  }
 });

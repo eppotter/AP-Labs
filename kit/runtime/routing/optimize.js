@@ -34,10 +34,13 @@
 // finish plus the drive), rounded up to limits.startRoundTo. When that slot
 // breaks a rule the solver looks for the first later slot (or, for a first
 // stop, any slot from limits.earliestStart) that breaks fewer, without
-// naming any rule. A locked stop always starts at its booked start; arriving
-// after it is a hard break. Drive minutes count the leg from the crew's base
-// to the first stop and every leg after it; the return to base only with
-// opts.returnToBase (data-design §6).
+// naming any rule. No start later than latestFinish minus the service (and,
+// with returnToBase, minus the drive back to base) is ever tried; a stop
+// with no such start is a hard break. A locked stop always starts at its
+// booked start; arriving after it is a hard break. Drive minutes count the
+// leg from the crew's base to the first stop and every leg after it; the
+// return to base only with opts.returnToBase (data-design §6), and then
+// getting back after latestFinish is a hard break too.
 //
 // Zones and locks. A stop's zone is its booked crew's zone; it never moves to
 // a crew of another zone. A locked stop keeps its crew and start. A crew with
@@ -127,25 +130,34 @@ function model(input, { travel, registry, returnToBase }) {
       const late = !first && floor > stop.start;
       const start = late ? roundUp(floor) : stop.start;
       const t = tally(ci, si, start);
-      slot = { start, late, hard: t.hardBreaks + (late ? 1 : 0), soft: t.softPenalty, aim: t.aimFinishMinutes };
+      slot = { start, late, overDay: false, hard: t.hardBreaks + (late ? 1 : 0), soft: t.softPenalty, aim: t.aimFinishMinutes };
     } else {
+      // The latest start that still finishes by latestFinish (and, with
+      // returnToBase, gets the crew back to its base by then). No later
+      // start is ever tried: it could only run past the crew day.
+      const home = returnToBase ? travel(stop.node, crews[ci].baseNode) : 0;
+      const latestStart = limits.latestFinish - stop.serviceMinutes - home;
       let from = roundUp(floor);
       let best = null;
       if (first) {
-        const t = tally(ci, si, limits.defaultStart);
-        best = { start: limits.defaultStart, t, key: keyOf(t) };
+        if (limits.defaultStart <= latestStart) {
+          const t = tally(ci, si, limits.defaultStart);
+          best = { start: limits.defaultStart, t, key: keyOf(t) };
+        }
         from = roundUp(limits.earliestStart);
       }
       if (!best || best.key.hard > 0 || best.key.soft > 0) {
-        for (let start = from; ; start += limits.startRoundTo) {
+        for (let start = from; start <= latestStart; start += limits.startRoundTo) {
           const t = tally(ci, si, start);
           const key = keyOf(t);
           if (!best || lessKey(key, best.key)) best = { start, t, key };
           if (best.key.hard === 0 && best.key.soft === 0) break;
-          if (start + limits.startRoundTo > limits.latestFinish) break;
         }
       }
-      slot = { start: best.start, late: false, hard: best.t.hardBreaks, soft: best.t.softPenalty, aim: best.t.aimFinishMinutes };
+      // No start fits the day: one hard break, and no rule is checked.
+      slot = best
+        ? { start: best.start, late: false, overDay: false, hard: best.t.hardBreaks, soft: best.t.softPenalty, aim: best.t.aimFinishMinutes }
+        : { start: first ? limits.defaultStart : from, late: false, overDay: true, hard: 1, soft: 0, aim: 0 };
     }
     memo.set(memoKey, slot);
     return slot;
@@ -164,13 +176,20 @@ function model(input, { travel, registry, returnToBase }) {
       cost = add(cost, { hard: slot.hard, soft: slot.soft, drive: leg, aim: slot.aim });
       prevNode = stop.node;
       prevFinish = slot.start + stop.serviceMinutes;
-      return { si, start: slot.start, late: slot.late, leg };
+      return { si, start: slot.start, late: slot.late, overDay: slot.overDay, leg };
     });
-    if (returnToBase && order.length > 0) cost = add(cost, { hard: 0, soft: 0, drive: travel(prevNode, crew.baseNode), aim: 0 });
-    return { cost, slots };
+    // With returnToBase, getting back to base after latestFinish is a hard
+    // break (a locked last stop can cause it; the slot search never does).
+    let lateHome = false;
+    if (returnToBase && order.length > 0) {
+      const back = travel(prevNode, crew.baseNode);
+      lateHome = prevFinish + back > limits.latestFinish;
+      cost = add(cost, { hard: lateHome ? 1 : 0, soft: 0, drive: back, aim: 0 });
+    }
+    return { cost, slots, lateHome };
   }
 
-  return { input, ctx, crews, crewIndex, stops, available, route, tally };
+  return { input, ctx, limits, returnToBase, crews, crewIndex, stops, available, route, tally };
 }
 
 // --- plans -----------------------------------------------------------------
@@ -238,15 +257,21 @@ function bookedPlan(m) {
 // The first hard break a route makes, as plain words, preferring the stop
 // being placed (si) over the stops it would push.
 function hardBreakWords(m, ci, order, si) {
-  const { slots } = m.route(ci, order);
+  const { slots, lateHome } = m.route(ci, order);
   const found = [];
+  const by = clock(m.limits.latestFinish);
   for (const slot of slots) {
     const { stop } = m.stops[slot.si];
+    if (slot.overDay) {
+      found.push({ si: slot.si, words: `no start leaves time to finish by ${by}${m.returnToBase ? ' and drive back to the base' : ''}` });
+      continue;
+    }
     if (slot.late) found.push({ si: slot.si, words: `its locked start of ${clock(stop.start)} can't be kept` });
     const t = m.tally(ci, slot.si, slot.start);
     const check = t.checks.find((c) => !c.ok && c.strength === 'hard');
     if (check) found.push({ si: slot.si, words: `${check.label}: ${check.reason}` });
   }
+  if (lateHome) found.push({ si: slots[slots.length - 1].si, words: `the crew would get back to its base after ${by}` });
   const own = found.find((f) => f.si === si);
   if (own) return own.words;
   const other = found[0];
@@ -316,6 +341,19 @@ function construct(m) {
 const without = (order, i) => [...order.slice(0, i), ...order.slice(i + 1)];
 const insertAt = (order, pos, si) => [...order.slice(0, pos), si, ...order.slice(pos)];
 
+// Every relocation of one stop within a route, in a fixed order: stop i is
+// taken out and put back so that it ends at index j of the new route, for
+// every j other than i (j = i is the route unchanged). insertAt works on the
+// route without stop i, where index j is exactly the stop's final index, so
+// forward (j > i) and backward moves are both covered.
+function* relocations(order) {
+  const n = order.length;
+  for (let i = 0; i < n; i += 1) {
+    const rest = without(order, i);
+    for (let j = 0; j < n; j += 1) if (j !== i) yield insertAt(rest, j, order[i]);
+  }
+}
+
 // Every move, in the one fixed order: per crew (compareIds order) relocate,
 // swap, 2-opt; then relocate between crews of the same zone. A locked stop
 // may change place within its crew's order but never leaves its crew.
@@ -323,10 +361,7 @@ function* moves(m, routes) {
   for (const ci of m.available) {
     const order = routes[ci];
     const n = order.length;
-    for (let i = 0; i < n; i += 1) {
-      const rest = without(order, i);
-      for (let j = 0; j < n; j += 1) if (j !== i) yield [[ci, insertAt(rest, j, order[i])]];
-    }
+    for (const next of relocations(order)) yield [[ci, next]];
     for (let i = 0; i < n; i += 1) {
       for (let j = i + 1; j < n; j += 1) {
         const next = order.slice();
@@ -469,12 +504,13 @@ function optimizeDay(input, opts = {}) {
   };
 }
 
-// The construction step's plans alone, for the budget-0 test; app code
-// calls optimizeDay through the routing index.
+// The construction step's plans alone, for the budget-0 test (and
+// relocations, for the move-set test); app code calls optimizeDay through
+// the routing index.
 function constructionPlans(input, opts = {}) {
   validateInput(input);
   const m = model(input, checkOpts(opts));
   return plansOut(m, construct(m).plan);
 }
 
-module.exports = { optimizeDay, constructionPlans, DEFAULT_BUDGET, BOOKED_BEST };
+module.exports = { optimizeDay, constructionPlans, relocations, DEFAULT_BUDGET, BOOKED_BEST };
