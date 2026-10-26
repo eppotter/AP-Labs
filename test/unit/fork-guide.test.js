@@ -17,6 +17,7 @@ const path = require('node:path');
 const YAML = require('yaml');
 const { validateProfile } = require('../../kit/lib/profile');
 const { tierOf } = require('../../kit/lib/tier');
+const { referencePatterns } = require('../../kit/lib/dist');
 
 const REPO = path.join(__dirname, '../..');
 const GUIDE = fs.readFileSync(path.join(REPO, 'docs/fork-guide.md'), 'utf8');
@@ -189,7 +190,18 @@ test('fork guide: covers the required rules', () => {
   assert.match(GUIDE, /spend cap/i);
   assert.match(GUIDE, /exactly one replica/i);
   assert.match(GUIDE, /stop-then-start/i);
-  assert.doesNotMatch(GUIDE, /hometown|varsity/i);
+});
+
+// The reference client's names come from the deny list (docs/reference/dist-deny.txt),
+// so this file never names them. null in a distribution copy (no docs/reference/).
+const REFERENCE = referencePatterns(REPO);
+
+test('fork guide: no reference-client specifics', { skip: REFERENCE ? false : 'distribution copy: no docs/reference/' }, () => {
+  for (const p of REFERENCE) assert.ok(!p.re.test(GUIDE), `the fork guide matches deny pattern ${p.n}`);
+});
+
+test('fork guide: the engine floor list names kit/lib/dist/** (plan template-dist, D.1)', () => {
+  assert.ok(GUIDE.includes('`kit/lib/dist/**`'));
 });
 
 test('fork guide: explains template updates with the real command (Story 11.6)', () => {

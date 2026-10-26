@@ -6,7 +6,7 @@ The Orchestrator is how we build on the template, and how the client's builders 
 
 It generalises two working systems:
 
-- **Varsity's Orchestrator** (Hometown, `bi-platform`): stages, two human gates, specialists, computed risk tiers, deterministic verify.
+- **The reference platform's Orchestrator** (a reference client's build process): stages, two human gates, specialists, computed risk tiers, deterministic verify.
 - **Ryan Iyengar's CanonCRM process**: p3-stack playbooks, cross-model review with hard budgets, a measured retro.
 
 Scope and order of work: [ADR 0002](../adr/0002-engagement-starter-template.md), [ADR 0003](../adr/0003-orchestrator-tooling.md), [PLAN-v1](../PLAN-v1.md).
@@ -36,7 +36,7 @@ Scope and order of work: [ADR 0002](../adr/0002-engagement-starter-template.md),
 | **Verifier** | Runs the deterministic checks and reports evidence. Never judges | No |
 | **Refuter** | Tries to disprove every blocking review finding before it counts | No |
 
-**Removed:** Varsity's Leadership Panel (seven business-unit personas). It was rarely used.
+**Removed:** the reference platform's Leadership Panel (seven business-unit personas). It was rarely used.
 
 **Roster:** each agent above except the Orchestrator is a file in [`.claude/agents/`](../../.claude/agents/). `test/unit/agents.test.js` pins the roster and every agent's tool list, so changing either is a design change.
 
@@ -56,13 +56,13 @@ Scope and order of work: [ADR 0002](../adr/0002-engagement-starter-template.md),
 
 Scribe drafts the **org-context document** (what the company does, its teams, its tools) from the Onboarder's findings, and keeps it current on regular builds. Every agent reads it.
 
-After onboarding, canon grows the Varsity way: regular builds and incidents add rules, Scribe proposes them, a human approves.
+After onboarding, canon grows the way it did on the reference platform: regular builds and incidents add rules, Scribe proposes them, a human approves.
 
 File locations are open (§8). They will sit under `.aplabs/`, which always floors at T3, because every agent trusts these files.
 
 ## 3a. Stages and ceremony (decided)
 
-**A simple core that every build runs, plus add-ons a client switches on.** Varsity's 0–12 map grew to fit Hometown. Client builders need something they can learn in a day.
+**A simple core that every build runs, plus add-ons a client switches on.** The reference platform's 0–12 map grew to fit its client. Client builders need something they can learn in a day.
 
 | # | Core stage | What happens |
 |---|---|---|
@@ -150,7 +150,7 @@ Adapted from CanonCRM (`docs/agent-coordination.md` §5 and its p3 adapter).
 - **Risk tier is computed from the files touched** (`kit/lib/tier`) and decides how much ceremony runs.
 - **Secrets:** agents never read or print them. Commands that need production credentials are run by a human.
 
-**Merge authority depends on who runs the session.** When the human driving it is an approver for the repo, the Orchestrator merges a PR itself once review shows nothing blocking and CI passes. When anyone else drives, the Orchestrator stops at PR-ready, posts a decision notice that @-mentions the approver, and waits for them. Varsity used the same idea: an approver fast path, with everyone else going through the approver gate.
+**Merge authority depends on who runs the session.** When the human driving it is an approver for the repo, the Orchestrator merges a PR itself once review shows nothing blocking and CI passes. When anyone else drives, the Orchestrator stops at PR-ready, posts a decision notice that @-mentions the approver, and waits for them. The reference platform used the same idea: an approver fast path, with everyone else going through the approver gate.
 
 ## 7. Learning loop (decided)
 

@@ -1,0 +1,27 @@
+# Reference-client deny list (plan template-dist, Story D.1). Ely reviews this in the PR.
+#
+# Names from the reference client that must never ship in the distribution
+# tree. One case-insensitive JavaScript regex per line; blank lines and lines
+# starting with # are ignored. kit/lib/dist loads it, and refuses to scan if it
+# is missing, empty or has an invalid regex. A hit is reported as file:line and
+# the pattern's number (1 is the first pattern below), never the matched text.
+# This file lives in docs/reference/, which never ships.
+#
+# Keep each pattern specific: generic template words ("reference platform",
+# "warehouse", vendor names) must not match. Ely's AP Labs Slack id is not
+# here (plan N1).
+
+# The client and its platform. Ely reviewed this list on 2026-10-25.
+hometown
+varsity
+
+# The reference repos, and the reference machine's home path.
+bi-platform
+/Users/ely\.potter\b
+
+# Reference-client tables.
+\bCTAOLIT\b
+\bCOMBINED_\w+_TABLE\b
+
+# Licensed fonts carried in the reference port.
+\bSTK[ _-]?Bureau\b

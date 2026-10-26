@@ -1,6 +1,6 @@
 'use strict';
 
-// Hub modals (Varsity-style). A hub command opens its menu as a modal; Open
+// Hub modals (as on the reference platform). A hub command opens its menu as a modal; Open
 // and Help push a view on top of it, so Slack's back arrow returns to the
 // menu. A module's replies render into its pushed view: the view first shows
 // "Loading…", the first reply replaces that, and each later reply is appended

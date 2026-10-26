@@ -9,11 +9,11 @@
 
 ADR 0001 scoped V1 to the build-governance kit and excluded the runtime ("no Slack runtime"). That framed the repo as a product. It isn't one.
 
-AP Labs is a consulting practice. Each engagement does a deep dive on the client, picks starter problems, builds the client's AI platform and tools, and trains the client's builders to carry on. Every org is different, so the deliverable is built per client. What saves time is a starting point that already has the building blocks Varsity took months to grow.
+AP Labs is a consulting practice. Each engagement does a deep dive on the client, picks starter problems, builds the client's AI platform and tools, and trains the client's builders to carry on. Every org is different, so the deliverable is built per client. What saves time is a starting point that already has the building blocks the reference platform took months to grow.
 
 ## Decision
 
-V1 is **our engagement starter template**: a generalised Varsity that we fork on day one of each engagement. It has three parts:
+V1 is **our engagement starter template**: a generalised version of a reference client's platform that we fork on day one of each engagement. It has three parts:
 
 1. **Runtime blocks:** what the client's people use. A Slack app shell, a hub registry, a module contract, access wiring, an LLM service, a connector pattern, SQL guardrails, two module archetypes (scoped pull, approval-gated write) and Slack UX basics.
 2. **Build governance:** what our builders and the client's builders use. The profile, permissions, tier, write gate, verify harness and the Orchestrator protocol.

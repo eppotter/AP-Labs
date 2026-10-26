@@ -15,7 +15,7 @@ AP Labs is a consulting practice that does it differently:
 
 Every company is different, so we don't sell one product. Instead we start every engagement from this template, so we never rebuild the basics from scratch.
 
-The template is a generalised version of Varsity, the AI platform built at Hometown Ticketing. One example of what Varsity does: a sales rep opens a tool in Slack and asks in plain English for a list of contacts from Salesforce. The tool scores them as leads, builds the list in Gong's format and pushes it to Gong, so four tools that didn't talk to each other now work as one. Hometown is a design reference only. No Hometown code, data or history is in this repo.
+The template is a generalised version of an AI platform we built for a reference client. One example of what it does: a sales rep opens a tool in Slack and asks in plain English for a list of contacts from the CRM. The tool scores them as leads and pushes the list to the email tool, so tools that didn't talk to each other now work as one. The reference client is a design reference only. None of its code, data or history is in this repo.
 
 ## What's in the template
 
@@ -59,7 +59,7 @@ Adding the next tool means filling in a template, not rebuilding the plumbing.
 | ⚪ | The "pull" tool | |
 | ⚪ | The "push" tool (the demo works end to end) | |
 
-The detailed plan, with every building block and where it comes from in Varsity, is in [`docs/PLAN-v1.md`](docs/PLAN-v1.md).
+The detailed plan, with every building block and where it comes from in the reference platform, is in [`docs/PLAN-v1.md`](docs/PLAN-v1.md).
 
 ---
 

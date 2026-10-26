@@ -13,7 +13,7 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 
 ## What this repo is
 
-**Our starter template, not a product.** A generalised version of Hometown's Varsity platform that we fork on day one of each engagement. It holds the building blocks: the Slack runtime, module and connector patterns, and build governance. Client-specific modules are built in the fork, never here.
+**Our starter template, not a product.** A generalised version of a reference client's platform that we fork on day one of each engagement. It holds the building blocks: the Slack runtime, module and connector patterns, and build governance. Client-specific modules are built in the fork, never here.
 
 **The test for any change:** would we want this on day one of a new engagement?
 
@@ -48,8 +48,8 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 - **Steps only CI can run** (a docker build, the network off) are named as untested in the builder's report and the PR body. The first CI run is their test. If the check itself proves wrong, the fix states the changed acceptance criterion in the plan and the PR, and Ely is told.
 - **Profiles are untrusted input.** The schema rejects unknown keys. `.aplabs/**` always floors at T3.
 - **Secrets:** never read, print, log or commit tokens. Commands that need a credential (for example publishing the fixture) are run by Ely, not by an agent.
-- **Reference repos are read-only:** `~/Projects/bi-platform` (live Varsity) and `~/Projects/AI-Governance-Layer` (archived). Read them with `git -C <repo> show main:<path>`. Never check out branches, install or run anything in them.
-- **No Hometown specifics** (names, paths, Slack ids, data) in this repo outside `docs/reference/`.
+- **Reference repos are read-only.** They are listed in `docs/reference/README.md`. Read them with `git -C <repo> show main:<path>`. Never check out branches, install or run anything in them.
+- **No reference-client specifics outside `docs/reference/`** (names, paths, Slack ids, data). The deny list is `docs/reference/dist-deny.txt`.
 
 ### Progress updates
 

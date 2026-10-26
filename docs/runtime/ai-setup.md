@@ -6,7 +6,7 @@ The bot uses Claude only to fill in the blanks of a form a module already declar
 
 ## 1. Create the key and its spend cap
 
-1. Go to <https://console.anthropic.com> with the venture email (not Hometown) and create an API key named `brightside-bot-dev`.
+1. Go to <https://console.anthropic.com> with the AP Labs email (not a client's) and create an API key named `brightside-bot-dev`.
 2. In the console, set a monthly spend cap (suggested: USD 20 for the demo). **This cap is the one that can't be reset by restarting the bot**; the bot's own breaker (below) resets on every restart.
 
 ## 2. Store it
