@@ -14,15 +14,17 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
-const { build } = require('../../../../kit/fixture/build');
+const { build, readRows } = require('../../../../kit/fixture/build');
 const { loadChecks, validate } = require('../../../../kit/fixture/validate');
 const { createData } = require('../../../../kit/runtime/data');
 const { loadProfile } = require('../../../../kit/lib/profile');
 const { truthChecksFor, loadTruths } = require('../../../../kit/lib/truths');
 const { contextDirFor } = require('../../../../kit/lib/onboard');
 const { runChecks } = require('../../../../kit/lib/verify/runner');
-const { checkEnv } = require('../../../../kit/lib/verify');
+const { checkEnv, checkLine } = require('../../../../kit/lib/verify');
 const { TRUTH_IDS } = require('../lib/truths');
+const { ROUTING_TARGET_IDS } = require('../lib/scenarios');
+const { packS3, TRUTH_IDS: ROUTING_TRUTH_IDS } = require('../truths/routing');
 const { generate, writeFiles } = require('../generate');
 
 const REPO = path.resolve(__dirname, '..', '..', '..', '..');
@@ -31,6 +33,7 @@ const PROFILE_FILE = path.join(REPO, 'profiles', 'brightside', 'profile.yml');
 const PROFILE = loadProfile(PROFILE_FILE);
 const FORBIDDEN = PROFILE.sql.forbidden_columns;
 const TARGETS = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, 'targets.json'), 'utf8')).truths;
+const ROUTING_TARGETS = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, 'targets.json'), 'utf8')).routing;
 
 function tmpDir(t) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'brightside-validate-')));
@@ -65,8 +68,16 @@ test('the profile\'s fixture-validate check names no profile: verify passes the 
   assert.deepEqual(check.run, ['node', 'kit/fixture/validate.js', 'examples/brightside/fixture']);
 });
 
+// The query truths (Story 7.6), then the routing truths (Story 14.4), in
+// data.md's order.
+const ALL_TRUTH_IDS = [...TRUTH_IDS, ...ROUTING_TARGET_IDS];
+const ROUTING_SCRIPT = 'examples/brightside/fixture/truths/routing.js';
+// A routing truth's expect: its planted answer; S3's three counts packed into
+// one number as the script prints them (100 x in-zone + 10 x cross-zone + unplaced).
+const routingExpect = (id) => (id === 'route-change-s3-crosszone' ? packS3(ROUTING_TARGETS[id]) : ROUTING_TARGETS[id]);
+
 test('data.md holds one truth per planted target: owner Dana Reyes, signed off 2026-10-25 (Story 4.3), tolerance 0', () => {
-  const entries = loadTruths(contextDirFor(PROFILE_FILE));
+  const entries = loadTruths(contextDirFor(PROFILE_FILE)).filter((e) => TRUTH_IDS.includes(e.id));
   assert.deepEqual(entries.map((e) => e.id).sort(), [...TRUTH_IDS].sort());
   assert.deepEqual(Object.keys(TARGETS).sort(), [...TRUTH_IDS].sort());
   for (const e of entries) {
@@ -81,14 +92,64 @@ test('data.md holds one truth per planted target: owner Dana Reyes, signed off 2
   }
 });
 
-test('each truth runs through the query runner, as npm run verify runs it, and matches its target', async (t) => {
+test('data.md holds the five routing truths (Story 14.4): planted targets, tolerance 0, owner Dana Reyes, sign-off pending', () => {
+  const entries = loadTruths(contextDirFor(PROFILE_FILE));
+  assert.deepEqual(entries.map((e) => e.id), ALL_TRUTH_IDS);
+  assert.deepEqual(Object.keys(ROUTING_TARGETS).sort(), [...ROUTING_TARGET_IDS].sort());
+  assert.deepEqual(ROUTING_TRUTH_IDS, ROUTING_TARGET_IDS.filter((id) => id !== 'scheduled-stops-next-14d'));
+  for (const e of entries.filter((x) => ROUTING_TARGET_IDS.includes(x.id))) {
+    assert.deepEqual(e.problems, [], e.id);
+    assert.equal(e.truth.expect, routingExpect(e.id), `${e.id}: expect must be the planted target`);
+    assert.deepEqual(e.truth.tolerance, { kind: 'abs', value: 0 }, e.id);
+    assert.equal(e.truth.owner, 'Dana Reyes', e.id);
+    assert.equal(e.truth.signedOff, 'pending', `${e.id}: not signed off until Dana Reyes confirms it`);
+    // No --profile here either: the governing profile applies.
+    const run = e.id === 'scheduled-stops-next-14d'
+      ? ['node', 'kit/fixture/query.js', `examples/brightside/fixture/truths/${e.id}.sql`]
+      : ['node', ROUTING_SCRIPT, e.id];
+    assert.deepEqual(e.truth.run, run, e.id);
+  }
+  assert.equal(routingExpect('route-change-s3-crosszone'), 510);
+});
+
+test('each truth runs as npm run verify runs it and matches its target; no output line holds a coordinate', async () => {
   const { out } = await builtFixture();
   // As verify passes it: no APLABS_PROFILE, the governing profile in
   // APLABS_GOVERNING_PROFILE. The data file is the temp build, so
   // APLABS_DATA_PATH is set here only.
   const env = checkEnv({ PATH: process.env.PATH, APLABS_DATA_PATH: out }, ['APLABS_DATA_PATH'], PROFILE_FILE);
   const { results } = await runChecks(truthChecksFor(PROFILE_FILE), env, REPO);
-  assert.deepEqual(results.map((r) => [r.id, r.outcome, r.reason || null]), TRUTH_IDS.map((id) => [`truth:${id}`, 'pass', null]));
+  assert.deepEqual(results.map((r) => [r.id, r.outcome, r.reason || null]), ALL_TRUTH_IDS.map((id) => [`truth:${id}`, 'pass', null]));
+
+  // GRD-002: every line verify prints for a truth, and everything the truth
+  // printed, is checked against every coordinate in the fixture: no
+  // micro-degree integer (with or without its sign), and no decimal inside
+  // the fixture's latitude or longitude range (a value in degrees).
+  const coords = await readRows(out, `SELECT geo_lat_e6 AS a, geo_lon_e6 AS o FROM properties
+    UNION ALL SELECT base_geo_lat_e6, base_geo_lon_e6 FROM crews`);
+  assert.ok(coords.length > 2000);
+  const integers = new Set();
+  const [lat, lon] = [[], []];
+  for (const r of coords) {
+    const [a, o] = [Number(r.a), Number(r.o)];
+    assert.ok(Number.isSafeInteger(a) && Number.isSafeInteger(o));
+    integers.add(String(Math.abs(a))).add(String(Math.abs(o)));
+    lat.push(Math.abs(a) / 1e6);
+    lon.push(Math.abs(o) / 1e6);
+  }
+  const range = (list) => [Math.min(...list) - 0.05, Math.max(...list) + 0.05];
+  const [latRange, lonRange] = [range(lat), range(lon)];
+  const inside = (x, [lo, hi]) => x >= lo && x <= hi;
+  const lines = results.flatMap((r) => [checkLine(r), ...`${r.stdout || ''}\n${r.stderr || ''}`.split('\n')]).filter(Boolean);
+  // The routing truths printed more than their number (S1's optimized
+  // minutes, S3's three counts), so the scan covers real output.
+  assert.ok(lines.some((l) => /^in_zone \d+$/.test(l)) && lines.some((l) => /^optimized drive minutes \d+$/.test(l)));
+  for (const line of lines) {
+    for (const tok of line.match(/\d+(?:\.\d+)?/g) || []) {
+      if (tok.includes('.')) assert.ok(!inside(Number(tok), latRange) && !inside(Number(tok), lonRange), `a degree value in: ${line}`);
+      else assert.ok(!integers.has(String(Number(tok))), `a micro-degree value in: ${line}`);
+    }
+  }
 });
 
 // The trap: end_date is inclusive, and one plan's last active day is as_of.
