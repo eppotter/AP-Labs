@@ -160,6 +160,26 @@ class ScoringFault extends RuntimeRefusal {
   }
 }
 
+// The routing engine refused its input (Story 12.1, AD-R2, AD-R3): a field of
+// the input contract is missing or malformed (contract.js never coerces), or
+// the travel port has no minutes for a pair (never 0). A setup fault in the
+// adapter, so no plan is shown. field is a path like "stops[2].node"; the
+// value itself is never carried. details: { field, problem }, plus { from,
+// to } (node ids) when problem is 'no_travel'. problem is one of
+// ROUTING_PROBLEMS.
+const ROUTING_PROBLEMS = Object.freeze([
+  'missing', 'not_object', 'not_list', 'not_text', 'not_integer', 'not_true_false', 'out_of_range',
+  'bad_id', 'bad_node', 'bad_date', 'bad_strength', 'unknown_crew', 'duplicate', 'no_travel',
+]);
+class RoutingFault extends RuntimeRefusal {
+  constructor(details) {
+    if (!ROUTING_PROBLEMS.includes(details.problem)) throw new TypeError(`unknown RoutingFault problem "${details.problem}"`);
+    const pair = details.problem === 'no_travel' ? ` (${details.from} to ${details.to})` : '';
+    super(`routing input refused: "${details.field}" ${details.problem}${pair}`, details);
+    this.code = 'ROUTING_FAULT';
+  }
+}
+
 // A "How was this made?" click whose run record is gone: older than 24 hours,
 // or never known (Story 9.6). details: {}
 class ProvenanceGone extends RuntimeRefusal {
@@ -222,4 +242,5 @@ module.exports = {
   KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
   SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
   ProvenanceGone, ProvenanceNotYours, ScoringFault, SCORING_PROBLEMS, PreviewInvalid, PushRefused, PUSH_REFUSALS, AlreadyPushed,
+  RoutingFault, ROUTING_PROBLEMS,
 };

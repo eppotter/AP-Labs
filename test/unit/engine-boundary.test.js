@@ -3,7 +3,10 @@
 // The engine/fork boundary (AD-1, Story 6.5), as grep tests:
 //   - app code (every app dir, and the module and connector templates) imports from kit/ only
 //     through kit/runtime/sdk (as '#sdk' or a relative path to it);
-//   - no engine file (kit/**, profiles/_schema/**) references examples/.
+//   - no engine file (kit/**, profiles/_schema/**) references examples/;
+//   - the routing engine (kit/runtime/routing/**) requires only
+//     kit/runtime/scoring, kit/runtime/errors and its own files, and its code
+//     uses no clock, randomness, async or process state (AD-R1, Story 12.1).
 // App dirs scanned: APLABS_APP_DIR when set, <repo>/app (a fork) and
 // examples/*/app (template dev), plus kit/templates/module and
 // kit/templates/connector always, so the check never passes by scanning nothing.
@@ -68,6 +71,40 @@ function kitImportProblems(dir, root = ROOT) {
 // Every engine file under root that references examples/.
 function engineExampleRefs(root = ROOT) {
   return listEngineFiles(root).filter((rel) => EXAMPLES.test(fs.readFileSync(path.join(root, rel), 'utf8')));
+}
+
+// The routing engine's dependency rule (architecture-routing.md): each import
+// in kit/runtime/routing/** must resolve inside it, to kit/runtime/scoring or
+// to kit/runtime/errors. A package or node: built-in is outside too.
+const ROUTING_DIR = 'kit/runtime/routing';
+const ROUTING_ALLOWED = ['kit/runtime/scoring', 'kit/runtime/errors.js', ROUTING_DIR];
+// AD-R1: no clock, randomness, async or process state in the engine's code.
+const IMPURE = [/\bDate\b/, /\bMath\.random\b/, /\basync\b/, /\bawait\b/, /\bPromise\b/, /\bprocess\b/, /\bset(Timeout|Interval|Immediate)\b/];
+
+const withoutComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+function routingProblems(root = ROOT) {
+  const dir = path.join(root, ROUTING_DIR);
+  const problems = [];
+  for (const file of jsFiles(dir)) {
+    const rel = slash(path.relative(root, file));
+    const text = fs.readFileSync(file, 'utf8');
+    if (EXAMPLES.test(text)) problems.push(`${rel}: names examples/`);
+    for (const m of text.matchAll(IMPORT)) {
+      const spec = m[2] || m[4] || m[6] || m[8];
+      let target = null;
+      if (spec.startsWith('.')) {
+        const abs = path.resolve(path.dirname(file), spec);
+        target = slash(path.relative(root, abs));
+        if (target === 'kit/runtime/errors') target = 'kit/runtime/errors.js';
+      }
+      const ok = target !== null && ROUTING_ALLOWED.some((a) => target === a || target.startsWith(`${a}/`));
+      if (!ok) problems.push(`${rel}: requires '${spec}' (outside routing, scoring and errors)`);
+    }
+    const code = withoutComments(text);
+    for (const re of IMPURE) if (re.test(code)) problems.push(`${rel}: uses ${re.source.replace(/\\b/g, '').replace(/\\/g, '')}`);
+  }
+  return problems;
 }
 
 function appDirs(root = ROOT, env = process.env) {
@@ -151,4 +188,52 @@ test('the engine check catches an engine file that references examples/', (t) =>
   fs.writeFileSync(path.join(root, 'profiles/_schema/s.json'), '{"$comment": "see examples/acme"}\n');
   fs.writeFileSync(path.join(root, 'profiles/acme/profile.yml'), '# examples/acme is fine here: not engine\n');
   assert.deepEqual(engineExampleRefs(root), ['kit/runtime/bad.js', 'profiles/_schema/s.json']);
+});
+
+test('the routing engine requires only scoring, errors and its own files, and is pure (AD-R1)', () => {
+  assert.ok(jsFiles(path.join(ROOT, ROUTING_DIR)).length >= 3, 'the routing engine is scanned');
+  assert.deepEqual(routingProblems(), []);
+});
+
+test('the routing check catches a require outside the rule, a name of examples/ and impure code', (t) => {
+  const root = tmpDir(t);
+  const dir = path.join(root, ROUTING_DIR);
+  fs.mkdirSync(path.join(dir, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'ok.js'), [
+    "require('./sub/x');",
+    "require('../scoring');",
+    "require('../scoring/index.js');",
+    "require('../errors');",
+    "require('../errors.js');",
+    '// a comment may say Date.now, async or process.env',
+    '/* or Math.random() here */',
+  ].join('\n'));
+  fs.writeFileSync(path.join(dir, 'sub', 'x.js'), "require('../../routing/ok');\n");
+  fs.writeFileSync(path.join(dir, 'bad.js'), [
+    "require('../data');",
+    "require('../routing-map');",
+    "require('../slack/modal');",
+    "require('node:fs');",
+    "require('yaml');",
+    "require('#sdk');",
+    "const APP = 'examples/acme/app';",
+    'const t = Date.now();',
+    'const r = Math.random();',
+    'async function f() { await g(); }',
+    'const e = process.env.X;',
+  ].join('\n'));
+  assert.deepEqual(routingProblems(root), [
+    'kit/runtime/routing/bad.js: names examples/',
+    "kit/runtime/routing/bad.js: requires '../data' (outside routing, scoring and errors)",
+    "kit/runtime/routing/bad.js: requires '../routing-map' (outside routing, scoring and errors)",
+    "kit/runtime/routing/bad.js: requires '../slack/modal' (outside routing, scoring and errors)",
+    "kit/runtime/routing/bad.js: requires 'node:fs' (outside routing, scoring and errors)",
+    "kit/runtime/routing/bad.js: requires 'yaml' (outside routing, scoring and errors)",
+    "kit/runtime/routing/bad.js: requires '#sdk' (outside routing, scoring and errors)",
+    'kit/runtime/routing/bad.js: uses Date',
+    'kit/runtime/routing/bad.js: uses Math.random',
+    'kit/runtime/routing/bad.js: uses async',
+    'kit/runtime/routing/bad.js: uses await',
+    'kit/runtime/routing/bad.js: uses process',
+  ]);
 });

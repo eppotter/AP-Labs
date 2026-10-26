@@ -16,6 +16,7 @@ const {
 const {
   ProvenanceGone, ProvenanceNotYours, ScoringFault, PreviewInvalid, PushRefused, AlreadyPushed,
 } = require('./errors');
+const { RoutingFault } = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
 function escapeText(s) {
@@ -37,6 +38,25 @@ const SCORING_WORDS = Object.freeze({
   column_taken: (label) => `the results already have a column named "${label}", which the scores need`,
   duplicate_row_id: (label) => `two rows have the same "${label}", so they can't be told apart`,
   bad_limit: (label) => `"${label}" is not a whole number of rows`,
+});
+
+// Why the routing engine refused its input (Story 12.1), from the field's
+// path. Never the value itself.
+const ROUTING_WORDS = Object.freeze({
+  missing: ({ field }) => `"${field}" is missing`,
+  not_object: ({ field }) => `"${field}" is not a set of named values`,
+  not_list: ({ field }) => `"${field}" is not a list`,
+  not_text: ({ field }) => `"${field}" is not text`,
+  not_integer: ({ field }) => `"${field}" is not a whole number`,
+  not_true_false: ({ field }) => `"${field}" is not true or false`,
+  out_of_range: ({ field }) => `"${field}" is outside its allowed range`,
+  bad_id: ({ field }) => `"${field}" is not a valid id`,
+  bad_node: ({ field }) => `"${field}" is not a place id (property:<id> or crew:<id>)`,
+  bad_date: ({ field }) => `"${field}" is not a date written as YYYY-MM-DD`,
+  bad_strength: ({ field }) => `"${field}" is neither hard nor soft`,
+  unknown_crew: ({ field }) => `"${field}" names a crew that isn't in the day`,
+  duplicate: ({ field }) => `"${field}" appears more than once`,
+  no_travel: ({ from, to }) => `there is no drive time from ${from} to ${to}`,
 });
 
 // The AI service's refusals (Story 9.1). Each points to the typed form, which
@@ -110,6 +130,8 @@ const MESSAGES = [
   [CsvNotDelivered, (details, { admin }) => `*The CSV didn't arrive.* I couldn't send the file to your DM, so you have only the first rows shown here, not the whole list. Open it again from the menu to try again, or tell ${admin} if it keeps happening.`],
   // A scored list (Story 10.1): a setup fault, so nothing partial is shown.
   [ScoringFault, ({ label, problem }, { admin }) => `This list's scores couldn't be worked out: ${escapeText(SCORING_WORDS[problem](label))}. So there are no results and nothing was sent. I've logged the problem; please tell ${admin}.`],
+  // The routing engine's input (Story 12.1): a setup fault, so no plan is shown.
+  [RoutingFault, (details, { admin }) => `The suggested plan couldn't be worked out: ${escapeText(ROUTING_WORDS[details.problem](details))}. Nothing was changed. I've logged the problem; please tell ${admin}.`],
   // "How was this made?" (Story 9.6). Neither says anything about the run.
   [ProvenanceGone, () => "The details of this run are no longer available (they're kept for 24 hours). Run the list again from the menu to see how a new one is made."],
   [ProvenanceNotYours, () => "These details belong to someone else's run, so I can't show them. Run the list yourself from the menu to see how yours is made."],
