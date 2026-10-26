@@ -1,0 +1,5 @@
+site_id,street_address,phone,pos_lat_e6,pos_lon_e6
+s1,1 Test Lane,555-0101,41123457,-73654321
+s2,22 Sample Road,555-0102,41187654,-73598765
+s3,333 Example Way,555-0103,41012345,-73812345
+s4,4 Nowhere Court,555-0104,,
