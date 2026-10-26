@@ -46,6 +46,8 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 - **Never reword code just to quiet a check** (write-path, job-imports, tier). If a check flags safe code, move the code to where the check allows it, or fix the check in its own reviewed change.
 - **A story that adds a Slack screen lists every way out of it** (back, cancel, an error, an expired trigger) in its acceptance criteria, with a test for each.
 - **Steps only CI can run** (a docker build, the network off) are named as untested in the builder's report and the PR body. The first CI run is their test. If the check itself proves wrong, the fix states the changed acceptance criterion in the plan and the PR, and Ely is told.
+- **A fake for an external API** (Anthropic, Slack, the email tool) **rejects what the real API rejects,** for every request field the code sets. A test passing against a fake that accepts anything proves nothing about the real call.
+- **A test that fixes the time fixes every clock the code reads:** freeze `Date` (node:test `mock.timers`) or pass `now` into every path, never only one store's clock.
 - **Profiles are untrusted input.** The schema rejects unknown keys. `.aplabs/**` always floors at T3.
 - **Secrets:** never read, print, log or commit tokens. Commands that need a credential (for example publishing the fixture) are run by Ely, not by an agent.
 - **Client forks get releases only through the distribution repo.** `npm run template:publish -- vX.Y.Z` builds the dist commit and tag locally; Ely pushes them. The Orchestrator never passes `--push` to `template:publish` and never pushes to the `dist` remote.
