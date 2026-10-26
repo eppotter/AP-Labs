@@ -221,8 +221,9 @@ test('packageDelta: a lockfile entry changed, removed or added with nothing appe
 
 // Story 11.6 (review B9): the path rules a template update applies.
 
-test('UPDATE_RULES: the fork-owned list is the ledger and the planning docs; deleted roots are derived', () => {
-  assert.deepEqual([...UPDATE_RULES.forkOwned], ['docs/ledger.md', 'docs/planning']);
+test('UPDATE_RULES: the fork-owned list is the ledger, the planning docs and the build files; deleted roots are derived', () => {
+  // 'docs/ledger' has no trailing slash: updateRule's under() adds it (plan ledger-rows, AC5).
+  assert.deepEqual([...UPDATE_RULES.forkOwned], ['docs/ledger.md', 'docs/planning', 'docs/ledger']);
   assert.equal(typeof UPDATE_RULES.deletedOnPurpose, 'string', 'no fixed list of deleted roots');
   assert.ok(Object.isFrozen(UPDATE_RULES) && Object.isFrozen(UPDATE_RULES.forkOwned));
 });
@@ -253,6 +254,10 @@ test('updateRule: fork, package, fork-owned, deleted and template paths', () => 
   assert.equal(updateRule('docs/ledger.md', opts), 'fork-owned');
   assert.equal(updateRule('docs/planning/plan.md', opts), 'fork-owned');
   assert.equal(updateRule('docs/planningish.md', opts), 'template');
+  assert.equal(updateRule('docs/ledger/builds/feat-x.md', opts), 'fork-owned');
+  assert.equal(updateRule('docs/ledger/README.md', opts), 'fork-owned');
+  assert.equal(updateRule('docs/ledgerish.md', opts), 'template');
+  assert.equal(updateRule('docs/ledger-old/x.md', opts), 'template');
   assert.equal(updateRule('examples/demo/new.md', opts), 'deleted');
   assert.equal(updateRule('examples/demo2/new.md', opts), 'template');
   assert.equal(updateRule('profiles/demo/profile.yml', opts), 'deleted');

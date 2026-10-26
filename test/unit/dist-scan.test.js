@@ -16,7 +16,8 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const dist = require('../../kit/lib/dist');
 const { ENGINE_DIRS } = require('../../kit/runtime/paths');
-const { parseLedger } = require('../../kit/lib/ledger');
+const { parseLedger, parseLedgerSet } = require('../../kit/lib/ledger');
+const { readLedgerSet } = require('../../scripts/ledger-check');
 
 const REPO = path.join(__dirname, '../..');
 const { EXCLUDED, DENY_FILE } = dist;
@@ -34,8 +35,8 @@ function writeDeny(root, text) {
 
 // --- Exclusions ---------------------------------------------------------
 
-test('EXCLUDED is the four internal paths, and frozen', () => {
-  assert.deepEqual([...EXCLUDED], ['docs/reference', 'docs/planning', 'docs/PLAN-v1.md', 'docs/HANDOFF.md']);
+test('EXCLUDED is the four internal paths and the build files, and frozen', () => {
+  assert.deepEqual([...EXCLUDED], ['docs/reference', 'docs/planning', 'docs/PLAN-v1.md', 'docs/HANDOFF.md', 'docs/ledger/builds']);
   assert.ok(Object.isFrozen(EXCLUDED));
 });
 
@@ -56,10 +57,12 @@ test('assertExclusionsSafe refuses an exclusion that would drop engine files, na
 });
 
 test('isExcluded matches an excluded path and what is under it, nothing near it', () => {
-  for (const p of ['docs/reference', 'docs/reference/dist-deny.txt', 'docs/planning/x/y.md', 'docs/PLAN-v1.md', 'docs/HANDOFF.md']) {
+  for (const p of ['docs/reference', 'docs/reference/dist-deny.txt', 'docs/planning/x/y.md', 'docs/PLAN-v1.md', 'docs/HANDOFF.md',
+    'docs/ledger/builds', 'docs/ledger/builds/feat-x.md']) {
     assert.ok(dist.isExcluded(p), p);
   }
-  for (const p of ['docs/references/x.md', 'docs/PLAN-v1.md.bak', 'docs/planning.md', 'docs/ledger.md', 'kit/lib/dist/index.js', 'README.md']) {
+  for (const p of ['docs/references/x.md', 'docs/PLAN-v1.md.bak', 'docs/planning.md', 'docs/ledger.md', 'docs/ledger/README.md',
+    'docs/ledger/builds.md', 'kit/lib/dist/index.js', 'README.md']) {
     assert.ok(!dist.isExcluded(p), p);
   }
 });
@@ -205,4 +208,57 @@ test('tripwire: the shipped tree has no reference-client names', {
   assert.ok(files.length > 100, 'the tracked tree was listed');
   const { hits } = dist.scanDist(files, patterns);
   assert.deepEqual(hits.map(dist.formatHit), [], `reference-client names would ship (see ${DENY_FILE}):\n${hits.map(dist.formatHit).join('\n')}`);
+});
+
+// --- Build files (plan ledger-rows, AC4) -------------------------------------
+
+test('the shipped tree has docs/ledger/README.md and no docs/ledger/builds/ path', () => {
+  const shipped = shippedFiles(REPO).map((f) => f.path);
+  assert.ok(shipped.includes('docs/ledger/README.md'), 'the README ships');
+  assert.deepEqual(shipped.filter((p) => p === 'docs/ledger/builds' || p.startsWith('docs/ledger/builds/')), []);
+});
+
+// A temp source repo with fixture build files: one whose name holds a made-up
+// deny word, one whose name doesn't. buildDistTree (the publish path) ships
+// neither, ships the README, and the shipped ledger parses as a set.
+test('buildDistTree ships no build file, whatever its name, and the shipped ledger parses (AC4)', (t) => {
+  const root = tempDir(t);
+  const env = { PATH: process.env.PATH, HOME: root, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (...a) => execFileSync('git', a, { cwd: root, env, encoding: 'utf8' });
+  const BUILDS = '| PR | Date | Story | Kind | Tier | Summary | DEPs |\n|---|---|---|---|---|---|---|\n';
+  const DEPS = '| DEP | Opened | Owner | Status | Blocks | What | Source |\n|---|---|---|---|---|---|---|\n';
+  const files = {
+    'docs/reference/dist-deny.txt': 'zorblax\n',
+    'README.md': 'A template.\n',
+    'docs/ledger.md': `# Build ledger\n\n## Builds\n\n${BUILDS}| #1 | d | — | — | — | One. | — |\n\n## Deferrals (DEP)\n\n${DEPS}| DEP-001 | d | O | open | — | A. | x |\n`,
+    'docs/ledger/README.md': 'Each build adds its one row in its own file under builds/.\n',
+    'docs/ledger/builds/feat-zorblax-map.md': `${BUILDS}| #2 | d | — | — | — | Two. | DEP-001 |\n`,
+    'docs/ledger/builds/feat-plain.md': `${BUILDS}| #3 | d | — | — | — | Three. | — |\n`,
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), text);
+  }
+  git('init', '-q', '-b', 'main');
+  git('add', '-A');
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'source');
+
+  const built = dist.buildDistTree(root, 'HEAD', { env });
+  assert.deepEqual(built.problems, [], 'no deny-list hit: the build file named with the deny word is excluded');
+  const shipped = git('ls-tree', '-r', '--name-only', built.tree).split('\n').filter(Boolean);
+  assert.deepEqual(shipped.sort(), ['README.md', 'docs/ledger.md', 'docs/ledger/README.md']);
+  const ledger = git('cat-file', 'blob', `${built.tree}:docs/ledger.md`);
+  const parsed = parseLedgerSet({ ledger, builds: [] });
+  assert.deepEqual(parsed.errors, []);
+  assert.equal(parsed.builds.length, 0);
+
+  // Without the exclusion, the deny word in the file name would be a hit.
+  const unexcluded = dist.buildDistTree(root, 'HEAD', { env, excluded: EXCLUDED.filter((e) => e !== 'docs/ledger/builds') });
+  assert.deepEqual(unexcluded.problems, ['dist: deny-list hit: docs/ledger/builds/feat-zorblax-map.md (path): deny pattern 1']);
+});
+
+test('the shipped repo ledger, with no build files, parses as a set', () => {
+  const set = readLedgerSet(REPO);
+  const shipped = dist.shippedContent(dist.LEDGER_PATH, Buffer.from(set.ledger)).toString('utf8');
+  assert.deepEqual(parseLedgerSet({ ledger: shipped, builds: [] }).errors, []);
 });

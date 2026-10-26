@@ -1,15 +1,15 @@
 name: ci
 
-# Minutes (plan ci-save-minutes): every PR runs CI. On main it runs only for
-# a push that changes CHANGELOG.md (a release-prep merge) or by hand
-# (`gh workflow run ci.yml --ref main`): `npm run land` merges only a PR head
-# that passed CI, so a full re-run of every merge is a duplicate, and
-# template:release needs the four jobs green on main's head, which those two
-# give it. Non-PR runs are never narrowed (scripts/ci-changes.js).
+# Every PR runs CI, and so does every push to main (plan ledger-rows): a PR
+# lands without main merged into it first, so its CI ran against an older
+# main, and two PRs that each passed alone can break main together. The run
+# on main shows that within minutes of the merge, and gives template:release
+# the four jobs green on main's head. A run by hand
+# (`gh workflow run ci.yml --ref main`) works too. Non-PR runs are never
+# narrowed (scripts/ci-changes.js).
 on:
   push:
     branches: [main]
-    paths: [CHANGELOG.md]
   pull_request:
   workflow_dispatch:
 

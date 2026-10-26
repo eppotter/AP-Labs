@@ -35,7 +35,10 @@ its own.
    only write what a client source supports, and mark anything inferred as inferred.
 3. **The build ledger.** A row per build when it starts, its status when it ships, and a `DEP` row
    for anything deferred or blocked (the Orchestrator classifies the gap and tells you its owner),
-   closed with the resolving PR.
+   closed with the resolving PR. The build's row goes in its own build file,
+   `docs/ledger/builds/<branch>.md` (the branch name lowercased, `/` as `-`; one row and nothing
+   else, see `docs/ledger/README.md`). `DEP` rows stay in `docs/ledger.md`, with the next free id.
+   Never move older rows out of `docs/ledger.md`, and never edit or delete another build's file.
 4. **Docs follow the build.** When a diff changes something a doc or a context file describes,
    draft the update in the same build so nothing ships disagreeing with its own docs. New canon
    (a rule a specialist proposed) is drafted here and approved by a human; you never decide it is

@@ -23,11 +23,13 @@ A fork records the release it is built from in `.aplabs/template-version`
 ### What changed
 
 - `THIRD_PARTY_NOTICES.md` carries BMAD-METHOD's MIT licence, which the bundled `_bmad/` copy needs in every copy, and points to p3-stack's.
+- Ledger rows without merge conflicts: each PR adds its one ledger row in its own build file, `docs/ledger/builds/<branch>.md` (`docs/ledger/README.md` says what it holds), so two open PRs no longer conflict over `docs/ledger.md`. DEP rows stay in `docs/ledger.md`. `scripts/ledger-check.js` fails a PR that deletes a build file, edits another PR's, reuses a branch name or adds a row in two places, and `npm test` checks every row together. A template update keeps the fork's `docs/ledger/` as it is (fork-owned), and no build file ships.
+- CI runs every job on every push to `main` again.
 
 ### What a fork must do
 
-- Nothing: take the update, and keep `THIRD_PARTY_NOTICES.md` in the fork.
-
+- Keep `THIRD_PARTY_NOTICES.md` in the fork.
+- Nothing for the ledger: a fork made before `docs/ledger/` keeps adding rows to `docs/ledger.md`, which still passes `ledger-check`, and the update adds no `docs/ledger/` to it. To switch to build files (no ledger conflicts between the fork's own PRs), copy the README in from the release, `git checkout vX.Y.Z -- docs/ledger/README.md`, and put each new PR's row in `docs/ledger/builds/<branch>.md`.
 ## v0.2.0
 
 The runtime phase, and the first release client forks can take. It is published to the distribution repo (`aplabs-template`), whose history starts here.
