@@ -1,6 +1,6 @@
 key,value
 as_of,2026-09-30
-generator_version,3
+generator_version,4
 history_start,2024-10-01
 rows_add_ons,5
 rows_clients,2000
@@ -14,8 +14,10 @@ rows_payments,39680
 rows_plan_price_changes,1013
 rows_plans,1584
 rows_properties,2186
+rows_scheduled_visits,1720
 rows_staff,89
 rows_timesheets,115302
 rows_visits,40895
 rows_zones,5
+schedule_horizon_end,2026-10-28
 seed,20241001

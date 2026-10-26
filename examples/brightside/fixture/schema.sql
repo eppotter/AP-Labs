@@ -22,7 +22,9 @@ CREATE TABLE add_ons (
 CREATE TABLE crews (
   crew_id INTEGER PRIMARY KEY,
   zone_id VARCHAR NOT NULL REFERENCES zones (zone_id),
-  name VARCHAR NOT NULL
+  name VARCHAR NOT NULL,
+  base_geo_lat_e6 INTEGER NOT NULL,
+  base_geo_lon_e6 INTEGER NOT NULL
 );
 
 CREATE TABLE staff (
@@ -74,7 +76,9 @@ CREATE TABLE properties (
   bedrooms INTEGER NOT NULL,
   bathrooms DECIMAL(3,1) NOT NULL,
   has_pets BOOLEAN NOT NULL,
-  access_method VARCHAR NOT NULL
+  access_method VARCHAR NOT NULL,
+  geo_lat_e6 INTEGER NOT NULL,
+  geo_lon_e6 INTEGER NOT NULL
 );
 
 CREATE TABLE plans (
@@ -146,6 +150,23 @@ CREATE TABLE timesheets (
   clock_in TIMESTAMP NOT NULL,
   clock_out TIMESTAMP NOT NULL,
   minutes INTEGER NOT NULL
+);
+
+CREATE TABLE scheduled_visits (
+  scheduled_visit_id INTEGER PRIMARY KEY,
+  property_id INTEGER NOT NULL REFERENCES properties (property_id),
+  plan_id INTEGER NOT NULL REFERENCES plans (plan_id),
+  crew_id INTEGER NOT NULL REFERENCES crews (crew_id),
+  package_id VARCHAR NOT NULL REFERENCES packages (package_id),
+  visit_date DATE NOT NULL,
+  status VARCHAR NOT NULL,
+  status_changed_on DATE NOT NULL,
+  arrival_window VARCHAR NOT NULL,
+  scheduled_start TIME NOT NULL,
+  scheduled_minutes INTEGER NOT NULL,
+  labour_minutes INTEGER NOT NULL,
+  route_order INTEGER NOT NULL,
+  travel_minutes_from_previous INTEGER NOT NULL
 );
 
 CREATE TABLE fixture_meta (
