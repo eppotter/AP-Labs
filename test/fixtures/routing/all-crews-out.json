@@ -1,0 +1,167 @@
+{
+  "_comment": "Synthetic day for Story 12.4: every crew is out, so every stop is unplaced. Monday 2026-11-02. Not client data; minutes come from made-up grid points that are not in the file.",
+  "input": {
+    "day": "2026-11-02",
+    "asOf": "2026-10-30",
+    "limits": {
+      "earliestStart": 360,
+      "defaultStart": 480,
+      "aimFinish": 1080,
+      "latestFinish": 1380,
+      "startRoundTo": 5
+    },
+    "crews": [
+      {
+        "crewId": "x1",
+        "zoneId": "east",
+        "baseNode": "crew:x1",
+        "headcountPlanned": 3,
+        "headcountPresent": 0,
+        "available": false
+      },
+      {
+        "crewId": "x2",
+        "zoneId": "west",
+        "baseNode": "crew:x2",
+        "headcountPlanned": 3,
+        "headcountPresent": 0,
+        "available": false
+      }
+    ],
+    "stops": [
+      {
+        "stopId": "e1",
+        "node": "property:e1",
+        "currentCrewId": "x1",
+        "routeOrder": 1,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "e2",
+        "node": "property:e2",
+        "currentCrewId": "x1",
+        "routeOrder": 2,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "f1",
+        "node": "property:f1",
+        "currentCrewId": "x2",
+        "routeOrder": 1,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": true,
+        "rules": [],
+        "start": 540
+      }
+    ]
+  },
+  "matrix": [
+    {
+      "from_node": "crew:x1",
+      "to_node": "crew:x2",
+      "minutes": 40
+    },
+    {
+      "from_node": "crew:x1",
+      "to_node": "property:e1",
+      "minutes": 5
+    },
+    {
+      "from_node": "crew:x1",
+      "to_node": "property:e2",
+      "minutes": 5
+    },
+    {
+      "from_node": "crew:x1",
+      "to_node": "property:f1",
+      "minutes": 43
+    },
+    {
+      "from_node": "crew:x2",
+      "to_node": "crew:x1",
+      "minutes": 40
+    },
+    {
+      "from_node": "crew:x2",
+      "to_node": "property:e1",
+      "minutes": 39
+    },
+    {
+      "from_node": "crew:x2",
+      "to_node": "property:e2",
+      "minutes": 37
+    },
+    {
+      "from_node": "crew:x2",
+      "to_node": "property:f1",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "crew:x1",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "crew:x2",
+      "minutes": 39
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:e2",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:f1",
+      "minutes": 41
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "crew:x1",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "crew:x2",
+      "minutes": 37
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:e1",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:f1",
+      "minutes": 38
+    },
+    {
+      "from_node": "property:f1",
+      "to_node": "crew:x1",
+      "minutes": 43
+    },
+    {
+      "from_node": "property:f1",
+      "to_node": "crew:x2",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:f1",
+      "to_node": "property:e1",
+      "minutes": 41
+    },
+    {
+      "from_node": "property:f1",
+      "to_node": "property:e2",
+      "minutes": 38
+    }
+  ]
+}

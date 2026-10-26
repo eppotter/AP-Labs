@@ -60,6 +60,8 @@ const ROUTING_WORDS = Object.freeze({
   unknown_rule: ({ field }) => `"${field}" names a rule that isn't registered`,
   not_overridable: ({ field }) => `"${field}" tries to change a rule that is always hard`,
   not_function: ({ field }) => `"${field}" is not a check the engine can run`,
+  unknown_weight: ({ field }) => `"${field}" names a ranking input the engine doesn't have`,
+  bad_weights: ({ field }) => `"${field}" are not ranking weights the scoring check accepts`,
 });
 
 // The AI service's refusals (Story 9.1). Each points to the typed form, which
