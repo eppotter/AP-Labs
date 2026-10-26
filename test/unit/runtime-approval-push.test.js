@@ -14,6 +14,7 @@
 // client's. The escalation itself: runtime-escalation.test.js.
 
 const test = require('node:test');
+const { mock } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -61,6 +62,13 @@ const ROWS = Object.freeze([
 ]);
 const SENDABLE = ROWS.filter((r) => r.address).map((r) => r.person_id);
 
+// The pull stamps ranAt from the real clock, and the list name carries its UTC
+// date: freeze Date at the store's pinned time so the expected names hold on
+// any day. The store keeps its own clock (setup's clock.t), which tests advance.
+const PINNED = Date.parse('2026-10-25T12:00:00Z');
+test.beforeEach(() => mock.timers.enable({ apis: ['Date'], now: PINNED }));
+test.afterEach(() => mock.timers.reset());
+
 function quietLog() {
   const lines = [];
   const rec = (level) => (msg, fields) => lines.push({ level, msg, fields });
@@ -72,7 +80,7 @@ function quietLog() {
 // at any point. granted.on decides the PUSH_LEADS grant; env the environment.
 function setup({ env = 'dev', prof = profile, rows = ROWS } = {}) {
   mail.reset();
-  const clock = { t: Date.parse('2026-10-25T12:00:00Z') };
+  const clock = { t: PINNED };
   const store = createStore({ now: () => clock.t });
   const app = new FakeSlackApp({ views: true });
   const log = quietLog();
