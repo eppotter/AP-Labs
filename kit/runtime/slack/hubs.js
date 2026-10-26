@@ -82,6 +82,34 @@
 // environment the same way dispatch does (resolveModule), before the
 // archetype (kit/runtime/archetypes/approval-write) looks at anything else.
 // connectors: the instances the app made at boot (approval-write/connectors.js).
+//
+// Map images (Story 15.1, AD-R12, AD-R15): a reply may carry image: { png,
+// alt } only from a module allowed to show one (kit/runtime/slack/image
+// uploadsMapImages: the routing-map archetype or the dev-only map-check
+// module); from any other module the image is refused, nothing is uploaded,
+// the refusal is logged and the person gets the plain error. mapFiles is the
+// lifecycle the app made (image.createMapFiles); when it is missing or not
+// ready (no store, no Slack client, the sweep not running), a map module's
+// Open shows "not available" and no map view opens (fail closed). A map
+// module's view is pushed with notify_on_close and callback hub:map. The hub
+// uploads the PNG (shared nowhere), records the file, then shows the image
+// block in that view, replacing what was there, and deletes the view's
+// earlier map files; a failed show deletes the new file at once. An upload
+// failure shows a plain message in the view, with Back. With no pushed view
+// (the trigger expired and the reply went in place, or a click from a
+// message) nothing is uploaded and the person is told to open it again.
+// view_closed on a map view (Back, or the X) deletes all of that view's
+// files; if it never arrives, the sweep deletes them within 20 minutes. The
+// PNG is never logged: refusals and failures log a reason only.
+// Fail closed (PR #222 review): an image is honoured only on that path, a
+// module's reply from Open. Every other way a message reaches the person (a
+// form, "How was this made?" or approval click, a form or answer submit, a
+// form's open, Help, a reply's ephemeral or in-place fallback) passes through
+// screened(), which refuses a message carrying an image: the refusal is
+// logged (where, and a reason; never the PNG), the person gets the plain
+// error, and nothing is uploaded or sent. The renderers (modal.messageBlocks,
+// format.messageParts) throw on an image as a backstop. A map view switch
+// (Story 15.4) must run the same lifecycle as showImage, not a new path.
 
 const access = require('../access');
 const {
@@ -108,9 +136,21 @@ const {
   createApprovalWrite, pushHooks, verbOf: writeVerbOf, ACTION_PATTERN: WRITE_ACTION,
 } = require('../archetypes/approval-write');
 const { QUERY_ARCHETYPES } = require('../registry');
+const { uploadsMapImages, ImageError } = require('./image');
+const { textBlocks } = require('./format');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
+const MAP_NOT_SHOWN = "The map couldn't be shown this time. Press Back to return to the menu, then try again in a minute.";
+const MAP_NEEDS_WINDOW = "The map opens in its own window, which Slack didn't open this time. Type the hub's command and press Open again.";
+// A map view: Slack sends view_closed for it (Back or the X).
+const MAP_VIEW_CALLBACK = 'hub:map';
+const MAP_VIEW = Object.freeze({ callbackId: MAP_VIEW_CALLBACK, notifyOnClose: true });
+const hasImage = (message) => Boolean(message && typeof message === 'object' && Object.hasOwn(message, 'image'));
+// An image anywhere a reply could be sent from: the message, or the text it
+// falls back to when there is no view.
+const carriesImage = (message) => hasImage(message)
+  || Boolean(message && typeof message === 'object' && hasImage(message.ephemeralFallback));
 
 function defaultCanUse(profile) {
   return (person, mod) => access.decide(profile, person.user, mod.resource);
@@ -173,6 +213,7 @@ function moduleData(data, mod) {
 
 function registerHubs(app, {
   registry, profile, env, log, store, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),
+  mapFiles = null,
 }) {
   const admin = access.adminContact(profile);
   const personOf = (slackId) => ({ id: slackId, user: access.personFor(profile, slackId) });
@@ -185,6 +226,13 @@ function registerHubs(app, {
     .filter((m) => isVisible(m, env) && decide(person, m) === 'allowed');
   const notSetUp = (person) => (person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin })));
   const fellBack = (where, reason, hub, via) => log.info('hub modal fallback', { where, reason, hub: hub || null, ...(via ? { via } : {}) });
+  // A message on any path but the map lifecycle: one carrying an image is
+  // refused and replaced by the plain error (fail closed).
+  const screened = (where, message) => {
+    if (!carriesImage(message)) return message;
+    log.warn('image refused', { where, reason: 'not on the map view path' });
+    return PLAIN_ERROR;
+  };
   // The runner keeps each result as shown, so "Back to the list" can put it
   // back; Back rebuilds the Push button with the same hook.
   const hooks = keepingResult(pushHooks, store, log);
@@ -238,7 +286,9 @@ function registerHubs(app, {
   // inside a modal has no response_url (#114), so there the reply instead
   // replaces the view the click came from (views.update on body.view.id),
   // later replies appended below it, and the fallback is logged.
-  const replyTarget = ({ body, respond, client }, { where, title, hubId }) => {
+  const replyTarget = ({ body, respond, client }, {
+    where, title, hubId, viewOptions,
+  }) => {
     // A long text reply goes as section blocks, in more than one message if
     // it needs over 50 blocks (kit/runtime/slack/format).
     // A message that works only in a view (a form) names what to send instead.
@@ -248,9 +298,13 @@ function registerHubs(app, {
     };
     if (!fromModal(body) || !hasViews(client)) {
       fellBack(where, fromModal(body) ? 'no views client' : 'not from a modal', hubId);
-      return { modal: false, loading: async () => {}, reply: viaEphemeral };
+      return {
+        modal: false, loading: async () => {}, reply: (m) => viaEphemeral(screened(where, m)), viewId: () => null,
+      };
     }
-    const view = pushedView({ client, triggerId: body.trigger_id, title, hubId });
+    const view = pushedView({
+      client, triggerId: body.trigger_id, title, hubId, viewOptions,
+    });
     const fromId = typeof body.view.id === 'string' && body.view.id ? body.view.id : null;
     // In place: the replies so far, all shown in the view the click came from.
     // force: a hash conflict (the view changed since the click) must not drop
@@ -274,10 +328,10 @@ function registerHubs(app, {
       return undefined;
     };
     let fallback = null; // null, or the function every later reply goes to
-    const guarded = (fn) => async (message) => {
+    const guarded = (fn) => async (message, opts) => {
       if (fallback) return message === undefined ? undefined : fallback(message);
       try {
-        return await fn(message);
+        return await fn(message, opts);
       } catch (err) {
         if (view.pushed) throw err;
         if (typeof respond === 'function') {
@@ -292,7 +346,50 @@ function registerHubs(app, {
         return message === undefined ? undefined : fallback(message);
       }
     };
-    return { modal: true, loading: guarded(() => view.loading()), reply: guarded((m) => view.show(m)) };
+    const show = guarded((m, opts) => view.show(m, opts));
+    return {
+      modal: true,
+      loading: guarded(() => view.loading()),
+      reply: (m, opts) => show(screened(where, m), opts),
+      // The pushed view's id, or null when the replies go anywhere else.
+      viewId: () => (fallback || !view.pushed ? null : view.id),
+    };
+  };
+
+  // A map module's reply with an image (Story 15.1). owner ties the files to
+  // this person and this view, for view_closed.
+  const showImage = async (mod, target, userId, message) => {
+    const { image, ...rest } = message;
+    if (!uploadsMapImages(mod)) {
+      log.warn('image refused', { module: mod.id, reason: 'this module may not show images' });
+      await target.reply(PLAIN_ERROR);
+      return;
+    }
+    const viewId = target.viewId();
+    if (!viewId || !mapFiles) {
+      log.warn('image refused', { module: mod.id, reason: 'no map view' });
+      await target.reply(MAP_NEEDS_WINDOW);
+      return;
+    }
+    const owner = `${userId}:${viewId}`;
+    let block;
+    try {
+      block = await mapFiles.upload({ owner, png: image && image.png, alt: image && image.alt });
+    } catch (err) {
+      log.warn('map not shown', { module: mod.id, reason: err instanceof ImageError ? err.reason : failureReason(err) });
+      await target.reply(MAP_NOT_SHOWN, { replace: true });
+      return;
+    }
+    const fileId = block.slack_file.id;
+    const text = typeof rest.text === 'string' && rest.text ? textBlocks(rest.text) : [];
+    try {
+      await target.reply({ blocks: [...text, block] }, { replace: true });
+    } catch (err) {
+      await mapFiles.release(owner, { only: fileId, why: 'not shown' });
+      throw err;
+    }
+    // A view switch: the map shown before this one goes now.
+    await mapFiles.release(owner, { keep: fileId, why: 'replaced' });
   };
 
   // In a modal there is no response_url for handle() to answer through, so a
@@ -366,10 +463,21 @@ function registerHubs(app, {
     const actionId = action && action.action_id;
     const mod = registry.module(moduleIdFromAction(actionId));
     const shown = mod && isVisible(mod, env);
-    const target = replyTarget(args, { where: 'open', title: shown ? mod.label : 'Not available', hubId: shown ? mod.hub : null });
+    // A map module opens only when its files can be cleaned up (fail closed).
+    const mapModule = Boolean(shown && uploadsMapImages(mod));
+    const mapBlocked = mapModule && !(mapFiles && mapFiles.ready());
+    const opens = shown && !mapBlocked;
+    const target = replyTarget(args, {
+      where: 'open', title: opens ? mod.label : 'Not available', hubId: opens ? mod.hub : null, viewOptions: opens && mapModule ? MAP_VIEW : undefined,
+    });
     try {
       if (!shown) {
         log.warn('hub action refused', { action_id: actionId, reason: !mod ? 'unknown module' : 'hidden in this environment', env });
+        await target.reply(NOT_AVAILABLE);
+        return;
+      }
+      if (mapBlocked) {
+        log.warn('hub action refused', { action_id: actionId, reason: 'map files cannot be cleaned up', env });
         await target.reply(NOT_AVAILABLE);
         return;
       }
@@ -394,7 +502,7 @@ function registerHubs(app, {
           client: { id: profile.client.id, name: profile.client.name },
           module: { id: mod.id, label: mod.label },
           data: moduleData(data, mod),
-          reply: (message) => target.reply(message),
+          reply: (message) => (hasImage(message) ? showImage(mod, target, user.id, message) : target.reply(message)),
         });
       } catch (err) {
         if (!(err instanceof DataUnavailable)) throw err;
@@ -407,14 +515,28 @@ function registerHubs(app, {
     }
   }, { log, store }));
 
+  // A map view closed (Back, or the X): its files go now (Story 15.1). Only
+  // the files this person's view recorded; a payload naming another view or
+  // person matches nothing.
+  app.view({ callback_id: MAP_VIEW_CALLBACK, type: 'view_closed' }, handle('hub:map-closed', async ({ body }) => {
+    const viewId = body && body.view && body.view.id;
+    const userId = body && body.user && body.user.id;
+    if (!mapFiles || typeof viewId !== 'string' || !viewId || typeof userId !== 'string' || !userId) return;
+    const res = await mapFiles.release(`${userId}:${viewId}`, { why: 'view_closed' });
+    log.info('map view closed', { deleted: res.deleted, kept: res.kept, cleared: Boolean(body.is_cleared) });
+  }, { log, store }));
+
   // A scoped-pull form's submit ("Check values"). The answer goes in the ack:
   // errors beside the inputs, or the Confirm screen (or a refusal) in place.
-  const submittedView = (view, message) => moduleView({
-    title: view && view.title && view.title.text,
-    hubId: parseMetadata(view && view.private_metadata).hubId,
-    blocks: messageBlocks(message),
-    message,
-  });
+  const submittedView = (view, message, where) => {
+    const shown = screened(where, message);
+    return moduleView({
+      title: view && view.title && view.title.text,
+      hubId: parseMetadata(view && view.private_metadata).hubId,
+      blocks: messageBlocks(shown),
+      message: shown,
+    });
+  };
   // The follow-up question's submit (Story 9.4) is answered the same way.
   for (const [callback, name, step] of [[FORM_CALLBACK, 'hub:form-submit', 'submit'], [ANSWER_CALLBACK, 'hub:form-answer', 'answer']]) {
     app.view(callback, handleView(name, ({ body }) => {
@@ -423,8 +545,8 @@ function registerHubs(app, {
       const { sessionId } = parseMetadata(view.private_metadata);
       const res = scopedPull[step]({ sessionId, person: person.id, state: view.state, resolve: resolveForm(person, callback) });
       if (res.errors) return { response_action: 'errors', errors: res.errors };
-      return { response_action: 'update', view: submittedView(view, res.message) };
-    }, { log, onError: ({ body }) => ({ response_action: 'update', view: submittedView(body && body.view, PLAIN_ERROR) }) }));
+      return { response_action: 'update', view: submittedView(view, res.message, `form-${step}`) };
+    }, { log, onError: ({ body }) => ({ response_action: 'update', view: submittedView(body && body.view, PLAIN_ERROR, `form-${step}`) }) }));
   }
 
   // The Confirm screen's buttons. Each click updates the view it came from.
@@ -439,7 +561,7 @@ function registerHubs(app, {
     const { hubId } = parseMetadata(from.private_metadata);
     const view = updatedView({ client, view: from, title: from.title && from.title.text, hubId });
     const show = async (message, opts) => {
-      const status = await view.show(message, opts);
+      const status = await view.show(screened('form', message), opts);
       if (status === 'dropped') log.info('stale view result dropped', { action: verb, reason: 'hash_conflict' });
       if (status === 'forced') log.info('stale view replaced by a confirmed result', { action: verb, reason: 'hash_conflict' });
       return status;
@@ -474,7 +596,7 @@ function registerHubs(app, {
     const { hubId } = parseMetadata(from.private_metadata);
     const view = updatedView({ client, view: from, title: from.title && from.title.text, hubId });
     const show = async (message) => {
-      const status = await view.show(message);
+      const status = await view.show(screened('provenance', message));
       if (status === 'dropped') log.info('stale view result dropped', { action: 'provenance', reason: 'hash_conflict' });
       return status;
     };
@@ -512,7 +634,7 @@ function registerHubs(app, {
     const { hubId } = parseMetadata(from.private_metadata);
     const view = updatedView({ client, view: from, title: from.title && from.title.text, hubId });
     const show = async (message) => {
-      const status = await view.show(message);
+      const status = await view.show(screened('approval', message));
       if (status === 'dropped') log.info('stale view result dropped', { action: verb, reason: 'hash_conflict' });
       return status;
     };
@@ -532,4 +654,6 @@ function registerHubs(app, {
   }, { log, store }));
 }
 
-module.exports = { registerHubs, personName, firstVisit, NOT_AVAILABLE, FORM_NEEDS_WINDOW };
+module.exports = {
+  registerHubs, personName, firstVisit, NOT_AVAILABLE, FORM_NEEDS_WINDOW, MAP_NOT_SHOWN, MAP_NEEDS_WINDOW, MAP_VIEW_CALLBACK,
+};

@@ -20,12 +20,21 @@ const CHANNEL = 'kit/runtime/slack/channel.js';
 // and views are private, so they aren't listed.
 const SENDS = /\bchat\.(?!postEphemeral\b)[A-Za-z]+\s*\(|\bfiles\.upload[A-Za-z0-9]*\s*\(|\bsay\s*\(/;
 
-// Each allowed send: [file, the line's code, why it reaches only a DM].
+// Matches only a source that never names channel, channels or channel_id
+// (any case), so no argument can share the file to a conversation.
+const NO_CHANNEL = /^(?![\s\S]*\bchannel(?:s|_id)?\b)/i;
+
+// Each allowed send: [file, the line's code, a guard over the file's source,
+// why it reaches only a DM (or no one)].
 const ALLOWED = [
   ['kit/runtime/archetypes/scoped-pull/deliver.js', /client\.files\.uploadV2\(\{$/, /DM_ID\.test\(channel\)/, 'the CSV goes to the DM conversations.open returned, checked against DM_ID first'],
   ['kit/runtime/slack/greeting.js', /await say\(\{ text: greetingText/, /if \(!isPersonDm\(message\)\) return;/, 'answers a person\'s DM in the same DM'],
   ['kit/runtime/slack/handle.js', /if \(ev\.channel_type === 'im' && typeof args\.say === 'function'\) return args\.say\(\{ text \}\);/, /channel_type === 'im'/, 'only in a DM (channel_type im)'],
   ['kit/runtime/slack/hubs.js', /await client\.chat\.postMessage\(\{ channel: user\.id, text \}\);/, /channel: user\.id/, 'a user id as the channel opens that person\'s DM (team_join welcome)'],
+  // Story 15.1 (AD-R15, F2): the map image is uploaded shared nowhere and
+  // shown only in the modal. The call's arguments are pinned, and the guard
+  // proves the file never names a channel, channels or channel_id at all.
+  ['kit/runtime/slack/image.js', /^const res = await client\.files\.uploadV2\(\{ file: png, filename: FILENAME, title: TITLE \}\);$/, NO_CHANNEL, 'the map image is uploaded with no channel_id, channel or channels: shared nowhere'],
 ];
 
 function jsUnder(dir) {
@@ -71,4 +80,17 @@ test('kit/runtime/slack/channel.js has exactly one send, guarded by its declared
   assert.match(guards, /if \(typeof channel !== 'string' \|\| !CHANNEL_ID\.test\(channel\)\) throw/);
   assert.match(guards, /const text = EXCEPTIONS\[exception\]\(fields\);/, 'the text is built by the exception, never passed in');
   assert.match(src, /const CHANNEL_ID = \/\^\[CG\]\[A-Z0-9\]\{8,\}\$\/;/, 'the profile schema\'s pattern: never a DM (D…) or a person (U…)');
+});
+
+// Story 15.1: the image row's guard fails on any way of naming a channel.
+test('the map image guard refuses a source that names channel_id, channel or channels', () => {
+  const ok = "const res = await client.files.uploadV2({ file: png, filename: FILENAME, title: TITLE });\n";
+  const row = ALLOWED.find(([file]) => file === 'kit/runtime/slack/image.js');
+  assert.match(ok, row[2]);
+  for (const bad of [
+    'client.files.uploadV2({ file: png, filename: FILENAME, title: TITLE, channel_id: dm });',
+    'client.files.uploadV2({ file: png, channels: c });',
+    'const args = { channel };',
+    'const CHANNEL_ID = x;',
+  ]) assert.doesNotMatch(`${ok}${bad}\n`, row[2], bad);
 });

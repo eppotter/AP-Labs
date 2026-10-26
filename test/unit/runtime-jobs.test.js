@@ -411,3 +411,59 @@ test('every app dir\'s jobs.json loads cleanly with every job file checked (a fo
     assert.deepEqual(r.problems, [], path.relative(ROOT, dir));
   }
 });
+
+// --- Story 15.1: engine jobs (AD-R15) ------------------------------------------
+
+const { engineJobsFor, createEngineJobs, ENGINE_JOBS } = require('../../kit/runtime/jobs');
+
+const mapCheck = (environments = ['dev']) => ({ id: 'map-check', archetype: 'handler', environments });
+const plain = { id: 'echo', archetype: 'handler', environments: ['dev', 'prod'] };
+
+test('engine jobs: the map-file sweep is a registered engine job, needed whenever a map module shows in this environment', () => {
+  assert.deepEqual(ENGINE_JOBS.map((j) => [j.name, j.everyMs]), [['sweep-map-files', 5 * 60 * 1000]]);
+  assert.deepEqual(engineJobsFor({ modules: [plain, mapCheck()], env: 'dev' }), ['sweep-map-files']);
+  assert.deepEqual(engineJobsFor({ modules: [{ id: 'r', archetype: 'routing-map', environments: ['prod'] }], env: 'prod' }), ['sweep-map-files']);
+  assert.deepEqual(engineJobsFor({ modules: [plain, mapCheck()], env: 'prod' }), [], 'hidden in prod: not enabled there');
+  assert.deepEqual(engineJobsFor({ modules: [plain], env: 'dev' }), []);
+  assert.deepEqual(engineJobsFor({ modules: [], env: 'dev' }), []);
+});
+
+test('engine jobs: the need never reads the jobs switch (profile jobs.enabled, APLABS_JOBS_OFF)', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'kit/runtime/jobs/index.js'), 'utf8');
+  const body = src.slice(src.indexOf('function engineJobsFor('), src.indexOf('function createEngineJobs('));
+  assert.ok(body.length > 0);
+  assert.ok(!/jobsSwitch|OFF_ENV|APLABS_JOBS_OFF|profile/.test(body.replace(/\/\/[^\n]*/g, '')));
+});
+
+test('engine jobs: run at start(), then every everyMs on the timers; stop() clears them; running() tells the hub', async () => {
+  const clock = fakeClock();
+  const runs = [];
+  const store = { expiredMapFiles: () => { runs.push(clock.now().toISOString()); return []; } };
+  const jobs = createEngineJobs({
+    names: ['sweep-map-files'], store, client: {}, log: capture(clock).log, timers: clock.timers, now: () => clock.now().getTime(),
+  });
+  assert.deepEqual(jobs.names, ['sweep-map-files']);
+  assert.equal(jobs.running('sweep-map-files'), false);
+  jobs.start();
+  await flush();
+  assert.equal(jobs.running('sweep-map-files'), true);
+  assert.equal(jobs.running('other'), false);
+  await clock.advance(11 * 60 * 1000);
+  assert.deepEqual(runs, ['2026-03-10T08:00:00.000Z', '2026-03-10T08:05:00.000Z', '2026-03-10T08:10:00.000Z']);
+  jobs.stop();
+  assert.equal(jobs.running('sweep-map-files'), false);
+  assert.deepEqual(clock.pending(), []);
+  await clock.advance(10 * 60 * 1000);
+  assert.equal(runs.length, 3);
+  jobs.start();
+  assert.equal(runs.length, 3, 'a stopped runner never starts again');
+});
+
+test('engine jobs: none needed runs nothing; an unknown name is refused', () => {
+  const clock = fakeClock();
+  const jobs = createEngineJobs({ names: [], store: {}, client: {}, log: capture(clock).log, timers: clock.timers });
+  jobs.start();
+  assert.deepEqual(clock.pending(), []);
+  assert.equal(jobs.running('sweep-map-files'), false);
+  assert.throws(() => createEngineJobs({ names: ['nope'], store: {}, client: {}, log: capture(clock).log }), /unknown engine job: nope/);
+});

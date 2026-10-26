@@ -25,17 +25,34 @@
 // id without its "U"). files.uploadV2(args) records args in this.uploads and
 // answers the way the Slack client does ({ files: [{ files: [{ id, permalink
 // }] }] }). Like Slack, it rejects an upload without a filename or without
-// content (invalid_arguments), and, stricter than Slack, one without a
-// channel_id (an unshared file reaches no one) or one using the retired
-// channels / channel arguments. Set this.filesFail (an error) to make the
-// upload throw, or this.dmChannel(user) to answer conversations.open with
+// content (invalid_arguments), and, stricter than Slack, one using the
+// retired channels / channel arguments. Like Slack (Story 15.1), it accepts
+// an upload with no channel_id: the file is shared nowhere. The check that
+// deliverCsv names the person's DM lives in deliverCsv's own test
+// (scoped-pull-run.test.js), not here. Set this.filesFail (an error) to make
+// the upload throw, or this.dmChannel(user) to answer conversations.open with
 // another channel id.
+//
+// files.delete({ file }) (Story 15.1) records the id in this.deleted. Like
+// Slack, an id never uploaded is file_not_found and one already deleted is
+// file_deleted. Set this.deleteFail (an error) to make every delete throw.
 //
 // new FakeSlackApp({ views: true }) adds client.views: open, push and update
 // record { method, args } in this.views and answer with a view id and a fresh
 // hash; set this.viewsFail[method] to an error to make that call throw.
 // Like Slack, a modal view with an input block and no submit is rejected
-// (invalid_arguments; docs.slack.dev/reference/views/modal-views).
+// (invalid_arguments; docs.slack.dev/reference/views/modal-views), and so is
+// an image block (docs.slack.dev/reference/block-kit/blocks/image-block) with
+// both image_url and slack_file or neither, no alt_text, or alt_text over
+// 2000 characters (invalid_blocks). Like Slack, views.open and views.push
+// with a trigger_id more than 3 seconds old (by Date.now(), so node:test's
+// mock.timers moves it) answer expired_trigger_id; expireTriggers() ages
+// every trigger handed out so far.
+//
+//   dispatchViewClosed(callback_id, { user, view, is_cleared })  every
+//       view_closed listener for that callback_id (registered with
+//       app.view({ callback_id, type: 'view_closed' }, fn), as in Bolt), with
+//       an ack. Returns how many ran.
 //
 //   dispatchView(callback_id, { user, view })    the view_submission listener
 //       for that callback_id, with an ack that records its payload in
@@ -76,6 +93,10 @@ class FakeSlackApp {
     this.dms = [];
     this.uploads = [];
     this.filesFail = null;
+    this.deleted = [];
+    this.files = new Set();
+    this.deleteFail = null;
+    this.triggers = new Map();
     this.dmChannel = (user) => `D${String(user).replace(/^U/, '')}`;
     this.client = {
       conversations: {
@@ -93,10 +114,20 @@ class FakeSlackApp {
           this.uploads.push(args);
           if (this.filesFail) throw this.filesFail;
           const id = `F${this.uploads.length}`;
+          this.files.add(id);
           return {
             ok: true,
             files: [{ ok: true, files: [{ id, name: args.filename, title: args.title || args.filename, permalink: `https://fake.slack.test/files/${id}` }] }],
           };
+        },
+        delete: async (args = {}) => {
+          const { file } = args;
+          if (typeof file !== 'string' || !file) throw slackError('invalid_arguments', 'file is required');
+          if (this.deleteFail) throw this.deleteFail;
+          if (this.deleted.includes(file)) throw slackError('file_deleted', 'already deleted');
+          if (!this.files.has(file)) throw slackError('file_not_found', 'no such file');
+          this.deleted.push(file);
+          return { ok: true };
         },
       },
       chat: {
@@ -114,14 +145,34 @@ class FakeSlackApp {
       const call = (method) => async (args) => {
         this.views.push({ method, args });
         if (this.viewsFail[method]) throw this.viewsFail[method];
+        if ((method === 'open' || method === 'push') && this.triggerExpired(args.trigger_id)) {
+          throw slackError('expired_trigger_id', 'the trigger_id is more than 3 seconds old');
+        }
         const bad = invalidModal(args.view);
         if (bad) throw Object.assign(new Error(`An API error occurred: invalid_arguments (${bad})`), { data: { ok: false, error: 'invalid_arguments' } });
+        const badBlock = invalidImageBlocks(args.view);
+        if (badBlock) throw slackError('invalid_blocks', badBlock);
         this.viewSeq += 1;
         const id = method === 'update' ? args.view_id : `V${this.viewSeq}`;
         return { ok: true, view: { id, hash: `h${this.viewSeq}`, ...args.view } };
       };
       this.client.views = { open: call('open'), push: call('push'), update: call('update') };
     }
+  }
+
+  // A trigger handed out now (Slack's lasts 3 seconds).
+  issueTrigger(id) {
+    this.triggers.set(id, Date.now());
+    return id;
+  }
+
+  triggerExpired(id) {
+    if (!this.triggers.has(id)) return false;
+    return Date.now() - this.triggers.get(id) > TRIGGER_MS;
+  }
+
+  expireTriggers() {
+    for (const id of this.triggers.keys()) this.triggers.set(id, -Infinity);
   }
 
   message(fn) { this.messageListeners.push(fn); }
@@ -136,11 +187,23 @@ class FakeSlackApp {
   async dispatchView(callback_id, { user = { id: 'U1', name: 'u1' }, view = {} } = {}) {
     const full = { type: 'modal', callback_id, ...view };
     const body = { type: 'view_submission', user, view: full };
-    const matching = this.viewListeners.filter(({ callbackId }) => (
-      callbackId instanceof RegExp ? callbackId.test(callback_id) : callbackId === callback_id));
+    const matching = this.viewListeners.filter(({ callbackId }) => matchesView(callbackId, callback_id, 'view_submission'));
     for (const { fn } of matching) {
       const ack = async (payload) => { this.acks += 1; this.viewAcks.push(payload); };
       await fn({ body, view: full, ack, client: this.client });
+    }
+    return matching.length;
+  }
+
+  // Returns how many listeners ran.
+  async dispatchViewClosed(callback_id, { user = { id: 'U1', name: 'u1' }, view = {}, is_cleared = false } = {}) {
+    const full = { type: 'modal', callback_id, ...view };
+    const body = {
+      type: 'view_closed', user, view: full, is_cleared,
+    };
+    const matching = this.viewListeners.filter(({ callbackId }) => matchesView(callbackId, callback_id, 'view_closed'));
+    for (const { fn } of matching) {
+      await fn({ body, view: full, ack: this.ack(), client: this.client });
     }
     return matching.length;
   }
@@ -182,7 +245,7 @@ class FakeSlackApp {
   async dispatchCommand(name, { user_id = 'U1', text = '' } = {}) {
     const fn = this.commandListeners.get(name);
     if (!fn) throw new Error(`no listener for ${name}`);
-    const command = { command: name, user_id, text, trigger_id: 'T-command' };
+    const command = { command: name, user_id, text, trigger_id: this.issueTrigger('T-command') };
     await fn({ command, body: command, ack: this.ack(), respond: this.respond(), client: this.client });
   }
 
@@ -190,7 +253,7 @@ class FakeSlackApp {
   async dispatchAction(action_id, { user = { id: 'U1', name: 'u1' }, view, value } = {}) {
     const action = { type: 'button', action_id, value: value === undefined ? action_id.split(':')[0] : value };
     const body = { type: 'block_actions', user, actions: [action] };
-    if (view) Object.assign(body, { view, container: { type: 'view', view_id: view.id }, trigger_id: 'T-action' });
+    if (view) Object.assign(body, { view, container: { type: 'view', view_id: view.id }, trigger_id: this.issueTrigger('T-action') });
     const matching = this.actionListeners.filter(({ pattern }) => (
       pattern instanceof RegExp ? pattern.test(action_id) : pattern === action_id));
     for (const { fn } of matching) {
@@ -210,6 +273,39 @@ class FakeSlackApp {
   }
 }
 
+const TRIGGER_MS = 3000;
+const MAX_ALT = 2000;
+
+// Bolt's view constraints: a callback id (string or RegExp) is a
+// view_submission; an object names its type (view_submission by default).
+function matchesView(constraint, callbackId, type) {
+  const c = constraint && typeof constraint === 'object' && !(constraint instanceof RegExp)
+    ? constraint : { callback_id: constraint };
+  if ((c.type || 'view_submission') !== type) return false;
+  if (c.callback_id === undefined) return true;
+  return c.callback_id instanceof RegExp ? c.callback_id.test(callbackId) : c.callback_id === callbackId;
+}
+
+// Why Slack would reject an image block in this view, or null.
+function invalidImageBlocks(view) {
+  const blocks = view && Array.isArray(view.blocks) ? view.blocks : [];
+  for (const b of blocks) {
+    if (!b || b.type !== 'image') continue;
+    const hasUrl = b.image_url !== undefined;
+    const hasFile = b.slack_file !== undefined;
+    if (hasUrl && hasFile) return 'an image block takes image_url or slack_file, not both';
+    if (!hasUrl && !hasFile) return 'an image block needs image_url or slack_file';
+    if (hasFile) {
+      const f = b.slack_file;
+      const ok = f && typeof f === 'object' && ((typeof f.id === 'string' && f.id) || (typeof f.url === 'string' && f.url));
+      if (!ok) return 'slack_file needs an id or a url';
+    }
+    if (typeof b.alt_text !== 'string' || !b.alt_text) return 'an image block needs alt_text';
+    if (b.alt_text.length > MAX_ALT) return `alt_text is over ${MAX_ALT} characters`;
+  }
+  return null;
+}
+
 // An error shaped like the Slack client's API errors.
 function slackError(code, why) {
   return Object.assign(new Error(`An API error occurred: ${code} (${why})`), { data: { ok: false, error: code } });
@@ -218,11 +314,13 @@ function slackError(code, why) {
 // Why files.uploadV2 would be rejected, or null (see the top).
 function invalidUpload(args) {
   if (args.channels !== undefined || args.channel !== undefined) return 'channels and channel are retired; use channel_id';
-  if (typeof args.channel_id !== 'string' || !args.channel_id) return 'channel_id is required';
+  if (args.channel_id !== undefined && (typeof args.channel_id !== 'string' || !args.channel_id)) return 'channel_id, when given, must name a conversation';
   if (typeof args.filename !== 'string' || !args.filename) return 'filename is required';
   const hasContent = typeof args.content === 'string' && args.content.length > 0;
-  if (!hasContent && args.file === undefined) return 'content or file is required';
-  if (hasContent && args.file !== undefined) return 'give content or file, not both';
+  const hasFile = args.file !== undefined;
+  if (!hasContent && !hasFile) return 'content or file is required';
+  if (hasContent && hasFile) return 'give content or file, not both';
+  if (hasFile && !(Buffer.isBuffer(args.file) && args.file.length > 0) && !(typeof args.file === 'string' && args.file)) return 'file must be non-empty bytes';
   return null;
 }
 
@@ -234,4 +332,6 @@ function invalidModal(view) {
   return null;
 }
 
-module.exports = { FakeSlackApp, invalidModal, invalidUpload };
+module.exports = {
+  FakeSlackApp, invalidModal, invalidUpload, invalidImageBlocks, TRIGGER_MS,
+};

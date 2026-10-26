@@ -42,12 +42,26 @@
 //
 // Stopping: stop() clears every timer and schedules nothing new. A run in
 // progress is not awaited.
+//
+// Engine jobs (Story 15.1, AD-R15) are the kit's own, listed in ENGINE_JOBS,
+// never in jobs.json: today only sweep-map-files. Each says when it is needed
+// (engineJobsFor): the sweep, whenever a module that uploads map images is
+// shown in this environment (kit/runtime/slack/image uploadsMapImages). A
+// needed engine job runs whatever the profile's jobs.enabled and
+// APLABS_JOBS_OFF say: switching it off would let a map file outlive its 20
+// minutes. createEngineJobs runs each at start() and then every everyMs
+// (timers re-armed after each run, a run still going skips that turn); its
+// ctx is { store, client, log }, the Slack client and the store a jobs.json
+// job never gets. running(name) tells the hub the job is up: without it the
+// map modules fail closed.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const Ajv2020 = require('ajv/dist/2020');
 const { parseSchedule, nextRun, scheduleProblem } = require('./schedule');
 const { DataUnavailable } = require('../errors');
+const sweepMapFiles = require('./sweep-map-files');
+const { uploadsMapImages } = require('../slack/image');
 
 const OFF_ENV = 'APLABS_JOBS_OFF';
 const JOBS_FILE = 'jobs.json';
@@ -290,4 +304,79 @@ function createScheduler({ jobs, log, data = null, now = () => new Date(), timer
   };
 }
 
-module.exports = { loadJobs, jobsSwitch, jobsWords, createScheduler, jobContext, resolveRun, OFF_ENV, JOBS_FILE, JOBS_DIR, MAX_TIMER_MS };
+// The kit's own jobs. needed({ modules, env }) says whether this app runs it.
+const ENGINE_JOBS = Object.freeze([
+  Object.freeze({
+    name: sweepMapFiles.NAME,
+    everyMs: sweepMapFiles.EVERY_MS,
+    run: sweepMapFiles.run,
+    needed: ({ modules, env }) => (modules || []).some((m) => uploadsMapImages(m) && Array.isArray(m.environments) && m.environments.includes(env)),
+  }),
+]);
+
+// The names of the engine jobs this app needs. Never reads the jobs switch.
+function engineJobsFor({ modules, env }) {
+  return ENGINE_JOBS.filter((j) => j.needed({ modules, env })).map((j) => j.name);
+}
+
+// Runs the named engine jobs: once at start(), then every everyMs. ctx is
+// { store, client, log }. timers { set(fn, ms), clear(t) } and now() (ms)
+// are injected by tests. Returns { start, stop, running(name), names }.
+function createEngineJobs({
+  names, store, client, log, now = () => Date.now(), timers = realTimers,
+}) {
+  const active = ENGINE_JOBS.filter((j) => names.includes(j.name)).map((job) => ({ job, timer: null, busy: false }));
+  const unknown = names.filter((n) => !ENGINE_JOBS.some((j) => j.name === n));
+  if (unknown.length) throw new Error(`unknown engine job: ${unknown.join(', ')}`);
+  const ctx = Object.freeze({ store, client, log });
+  let started = false;
+  let stopped = false;
+
+  function fire(s) {
+    if (s.busy) {
+      log.warn('engine job skipped: still running', { job: s.job.name });
+      return;
+    }
+    s.busy = true;
+    const start = now();
+    Promise.resolve()
+      .then(() => s.job.run(ctx))
+      .catch((err) => log.error('engine job failed', { job: s.job.name, ms: now() - start, err }))
+      .finally(() => { s.busy = false; });
+  }
+
+  function arm(s) {
+    if (stopped) return;
+    s.timer = timers.set(() => {
+      s.timer = null;
+      if (stopped) return;
+      fire(s);
+      arm(s);
+    }, s.job.everyMs);
+  }
+
+  return {
+    names: active.map((s) => s.job.name),
+    start() {
+      if (started || stopped) return;
+      started = true;
+      for (const s of active) {
+        fire(s);
+        arm(s);
+      }
+    },
+    stop() {
+      stopped = true;
+      for (const s of active) {
+        if (s.timer) timers.clear(s.timer);
+        s.timer = null;
+      }
+    },
+    running: (name) => started && !stopped && active.some((s) => s.job.name === name),
+  };
+}
+
+module.exports = {
+  loadJobs, jobsSwitch, jobsWords, createScheduler, jobContext, resolveRun, engineJobsFor, createEngineJobs,
+  ENGINE_JOBS, OFF_ENV, JOBS_FILE, JOBS_DIR, MAX_TIMER_MS,
+};
