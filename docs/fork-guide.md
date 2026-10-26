@@ -1,7 +1,6 @@
 # Starting an engagement fork
 
-> **Stop: do not create a real client fork until Ely has decided what template history ships.**
-> Cloning the template gives the client its whole git history, including `docs/reference/`. Which history a client gets is an open decision (plan epic-11, the template-history DEP row). Until Ely has made it, use this guide only for practice forks that never leave AP Labs.
+> **Clone only from the distribution repo (`aplabs-template`). The AP Labs source repo carries internal history and never goes to a client.**
 
 A **fork** is the client's own copy of this template: the same engine (`kit/`, `profiles/_schema/`), plus the client's profile, context, modules and data. The client **adds** to the template and never edits the engine. Fixes to the engine go to the template, and the fork takes them as a template update.
 
@@ -15,16 +14,16 @@ Throughout, the example client is called Acme Co (`acme`). Use the real client's
 
 **You, not the agent:** creating the GitHub repo and the first push.
 
-Clone the template **at a release tag**, so the template's history comes with it. Updates merge only into a repo that shares that history. Never use GitHub's **Use this template** button: it drops the history, and no update can merge afterwards.
+Clone the distribution repo, `aplabs-template`, **at a release tag**, so the template's release history comes with it. Updates merge only into a repo that shares that history. Never use GitHub's **Use this template** button: it drops the history, and no update can merge afterwards.
 
 ```bash
-git clone --branch v0.2.0 https://github.com/eppotter/AP-Labs.git acme-aplabs
+git clone --branch v0.2.0 https://github.com/eppotter/aplabs-template.git acme-aplabs
 cd acme-aplabs
 git switch -c main
 git remote rename origin upstream
 ```
 
-`v0.2.0` stands for the newest release tag: use that one (`git tag --list 'v*'` shows them; `CHANGELOG.md` says what each one changed). `upstream` now points at the template, and stays there: it is where updates come from.
+`v0.2.0` stands for the newest release tag: use that one (`git tag --list 'v*'` shows them; `CHANGELOG.md` says what each one changed). `upstream` now points at the distribution repo, and stays there: it is where updates come from.
 
 Then create an **empty, private** repo for the client on GitHub (no README, no licence, no `.gitignore`), and push to it:
 
@@ -107,13 +106,13 @@ git rm -r examples/brightside profiles/brightside
 
 Leave `package.json` as it is, including `aplabs.appDirs`: it only adds folders to scan, and a missing one is fine. The `fixture:*` scripts in `package.json` name the example's folder, so they stop working in a fork; CI skips its fixture steps in a fork with no example. To build a synthetic fixture of your own, run the same tools on your folder (`node kit/fixture/build.js <your-fixture-dir>`).
 
-Then start the fork's own build ledger. Keep the top of `docs/ledger.md` (the introduction, both headings and both table header rows) and delete every row under them. The fork's first row is the day-one PR. Check it:
+Then start the fork's own build ledger. `docs/ledger.md` arrives with no rows (the introduction, both headings and both table header rows only), so there is nothing to delete; just check it. The fork's first row is the day-one PR.
 
 ```bash
 node --test test/unit/ledger.test.js
 ```
 
-The fork also keeps its own `docs/planning/`. A template update leaves the fork's ledger and planning files as they are.
+The fork also keeps its own `docs/planning/` (the distribution repo ships none). A template update leaves the fork's ledger and planning files as they are.
 
 ## 4. Record the template version
 
@@ -242,7 +241,7 @@ It passes while `kit/` and `profiles/_schema/` match the recorded release. When 
 
 ## Taking a template update
 
-**In plain words.** The fork is the client's copy of the template. `upstream` is the git remote that points back at the template (step 1 set it up), and `origin` is the client's own repo. When AP Labs improves the template, it cuts a release: a tag such as `v0.3.0`, with an entry in `CHANGELOG.md` that says what changed and what a fork must do. The client **adds** to the template and never edits the engine, so a release can flow into the fork with one command and no hand-merging.
+**In plain words.** The fork is the client's copy of the template. `upstream` is the git remote that points at the distribution repo, `aplabs-template` (step 1 set it up), never the AP Labs source repo, and `origin` is the client's own repo. When AP Labs improves the template, it cuts a release: a tag such as `v0.3.0`, with an entry in `CHANGELOG.md` that says what changed and what a fork must do. The client **adds** to the template and never edits the engine, so a release can flow into the fork with one command and no hand-merging.
 
 Run it on a clean, up-to-date `main`:
 
