@@ -90,6 +90,103 @@ test('jobs.enabled is optional, defaults to false, and refuses unknown keys and 
   rejects(jobs([]), /\/jobs must be object/);
 });
 
+// Story 13.1 (AD-R10): one optional routing block. Absent = routing off.
+const ROUTING_DEFAULTS = { min_travel_minutes: 5, max_pairs: 10000, gap_fill: { horizon_days: 14, limit: 5 } };
+const withRouting = (edit) => {
+  const p = parsed('routing');
+  edit(p.routing, p);
+  return p;
+};
+
+test('a profile with no routing block has no routing key (routing off)', () => {
+  for (const name of ['minimal', 'full', 'tiers', 'lowered-floors']) {
+    assert.equal(Object.hasOwn(loadProfile(fixture(name)), 'routing'), false, name);
+  }
+});
+
+test('a valid routing block loads with defaults filled (5, 10 000 pairs, 14 days, 5)', () => {
+  const p = loadProfile(fixture('routing'));
+  const { coordinates, speed_kmh, detour_factor, limits } = parsed('routing').routing;
+  assert.deepEqual(p.routing, { coordinates, speed_kmh, detour_factor, limits, ...ROUTING_DEFAULTS });
+  assert.ok(Object.isFrozen(p.routing.coordinates.nodes[0]));
+  assert.ok(Object.isFrozen(p.routing.gap_fill));
+});
+
+test('routing values the client sets win over the defaults', () => {
+  const p = loadProfile(fixture('routing-full'));
+  assert.deepEqual(p.routing, parsed('routing-full').routing);
+  const partial = validateProfile(withRouting((r) => { r.gap_fill = { limit: 2 }; }));
+  assert.deepEqual(partial.routing.gap_fill, { horizon_days: 14, limit: 2 });
+});
+
+test('routing defaults do not touch the parsed input (what the client wrote stays as written)', () => {
+  const input = parsed('routing');
+  const before = JSON.stringify(input);
+  validateProfile(input);
+  assert.equal(JSON.stringify(input), before);
+});
+
+test('routing refuses unknown keys at every level, naming the key', () => {
+  rejects(withRouting((r) => { r.enabled = true; }), /\/routing has unknown key "enabled"/);
+  rejects(withRouting((r) => { r.coordinates.source = 'x'; }), /\/routing\/coordinates has unknown key "source"/);
+  rejects(withRouting((r) => { r.coordinates.nodes[0].alt_column = 'x'; }), /\/routing\/coordinates\/nodes\/0 has unknown key "alt_column"/);
+  rejects(withRouting((r) => { r.limits.lunch = 720; }), /\/routing\/limits has unknown key "lunch"/);
+  rejects(withRouting((r) => { r.gap_fill = { radius_km: 3 }; }), /\/routing\/gap_fill has unknown key "radius_km"/);
+  // The map keys arrive with Story 15.2; until then they are unknown.
+  rejects(withRouting((r) => { r.map_grid_e6 = 2000; }), /\/routing has unknown key "map_grid_e6"/);
+  rejects(withRouting((r) => { r.audience = []; }), /\/routing has unknown key "audience"/);
+});
+
+test('routing refuses a bad identifier, naming the key', () => {
+  for (const bad of ['Sites', 'sites;drop', 'sites.x', '"sites"', '1sites', '', 'a'.repeat(64)]) {
+    rejects(withRouting((r) => { r.coordinates.nodes[0].table = bad; }), /\/routing\/coordinates\/nodes\/0\/table must match pattern/);
+  }
+  for (const key of ['id_column', 'lat_column', 'lon_column']) {
+    rejects(withRouting((r) => { r.coordinates.nodes[1][key] = 'x y'; }), new RegExp(`/routing/coordinates/nodes/1/${key} must match pattern`));
+  }
+  rejects(withRouting((r) => { r.coordinates.nodes[0].kind = 'site:x'; }), /\/routing\/coordinates\/nodes\/0\/kind must match pattern/);
+  rejects(withRouting((r) => { r.coordinates.nodes[0].kind = 'Site'; }), /\/routing\/coordinates\/nodes\/0\/kind must match pattern/);
+});
+
+test('routing refuses a coordinate column missing from sql.forbidden_columns, naming the key', () => {
+  rejects(
+    withRouting((r, p) => { p.sql.forbidden_columns = p.sql.forbidden_columns.filter((c) => c !== 'vans.home_lon_e6'); }),
+    /^\[profile\] refusing to start: \/routing\/coordinates\/nodes\/1\/lon_column "vans\.home_lon_e6" is not in sql\.forbidden_columns$/,
+  );
+  rejects(
+    withRouting((r, p) => { delete p.sql; }),
+    /\/routing\/coordinates\/nodes\/0\/lat_column "sites\.pos_lat_e6" is not in sql\.forbidden_columns.*\/routing\/coordinates\/nodes\/1\/lon_column/,
+  );
+  // The column is forbidden in another table only: still refused.
+  rejects(
+    withRouting((r) => { r.coordinates.nodes[0].table = 'vans'; }),
+    /\/routing\/coordinates\/nodes\/0\/lat_column "vans\.pos_lat_e6" is not in sql\.forbidden_columns/,
+  );
+});
+
+test('routing refuses duplicate kinds, a shared lat/lon column, limits out of order, and bad numbers', () => {
+  rejects(withRouting((r) => { r.coordinates.nodes[1].kind = 'site'; }), /\/routing\/coordinates\/nodes has duplicate kind "site"/);
+  rejects(withRouting((r) => { r.coordinates.nodes[0].lon_column = 'pos_lat_e6'; }), /\/routing\/coordinates\/nodes\/0 uses one column for lat_column and lon_column/);
+  rejects(withRouting((r) => { r.limits.default_start = 400; }), /\/routing\/limits\/default_start must not be before earliest_start/);
+  rejects(withRouting((r) => { r.limits.latest_finish = 1000; }), /\/routing\/limits\/latest_finish must not be before aim_finish/);
+  rejects(withRouting((r) => { r.coordinates.nodes = []; }), /\/routing\/coordinates\/nodes must NOT have fewer than 1 items/);
+  rejects(withRouting((r) => { delete r.speed_kmh; }), /\/routing must have required property 'speed_kmh'/);
+  rejects(withRouting((r) => { delete r.limits; }), /\/routing must have required property 'limits'/);
+  rejects(withRouting((r) => { delete r.limits.slot_minutes; }), /\/routing\/limits must have required property 'slot_minutes'/);
+  rejects(withRouting((r) => { r.speed_kmh = 0; }), /\/routing\/speed_kmh must be > 0/);
+  rejects(withRouting((r) => { r.detour_factor = 0.9; }), /\/routing\/detour_factor must be >= 1/);
+  rejects(withRouting((r) => { r.min_travel_minutes = 2.5; }), /\/routing\/min_travel_minutes must be integer/);
+  rejects(withRouting((r) => { r.max_pairs = 0; }), /\/routing\/max_pairs must be >= 1/);
+  rejects(withRouting((r) => { r.limits.latest_finish = 1441; }), /\/routing\/limits\/latest_finish must be <= 1440/);
+  rejects(withRouting((r) => { r.limits.slot_minutes = 0; }), /\/routing\/limits\/slot_minutes must be >= 1/);
+  rejects(withRouting((r) => { r.limits.earliest_start = '06:00'; }), /\/routing\/limits\/earliest_start must be integer/);
+  rejects(withRouting((r) => { r.gap_fill = { horizon_days: 0 }; }), /\/routing\/gap_fill\/horizon_days must be >= 1/);
+  rejects(withRouting((r) => { r.gap_fill = { limit: 0 }; }), /\/routing\/gap_fill\/limit must be >= 1/);
+  rejects(withRouting((r) => { r.gap_fill = { weights: { flexible: 'high' } }; }), /\/routing\/gap_fill\/weights\/flexible must be number/);
+  rejects(withRouting((r) => { r.gap_fill = { weights: { 'Bad Name': 1 } }; }), /\/routing\/gap_fill\/weights/);
+  rejects(withRouting((r) => { r.gap_fill = { weights: {} }; }), /\/routing\/gap_fill\/weights must NOT have fewer than 1 properties/);
+});
+
 test('data.source defaults to local; motherduck needs data.database, and local refuses it', () => {
   assert.deepEqual(loadProfile(fixture('minimal')).data, { source: 'local' });
   assert.deepEqual(validateProfile({ ...parsed('minimal'), data: { source: 'local' } }).data, { source: 'local' });
