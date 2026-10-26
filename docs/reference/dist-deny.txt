@@ -11,20 +11,17 @@
 # "warehouse", vendor names) must not match. Ely's AP Labs Slack id is not
 # here (plan N1).
 
-# The client and its platform.
+# The client and its platform. Ely reviewed this list on 2026-10-25.
 hometown
 varsity
 
 # The reference repos, and the reference machine's home path.
 bi-platform
-ai-governance-layer
 /Users/ely\.potter\b
 
-# Reference-client tables and logs.
+# Reference-client tables.
 \bCTAOLIT\b
 \bCOMBINED_\w+_TABLE\b
-\bCLAUDE_CALL_LOG\b
-\bTOOL_PROFILES\b
 
 # Licensed fonts carried in the reference port.
 \bSTK[ _-]?Bureau\b
