@@ -37,7 +37,8 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 
 - **Node 24 (LTS), bash.** `npm ci`, then `npm run check && npm test` before every commit.
 - **`npm test` takes about 2 to 4 minutes** (longer when other builds share the machine), more than the default 2-minute agent shell timeout. Give it a timeout of 600000 ms. The slowest tests run separately in `npm run test:slow` (about 1 to 2 minutes).
-- Run `npm run test:slow` as well before committing a change to `kit/release/**`, `kit/lib/template/**`, `kit/lib/fork/**`, `.github/workflows/ci.yml`, `scripts/clean-bones.sh` or `test/fixtures/temp-*.js`. CI runs it either way.
+- Run `npm run test:slow` as well before committing a change to `kit/release/**`, `kit/lib/template/**`, `kit/lib/fork/**`, `.github/workflows/ci.yml`, `scripts/clean-bones.sh` or `test/fixtures/temp-*.js`. CI runs it on every PR that is not docs-only.
+- **CI saves Actions minutes** (`.github/workflows/ci.yml`, `scripts/ci-changes.js`). Every PR runs CI, and a new push cancels the PR's older run. A docs-only PR (every file under `docs/`) runs the fast suite and the ledger check but skips `test:slow`, clean-bones and dist; the container job runs only when an image input changed. On `main`, CI runs only for a push that changes `CHANGELOG.md` or by hand (`gh workflow run ci.yml --ref main`), and then runs every job.
 - **Git:** branch off `main`, one PR per block, merge commits (no squash). Never push to `main` directly.
 - **Commits end with an `Agent: <harness> <model>` trailer**, for example `Agent: claude-code claude-opus-5-5` or `Agent: codex gpt-6-luna`. Cross-model review uses it to pick the other model as reviewer.
 - **PR descriptions open with `**What this does:**`** followed by one or two plain-language sentences. Technical detail goes below.
@@ -123,7 +124,7 @@ Scope changes mid-program: `bmad-correct-course`. Do not route to BMAD's build, 
 
 - Merge yourself only when the human driving the session is an approver for the repo. For this template repo, that is Ely.
 - Otherwise stop when the PR is ready, post `npm run notify -- --kind decision` @-mentioning the approver, and wait.
-- Template releases are tagged with `npm run template:release -- vX.Y.Z`; Ely pushes the tag. The Orchestrator never passes `--push` to `template:release` and never runs `git push --tags`.
+- Template releases are tagged with `npm run template:release -- vX.Y.Z`; Ely pushes the tag. It needs the four CI jobs green on main's head: merging the release's CHANGELOG.md entry runs them; if main moved on since, run `gh workflow run ci.yml --ref main` and wait for it first. The Orchestrator never passes `--push` to `template:release` and never runs `git push --tags`.
 ### Model roles
 
 - By default Opus builds and Codex reviews. Do not route a build to Codex without the human's say-so.
