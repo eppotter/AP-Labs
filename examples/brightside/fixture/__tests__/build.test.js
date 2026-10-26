@@ -32,7 +32,7 @@ test('Brightside builds in under 60 seconds with every table at its fixture_meta
 
   const m = meta();
   const expected = Object.fromEntries(Object.entries(m).filter(([k]) => k.startsWith('rows_')).map(([k, v]) => [k.slice(5), Number(v)]));
-  assert.equal(Object.keys(expected).length, 16);
+  assert.equal(Object.keys(expected).length, 19);
   const loaded = Object.fromEntries(result.tables.filter((x) => x.name !== 'fixture_meta').map((x) => [x.name, x.rows]));
   assert.deepEqual(loaded, expected);
 
@@ -58,8 +58,10 @@ test('Brightside builds in under 60 seconds with every table at its fixture_meta
 // The version Brightside's seeds had as plain CSVs, before they were
 // compressed. Compressing must not change it, so the shared MotherDuck copy
 // and the bot see no change. A seed or generator change moves it on purpose:
-// update it then.
-const VERSION_AS_PLAIN_CSV = '3+80453e2a90d0';
+// update it then. Story 14.1 (generator v4: coordinates and scheduled_visits)
+// moved it from 3+80453e2a90d0; Story 14.2 (service_rules, staff_absences
+// and the planted scenarios, still v4: unpublished) from 4+c090cded7e68.
+const VERSION_AS_PLAIN_CSV = '4+dd14e6d231b7';
 
 // A copy of the fixture with every seed unzipped to plain seeds/<table>.csv.
 function plainCopy(t) {

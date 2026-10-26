@@ -35,9 +35,12 @@ const { buildActivity } = require('./lib/activity');
 const { TRUTH_IDS, computeTruths } = require('./lib/truths');
 const { buildOperations, OPERATIONS_STREAM } = require('./lib/operations');
 const { checkOperations } = require('./lib/operations-rules');
+const { buildRouting, scheduleHorizonEnd, ROUTING_STREAM } = require('./lib/routing');
+const { checkRouting } = require('./lib/routing-rules');
+const { createPlant, checkScenarios, checkRoutingTargets, missedRoutingTargets } = require('./lib/scenarios');
 
 // Bump when a change to this code changes the output for the same seed.
-const GENERATOR_VERSION = 3;
+const GENERATOR_VERSION = 4;
 
 const FIXTURE_DIR = __dirname;
 const SEED_FILE = path.join(FIXTURE_DIR, 'seed.json');
@@ -49,9 +52,11 @@ const GZIP_OS_UNKNOWN = 255;
 
 const USAGE = 'Usage: node examples/brightside/fixture/generate.js [--check] [--seed <n>] [--clients <n>] [--out <dir>]';
 
-// The recorded config: seed.json plus the planted targets.
+// The recorded config: seed.json plus the planted targets. `routing` (the
+// routing truths' targets, Story 14.2) also switches on the planted routing
+// scenarios, whose ids fit the recorded seed only.
 function readSeedConfig(file = SEED_FILE, targetsFile = TARGETS_FILE) {
-  return { ...JSON.parse(fs.readFileSync(file, 'utf8')), targets: readTargets(targetsFile) };
+  return { ...JSON.parse(fs.readFileSync(file, 'utf8')), targets: readTargets(targetsFile), routing: readRoutingTargets(targetsFile) };
 }
 
 function readTargets(file = TARGETS_FILE) {
@@ -63,11 +68,18 @@ function readTargets(file = TARGETS_FILE) {
   return truths;
 }
 
+// targets.json `routing`: the routing truths' planted answers, kept apart
+// from `truths` so TRUTH_IDS and readTargets stay as they are.
+function readRoutingTargets(file = TARGETS_FILE) {
+  return checkRoutingTargets(JSON.parse(fs.readFileSync(file, 'utf8')).routing, path.basename(file));
+}
+
 function fixtureMeta(config, tables) {
   const rows = [
     { key: 'as_of', value: AS_OF },
     { key: 'generator_version', value: String(GENERATOR_VERSION) },
     { key: 'history_start', value: HISTORY_START },
+    { key: 'schedule_horizon_end', value: scheduleHorizonEnd(AS_OF) },
     { key: 'seed', value: String(config.seed) },
   ];
   for (const table of TABLES) {
@@ -95,8 +107,9 @@ function toCsv(table, rows) {
   return `${lines.join('\n')}\n`;
 }
 
-// Generate every table and file in memory. With targets, plant them. Throws
-// if a rule fails or a planted figure misses its target.
+// Generate every table and file in memory. With targets, plant them; with
+// routing targets, plant the routing scenarios. Throws if a rule fails or a
+// planted figure misses its target.
 function generate(config) {
   const { seed, clients, targets = null } = config;
   if (!Number.isSafeInteger(clients) || clients < 1) throw new RangeError(`clients must be a positive integer, got ${clients}`);
@@ -111,9 +124,20 @@ function generate(config) {
   // above is final, so no earlier draw or value moves.
   const opsRng = createRng(deriveSeed(seed, OPERATIONS_STREAM));
   Object.assign(tables, buildOperations(opsRng, tables, { historyStart: HISTORY_START, asOf: AS_OF }));
+  // Coordinates, the booked schedule, rules and absences (Stories 14.1 and
+  // 14.2): their own stream too, after the operations tables are final. With
+  // routing targets, the scenarios S1 to S3 are planted on top.
+  const routing = config.routing || null;
+  const plant = routing ? createPlant() : null;
+  const routingRng = createRng(deriveSeed(seed, ROUTING_STREAM));
+  Object.assign(tables, buildRouting(routingRng, tables, { zones: ZONES, asOf: AS_OF, plant }));
   tables.fixture_meta = fixtureMeta(config, tables);
   const ruleOpts = { zones: ZONES, historyStart: HISTORY_START, asOf: AS_OF };
-  const problems = checkRules(tables, ruleOpts).concat(checkOperations(tables, ruleOpts));
+  const problems = checkRules(tables, ruleOpts).concat(
+    checkOperations(tables, ruleOpts),
+    checkRouting(tables, { ...ruleOpts, reassigned: plant ? plant.reassigned : new Set() }),
+    plant ? checkScenarios(tables, ruleOpts) : [],
+  );
   if (problems.length > 0) {
     throw new Error(`generated data breaks ${problems.length} rule(s):\n  ${problems.slice(0, 20).join('\n  ')}`);
   }
@@ -122,12 +146,18 @@ function generate(config) {
     const missed = TRUTH_IDS.filter((id) => got[id] !== targets[id]);
     if (missed.length > 0) throw new Error(`planted figures missed: ${missed.map((id) => `${id} ${got[id]} (target ${targets[id]})`).join(', ')}`);
   }
+  if (routing) {
+    const missed = missedRoutingTargets(tables, routing, { asOf: AS_OF });
+    if (missed.length > 0) throw new Error(`planted routing figures missed: ${missed.join(', ')}`);
+  }
   const files = new Map();
   files.set('schema.sql', schemaSql());
   for (const table of TABLES) {
     files.set(`${SEEDS_DIR}/${table.name}.csv`, toCsv(table, tables[table.name]));
   }
-  return { tables, files };
+  // reassigned: the booked visits the planted scenarios moved to another
+  // crew of their zone (none without routing targets).
+  return { tables, files, reassigned: plant ? [...plant.reassigned].sort((a, b) => a - b) : [] };
 }
 
 // The name a generated file is stored under: seeds/<table>.csv.gz for every
@@ -275,4 +305,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { generate, writeFiles, checkCommitted, storedName, gzipSeed, gzipHeaderProblem, readSeedConfig, readTargets, toCsv, main, GENERATOR_VERSION };
+module.exports = { generate, writeFiles, checkCommitted, storedName, gzipSeed, gzipHeaderProblem, readSeedConfig, readTargets, readRoutingTargets, toCsv, main, GENERATOR_VERSION };

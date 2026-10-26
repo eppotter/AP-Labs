@@ -25,6 +25,8 @@ tiers:
     - "kit/runtime/sql/**"
     - "kit/runtime/data/**"
     - "kit/runtime/llm/**"
+    # Runtime: the routing engine (Epic 12). Pure, but its plans reach dispatchers.
+    - "kit/runtime/routing/**"
   T1: ["lib/**"]
 inert: ["**/*.md", "docs/**"]
 
@@ -87,7 +89,31 @@ users:
 # Columns no query may name (kit/runtime/sql). While any is set, SELECT * and
 # whole-row references are refused too.
 sql:
-  forbidden_columns: [clients.phone, properties.street_address, properties.postal_code]
+  forbidden_columns:
+    - clients.phone
+    - properties.street_address
+    - properties.postal_code
+    # Coordinates (Story 13.3, GRD-002): forbidden before the generator adds them
+    # (Story 14.1), and forbidden to every query and every other read path.
+    # travelMatrix is the one exception; it returns whole minutes only (AD-R9).
+    - properties.geo_lat_e6
+    - properties.geo_lon_e6
+    - crews.base_geo_lat_e6
+    - crews.base_geo_lon_e6
+
+# Route optimization (AD-R10). Each node kind's coordinate columns (micro-degree
+# INTEGER) must also be in sql.forbidden_columns above. The engine knows only the
+# kinds property and crew. Limits are minutes after local midnight, the
+# generator's day: 06:00 earliest, 08:00 default start, aim 18:00, 23:00 latest.
+routing:
+  coordinates:
+    nodes:
+      - { kind: property, table: properties, id_column: property_id, lat_column: geo_lat_e6, lon_column: geo_lon_e6 }
+      - { kind: crew, table: crews, id_column: crew_id, lat_column: base_geo_lat_e6, lon_column: base_geo_lon_e6 }
+  speed_kmh: 40
+  detour_factor: 1.3
+  min_travel_minutes: 5
+  limits: { earliest_start: 360, default_start: 480, aim_finish: 1080, latest_finish: 1380, slot_minutes: 15 }
 
 verify:
   checks:

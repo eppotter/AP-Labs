@@ -122,23 +122,23 @@ development_status:
   epic-12: in-progress
   12-1-the-input-contract-and-the-travel-port: done
   12-2-the-rule-registry-and-the-v1-rules: done
-  12-3-optimize-a-day: review
-  12-4-a-broken-day-place-the-orphans: backlog
-  12-5-fill-a-gap-with-ranked-candidates: backlog
+  12-3-optimize-a-day: done
+  12-4-a-broken-day-place-the-orphans: review
+  12-5-fill-a-gap-with-ranked-candidates: review
   epic-12-retrospective: optional
 
   epic-13: in-progress
   13-1-the-profile-s-routing-block: done
   13-2-travelmatrix-the-one-coordinate-read-path: review
-  13-3-brightside-forbids-the-coordinates-and-declares-routing: backlog
+  13-3-brightside-forbids-the-coordinates-and-declares-routing: review
   epic-13-retrospective: optional
 
   epic-14: backlog
-  14-1-the-fixture-gains-coordinates-and-a-future-schedule: backlog
-  14-2-rules-absences-and-the-planted-scenarios-s1-s3: backlog
-  14-3-the-brightside-adapter: backlog
-  14-4-routing-truths-that-reconcile-under-npm-run-verify: backlog
-  14-5-a-read-only-cli-for-the-dispatcher: backlog
+  14-1-the-fixture-gains-coordinates-and-a-future-schedule: review
+  14-2-rules-absences-and-the-planted-scenarios-s1-s3: review
+  14-3-the-brightside-adapter: review
+  14-4-routing-truths-that-reconcile-under-npm-run-verify: review
+  14-5-a-read-only-cli-for-the-dispatcher: review
   epic-14-retrospective: optional
 
   epic-15: in-progress

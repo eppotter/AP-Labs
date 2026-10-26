@@ -1,0 +1,29 @@
+# Test fixture for Brightside's routing adapter test (Story 14.3): the
+# fixture's forbidden columns, the four coordinate columns among them, and a
+# routing block with the generator's day (06:00 / 08:00 / 18:00 / 23:00,
+# 15-minute slots), 40 km/h and a 1.3 detour. Tests read this, never
+# profiles/brightside/profile.yml. Deleted with the example in a fork.
+schema_version: 1
+client: { id: routing-fixture, name: Routing Fixture Co }
+resources:
+  - { key: HELLO_WORLD, label: Say hello, open_access: true }
+users:
+  - { id: ada, name: Ada Admin, role: admin, identities: { slack: U0FIXTUREADA } }
+sql:
+  forbidden_columns:
+    - clients.phone
+    - properties.street_address
+    - properties.postal_code
+    - properties.geo_lat_e6
+    - properties.geo_lon_e6
+    - crews.base_geo_lat_e6
+    - crews.base_geo_lon_e6
+routing:
+  coordinates:
+    nodes:
+      - { kind: property, table: properties, id_column: property_id, lat_column: geo_lat_e6, lon_column: geo_lon_e6 }
+      - { kind: crew, table: crews, id_column: crew_id, lat_column: base_geo_lat_e6, lon_column: base_geo_lon_e6 }
+  speed_kmh: 40
+  detour_factor: 1.3
+  min_travel_minutes: 5
+  limits: { earliest_start: 360, default_start: 480, aim_finish: 1080, latest_finish: 1380, slot_minutes: 15 }
