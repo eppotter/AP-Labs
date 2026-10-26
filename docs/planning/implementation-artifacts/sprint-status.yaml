@@ -121,8 +121,8 @@ development_status:
 
   epic-12: in-progress
   12-1-the-input-contract-and-the-travel-port: done
-  12-2-the-rule-registry-and-the-v1-rules: review
-  12-3-optimize-a-day: backlog
+  12-2-the-rule-registry-and-the-v1-rules: done
+  12-3-optimize-a-day: review
   12-4-a-broken-day-place-the-orphans: backlog
   12-5-fill-a-gap-with-ranked-candidates: backlog
   epic-12-retrospective: optional

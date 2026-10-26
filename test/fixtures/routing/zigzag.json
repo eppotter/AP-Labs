@@ -1,0 +1,1056 @@
+{
+  "_comment": "Synthetic day for Story 12.3: two crews in zone north booked back and forth between a west and an east cluster, and one crew in zone south. Monday 2026-11-02. Not client data; minutes come from made-up grid points that are not in the file.",
+  "input": {
+    "day": "2026-11-02",
+    "asOf": "2026-10-30",
+    "limits": {
+      "earliestStart": 360,
+      "defaultStart": 480,
+      "aimFinish": 1080,
+      "latestFinish": 1380,
+      "startRoundTo": 5
+    },
+    "crews": [
+      {
+        "crewId": "n1",
+        "zoneId": "north",
+        "baseNode": "crew:n1",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      },
+      {
+        "crewId": "n2",
+        "zoneId": "north",
+        "baseNode": "crew:n2",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      },
+      {
+        "crewId": "s1",
+        "zoneId": "south",
+        "baseNode": "crew:s1",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      }
+    ],
+    "stops": [
+      {
+        "stopId": "v01",
+        "node": "property:w1",
+        "currentCrewId": "n1",
+        "routeOrder": 1,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "v02",
+        "node": "property:e1",
+        "currentCrewId": "n1",
+        "routeOrder": 2,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": [
+          {
+            "ruleId": "day-of-week",
+            "value": [
+              1,
+              3,
+              5
+            ]
+          }
+        ]
+      },
+      {
+        "stopId": "v03",
+        "node": "property:w2",
+        "currentCrewId": "n1",
+        "routeOrder": 3,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": [
+          {
+            "ruleId": "preferred-crew",
+            "value": "n1"
+          }
+        ]
+      },
+      {
+        "stopId": "v04",
+        "node": "property:e2",
+        "currentCrewId": "n1",
+        "routeOrder": 4,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "v05",
+        "node": "property:e3",
+        "currentCrewId": "n2",
+        "routeOrder": 1,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "v06",
+        "node": "property:w3",
+        "currentCrewId": "n2",
+        "routeOrder": 2,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": [
+          {
+            "ruleId": "time-of-day",
+            "value": {
+              "startFrom": 540,
+              "startBefore": 840
+            }
+          }
+        ]
+      },
+      {
+        "stopId": "v07",
+        "node": "property:e4",
+        "currentCrewId": "n2",
+        "routeOrder": 3,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "v08",
+        "node": "property:w4",
+        "currentCrewId": "n2",
+        "routeOrder": 4,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "v09",
+        "node": "property:q1",
+        "currentCrewId": "s1",
+        "routeOrder": 1,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "v10",
+        "node": "property:q2",
+        "currentCrewId": "s1",
+        "routeOrder": 2,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "v11",
+        "node": "property:q3",
+        "currentCrewId": "s1",
+        "routeOrder": 3,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": []
+      }
+    ]
+  },
+  "matrix": [
+    {
+      "from_node": "crew:n1",
+      "to_node": "property:w1",
+      "minutes": 8
+    },
+    {
+      "from_node": "crew:n1",
+      "to_node": "property:w2",
+      "minutes": 14
+    },
+    {
+      "from_node": "crew:n1",
+      "to_node": "property:w3",
+      "minutes": 17
+    },
+    {
+      "from_node": "crew:n1",
+      "to_node": "property:w4",
+      "minutes": 9
+    },
+    {
+      "from_node": "crew:n1",
+      "to_node": "property:e1",
+      "minutes": 37
+    },
+    {
+      "from_node": "crew:n1",
+      "to_node": "property:e2",
+      "minutes": 44
+    },
+    {
+      "from_node": "crew:n1",
+      "to_node": "property:e3",
+      "minutes": 42
+    },
+    {
+      "from_node": "crew:n1",
+      "to_node": "property:e4",
+      "minutes": 37
+    },
+    {
+      "from_node": "crew:n1",
+      "to_node": "property:q1",
+      "minutes": 40
+    },
+    {
+      "from_node": "crew:n1",
+      "to_node": "property:q2",
+      "minutes": 51
+    },
+    {
+      "from_node": "crew:n1",
+      "to_node": "property:q3",
+      "minutes": 41
+    },
+    {
+      "from_node": "crew:n2",
+      "to_node": "property:w1",
+      "minutes": 37
+    },
+    {
+      "from_node": "crew:n2",
+      "to_node": "property:w2",
+      "minutes": 37
+    },
+    {
+      "from_node": "crew:n2",
+      "to_node": "property:w3",
+      "minutes": 42
+    },
+    {
+      "from_node": "crew:n2",
+      "to_node": "property:w4",
+      "minutes": 33
+    },
+    {
+      "from_node": "crew:n2",
+      "to_node": "property:e1",
+      "minutes": 8
+    },
+    {
+      "from_node": "crew:n2",
+      "to_node": "property:e2",
+      "minutes": 11
+    },
+    {
+      "from_node": "crew:n2",
+      "to_node": "property:e3",
+      "minutes": 17
+    },
+    {
+      "from_node": "crew:n2",
+      "to_node": "property:e4",
+      "minutes": 14
+    },
+    {
+      "from_node": "crew:n2",
+      "to_node": "property:q1",
+      "minutes": 44
+    },
+    {
+      "from_node": "crew:n2",
+      "to_node": "property:q2",
+      "minutes": 47
+    },
+    {
+      "from_node": "crew:n2",
+      "to_node": "property:q3",
+      "minutes": 39
+    },
+    {
+      "from_node": "crew:s1",
+      "to_node": "property:w1",
+      "minutes": 49
+    },
+    {
+      "from_node": "crew:s1",
+      "to_node": "property:w2",
+      "minutes": 54
+    },
+    {
+      "from_node": "crew:s1",
+      "to_node": "property:w3",
+      "minutes": 59
+    },
+    {
+      "from_node": "crew:s1",
+      "to_node": "property:w4",
+      "minutes": 46
+    },
+    {
+      "from_node": "crew:s1",
+      "to_node": "property:e1",
+      "minutes": 49
+    },
+    {
+      "from_node": "crew:s1",
+      "to_node": "property:e2",
+      "minutes": 55
+    },
+    {
+      "from_node": "crew:s1",
+      "to_node": "property:e3",
+      "minutes": 59
+    },
+    {
+      "from_node": "crew:s1",
+      "to_node": "property:e4",
+      "minutes": 54
+    },
+    {
+      "from_node": "crew:s1",
+      "to_node": "property:q1",
+      "minutes": 6
+    },
+    {
+      "from_node": "crew:s1",
+      "to_node": "property:q2",
+      "minutes": 6
+    },
+    {
+      "from_node": "crew:s1",
+      "to_node": "property:q3",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "crew:n1",
+      "minutes": 8
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "crew:n2",
+      "minutes": 37
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "crew:s1",
+      "minutes": 49
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "property:w2",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "property:w3",
+      "minutes": 11
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "property:w4",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "property:e1",
+      "minutes": 32
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "property:e2",
+      "minutes": 39
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "property:e3",
+      "minutes": 36
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "property:e4",
+      "minutes": 31
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "property:q1",
+      "minutes": 44
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "property:q2",
+      "minutes": 54
+    },
+    {
+      "from_node": "property:w1",
+      "to_node": "property:q3",
+      "minutes": 44
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "crew:n1",
+      "minutes": 14
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "crew:n2",
+      "minutes": 37
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "crew:s1",
+      "minutes": 54
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "property:w1",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "property:w3",
+      "minutes": 6
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "property:w4",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "property:e1",
+      "minutes": 31
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "property:e2",
+      "minutes": 37
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "property:e3",
+      "minutes": 33
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "property:e4",
+      "minutes": 28
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "property:q1",
+      "minutes": 50
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "property:q2",
+      "minutes": 59
+    },
+    {
+      "from_node": "property:w2",
+      "to_node": "property:q3",
+      "minutes": 49
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "crew:n1",
+      "minutes": 17
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "crew:n2",
+      "minutes": 42
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "crew:s1",
+      "minutes": 59
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "property:w1",
+      "minutes": 11
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "property:w2",
+      "minutes": 6
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "property:w4",
+      "minutes": 14
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "property:e1",
+      "minutes": 36
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "property:e2",
+      "minutes": 41
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "property:e3",
+      "minutes": 36
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "property:e4",
+      "minutes": 33
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "property:q1",
+      "minutes": 54
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "property:q2",
+      "minutes": 64
+    },
+    {
+      "from_node": "property:w3",
+      "to_node": "property:q3",
+      "minutes": 54
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "crew:n1",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "crew:n2",
+      "minutes": 33
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "crew:s1",
+      "minutes": 46
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "property:w1",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "property:w2",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "property:w3",
+      "minutes": 14
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "property:e1",
+      "minutes": 29
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "property:e2",
+      "minutes": 35
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "property:e3",
+      "minutes": 33
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "property:e4",
+      "minutes": 28
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "property:q1",
+      "minutes": 41
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "property:q2",
+      "minutes": 51
+    },
+    {
+      "from_node": "property:w4",
+      "to_node": "property:q3",
+      "minutes": 41
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "crew:n1",
+      "minutes": 37
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "crew:n2",
+      "minutes": 8
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "crew:s1",
+      "minutes": 49
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:w1",
+      "minutes": 32
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:w2",
+      "minutes": 31
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:w3",
+      "minutes": 36
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:w4",
+      "minutes": 29
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:e2",
+      "minutes": 8
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:e3",
+      "minutes": 11
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:e4",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:q1",
+      "minutes": 47
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:q2",
+      "minutes": 52
+    },
+    {
+      "from_node": "property:e1",
+      "to_node": "property:q3",
+      "minutes": 43
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "crew:n1",
+      "minutes": 44
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "crew:n2",
+      "minutes": 11
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "crew:s1",
+      "minutes": 55
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:w1",
+      "minutes": 39
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:w2",
+      "minutes": 37
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:w3",
+      "minutes": 41
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:w4",
+      "minutes": 35
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:e1",
+      "minutes": 8
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:e3",
+      "minutes": 8
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:e4",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:q1",
+      "minutes": 53
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:q2",
+      "minutes": 57
+    },
+    {
+      "from_node": "property:e2",
+      "to_node": "property:q3",
+      "minutes": 49
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "crew:n1",
+      "minutes": 42
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "crew:n2",
+      "minutes": 17
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "crew:s1",
+      "minutes": 59
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "property:w1",
+      "minutes": 36
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "property:w2",
+      "minutes": 33
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "property:w3",
+      "minutes": 36
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "property:w4",
+      "minutes": 33
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "property:e1",
+      "minutes": 11
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "property:e2",
+      "minutes": 8
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "property:e4",
+      "minutes": 6
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "property:q1",
+      "minutes": 57
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "property:q2",
+      "minutes": 62
+    },
+    {
+      "from_node": "property:e3",
+      "to_node": "property:q3",
+      "minutes": 53
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "crew:n1",
+      "minutes": 37
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "crew:n2",
+      "minutes": 14
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "crew:s1",
+      "minutes": 54
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "property:w1",
+      "minutes": 31
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "property:w2",
+      "minutes": 28
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "property:w3",
+      "minutes": 33
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "property:w4",
+      "minutes": 28
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "property:e1",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "property:e2",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "property:e3",
+      "minutes": 6
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "property:q1",
+      "minutes": 52
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "property:q2",
+      "minutes": 57
+    },
+    {
+      "from_node": "property:e4",
+      "to_node": "property:q3",
+      "minutes": 48
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "crew:n1",
+      "minutes": 40
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "crew:n2",
+      "minutes": 44
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "crew:s1",
+      "minutes": 6
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "property:w1",
+      "minutes": 44
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "property:w2",
+      "minutes": 50
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "property:w3",
+      "minutes": 54
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "property:w4",
+      "minutes": 41
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "property:e1",
+      "minutes": 47
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "property:e2",
+      "minutes": 53
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "property:e3",
+      "minutes": 57
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "property:e4",
+      "minutes": 52
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "property:q2",
+      "minutes": 12
+    },
+    {
+      "from_node": "property:q1",
+      "to_node": "property:q3",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "crew:n1",
+      "minutes": 51
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "crew:n2",
+      "minutes": 47
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "crew:s1",
+      "minutes": 6
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "property:w1",
+      "minutes": 54
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "property:w2",
+      "minutes": 59
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "property:w3",
+      "minutes": 64
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "property:w4",
+      "minutes": 51
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "property:e1",
+      "minutes": 52
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "property:e2",
+      "minutes": 57
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "property:e3",
+      "minutes": 62
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "property:e4",
+      "minutes": 57
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "property:q1",
+      "minutes": 12
+    },
+    {
+      "from_node": "property:q2",
+      "to_node": "property:q3",
+      "minutes": 11
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "crew:n1",
+      "minutes": 41
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "crew:n2",
+      "minutes": 39
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "crew:s1",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "property:w1",
+      "minutes": 44
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "property:w2",
+      "minutes": 49
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "property:w3",
+      "minutes": 54
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "property:w4",
+      "minutes": 41
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "property:e1",
+      "minutes": 43
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "property:e2",
+      "minutes": 49
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "property:e3",
+      "minutes": 53
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "property:e4",
+      "minutes": 48
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "property:q1",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:q3",
+      "to_node": "property:q2",
+      "minutes": 11
+    }
+  ]
+}
