@@ -5,7 +5,8 @@
 // repo-relative path it names (in backticks, or as a word in a code block)
 // exists, or is one the fork creates or deletes in a step the guide describes
 // (listed below with the reason). It also checks the parts the plan requires:
-// the template-history stop sign first, cloning at a tag with `upstream`, the
+// cloning only from the distribution repo (plan template-dist, D.3), at a tag
+// with `upstream`, the
 // list of files a fork never edits (review B10), the profile example's tier
 // rows (app/jobs at T2 or higher, review N2), the "you, not the agent"
 // marks and the template update section (Story 11.6).
@@ -136,12 +137,18 @@ test('fork guide: every path it names exists, or a step creates or deletes it', 
   assert.deepEqual(problems, []);
 });
 
-test('fork guide: opens with the template-history stop sign', () => {
+test('fork guide: clones from the distribution repo, never the source repo (plan template-dist, D.3)', () => {
   const firstSection = GUIDE.indexOf('\n## ');
-  const stop = GUIDE.search(/do not create a real client fork until Ely has decided what template history ships/i);
-  assert.ok(stop >= 0, 'the history warning is in the guide');
-  assert.ok(stop < firstSection, 'the history warning comes before the first step');
-  assert.match(GUIDE.slice(0, firstSection), /`docs\/reference\/`/);
+  assert.match(
+    GUIDE.slice(0, firstSection),
+    /Clone only from the distribution repo \(`aplabs-template`\)\. The AP Labs source repo carries internal history and never goes to a client\./,
+    'the warning comes before the first step',
+  );
+  assert.doesNotMatch(GUIDE, /until Ely has decided what template history ships/i, 'the old stop sign is gone');
+  assert.match(section('1.'), /git clone --branch v\d+\.\d+\.\d+ https:\/\/github\.com\/eppotter\/aplabs-template\.git /);
+  assert.doesNotMatch(GUIDE, /AP-Labs\.git/, 'no clone URL of the source repo appears');
+  assert.match(section('3.'), /arrives with no rows/);
+  assert.match(section('Taking a template update'), /`upstream` is the git remote that points at the distribution repo/);
 });
 
 test('fork guide: clones at a release tag, renames the remote to upstream, never "Use this template"', () => {
