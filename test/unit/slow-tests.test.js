@@ -49,14 +49,17 @@ test('package.json: test:slow is the runner and test is still plain node --test'
   assert.equal(pkg.scripts.test, 'node --test');
 });
 
-test('ci.yml: the slow step follows the tests in the test job, runs test:slow and has no condition', () => {
+test('ci.yml: the slow step follows the tests in the test job, runs test:slow and skips only for a docs-only PR', () => {
   const doc = YAML.parse(read('.github/workflows/ci.yml'));
   const steps = doc.jobs.test.steps;
   const i = steps.findIndex((s) => s.name === STEP);
   assert.ok(i > 0, `the test job has the step "${STEP}"`);
   assert.equal(steps[i - 1].name, 'Tests (unit, hook, acceptance)', 'right after the fast tests');
   assert.equal(steps[i].run, 'npm run test:slow');
-  assert.equal(steps[i].if, undefined, 'no if: (the template and every fork run it)');
+  // The only condition is the changes job's code output, false only for a
+  // docs-only pull request (plan ci-save-minutes; scripts/ci-changes.js).
+  assert.equal(steps[i].if, "needs.changes.outputs.code == 'true'", 'skips only for a docs-only PR');
+  assert.equal(doc.jobs.test.needs, 'changes');
   assert.ok(!steps[i].run.includes('examples/brightside'), 'no fork guard');
   for (const [job, def] of Object.entries(doc.jobs)) {
     if (job === 'test') continue;
