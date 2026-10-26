@@ -1,0 +1,187 @@
+{
+  "_comment": "Synthetic day for Story 12.5: crew w1 has two separate gaps: y1 (09:30) cancelled between s1 and s2, and y2 (13:00), its last stop, cancelled after s2. k1 fits both; k2 (200 minutes) fits only the second; k3 (hard window before 10:00) fits only the first. Wednesday 2026-11-04. Not client data; minutes are made up.",
+  "input": {
+    "day": "2026-11-04",
+    "asOf": "2026-11-02",
+    "limits": {
+      "earliestStart": 360,
+      "defaultStart": 480,
+      "aimFinish": 1080,
+      "latestFinish": 1380,
+      "startRoundTo": 5
+    },
+    "crews": [
+      {
+        "crewId": "w1",
+        "zoneId": "north",
+        "baseNode": "crew:w1",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      }
+    ],
+    "stops": [
+      {
+        "stopId": "s1",
+        "node": "property:s1",
+        "currentCrewId": "w1",
+        "routeOrder": 1,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "start": 480
+      },
+      {
+        "stopId": "s2",
+        "node": "property:s2",
+        "currentCrewId": "w1",
+        "routeOrder": 3,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "start": 690
+      }
+    ],
+    "cancelled": [
+      {
+        "stopId": "y1",
+        "node": "property:y1",
+        "currentCrewId": "w1",
+        "start": 570,
+        "serviceMinutes": 60
+      },
+      {
+        "stopId": "y2",
+        "node": "property:y2",
+        "currentCrewId": "w1",
+        "start": 780,
+        "serviceMinutes": 60
+      }
+    ],
+    "candidates": [
+      {
+        "stopId": "k1",
+        "node": "property:k1",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-06",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-23",
+        "flexible": true
+      },
+      {
+        "stopId": "k2",
+        "node": "property:k2",
+        "labourMinutes": 600,
+        "serviceMinutes": 200,
+        "locked": false,
+        "rules": [],
+        "plannedDate": "2026-11-07",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-23",
+        "flexible": true
+      },
+      {
+        "stopId": "k3",
+        "node": "property:k3",
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [
+          {
+            "ruleId": "time-of-day",
+            "value": {
+              "startFrom": 360,
+              "startBefore": 600
+            }
+          }
+        ],
+        "plannedDate": "2026-11-08",
+        "cadenceDays": 14,
+        "prevVisitDate": "2026-10-23",
+        "flexible": false
+      }
+    ]
+  },
+  "matrix": [
+    {
+      "from_node": "property:s1",
+      "to_node": "property:s2",
+      "minutes": 18
+    },
+    {
+      "from_node": "crew:w1",
+      "to_node": "property:s2",
+      "minutes": 20
+    },
+    {
+      "from_node": "property:s1",
+      "to_node": "property:k1",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:k1",
+      "to_node": "property:s2",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:s2",
+      "to_node": "property:k1",
+      "minutes": 12
+    },
+    {
+      "from_node": "property:k1",
+      "to_node": "crew:w1",
+      "minutes": 15
+    },
+    {
+      "from_node": "property:s1",
+      "to_node": "property:k2",
+      "minutes": 15
+    },
+    {
+      "from_node": "property:k2",
+      "to_node": "property:s2",
+      "minutes": 15
+    },
+    {
+      "from_node": "property:s2",
+      "to_node": "property:k2",
+      "minutes": 15
+    },
+    {
+      "from_node": "property:k2",
+      "to_node": "crew:w1",
+      "minutes": 25
+    },
+    {
+      "from_node": "property:s1",
+      "to_node": "property:k3",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:k3",
+      "to_node": "property:s2",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:s2",
+      "to_node": "property:k3",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:k3",
+      "to_node": "crew:w1",
+      "minutes": 25
+    },
+    {
+      "from_node": "property:s2",
+      "to_node": "crew:w1",
+      "minutes": 20
+    }
+  ]
+}

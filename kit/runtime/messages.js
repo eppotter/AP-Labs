@@ -60,6 +60,8 @@ const ROUTING_WORDS = Object.freeze({
   unknown_rule: ({ field }) => `"${field}" names a rule that isn't registered`,
   not_overridable: ({ field }) => `"${field}" tries to change a rule that is always hard`,
   not_function: ({ field }) => `"${field}" is not a check the engine can run`,
+  unknown_weight: ({ field }) => `"${field}" names a ranking input the engine doesn't have`,
+  bad_weights: ({ field }) => `"${field}" are not ranking weights the scoring check accepts`,
   // travelMatrix (Story 13.2): fixed words, never the query's own text.
   routing_off: ({ field }) => `"${field}" needs a routing block in the profile, and there is none`,
   too_many_pairs: ({ field }) => `"${field}" asks for more drive times than the profile allows at once`,
