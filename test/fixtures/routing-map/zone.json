@@ -1,0 +1,125 @@
+{
+  "_comment": "Synthetic map model for Story 15.3 renderer tests (AD-R14). Not client data: pixel points in a frame, as mapPoints returns them; no coordinates, no names.",
+  "view": "zone",
+  "model": {
+    "frame": {
+      "width": 600,
+      "height": 400,
+      "padding": 40
+    },
+    "points": [
+      {
+        "node": "crew:c1",
+        "x": 100,
+        "y": 120
+      },
+      {
+        "node": "crew:c2",
+        "x": 120,
+        "y": 300
+      },
+      {
+        "node": "crew:c3",
+        "x": 480,
+        "y": 200
+      },
+      {
+        "node": "property:p1",
+        "x": 190,
+        "y": 80
+      },
+      {
+        "node": "property:p2",
+        "x": 250,
+        "y": 150
+      },
+      {
+        "node": "property:p3",
+        "x": 180,
+        "y": 200
+      },
+      {
+        "node": "property:p4",
+        "x": 230,
+        "y": 290
+      },
+      {
+        "node": "property:p5",
+        "x": 160,
+        "y": 350
+      },
+      {
+        "node": "property:p6",
+        "x": 430,
+        "y": 90
+      },
+      {
+        "node": "property:p7",
+        "x": 530,
+        "y": 140
+      },
+      {
+        "node": "property:p8",
+        "x": 500,
+        "y": 320
+      }
+    ],
+    "crews": [
+      {
+        "crewId": "c1",
+        "color": 0,
+        "baseNode": "crew:c1"
+      },
+      {
+        "crewId": "c2",
+        "color": 1,
+        "baseNode": "crew:c2"
+      },
+      {
+        "crewId": "c3",
+        "color": 2,
+        "baseNode": "crew:c3"
+      }
+    ],
+    "routes": [
+      {
+        "crewId": "c1",
+        "stops": [
+          "property:p1",
+          "property:p2",
+          "property:p3"
+        ]
+      },
+      {
+        "crewId": "c2",
+        "stops": [
+          "property:p4",
+          "property:p5"
+        ]
+      },
+      {
+        "crewId": "c3",
+        "stops": [
+          "property:p6",
+          "property:p7",
+          "property:p8"
+        ]
+      }
+    ],
+    "zones": [
+      {
+        "zoneId": "north",
+        "crewIds": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "zoneId": "south",
+        "crewIds": [
+          "c3"
+        ]
+      }
+    ]
+  }
+}

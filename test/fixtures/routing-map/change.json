@@ -1,0 +1,122 @@
+{
+  "_comment": "Synthetic map model for Story 15.3 renderer tests (AD-R14). Not client data: pixel points in a frame, as mapPoints returns them; no coordinates, no names.",
+  "view": "change",
+  "model": {
+    "frame": {
+      "width": 600,
+      "height": 400,
+      "padding": 40
+    },
+    "points": [
+      {
+        "node": "crew:c1",
+        "x": 70,
+        "y": 200
+      },
+      {
+        "node": "crew:c2",
+        "x": 300,
+        "y": 60
+      },
+      {
+        "node": "crew:c3",
+        "x": 540,
+        "y": 340
+      },
+      {
+        "node": "property:p1",
+        "x": 140,
+        "y": 110
+      },
+      {
+        "node": "property:p2",
+        "x": 200,
+        "y": 190
+      },
+      {
+        "node": "property:p3",
+        "x": 160,
+        "y": 300
+      },
+      {
+        "node": "property:p4",
+        "x": 290,
+        "y": 140
+      },
+      {
+        "node": "property:p5",
+        "x": 350,
+        "y": 230
+      },
+      {
+        "node": "property:p6",
+        "x": 420,
+        "y": 300
+      }
+    ],
+    "crews": [
+      {
+        "crewId": "c1",
+        "color": 0,
+        "baseNode": "crew:c1"
+      },
+      {
+        "crewId": "c2",
+        "color": 1,
+        "baseNode": "crew:c2"
+      },
+      {
+        "crewId": "c3",
+        "color": 2,
+        "baseNode": "crew:c3"
+      }
+    ],
+    "before": [
+      {
+        "crewId": "c1",
+        "stops": [
+          "property:p1",
+          "property:p2",
+          "property:p3"
+        ]
+      },
+      {
+        "crewId": "c2",
+        "stops": [
+          "property:p4",
+          "property:p5",
+          "property:p6"
+        ]
+      }
+    ],
+    "after": [
+      {
+        "crewId": "c1",
+        "stops": [
+          "property:p1",
+          "property:p4",
+          "property:p2",
+          "property:p5",
+          "property:p3"
+        ]
+      },
+      {
+        "crewId": "c2",
+        "stops": []
+      }
+    ],
+    "moved": [
+      "property:p4",
+      "property:p5"
+    ],
+    "crossZone": [
+      {
+        "node": "property:p6",
+        "crewId": "c3"
+      }
+    ],
+    "unplaced": [
+      "property:p6"
+    ]
+  }
+}

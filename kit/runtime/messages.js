@@ -71,6 +71,12 @@ const ROUTING_WORDS = Object.freeze({
   data_unavailable: ({ field }) => `"${field}" could not reach the data`,
   query_refused: ({ field }) => `"${field}" was refused by the query check`,
   query_failed: ({ field }) => `"${field}" failed while reading the data`,
+  // The map renderer (Story 15.3): fixed words, never the model's values.
+  unknown_key: ({ field }) => `"${field}" holds a field the map does not take`,
+  renderer_unavailable: ({ field }) => `"${field}" can't be drawn: the map drawing tool didn't load`,
+  renderer_failed: ({ field }) => `"${field}" couldn't be drawn`,
+  image_too_large: ({ field }) => `"${field}" came out larger than 1 MB`,
+  unsafe_svg: ({ field }) => `"${field}" was refused: it names something outside the map`,
 });
 
 // The AI service's refusals (Story 9.1). Each points to the typed form, which

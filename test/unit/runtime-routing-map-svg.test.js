@@ -1,0 +1,358 @@
+'use strict';
+
+// Story 15.3 (AD-R14): the route map as SVG. renderSvg(view, model) is pure
+// and deterministic, writes no text, font or reference, and draws each view's
+// features where the model's pixel points say. Models come from
+// test/fixtures/routing-map/*.json (synthetic, no client data).
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const { renderSvg, imageSize, VIEWS } = require('../../kit/runtime/routing-map');
+const { PALETTE, MAX_COLOR } = require('../../kit/runtime/routing-map/svg');
+const { numberPath } = require('../../kit/runtime/routing-map/glyphs');
+const { RoutingFault, ROUTING_PROBLEMS } = require('../../kit/runtime/errors');
+
+const FIXTURES = path.join(__dirname, '..', 'fixtures', 'routing-map');
+const load = (view) => require(path.join(FIXTURES, `${view}.json`));
+const clone = (v) => JSON.parse(JSON.stringify(v));
+const model = (view) => clone(load(view).model);
+
+// --- reading the SVG back -----------------------------------------------------------
+
+// Every self-closing element as { name, attrs }.
+function elements(svg) {
+  return [...svg.matchAll(/<([a-z]+)((?:\s+[a-z0-9-]+="[^"]*")*)\s*\/>/g)].map((m) => ({
+    name: m[1],
+    attrs: Object.fromEntries([...m[2].matchAll(/([a-z0-9-]+)="([^"]*)"/g)].map((a) => [a[1], a[2]])),
+  }));
+}
+const find = (svg, name, where = {}) => elements(svg).filter((e) => e.name === name && Object.entries(where).every(([k, v]) => e.attrs[k] === String(v)));
+const pointOf = (m, node) => m.points.find((p) => p.node === node);
+const crewOf = (m, crewId) => m.crews.find((c) => c.crewId === crewId);
+const fillOf = (m, crewId) => PALETTE[crewOf(m, crewId).color % PALETTE.length].fill;
+
+function faultOf(fn) {
+  try { fn(); } catch (e) {
+    assert.ok(e instanceof RoutingFault, `not a RoutingFault: ${e && e.message}`);
+    assert.ok(ROUTING_PROBLEMS.includes(e.details.problem));
+    return { field: e.details.field, problem: e.details.problem, message: e.message };
+  }
+  assert.fail('expected a RoutingFault');
+}
+const refuses = (view, m, field, problem) => {
+  const f = faultOf(() => renderSvg(view, m));
+  assert.deepEqual({ field: f.field, problem: f.problem }, { field, problem });
+  assert.doesNotMatch(f.message, /property:|crew:/, 'never a node id in the words');
+};
+
+// Asserts a numbered marker for each stop of each route, in order, at its point.
+function assertNumberedRoutes(svg, m, routes, dx) {
+  for (const r of routes) {
+    r.stops.forEach((node, i) => {
+      const p = pointOf(m, node);
+      assert.equal(find(svg, 'circle', { cx: p.x + dx, cy: p.y, r: 11, fill: fillOf(m, r.crewId) }).length, 1, `${r.crewId} stop ${i + 1}`);
+      assert.equal(find(svg, 'path', { d: numberPath(i + 1, p.x + dx, p.y) }).length, 1, `number ${i + 1} on ${r.crewId}`);
+    });
+    const line = find(svg, 'polyline', { stroke: fillOf(m, r.crewId) }).filter((e) => e.attrs.points.startsWith(`${pointOf(m, crewOf(m, r.crewId).baseNode).x + dx},`));
+    const want = [crewOf(m, r.crewId).baseNode, ...r.stops].map((n) => `${pointOf(m, n).x + dx},${pointOf(m, n).y}`).join(' ');
+    if (r.stops.length) assert.deepEqual(line.map((l) => l.attrs.points), [want], `${r.crewId}'s line from its base through its stops`);
+  }
+}
+
+function assertBase(svg, m, crewId, dx) {
+  const p = pointOf(m, crewOf(m, crewId).baseNode);
+  assert.equal(find(svg, 'rect', { x: p.x + dx - 8, y: p.y - 8, width: 16, height: 16, fill: fillOf(m, crewId) }).length, 1, `${crewId}'s base square`);
+}
+
+// --- every view -----------------------------------------------------------------
+
+test('the four views, each fixture: byte-identical twice, no text, font, reference or href', () => {
+  assert.deepEqual(VIEWS, ['compare', 'change', 'zone', 'gap']);
+  for (const view of VIEWS) {
+    const fx = load(view);
+    assert.equal(fx.view, view);
+    const a = renderSvg(view, fx.model);
+    const b = renderSvg(view, clone(fx.model));
+    assert.equal(a, b, view);
+    assert.match(a, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="\d+" height="\d+" viewBox="0 0 \d+ \d+">\n/);
+    const body = a.replace(' xmlns="http://www.w3.org/2000/svg"', '');
+    for (const bad of [/<text/i, /font/i, /href/i, /url\(/i, /https?:/i, /<image/i, /<use/i, /<style/i, /<script/i, /foreignObject/i, /@import/i, /xlink/i]) {
+      assert.doesNotMatch(body, bad, `${view}: ${bad}`);
+    }
+    // No id, name or label from the model is written into the image.
+    assert.doesNotMatch(a, /property|crew|north|south|\bc\d\b|\bp\d+\b/, `${view}: no id text`);
+    const size = imageSize(view, fx.model.frame);
+    assert.match(a, new RegExp(`width="${size.width}" height="${size.height}"`));
+  }
+});
+
+test('the SVG is identical under two time zones and locales (no clock, no locale)', () => {
+  const script = `
+    const { renderSvg, VIEWS } = require(${JSON.stringify(path.join(__dirname, '..', '..', 'kit/runtime/routing-map'))});
+    const out = VIEWS.map((v) => renderSvg(v, require(${JSON.stringify(FIXTURES)} + '/' + v + '.json').model)).join('');
+    process.stdout.write(require('node:crypto').createHash('sha256').update(out).digest('hex'));`;
+  const run = (env) => spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', env: { ...process.env, ...env } });
+  const a = run({ TZ: 'America/New_York', LANG: 'en_US.UTF-8' });
+  const b = run({ TZ: 'Pacific/Auckland', LANG: 'de_DE.UTF-8' });
+  assert.equal(a.status, 0, a.stderr);
+  assert.equal(a.stdout, b.stdout);
+  assert.equal(a.stdout.length, 64);
+});
+
+test('compare: two panels (booked left, optimized right), numbered stops, one line color per crew, bases marked', () => {
+  const m = model('compare');
+  const svg = renderSvg('compare', m);
+  const w = m.frame.width;
+  assert.deepEqual(imageSize('compare', m.frame), { width: 2 * w, height: m.frame.height });
+  assert.equal(find(svg, 'line', { x1: w, y1: 0, x2: w, y2: m.frame.height }).length, 1, 'the divider between the panels');
+  assertNumberedRoutes(svg, m, m.booked, 0);
+  assertNumberedRoutes(svg, m, m.optimized, w);
+  for (const dx of [0, w]) for (const c of m.crews) assertBase(svg, m, c.crewId, dx);
+  const strokes = find(svg, 'polyline').map((e) => e.attrs.stroke);
+  assert.deepEqual(strokes, [PALETTE[0].fill, PALETTE[1].fill, PALETTE[0].fill, PALETTE[1].fill]);
+  assert.notEqual(PALETTE[0].fill, PALETTE[1].fill);
+  assert.equal(find(svg, 'circle', { r: 11 }).length, 16);
+  assert.equal(find(svg, 'circle', { r: 16 }).length, 0, 'nothing ringed');
+});
+
+test('change: before and after panels, moved stops ringed, the cross-zone recommendation dashed, unplaced stops hollow', () => {
+  const m = model('change');
+  const svg = renderSvg('change', m);
+  const w = m.frame.width;
+  assertNumberedRoutes(svg, m, m.before, 0);
+  assertNumberedRoutes(svg, m, m.after, w);
+  for (const node of m.moved) {
+    const p = pointOf(m, node);
+    for (const dx of [0, w]) assert.equal(find(svg, 'circle', { cx: p.x + dx, cy: p.y, r: 16, fill: 'none', stroke: '#000000' }).length, 1, `${node} ringed at ${dx}`);
+  }
+  assert.equal(find(svg, 'circle', { r: 16 }).length, 2 * m.moved.length);
+  const [rec] = m.crossZone;
+  const from = pointOf(m, crewOf(m, rec.crewId).baseNode);
+  const to = pointOf(m, rec.node);
+  assert.deepEqual(find(svg, 'line', { 'stroke-dasharray': '2 7' }).map((e) => e.attrs), [{
+    x1: String(from.x + w), y1: String(from.y), x2: String(to.x + w), y2: String(to.y),
+    stroke: fillOf(m, rec.crewId), 'stroke-width': '3', 'stroke-dasharray': '2 7', 'stroke-linecap': 'round',
+  }], 'one dashed line from the recommended crew\'s base, in the after panel');
+  assertBase(svg, m, rec.crewId, w);
+  const [u] = m.unplaced;
+  const up = pointOf(m, u);
+  assert.equal(find(svg, 'circle', { cx: up.x + w, cy: up.y, r: 11, fill: '#FFFFFF', stroke: '#000000' }).length, 1, 'the unplaced stop is hollow');
+  assert.equal(find(svg, 'circle', { cx: up.x, cy: up.y, fill: '#FFFFFF' }).length, 0, 'only in the after panel');
+  // The crew that is out keeps its base square in both panels, and no line after.
+  assertBase(svg, m, 'c2', 0);
+  assertBase(svg, m, 'c2', w);
+});
+
+// Whether (x, y) is inside or on a convex polygon given counter-clockwise or
+// clockwise, by the sign of every edge's cross product.
+function insideConvex(poly, x, y) {
+  let sign = 0;
+  for (let i = 0; i < poly.length; i += 1) {
+    const [ax, ay] = poly[i];
+    const [bx, by] = poly[(i + 1) % poly.length];
+    const c = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+    if (c !== 0) {
+      if (sign && Math.sign(c) !== sign) return false;
+      sign = Math.sign(c);
+    }
+  }
+  return true;
+}
+
+test('zone: one color per crew, and each zone the padded convex hull of its own crews\' points', () => {
+  const m = model('zone');
+  const svg = renderSvg('zone', m);
+  assertNumberedRoutes(svg, m, m.routes, 0);
+  for (const c of m.crews) assertBase(svg, m, c.crewId, 0);
+  const strokes = find(svg, 'polyline').map((e) => e.attrs.stroke);
+  assert.equal(new Set(strokes).size, m.crews.length, 'a color per crew');
+  const hulls = find(svg, 'polygon', { 'fill-opacity': '0.05' }).map((e) => e.attrs.points.split(' ').map((p) => p.split(',').map(Number)));
+  assert.equal(hulls.length, m.zones.length);
+  m.zones.forEach((z, i) => {
+    const own = m.routes.filter((r) => z.crewIds.includes(r.crewId)).flatMap((r) => [crewOf(m, r.crewId).baseNode, ...r.stops]);
+    const other = m.routes.filter((r) => !z.crewIds.includes(r.crewId)).flatMap((r) => [crewOf(m, r.crewId).baseNode, ...r.stops]);
+    for (const n of own) {
+      const p = pointOf(m, n);
+      // Padded: a point 20 pixels out every way is still inside.
+      for (const [ox, oy] of [[0, 0], [20, 0], [-20, 0], [0, 20], [0, -20]]) assert.ok(insideConvex(hulls[i], p.x + ox, p.y + oy), `${z.zoneId} holds ${n} (+${ox},${oy})`);
+    }
+    for (const n of other) assert.ok(!insideConvex(hulls[i], pointOf(m, n).x, pointOf(m, n).y), `${z.zoneId} leaves out ${n}`);
+  });
+});
+
+test('zone: one crew alone, or a single stop, still gets a padded hull', () => {
+  const m = model('zone');
+  m.routes = [{ crewId: 'c3', stops: [] }];
+  m.zones = [{ zoneId: 'south', crewIds: ['c3'] }, { zoneId: 'north', crewIds: ['c1', 'c2'] }];
+  const svg = renderSvg('zone', m);
+  const hulls = find(svg, 'polygon', { 'fill-opacity': '0.05' });
+  assert.equal(hulls.length, 1, 'a zone with nothing drawn has no hull');
+  assert.equal(hulls[0].attrs.points.split(' ').length, 8, 'the octagon around one base');
+});
+
+test('gap: the gap\'s two neighbours double-ringed, up to five candidates as diamonds numbered by rank', () => {
+  const m = model('gap');
+  const svg = renderSvg('gap', m);
+  assertNumberedRoutes(svg, m, m.routes, 0);
+  assertBase(svg, m, 'c1', 0);
+  for (const n of [m.gap.before, m.gap.after]) {
+    const p = pointOf(m, n);
+    for (const r of [17, 22]) assert.equal(find(svg, 'circle', { cx: p.x, cy: p.y, r, fill: 'none' }).length, 1, `${n} ring ${r}`);
+  }
+  assert.equal(find(svg, 'circle', { r: 17 }).length, 2);
+  const diamonds = find(svg, 'polygon', { fill: '#333333' });
+  assert.equal(diamonds.length, 5);
+  for (const c of m.candidates) {
+    const p = pointOf(m, c.node);
+    assert.ok(diamonds.some((d) => d.attrs.points === `${p.x},${p.y - 14} ${p.x + 14},${p.y} ${p.x},${p.y + 14} ${p.x - 14},${p.y}`), `diamond for rank ${c.rank}`);
+    assert.equal(find(svg, 'path', { d: numberPath(c.rank, p.x, p.y), stroke: '#FFFFFF' }).length, 1, `rank ${c.rank} drawn as its number`);
+  }
+  // A gap at the end of the day has one neighbour; fewer candidates are fine.
+  m.gap.after = null;
+  m.candidates = m.candidates.slice(0, 2);
+  const svg2 = renderSvg('gap', m);
+  assert.equal(find(svg2, 'circle', { r: 17 }).length, 1);
+  assert.equal(find(svg2, 'polygon', { fill: '#333333' }).length, 2);
+});
+
+test('beyond the palette the colors repeat and the line\'s dashes vary; the color index is capped', () => {
+  const m = model('compare');
+  m.crews[1].color = PALETTE.length; // the eighth color
+  const svg = renderSvg('compare', m);
+  const lines = find(svg, 'polyline');
+  assert.equal(lines[0].attrs.stroke, lines[1].attrs.stroke, 'same color as the first');
+  assert.equal(lines[0].attrs['stroke-dasharray'], undefined);
+  assert.equal(lines[1].attrs['stroke-dasharray'], '12 6');
+  m.crews[1].color = MAX_COLOR;
+  assert.ok(renderSvg('compare', m));
+  m.crews[1].color = MAX_COLOR + 1;
+  refuses('compare', m, 'crews[1].color', 'out_of_range');
+});
+
+// --- refusals --------------------------------------------------------------------
+
+test('a node missing from the points is refused as no_position, wherever the model names it', () => {
+  const cases = [
+    ['compare', (m) => { m.points = m.points.filter((p) => p.node !== 'property:p3'); }, 'booked[0].stops[2]'],
+    ['compare', (m) => { m.optimized[1].stops.push('property:zz'); }, 'optimized[1].stops[4]'],
+    ['compare', (m) => { m.points = m.points.filter((p) => p.node !== 'crew:c2'); }, 'crews[1].baseNode'],
+    ['change', (m) => { m.moved.push('property:zz'); }, 'moved[2]'],
+    ['change', (m) => { m.unplaced = ['property:zz']; }, 'unplaced[0]'],
+    ['change', (m) => { m.crossZone[0].node = 'property:zz'; }, 'crossZone[0].node'],
+    ['gap', (m) => { m.gap.before = 'property:zz'; }, 'gap.before'],
+    ['gap', (m) => { m.gap.after = 'property:zz'; }, 'gap.after'],
+    ['gap', (m) => { m.candidates[4].node = 'property:zz'; }, 'candidates[4].node'],
+  ];
+  for (const [view, edit, field] of cases) {
+    const m = model(view);
+    edit(m);
+    refuses(view, m, field, 'no_position');
+  }
+});
+
+test('more than 99 stops on a crew is refused; 99 are drawn', () => {
+  const m = model('compare');
+  const many = Array.from({ length: 100 }, (_, i) => `property:x${i}`);
+  m.points.push(...many.map((node, i) => ({ node, x: 10 + (i % 50) * 10, y: 20 + Math.floor(i / 50) * 300 })));
+  m.booked[0].stops = many.slice(0, 99);
+  const svg = renderSvg('compare', m);
+  assert.equal(find(svg, 'path', { d: numberPath(99, 10 + 48 * 10, 320) }).length, 1, 'the 99th stop numbered 99');
+  m.booked[0].stops = many;
+  refuses('compare', m, 'booked[0].stops', 'out_of_range');
+});
+
+test('an unknown view is refused, as is a model of the wrong shape', () => {
+  for (const view of ['map', '', 'Compare', undefined, 3]) refuses(view, model('compare'), 'view', 'out_of_range');
+  assert.throws(() => imageSize('map', { width: 600, height: 400 }), RoutingFault);
+  refuses('compare', null, 'model', 'not_object');
+  refuses('compare', [], 'model', 'not_object');
+  // The model of another view.
+  refuses('compare', model('zone'), 'model', 'unknown_key');
+  // A name, or any other key, is refused at every level.
+  const named = (edit, field, view = 'compare') => { const m = model(view); edit(m); refuses(view, m, field, 'unknown_key'); };
+  named((m) => { m.clientName = 'x'; }, 'model');
+  named((m) => { m.points[0].label = 'x'; }, 'points[0]');
+  named((m) => { m.crews[0].name = 'x'; }, 'crews[0]');
+  named((m) => { m.booked[0].names = []; }, 'booked[0]');
+  named((m) => { m.frame.scale = 1; }, 'frame');
+  named((m) => { m.gap.reason = 'x'; }, 'gap', 'gap');
+  named((m) => { m.candidates[0].client = 'x'; }, 'candidates[0]', 'gap');
+  named((m) => { m.zones[0].name = 'x'; }, 'zones[0]', 'zone');
+  named((m) => { m.crossZone[0].city = 'x'; }, 'crossZone[0]', 'change');
+  const missing = model('change');
+  delete missing.unplaced;
+  refuses('change', missing, 'unplaced', 'missing');
+});
+
+test('the frame, the points and the ids are checked', () => {
+  const edits = [
+    [(m) => { m.frame.width = 199; }, 'frame.width', 'out_of_range'],
+    [(m) => { m.frame.height = 2001; }, 'frame.height', 'out_of_range'],
+    [(m) => { m.frame.padding = 201; }, 'frame.padding', 'out_of_range'],
+    [(m) => { m.frame.width = 600.5; }, 'frame.width', 'not_integer'],
+    [(m) => { m.points[0].x = 601; }, 'points[0].x', 'out_of_range'],
+    [(m) => { m.points[0].y = -1; }, 'points[0].y', 'out_of_range'],
+    [(m) => { m.points[1].x = 1.5; }, 'points[1].x', 'not_integer'],
+    [(m) => { m.points[1].node = m.points[0].node; }, 'points[1].node', 'duplicate'],
+    [(m) => { m.points[1].node = 'p1'; }, 'points[1].node', 'bad_node'],
+    [(m) => { m.points = {}; }, 'points', 'not_list'],
+    [(m) => { m.crews[1].crewId = 'c1'; }, 'crews[1].crewId', 'duplicate'],
+    [(m) => { m.crews[1].crewId = 'c 2'; }, 'crews[1].crewId', 'bad_id'],
+    [(m) => { m.crews[0].color = -1; }, 'crews[0].color', 'out_of_range'],
+    [(m) => { m.booked[0].crewId = 'c9'; }, 'booked[0].crewId', 'unknown_crew'],
+    [(m) => { m.booked[1].crewId = 'c1'; }, 'booked[1].crewId', 'duplicate'],
+    [(m) => { delete m.booked[0].stops; }, 'booked[0].stops', 'missing'],
+    [(m) => { m.booked[0].stops[0] = 7; }, 'booked[0].stops[0]', 'not_text'],
+  ];
+  for (const [edit, field, problem] of edits) {
+    const m = model('compare');
+    edit(m);
+    refuses('compare', m, field, problem);
+  }
+  const gap = model('gap');
+  gap.candidates.push({ node: 'property:p1', rank: 5 });
+  refuses('gap', gap, 'candidates', 'out_of_range');
+  const ranks = model('gap');
+  ranks.candidates[1].rank = 1;
+  refuses('gap', ranks, 'candidates[1].rank', 'duplicate');
+  const rank6 = model('gap');
+  rank6.candidates[0].rank = 6;
+  refuses('gap', rank6, 'candidates[0].rank', 'out_of_range');
+  const zone = model('zone');
+  zone.zones[1].crewIds.push('c1');
+  refuses('zone', zone, 'zones[1].crewIds[1]', 'duplicate');
+  const zone2 = model('zone');
+  zone2.zones[0].crewIds.push('c9');
+  refuses('zone', zone2, 'zones[0].crewIds[2]', 'unknown_crew');
+  const cz = model('change');
+  cz.crossZone[0].crewId = 'c9';
+  refuses('change', cz, 'crossZone[0].crewId', 'unknown_crew');
+});
+
+test('the renderer never changes its model', () => {
+  for (const view of VIEWS) {
+    const m = model(view);
+    const before = JSON.stringify(m);
+    renderSvg(view, m);
+    assert.equal(JSON.stringify(m), before, view);
+  }
+});
+
+// --- glyphs ------------------------------------------------------------------------
+
+test('numbers 1 to 99 are distinct digit paths of whole pixels; anything else is a programming error', () => {
+  const seen = new Set();
+  for (let n = 1; n <= 99; n += 1) {
+    const d = numberPath(n, 100, 100);
+    assert.match(d, /^(M\d+ \d+L\d+ \d+)+$/, String(n));
+    assert.ok(!seen.has(d), `${n} is distinct`);
+    seen.add(d);
+  }
+  for (const bad of [0, 100, 1.5, '7', -1]) assert.throws(() => numberPath(bad, 0, 0), RangeError);
+  // Centred: a one-digit number spans x-3..x+3, a two-digit one x-7..x+7.
+  const xs = (d) => [...d.matchAll(/[ML](\d+) /g)].map((m) => Number(m[1]));
+  assert.deepEqual([Math.min(...xs(numberPath(8, 100, 100))), Math.max(...xs(numberPath(8, 100, 100)))], [97, 103]);
+  assert.deepEqual([Math.min(...xs(numberPath(88, 100, 100))), Math.max(...xs(numberPath(88, 100, 100)))], [93, 107]);
+});

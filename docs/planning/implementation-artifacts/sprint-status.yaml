@@ -144,7 +144,7 @@ development_status:
   epic-15: in-progress
   15-1-spike-a-private-image-in-a-modal-live-check: backlog
   15-2-mappoints-snapped-pixel-positions-for-the-map-and-the: review
-  15-3-the-map-renderer-four-views-svg-to-png: backlog
+  15-3-the-map-renderer-four-views-svg-to-png: review
   15-4-the-routing-map-archetype-modal-view-switching-audience: backlog
   15-5-brightside-s-routing-module-its-audience-and-the-guardrail: backlog
   15-6-routing-goes-to-prod-after-the-guardrail-is-signed: backlog

@@ -20,7 +20,10 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 # Dependencies for the image's own platform; node_modules never comes from
-# the host (.dockerignore keeps it out).
+# the host (.dockerignore keeps it out). The route map's rasterizer
+# (@resvg/resvg-js, Story 15.3) needs no install script: npm picks its prebuilt
+# @resvg/resvg-js-linux-x64-gnu package from the lockfile for this platform,
+# and CI's container job renders the map fixtures inside the image to prove it.
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 

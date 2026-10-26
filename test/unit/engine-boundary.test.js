@@ -12,7 +12,11 @@
 //     kit/runtime/errors (AD-R9, Story 13.2);
 //   - only kit/runtime/archetypes/routing-map/** and kit/runtime/data/**
 //     require kit/runtime/data/map.js (mapPoints), and that file requires only
-//     ./travel and kit/runtime/errors (AD-R13, Story 15.2).
+//     ./travel and kit/runtime/errors (AD-R13, Story 15.2);
+//   - the route map renderer (kit/runtime/routing-map/**) requires only
+//     kit/runtime/errors and its own files, png.js alone also the rasterizer,
+//     which nothing else requires; it names no client and is pure (AD-R14,
+//     Story 15.3).
 // App dirs scanned: APLABS_APP_DIR when set, <repo>/app (a fork) and
 // examples/*/app (template dev), plus kit/templates/module and
 // kit/templates/connector always, so the check never passes by scanning nothing.
@@ -315,6 +319,75 @@ test('the travelMatrix check catches another requirer and a template that reache
   ]);
 });
 
+// The route map renderer (Story 15.3, AD-R14): kit/runtime/routing-map/**
+// requires only kit/runtime/errors and its own files, and png.js alone may
+// also require the rasterizer, @resvg/resvg-js; no other file in the repo
+// requires the rasterizer. png.js's rasterize can read a local file an SVG
+// names, so only index.js (which rasterizes only renderSvg's output), the
+// smoke script and png.js's own test may require png.js. Its code names no
+// client and no examples/ path, and uses no clock, randomness, async or
+// process state.
+const MAP_DIR = 'kit/runtime/routing-map';
+const MAP_RASTERIZER_FILE = `${MAP_DIR}/png.js`;
+const RASTERIZER = ['@resvg', 'resvg-js'].join('/'); // spelled apart: this file is scanned too
+const MAP_SCANNED = ['kit', 'scripts', 'examples', 'app', 'test'];
+const MAP_PNG_USERS = [`${MAP_DIR}/index.js`, 'scripts/smoke-routing-map.js', 'test/unit/runtime-routing-map-png.test.js'];
+const namesPng = (spec, file, root) => (spec.startsWith('.')
+  ? resolved(spec, file, root) === MAP_RASTERIZER_FILE
+  : /(^|\/)kit\/runtime\/routing-map\/png(\.js)?$/.test(spec));
+
+// Names a renderer file must never hold: each example client's and each
+// client profile's folder name, and, in the template source repo, the
+// reference-client deny list (docs/reference/ never ships, so a copy without
+// it checks the folder names alone).
+function clientNames(root = ROOT) {
+  const names = [];
+  const dirs = (d) => (fs.existsSync(path.join(root, d)) ? fs.readdirSync(path.join(root, d), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name) : []);
+  for (const n of [...dirs('examples'), ...dirs('profiles')]) {
+    if (!n.startsWith('_')) names.push(new RegExp(`\\b${n.replace(/[^A-Za-z0-9]/g, '.')}\\b`, 'i'));
+  }
+  const deny = path.join(root, 'docs/reference/dist-deny.txt');
+  if (fs.existsSync(deny)) {
+    for (const l of fs.readFileSync(deny, 'utf8').split('\n').map((s) => s.trim())) {
+      if (l && !l.startsWith('#')) names.push(new RegExp(l, 'i'));
+    }
+  }
+  return names;
+}
+
+function routingMapProblems(root = ROOT) {
+  const problems = [];
+  const dir = path.join(root, MAP_DIR);
+  const names = clientNames(root);
+  for (const file of fs.existsSync(dir) ? jsFiles(dir) : []) {
+    const rel = slash(path.relative(root, file));
+    const text = fs.readFileSync(file, 'utf8');
+    if (EXAMPLES.test(text)) problems.push(`${rel}: names examples/`);
+    names.forEach((re, i) => { if (re.test(text) || re.test(rel)) problems.push(`${rel}: holds client name ${i + 1}`); });
+    for (const m of text.matchAll(IMPORT)) {
+      const spec = m[2] || m[4] || m[6] || m[8];
+      if (spec === RASTERIZER && rel === MAP_RASTERIZER_FILE) continue;
+      const target = spec.startsWith('.') ? resolved(spec, file, root) : null;
+      const ok = target !== null && (target === 'kit/runtime/errors.js' || target.startsWith(`${MAP_DIR}/`));
+      if (!ok) problems.push(`${rel}: requires '${spec}' (outside routing-map and errors)`);
+    }
+    const code = withoutComments(text);
+    for (const re of IMPURE) if (re.test(code)) problems.push(`${rel}: uses ${re.source.replace(/\\b/g, '').replace(/\\/g, '')}`);
+  }
+  for (const d of MAP_SCANNED.map((s) => path.join(root, s)).filter((s) => fs.existsSync(s))) {
+    for (const file of jsFiles(d)) {
+      const rel = slash(path.relative(root, file));
+      if (rel === MAP_RASTERIZER_FILE) continue;
+      for (const m of fs.readFileSync(file, 'utf8').matchAll(IMPORT)) {
+        const spec = m[2] || m[4] || m[6] || m[8];
+        if (spec === RASTERIZER || spec.startsWith(`${RASTERIZER}/`)) problems.push(`${rel}: requires '${spec}' (only ${MAP_RASTERIZER_FILE} may)`);
+        if (namesPng(spec, file, root) && !MAP_PNG_USERS.includes(rel)) problems.push(`${rel}: requires '${spec}' (only ${MAP_PNG_USERS.join(', ')} may)`);
+      }
+    }
+  }
+  return problems;
+}
+
 // mapPoints (Story 15.2, AD-R13): kit/runtime/data/map.js may require only
 // ./travel and kit/runtime/errors (no DuckDB, no runner, no sql guard), and
 // only kit/runtime/archetypes/routing-map/** and kit/runtime/data/** may
@@ -347,6 +420,46 @@ function mapReadProblems(root = ROOT) {
   }
   return problems;
 }
+
+test('the route map renderer requires only errors and itself, png.js alone the rasterizer, and names no client (AD-R14)', () => {
+  assert.ok(jsFiles(path.join(ROOT, MAP_DIR)).length >= 4, 'the renderer is scanned');
+  assert.deepEqual(routingMapProblems(), []);
+});
+
+test('the routing-map check catches a require outside the rule, a second rasterizer user, a png.js user, a client name and impure code', (t) => {
+  const root = tmpDir(t);
+  const dir = path.join(root, MAP_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.join(root, 'examples/acme/app'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'kit/runtime/errors.js'), '');
+  fs.writeFileSync(path.join(dir, 'png.js'), [`require('${RASTERIZER}');`, "require('../errors');", "require('./svg');"].join('\n'));
+  fs.writeFileSync(path.join(dir, 'svg.js'), [
+    `require('${RASTERIZER}');`,
+    "require('../routing');",
+    "require('../data/map');",
+    "require('node:fs');",
+    "require('#sdk');",
+    "const CLIENT = 'Acme';",
+    'const t = Date.now();',
+  ].join('\n'));
+  fs.writeFileSync(path.join(root, 'scripts/x.js'), `require('${RASTERIZER}');\n`);
+  fs.writeFileSync(path.join(root, 'scripts/y.js'), "require('../kit/runtime/routing-map/png');\nrequire('ap-labs/kit/runtime/routing-map/png.js');\n");
+  fs.writeFileSync(path.join(dir, 'index.js'), "require('./png');\n");
+  assert.deepEqual(routingMapProblems(root), [
+    `${MAP_DIR}/svg.js: holds client name 1`,
+    `${MAP_DIR}/svg.js: requires '${RASTERIZER}' (outside routing-map and errors)`,
+    `${MAP_DIR}/svg.js: requires '../routing' (outside routing-map and errors)`,
+    `${MAP_DIR}/svg.js: requires '../data/map' (outside routing-map and errors)`,
+    `${MAP_DIR}/svg.js: requires 'node:fs' (outside routing-map and errors)`,
+    `${MAP_DIR}/svg.js: requires '#sdk' (outside routing-map and errors)`,
+    `${MAP_DIR}/svg.js: uses Date`,
+    `${MAP_DIR}/svg.js: requires '${RASTERIZER}' (only ${MAP_RASTERIZER_FILE} may)`,
+    `scripts/x.js: requires '${RASTERIZER}' (only ${MAP_RASTERIZER_FILE} may)`,
+    `scripts/y.js: requires '../kit/runtime/routing-map/png' (only ${MAP_PNG_USERS.join(', ')} may)`,
+    `scripts/y.js: requires 'ap-labs/kit/runtime/routing-map/png.js' (only ${MAP_PNG_USERS.join(', ')} may)`,
+  ]);
+});
 
 test('only the routing-map archetype and kit/runtime/data require the mapPoints read, which requires only ./travel and errors (AD-R13)', () => {
   assert.ok(fs.existsSync(path.join(ROOT, MAP_READ)));
