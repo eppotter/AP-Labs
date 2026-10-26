@@ -168,7 +168,8 @@ jobs:
   container:
     # The app runs in a container (Story 11.2): build the image, then run its
     # smoke test inside it with no network, a read-only filesystem (only /tmp
-    # and APLABS_VAR_DIR writable) and the test fixtures mounted read-only.
+    # and APLABS_VAR_DIR writable) and the test fixtures mounted read-only,
+    # and the route map smoke the same way (Story 15.3).
     # Plain docker build and run: no third-party actions, no secrets, no
     # build args. Local `npm test` skips the image build (no docker there).
     # Runs only when an image input changed (scripts/ci-changes.js).
@@ -194,3 +195,15 @@ jobs:
             --volume "$PWD/test/fixtures:/app/test/fixtures:ro" \
             aplabs-runtime:ci \
             node scripts/container-smoke.js
+      # The route map's rasterizer is a native binary (@resvg/resvg-js, Story
+      # 15.3): draw each map fixture to a PNG inside the image and check its
+      # size, so the binary is proved on the image we ship.
+      - name: Route map renders inside the image (no network, read-only)
+        run: |
+          docker run --rm \
+            --network none \
+            --read-only \
+            --tmpfs /tmp:rw,mode=1777 \
+            --volume "$PWD/test/fixtures:/app/test/fixtures:ro" \
+            aplabs-runtime:ci \
+            node scripts/smoke-routing-map.js

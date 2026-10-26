@@ -1,0 +1,108 @@
+{
+  "_comment": "Synthetic map model for Story 15.3 renderer tests (AD-R14). Not client data: pixel points in a frame, as mapPoints returns them; no coordinates, no names.",
+  "view": "gap",
+  "model": {
+    "frame": {
+      "width": 600,
+      "height": 400,
+      "padding": 40
+    },
+    "points": [
+      {
+        "node": "crew:c1",
+        "x": 90,
+        "y": 200
+      },
+      {
+        "node": "property:p1",
+        "x": 170,
+        "y": 100
+      },
+      {
+        "node": "property:p2",
+        "x": 260,
+        "y": 150
+      },
+      {
+        "node": "property:p3",
+        "x": 360,
+        "y": 260
+      },
+      {
+        "node": "property:p4",
+        "x": 470,
+        "y": 320
+      },
+      {
+        "node": "property:p11",
+        "x": 320,
+        "y": 90
+      },
+      {
+        "node": "property:p12",
+        "x": 300,
+        "y": 330
+      },
+      {
+        "node": "property:p13",
+        "x": 420,
+        "y": 170
+      },
+      {
+        "node": "property:p14",
+        "x": 520,
+        "y": 110
+      },
+      {
+        "node": "property:p15",
+        "x": 200,
+        "y": 320
+      }
+    ],
+    "crews": [
+      {
+        "crewId": "c1",
+        "color": 0,
+        "baseNode": "crew:c1"
+      }
+    ],
+    "routes": [
+      {
+        "crewId": "c1",
+        "stops": [
+          "property:p1",
+          "property:p2",
+          "property:p3",
+          "property:p4"
+        ]
+      }
+    ],
+    "gap": {
+      "crewId": "c1",
+      "before": "property:p2",
+      "after": "property:p3"
+    },
+    "candidates": [
+      {
+        "node": "property:p11",
+        "rank": 1
+      },
+      {
+        "node": "property:p13",
+        "rank": 2
+      },
+      {
+        "node": "property:p12",
+        "rank": 3
+      },
+      {
+        "node": "property:p14",
+        "rank": 4
+      },
+      {
+        "node": "property:p15",
+        "rank": 5
+      }
+    ]
+  }
+}

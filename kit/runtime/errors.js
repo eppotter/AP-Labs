@@ -168,7 +168,9 @@ class ScoringFault extends RuntimeRefusal {
 // refused or failed: routing is off, too many pairs, a coordinate column that
 // is missing or not INTEGER/BIGINT or whose name another table forbids, a node with no position, or the query
 // refused, unavailable or failed (fixed words: never DuckDB's text, the SQL,
-// a path or a value). A setup fault in the
+// a path or a value), or the map renderer (Story 15.3, AD-R14) refused its
+// model (an unknown key) or could not draw (the rasterizer did not load, drew
+// nothing usable, or drew over 1 MB). A setup fault in the
 // adapter, so no plan is shown. field is a path like "stops[2].node"; the
 // value itself is never carried. details: { field, problem }, plus { from,
 // to } (node ids) when problem is 'no_travel'. problem is one of
@@ -178,6 +180,7 @@ const ROUTING_PROBLEMS = Object.freeze([
   'bad_id', 'bad_node', 'bad_date', 'bad_strength', 'unknown_crew', 'duplicate', 'no_travel',
   'unknown_rule', 'not_overridable', 'not_function',
   'routing_off', 'too_many_pairs', 'not_coordinate_column', 'shared_column_name', 'no_position', 'data_unavailable', 'query_refused', 'query_failed',
+  'unknown_key', 'renderer_unavailable', 'renderer_failed', 'image_too_large',
 ]);
 class RoutingFault extends RuntimeRefusal {
   constructor(details) {

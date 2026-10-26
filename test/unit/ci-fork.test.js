@@ -45,6 +45,7 @@ const NOT_RUN = Object.freeze({
   'container/Build the image': 'docker build pulls the base image (network)',
   'container/Show the image (user, platform, size)': 'needs the image the build step makes',
   'container/Smoke test inside the image (no network, read-only, fake Slack)': 'needs the image the build step makes',
+  'container/Route map renders inside the image (no network, read-only)': 'needs the image the build step makes; runtime-routing-map-png.test.js runs the script outside it',
 });
 // Run only where the tool is there (CI always has it).
 const NEEDS_SHELLCHECK = 'test/Shellcheck';

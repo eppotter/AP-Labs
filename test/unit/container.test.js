@@ -168,6 +168,11 @@ function ciJobProblems(job, varDir) {
   const need = ['--network none', '--read-only', '--tmpfs /tmp', `--tmpfs ${varDir}`];
   for (const flag of need) if (!smoke.includes(flag)) problems.push(`the smoke run uses ${flag}`);
   if (!/(-v|--volume) "?\$PWD\/test\/fixtures:\/app\/test\/fixtures:ro"?/.test(smoke)) problems.push('the fixtures are mounted read-only');
+  // The route map's native rasterizer is proved inside the image (Story 15.3).
+  const map = runs.find((r) => /docker run\b/.test(r) && /node scripts\/smoke-routing-map\.js/.test(r));
+  if (!map) return [...problems, 'a docker run step for scripts/smoke-routing-map.js'];
+  for (const flag of ['--network none', '--read-only']) if (!map.includes(flag)) problems.push(`the route map smoke run uses ${flag}`);
+  if (!/(-v|--volume) "?\$PWD\/test\/fixtures:\/app\/test\/fixtures:ro"?/.test(map)) problems.push('the route map smoke mounts the fixtures read-only');
   return problems;
 }
 
@@ -181,7 +186,7 @@ test('.dockerignore keeps out dependencies, git, data, secrets, agent folders, d
   assert.deepEqual(dockerignoreProblems(DOCKERIGNORE), []);
 });
 
-test('the CI container job builds and smoke-tests the image offline, read-only, with no secrets', () => {
+test('the CI container job builds and smoke-tests the image (runtime and route map) offline, read-only, with no secrets', () => {
   const varDir = envValues(instructions(DOCKERFILE)).APLABS_VAR_DIR;
   assert.deepEqual(ciJobProblems(CI.jobs.container, varDir), []);
 });
@@ -276,6 +281,11 @@ test('the CI job rules can each fail', () => {
   fails((j) => { smokeStep(j).run = smokeStep(j).run.replace('--network none', ''); }, /--network none/);
   fails((j) => { smokeStep(j).run = smokeStep(j).run.replace('--read-only', ''); }, /--read-only/);
   fails((j) => { smokeStep(j).run = smokeStep(j).run.replace(/:ro"/, '"'); }, /read-only/);
+  const mapStep = (j) => j.steps.find((s) => s.run && /smoke-routing-map/.test(s.run));
+  fails((j) => { j.steps = j.steps.filter((s) => !(s.run && /smoke-routing-map/.test(s.run))); }, /scripts\/smoke-routing-map\.js/);
+  fails((j) => { mapStep(j).run = mapStep(j).run.replace('--network none', ''); }, /route map smoke run uses --network none/);
+  fails((j) => { mapStep(j).run = mapStep(j).run.replace('--read-only', ''); }, /route map smoke run uses --read-only/);
+  fails((j) => { mapStep(j).run = mapStep(j).run.replace(/:ro"/, '"'); }, /route map smoke mounts the fixtures read-only/);
   assert.deepEqual(ciJobProblems(undefined, varDir), ['a `container` job in ci.yml']);
 });
 

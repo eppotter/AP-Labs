@@ -1,0 +1,115 @@
+{
+  "_comment": "Synthetic map model for Story 15.3 renderer tests (AD-R14). Not client data: pixel points in a frame, as mapPoints returns them; no coordinates, no names.",
+  "view": "compare",
+  "model": {
+    "frame": {
+      "width": 600,
+      "height": 400,
+      "padding": 40
+    },
+    "points": [
+      {
+        "node": "crew:c1",
+        "x": 80,
+        "y": 200
+      },
+      {
+        "node": "crew:c2",
+        "x": 520,
+        "y": 200
+      },
+      {
+        "node": "property:p1",
+        "x": 150,
+        "y": 90
+      },
+      {
+        "node": "property:p2",
+        "x": 230,
+        "y": 140
+      },
+      {
+        "node": "property:p3",
+        "x": 200,
+        "y": 260
+      },
+      {
+        "node": "property:p4",
+        "x": 290,
+        "y": 330
+      },
+      {
+        "node": "property:p5",
+        "x": 450,
+        "y": 80
+      },
+      {
+        "node": "property:p6",
+        "x": 380,
+        "y": 150
+      },
+      {
+        "node": "property:p7",
+        "x": 470,
+        "y": 280
+      },
+      {
+        "node": "property:p8",
+        "x": 360,
+        "y": 340
+      }
+    ],
+    "crews": [
+      {
+        "crewId": "c1",
+        "color": 0,
+        "baseNode": "crew:c1"
+      },
+      {
+        "crewId": "c2",
+        "color": 1,
+        "baseNode": "crew:c2"
+      }
+    ],
+    "booked": [
+      {
+        "crewId": "c1",
+        "stops": [
+          "property:p1",
+          "property:p2",
+          "property:p3",
+          "property:p4"
+        ]
+      },
+      {
+        "crewId": "c2",
+        "stops": [
+          "property:p5",
+          "property:p6",
+          "property:p7",
+          "property:p8"
+        ]
+      }
+    ],
+    "optimized": [
+      {
+        "crewId": "c1",
+        "stops": [
+          "property:p2",
+          "property:p1",
+          "property:p3",
+          "property:p4"
+        ]
+      },
+      {
+        "crewId": "c2",
+        "stops": [
+          "property:p5",
+          "property:p7",
+          "property:p6",
+          "property:p8"
+        ]
+      }
+    ]
+  }
+}
