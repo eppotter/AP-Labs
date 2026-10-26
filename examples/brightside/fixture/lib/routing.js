@@ -1,15 +1,19 @@
 'use strict';
 
-// Brightside's routing data (Story 14.1, data-design §1-2): synthetic
-// coordinates for every property and crew base, and the booked schedule after
-// as_of (scheduled_visits).
+// Brightside's routing data (Stories 14.1 and 14.2, data-design §1-2):
+// synthetic coordinates for every property and crew base, the booked schedule
+// after as_of (scheduled_visits), the customers' rules (service_rules) and
+// staff absences in the horizon (staff_absences).
 //
 // It runs after the operations build, reads only final tables, and draws
 // from its own stream (createRng(deriveSeed(seed, ROUTING_STREAM))), so every
 // earlier column keeps its values byte for byte. Draw order inside the stream
 // is fixed: each property's jitter in property_id order, each scheduled
-// visit's cancellation chance in scheduled_visit_id order, then each
-// crew-day's route in date then crew order.
+// visit's cancellation chance in scheduled_visit_id order, each crew-day's
+// route in date then crew order, each booked property's rules in property_id
+// order, then each open membership's absence chance, day by day. With the
+// recorded seed, lib/scenarios.js plants S1 to S3 on top (data-design §5);
+// planting draws nothing.
 //
 // Coordinates are synthetic: a box in the open South Pacific, far from any
 // coast, so no value names a real place. Micro-degrees (degrees x 1e6) as
@@ -190,7 +194,10 @@ function timeDay(stops) {
   return cursor;
 }
 
-function buildSchedule(rng, tables, { properties, crews, asOf }) {
+// A crew-day's key: its date, then its crew in number order.
+const crewDayKey = (r) => `${r.visit_date}|${String(r.crew_id).padStart(6, '0')}`;
+
+function buildSchedule(rng, tables, { properties, crews, asOf, plant }) {
   const asOfDay = toDay(asOf);
   const horizonEnd = asOfDay + SCHEDULE_HORIZON_DAYS;
   const home = new Map(properties.map((p) => [p.property_id, p]));
@@ -224,13 +231,19 @@ function buildSchedule(rng, tables, { properties, crews, asOf }) {
 
   // Each crew-day's booked route: cities in a random order, stops in a random
   // order within each city. Cancelled stops keep their place, as in history.
-  const crewDays = [...groupBy(rows, (r) => `${r.visit_date}|${String(r.crew_id).padStart(6, '0')}`)]
-    .sort((a, b) => (a[0] < b[0] ? -1 : 1));
-  for (const [, day] of crewDays) {
-    const { crew_id: crewId, visit_date: iso } = day[0];
+  // The planted scenarios (lib/scenarios.js) then move a few stops between a
+  // zone's crews on their days and set those days' orders; the draws above
+  // are made first on the unplanted days, so no other day's order moves.
+  const routes = new Map();
+  for (const [key, day] of [...groupBy(rows, crewDayKey)].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     const byCity = groupBy(day, (r) => home.get(r.property_id).city);
     const cities = shuffled(rng, [...byCity.keys()].sort());
-    const route = cities.flatMap((c) => shuffled(rng, byCity.get(c)));
+    routes.set(key, cities.flatMap((c) => shuffled(rng, byCity.get(c))));
+  }
+  if (plant) plant.schedule(rows, routes, { asOf, city: (r) => home.get(r.property_id).city });
+  for (const [, route] of [...routes].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    if (route.length === 0) continue;
+    const { crew_id: crewId, visit_date: iso } = route[0];
     let at = base.get(crewId);
     for (const r of route) {
       const next = where(home.get(r.property_id));
@@ -265,14 +278,101 @@ function buildSchedule(rng, tables, { properties, crews, asOf }) {
   }));
 }
 
-// Returns the two extended tables and scheduled_visits. `tables` is read,
-// never changed: the extended tables are new row objects with the columns
-// appended.
-function buildRouting(rng, tables, { zones, asOf }) {
-  const properties = placeProperties(rng, tables.properties);
+// ---- customer rules -------------------------------------------------------
+
+// ISO weekday (Monday 1 to Sunday 7) of a day number; day 0 was a Thursday.
+const isoWeekday = (day) => ((day + 3) % 7) + 1;
+const DAY_NAMES = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+const RULE_TYPES = ['preferred_crew', 'day_of_week', 'time_of_day'];
+const RULE_STRENGTH = { preferred_crew: 'soft', day_of_week: 'hard', time_of_day: 'hard' };
+const PREFERRED_CREW_SHARE = 0.6;
+const DAY_OF_WEEK_SHARE = 0.2;
+const EXTRA_DAY_SHARE = 0.5;
+const TIME_OF_DAY_SHARE = 0.25;
+
+// A day_of_week value: ISO day names in week order, separated by | (a
+// comma would make the seed CSV quote the field).
+const dayList = (isoDays) => [...new Set(isoDays)].sort((a, b) => a - b).map((d) => DAY_NAMES[d - 1]).join('|');
+
+// One row per (property, rule type), long form, for each property with a
+// booked visit (data-design §1). Every rule matches the property's own
+// booked visits (status scheduled): preferred_crew is the crew of every one
+// of them (so a property with a visit moved to another crew has none),
+// day_of_week holds each of their weekdays (sometimes one more day), and
+// time_of_day is the window all of them share. Each property takes the same
+// five draws whether or not it gets a rule, so one property's rules never
+// move another's. A planted scenario may set a property's rules outright.
+function buildRules(rng, scheduledVisits, plant) {
+  const booked = groupBy(scheduledVisits.filter((v) => v.status === 'scheduled'), 'property_id');
+  const rows = [];
+  for (const pid of [...booked.keys()].sort((a, b) => a - b)) {
+    const visits = booked.get(pid);
+    const crewIds = new Set(visits.map((v) => v.crew_id));
+    const windows = new Set(visits.map((v) => v.arrival_window));
+    const days = visits.map((v) => isoWeekday(toDay(v.visit_date)));
+    const wantsCrew = rng.chance(PREFERRED_CREW_SHARE);
+    const wantsDays = rng.chance(DAY_OF_WEEK_SHARE);
+    const wantsExtraDay = rng.chance(EXTRA_DAY_SHARE);
+    const extraDay = rng.int(1, 7);
+    const wantsWindow = rng.chance(TIME_OF_DAY_SHARE);
+    let rules = [];
+    if (wantsCrew && crewIds.size === 1) rules.push({ rule_type: 'preferred_crew', value: String(visits[0].crew_id) });
+    if (wantsDays) rules.push({ rule_type: 'day_of_week', value: dayList(wantsExtraDay ? [...days, extraDay] : days) });
+    if (wantsWindow && windows.size === 1) rules.push({ rule_type: 'time_of_day', value: visits[0].arrival_window });
+    if (plant) rules = plant.rules(pid, rules);
+    for (const type of RULE_TYPES) {
+      const rule = rules.find((r) => r.rule_type === type);
+      if (rule) rows.push({ rule_id: rows.length + 1, property_id: pid, rule_type: type, value: rule.value, strength: RULE_STRENGTH[type] });
+    }
+  }
+  return rows;
+}
+
+// ---- staff absences -------------------------------------------------------
+
+const BACKGROUND_ABSENCE_CHANCE = 0.01;
+const ABSENCE_NOTICE_DAYS = 13;
+// The planted scenarios' days (as_of + 1 to + 3) get no background absence,
+// so only the planted ones change a crew there.
+const QUIET_DAYS = 3;
+
+// About 1% of cleaner-days in the horizon, on open memberships (only those
+// cover a day after as_of), at most one per crew-day so a crew is never
+// left with nobody; never a crew lead, so the background never puts a crew
+// out (that is S3's job). Each was reported on or before as_of. Then the
+// planted ones. One row per (staff, day), in date then staff order.
+function buildAbsences(rng, tables, { asOf, plant }) {
+  const asOfDay = toDay(asOf);
+  const role = new Map(tables.staff.map((s) => [s.staff_id, s.role]));
+  const open = tables.crew_memberships.filter((m) => m.end_date === null).sort((a, b) => a.membership_id - b.membership_id);
+  const absent = [];
+  for (let day = asOfDay + 1; day <= asOfDay + SCHEDULE_HORIZON_DAYS; day++) {
+    const crewsOut = new Set();
+    for (const m of open) {
+      const hit = rng.chance(BACKGROUND_ABSENCE_CHANCE);
+      const notice = rng.int(0, ABSENCE_NOTICE_DAYS);
+      if (!hit || day <= asOfDay + QUIET_DAYS || role.get(m.staff_id) !== 'cleaner' || crewsOut.has(m.crew_id)) continue;
+      crewsOut.add(m.crew_id);
+      absent.push({ staff_id: m.staff_id, absence_date: toIso(day), reported_on: toIso(asOfDay - notice) });
+    }
+  }
+  if (plant) absent.push(...plant.absences({ asOf }));
+  absent.sort((a, b) => (a.absence_date < b.absence_date ? -1 : a.absence_date > b.absence_date ? 1 : a.staff_id - b.staff_id));
+  return absent.map((a, i) => ({ absence_id: i + 1, ...a }));
+}
+
+// Returns the two extended tables, scheduled_visits, service_rules and
+// staff_absences. `tables` is read, never changed: the extended tables are
+// new row objects with the columns appended. `plant` (lib/scenarios.js, the
+// recorded seed only) plants S1 to S3.
+function buildRouting(rng, tables, { zones, asOf, plant = null }) {
+  let properties = placeProperties(rng, tables.properties);
+  if (plant) properties = plant.coordinates(properties, point);
   const crews = placeCrews(tables.crews, zones);
-  const scheduledVisits = buildSchedule(rng, tables, { properties, crews, asOf });
-  return { properties, crews, scheduled_visits: scheduledVisits };
+  const scheduledVisits = buildSchedule(rng, tables, { properties, crews, asOf, plant });
+  const serviceRules = buildRules(rng, scheduledVisits, plant);
+  const staffAbsences = buildAbsences(rng, tables, { asOf, plant });
+  return { properties, crews, scheduled_visits: scheduledVisits, service_rules: serviceRules, staff_absences: staffAbsences };
 }
 
 // fixture_meta's last booked day.
@@ -281,7 +381,13 @@ const scheduleHorizonEnd = (asOf) => toIso(toDay(asOf) + SCHEDULE_HORIZON_DAYS);
 module.exports = {
   buildRouting,
   travelMinutes,
+  isoWeekday,
+  dayList,
+  crewDayKey,
   scheduleHorizonEnd,
+  point,
+  DAY_NAMES,
+  RULE_STRENGTH,
   ROUTING_STREAM,
   SCHEDULE_HORIZON_DAYS,
   EARTH_RADIUS_KM,

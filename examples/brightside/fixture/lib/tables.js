@@ -8,7 +8,8 @@
 // The labour, home-detail and scheduling build (lib/operations.js) added
 // staff, pay_rates and timesheets, and appended columns to crew_memberships,
 // properties and visits. The routing build (lib/routing.js) appended
-// coordinates to crews and properties and added scheduled_visits. Appended
+// coordinates to crews and properties and added scheduled_visits,
+// service_rules and staff_absences. Appended
 // columns and tables always go last, so every earlier column keeps its place
 // and its values.
 
@@ -281,6 +282,39 @@ const TABLES = [
       // route_order 1: travelMatrix's figure for the two places.
       { name: 'travel_minutes_from_previous', type: 'INTEGER', notNull: true },
     ],
+  },
+  {
+    // A customer's rules for its visits (lib/routing.js), long form: one row
+    // per (property, rule type), so a new rule type needs no schema change.
+    // Every rule matches the property's own booked visits (integrity-rules).
+    name: 'service_rules',
+    columns: [
+      { name: 'rule_id', type: 'INTEGER', pk: true },
+      { name: 'property_id', type: 'INTEGER', notNull: true, references: 'properties' },
+      // preferred_crew, day_of_week or time_of_day.
+      { name: 'rule_type', type: 'VARCHAR', notNull: true },
+      // preferred_crew: a crew_id; day_of_week: ISO day names in week order,
+      // separated by | (MON|THU); time_of_day: morning or afternoon.
+      { name: 'value', type: 'VARCHAR', notNull: true },
+      // soft for preferred_crew, hard for the other two.
+      { name: 'strength', type: 'VARCHAR', notNull: true },
+    ],
+    unique: [['property_id', 'rule_type']],
+  },
+  {
+    // A staff member off for a day after as_of, as known on as_of
+    // (lib/routing.js). Only staff whose membership covers the day. No
+    // reason is kept: why someone is off is their business.
+    name: 'staff_absences',
+    columns: [
+      { name: 'absence_id', type: 'INTEGER', pk: true },
+      { name: 'staff_id', type: 'INTEGER', notNull: true, references: 'staff' },
+      // After as_of, on or before schedule_horizon_end.
+      { name: 'absence_date', type: 'DATE', notNull: true },
+      // On or before as_of.
+      { name: 'reported_on', type: 'DATE', notNull: true },
+    ],
+    unique: [['staff_id', 'absence_date']],
   },
   {
     name: 'fixture_meta',

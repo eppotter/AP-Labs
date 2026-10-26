@@ -55,7 +55,7 @@ test.after(async () => {
 test('every check in checks/ passes on the committed seeds, with Brightside\'s forbidden columns', async (t) => {
   const { out } = await builtFixture();
   const checks = loadChecks(FIXTURE_DIR);
-  assert.equal(checks.length, 28);
+  assert.equal(checks.length, 30);
   const results = await validate({ checks, db: out, forbiddenColumns: FORBIDDEN });
   assert.deepEqual(results.filter((r) => r.outcome !== 'pass'), []);
 });
@@ -127,7 +127,7 @@ function writeCsv(file, { cols, rows }) {
 // break's pick(t_, take) chooses its rows from the unedited seeds and returns
 // the edit, so it picks the same rows alone or with the others.
 const TABLES = ['crews', 'clients', 'invoices', 'payments', 'visits', 'plans', 'plan_price_changes', 'invoice_lines', 'crew_memberships', 'fixture_meta',
-  'staff', 'pay_rates', 'properties', 'timesheets', 'scheduled_visits'];
+  'staff', 'pay_rates', 'properties', 'timesheets', 'scheduled_visits', 'service_rules', 'staff_absences'];
 
 // Local timestamps ("YYYY-MM-DD HH:MM:SS") as whole minutes, and back.
 const toMinute = (ts) => Date.parse(`${ts.replace(' ', 'T')}Z`) / 60000;
@@ -409,10 +409,12 @@ const BREAKS = [
     },
   },
   {
-    // A booked arrival window that disagrees with the scheduled start.
+    // A booked arrival window that disagrees with the scheduled start. Its
+    // property has no time_of_day rule, so integrity-rules does not see it.
     check: 'integrity-scheduled-schedule',
     pick: (t_, take, used) => {
-      const v = t_.scheduled_visits.rows.find((x) => !used.scheduled.has(x.scheduled_visit_id));
+      const windowed = new Set(t_.service_rules.rows.filter((r) => r.rule_type === 'time_of_day').map((r) => r.property_id));
+      const v = t_.scheduled_visits.rows.find((x) => !used.scheduled.has(x.scheduled_visit_id) && !windowed.has(x.property_id));
       take('scheduled', v.scheduled_visit_id);
       return () => { v.arrival_window = v.arrival_window === 'morning' ? 'afternoon' : 'morning'; };
     },
@@ -433,6 +435,26 @@ const BREAKS = [
       const v = t_.scheduled_visits.rows.find((x) => !used.scheduled.has(x.scheduled_visit_id));
       take('scheduled', v.scheduled_visit_id);
       return () => { v.package_id = v.package_id === 'deep' ? 'standard' : 'deep'; };
+    },
+  },
+  {
+    // A day_of_week rule marked soft: day and window rules are hard (Story 14.2).
+    check: 'integrity-rules',
+    pick: (t_) => {
+      const rule = t_.service_rules.rows.find((r) => r.rule_type === 'day_of_week');
+      return () => { rule.strength = 'soft'; };
+    },
+  },
+  {
+    // An absence reported the day after as_of (Story 14.2). Added, so the
+    // break never depends on how many background absences a seed draws.
+    check: 'integrity-staff-absences',
+    pick: (t_) => () => {
+      const horizon = t_.fixture_meta.rows.find((r) => r.key === 'schedule_horizon_end').value;
+      const away = new Set(t_.staff_absences.rows.filter((a) => a.absence_date === horizon).map((a) => a.staff_id));
+      const member = t_.crew_memberships.rows.find((m) => m.end_date === '' && !away.has(m.staff_id));
+      t_.staff_absences.rows.push({ absence_id: String(t_.staff_absences.rows.length + 1), staff_id: member.staff_id, absence_date: horizon, reported_on: dayAfterAsOf(t_) });
+      t_.fixture_meta.rows.find((r) => r.key === 'rows_staff_absences').value = String(t_.staff_absences.rows.length);
     },
   },
 ];
@@ -527,11 +549,11 @@ test('with no as_of row in fixture_meta, the as_of check fails on its guard row'
   }
 });
 
-// Story 14.1: with no schedule_horizon_end to compare against, the two
-// checks that read it fail on their guard row instead of passing.
-test('with no schedule_horizon_end row in fixture_meta, the scheduled checks fail on their guard row only', async (t) => {
+// Stories 14.1 and 14.2: with no schedule_horizon_end to compare against,
+// the three checks that read it fail on their guard row instead of passing.
+test('with no schedule_horizon_end row in fixture_meta, the checks that read it fail on their guard row only', async (t) => {
   const results = await validateBroken(t, [], (t_) => { t_.fixture_meta.rows = t_.fixture_meta.rows.filter((r) => r.key !== 'schedule_horizon_end'); });
-  assert.deepEqual(failures(results), [['integrity-scheduled-after-as-of', 1], ['integrity-scheduled-cadence', 1]]);
+  assert.deepEqual(failures(results), [['integrity-scheduled-after-as-of', 1], ['integrity-scheduled-cadence', 1], ['integrity-staff-absences', 1]]);
 });
 
 // Story 14.1: the cadence check's other rules, each alone.
@@ -572,6 +594,78 @@ for (const [what, edit] of [
     assert.deepEqual(failures(await validateBroken(t, [], edit)), [['integrity-scheduled-cadence', 1]]);
   });
 }
+
+// Story 14.2: a booked visit may move to another crew of its zone on its own
+// day (the planted scenarios do), but never to another zone's crew. The
+// visit is alone on its crew-day, its property has no preferred crew, and
+// the crew it moves to has nothing that day, so no other check sees it.
+function moveToCrewOf(t_, sameZone) {
+  const zoneOf = new Map(t_.crews.rows.map((c) => [c.crew_id, c.zone_id]));
+  const size = new Map();
+  for (const v of t_.scheduled_visits.rows) size.set(crewDay(v), (size.get(crewDay(v)) || 0) + 1);
+  const preferred = new Set(t_.service_rules.rows.filter((r) => r.rule_type === 'preferred_crew').map((r) => r.property_id));
+  for (const v of t_.scheduled_visits.rows) {
+    if (size.get(crewDay(v)) !== 1 || preferred.has(v.property_id)) continue;
+    const to = t_.crews.rows.find((c) => c.crew_id !== v.crew_id && (zoneOf.get(c.crew_id) === zoneOf.get(v.crew_id)) === sameZone
+      && !size.has(crewDay({ ...v, crew_id: c.crew_id })));
+    if (to) { v.crew_id = to.crew_id; return; }
+  }
+  throw new Error('no visit to move');
+}
+
+test('a booked visit moved to another zone\'s crew fails integrity-scheduled-cadence only', async (t) => {
+  assert.deepEqual(failures(await validateBroken(t, [], (t_) => moveToCrewOf(t_, false))), [['integrity-scheduled-cadence', 1]]);
+});
+
+test('a booked visit moved to another crew of its zone fails no check', async (t) => {
+  assert.deepEqual(failures(await validateBroken(t, [], (t_) => moveToCrewOf(t_, true))), []);
+});
+
+// Story 14.2: integrity-rules' other rules, each alone. Each edits one rule,
+// or one booked visit of a property with one booked visit.
+const bookedOnce = (t_, filter) => {
+  const count = new Map();
+  for (const v of t_.scheduled_visits.rows) if (v.status === 'scheduled') count.set(v.property_id, (count.get(v.property_id) || 0) + 1);
+  return t_.service_rules.rows.find((r) => filter(r) && count.get(r.property_id) === 1);
+};
+for (const [what, edit, rows = 1] of [
+  ['a day_of_week value out of week order', (t_) => {
+    const rule = t_.service_rules.rows.find((r) => r.rule_type === 'day_of_week' && r.value.includes('|'));
+    rule.value = rule.value.split('|').reverse().join('|');
+  }],
+  ['a time_of_day its one booked visit is not in', (t_) => {
+    const rule = bookedOnce(t_, (r) => r.rule_type === 'time_of_day');
+    rule.value = rule.value === 'morning' ? 'afternoon' : 'morning';
+  }],
+  ['a day_of_week its one booked visit is not on', (t_) => {
+    const rule = bookedOnce(t_, (r) => r.rule_type === 'day_of_week');
+    const names = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+    rule.value = names.find((d) => !rule.value.split('|').includes(d));
+  }],
+  ['a preferred crew in another zone', (t_) => {
+    // Its one booked visit is then off its preferred crew too: two rows.
+    const zoneOf = new Map(t_.crews.rows.map((c) => [c.crew_id, c.zone_id]));
+    const rule = bookedOnce(t_, (r) => r.rule_type === 'preferred_crew');
+    rule.value = t_.crews.rows.find((c) => zoneOf.get(c.crew_id) !== zoneOf.get(rule.value)).crew_id;
+  }, 2],
+  ['an unknown rule type', (t_) => { t_.service_rules.rows[0].rule_type = 'favourite_colour'; }],
+]) {
+  test(`${what} fails integrity-rules only`, async (t) => {
+    assert.deepEqual(failures(await validateBroken(t, [], edit)), [['integrity-rules', rows]]);
+  });
+}
+
+// Story 14.2: an absence by someone with no membership covering the day.
+test('an absence of someone on no crew that day fails integrity-staff-absences only', async (t) => {
+  const results = await validateBroken(t, [], (t_) => {
+    const open = new Set(t_.crew_memberships.rows.filter((m) => m.end_date === '').map((m) => m.staff_id));
+    const gone = t_.staff.rows.find((x) => !open.has(x.staff_id));
+    const horizon = t_.fixture_meta.rows.find((r) => r.key === 'schedule_horizon_end').value;
+    t_.staff_absences.rows.push({ absence_id: String(t_.staff_absences.rows.length + 1), staff_id: gone.staff_id, absence_date: horizon, reported_on: t_.fixture_meta.rows.find((r) => r.key === 'as_of').value });
+    t_.fixture_meta.rows.find((r) => r.key === 'rows_staff_absences').value = String(t_.staff_absences.rows.length);
+  });
+  assert.deepEqual(failures(results), [['integrity-staff-absences', 1]]);
+});
 
 // Issue #77 item 8: the outstanding and clients-total truths count on every
 // event date being on or before as_of. The paid_on break is in BREAKS; these

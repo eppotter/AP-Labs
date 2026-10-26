@@ -169,6 +169,23 @@ CREATE TABLE scheduled_visits (
   travel_minutes_from_previous INTEGER NOT NULL
 );
 
+CREATE TABLE service_rules (
+  rule_id INTEGER PRIMARY KEY,
+  property_id INTEGER NOT NULL REFERENCES properties (property_id),
+  rule_type VARCHAR NOT NULL,
+  value VARCHAR NOT NULL,
+  strength VARCHAR NOT NULL,
+  UNIQUE (property_id, rule_type)
+);
+
+CREATE TABLE staff_absences (
+  absence_id INTEGER PRIMARY KEY,
+  staff_id INTEGER NOT NULL REFERENCES staff (staff_id),
+  absence_date DATE NOT NULL,
+  reported_on DATE NOT NULL,
+  UNIQUE (staff_id, absence_date)
+);
+
 CREATE TABLE fixture_meta (
   key VARCHAR PRIMARY KEY,
   value VARCHAR NOT NULL
