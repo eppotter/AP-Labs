@@ -5,7 +5,7 @@
 ## 1. Where it stands
 
 - **Branch:** `docs/plan-routing`, pushed, with no PR yet. Planning docs only; no code is written.
-- **Stage:** the plan gate (stage 3). It is T3, so nothing gets built until Ely writes `approve plan routing`.
+- **Stage:** approved. Ely wrote `approve plan routing` on 2026-10-26; the build (stage 4) runs Epics 12 to 14, then 15.2 and 15.3, and stops at the 15.1 live check (DEP-026).
 - **Done:** intake → spec (scribe) → data design (sqlsmith) → architecture and epics → T3 architect review, round 1 (1 P1 and 12 P2s, all folded) → Epic 15 added → architect review, round 2 (F1–F18, all folded; see `epics-routing.md`).
 
 | File | What |
@@ -62,7 +62,7 @@ Decided in review, and open to change at the gate:
 ## 4. Next steps, in order
 
 1. **Agent:** recompute Epic 15's tiers from the updated file lists (15.6 is new). All round-2 findings are folded.
-2. **Ely:** read the four files, then write `approve plan routing` or ask for changes.
+2. **Ely:** done 2026-10-26 (`approve plan routing`).
 3. **Agent, after approval:**
    - Open a docs PR for the plan (body opens with `**What this does:**`, plus a ledger row) and land it.
    - Add Epics 12–15 to `sprint-status.yaml`.

@@ -10,7 +10,7 @@ inputDocuments:
 
 # AP-Labs - Epic Breakdown: route optimization
 
-**Status: drafted, awaiting `approve plan routing`.** Nothing is built until Ely types it.
+**Status: approved by Ely 2026-10-26 (`approve plan routing`).**
 
 ## Overview
 
