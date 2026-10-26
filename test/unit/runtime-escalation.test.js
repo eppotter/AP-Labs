@@ -12,6 +12,7 @@
 // (test/fixtures/runtime/approval), never a client's.
 
 const test = require('node:test');
+const { mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -54,6 +55,15 @@ const ROWS = Object.freeze([
 ]);
 const ROW_VALUES = ROWS.flatMap((r) => [String(r.person_id), r.first, r.address].filter(Boolean));
 
+// The pull stamps ranAt from the real clock, and the list name carries its UTC
+// date: freeze Date at the store's pinned time so the list name is the one the
+// "never in the post" check names, on any day. The store keeps its own clock
+// (setup's clock.t), which tests advance.
+const PINNED = Date.parse('2026-10-25T12:00:00Z');
+const LIST_NAME = 'leads-north-2026-10-25';
+test.beforeEach(() => mock.timers.enable({ apis: ['Date'], now: PINNED }));
+test.afterEach(() => mock.timers.reset());
+
 function quietLog() {
   const lines = [];
   const rec = (level) => (msg, fields) => lines.push({ level, msg, fields });
@@ -62,7 +72,7 @@ function quietLog() {
 
 function setup(prof = OPS) {
   mail.reset();
-  const clock = { t: Date.parse('2026-10-25T12:00:00Z') };
+  const clock = { t: PINNED };
   const store = createStore({ now: () => clock.t });
   const app = new FakeSlackApp({ views: true });
   const log = quietLog();
@@ -112,13 +122,14 @@ test('a partly failed push posts one message to the ops channel: module, reason 
   const ctx = setup();
   const view = await partlyFail(ctx);
   assert.match(head(view), /^Sent 2 of 3 to Fixture mail tool; 1 failed\./, 'the person\'s reply is the honest one');
+  assert.ok(JSON.stringify(ctx.app.views).includes(`*List name:* ${LIST_NAME}`), 'the preview names the list the post must not hold');
   assert.equal(ctx.app.posted.length, 1);
   const post = ctx.app.posted[0];
   assert.equal(post.channel, OPS_CHANNEL);
   assert.equal(post.text, 'Push needs a look: module leads, some contacts failed. Counts: 4 rows approved, 2 sent, 0 already there, 1 skipped, 1 failed or not sent. No client data is in this message; the bot\'s log has the details.');
   assert.deepEqual(Object.keys(post).sort(), ['channel', 'text', 'unfurl_links', 'unfurl_media'], 'no blocks, no attachments');
   const all = JSON.stringify(post);
-  for (const value of [...ROW_VALUES, 'leads-north-2026-10-25', 'Leads list']) assert.ok(!all.includes(value), `the post holds no "${value}"`);
+  for (const value of [...ROW_VALUES, LIST_NAME, 'Leads list']) assert.ok(!all.includes(value), `the post holds no "${value}"`);
   const logged = JSON.stringify(ctx.log.lines);
   for (const value of ROW_VALUES) assert.ok(!logged.includes(value), `the log holds no "${value}"`);
 });
