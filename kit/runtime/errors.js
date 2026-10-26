@@ -164,7 +164,7 @@ class ScoringFault extends RuntimeRefusal {
 // the input contract is missing or malformed (contract.js never coerces), or
 // the travel port has no minutes for a pair (never 0), or a rule is malformed
 // or misused (Story 12.2, AD-R4: registration, an unknown rule id, a soft
-// override of an always-hard rule), gap fill's ranking weights name an
+// override of an always-hard rule), or gap fill's ranking weights name an
 // input it doesn't have or fail scoring's checkScoring (Story 12.5, AD-R8),
 // or travelMatrix (Story 13.2, AD-R9)
 // refused or failed: routing is off, too many pairs, a coordinate column that
