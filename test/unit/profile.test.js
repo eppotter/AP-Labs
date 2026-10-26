@@ -91,7 +91,9 @@ test('jobs.enabled is optional, defaults to false, and refuses unknown keys and 
 });
 
 // Story 13.1 (AD-R10): one optional routing block. Absent = routing off.
-const ROUTING_DEFAULTS = { min_travel_minutes: 5, max_pairs: 10000, gap_fill: { horizon_days: 14, limit: 5 } };
+const ROUTING_DEFAULTS = {
+  min_travel_minutes: 5, max_pairs: 10000, max_points: 500, map_grid_e6: 2000, map_min_span_km: 5, gap_fill: { horizon_days: 14, limit: 5 },
+};
 const withRouting = (edit) => {
   const p = parsed('routing');
   edit(p.routing, p);
@@ -104,7 +106,7 @@ test('a profile with no routing block has no routing key (routing off)', () => {
   }
 });
 
-test('a valid routing block loads with defaults filled (5, 10 000 pairs, 14 days, 5)', () => {
+test('a valid routing block loads with defaults filled (5, 10 000 pairs, 500 points, 2000 grid, 5 km, 14 days, 5)', () => {
   const p = loadProfile(fixture('routing'));
   const { coordinates, speed_kmh, detour_factor, limits } = parsed('routing').routing;
   assert.deepEqual(p.routing, { coordinates, speed_kmh, detour_factor, limits, ...ROUTING_DEFAULTS });
@@ -132,9 +134,93 @@ test('routing refuses unknown keys at every level, naming the key', () => {
   rejects(withRouting((r) => { r.coordinates.nodes[0].alt_column = 'x'; }), /\/routing\/coordinates\/nodes\/0 has unknown key "alt_column"/);
   rejects(withRouting((r) => { r.limits.lunch = 720; }), /\/routing\/limits has unknown key "lunch"/);
   rejects(withRouting((r) => { r.gap_fill = { radius_km: 3 }; }), /\/routing\/gap_fill has unknown key "radius_km"/);
-  // The map keys arrive with Story 15.2; until then they are unknown.
-  rejects(withRouting((r) => { r.map_grid_e6 = 2000; }), /\/routing has unknown key "map_grid_e6"/);
-  rejects(withRouting((r) => { r.audience = []; }), /\/routing has unknown key "audience"/);
+  rejects(withRouting((r) => { r.map_grid = 2000; }), /\/routing has unknown key "map_grid"/);
+  rejects(withRouting((r) => { r.map_tiles = true; }), /\/routing has unknown key "map_tiles"/);
+  rejects(withAudience((a) => { a.everyone = 'ROUTING_ALL_CREWS'; }), /\/routing\/audience has unknown key "everyone"/);
+  rejects(withAudience((a) => { a.crew_leads[0].zone = 'north'; }), /\/routing\/audience\/crew_leads\/0 has unknown key "zone"/);
+});
+
+// Story 15.2 (AD-R10, AD-R13, AD-R17): the map keys and the map audience.
+const withAudience = (edit) => {
+  const p = parsed('routing-audience');
+  edit(p.routing.audience, p);
+  return p;
+};
+
+test('the map keys default (500 points, 2000 grid, 5 km) and a client\'s own values win', () => {
+  const p = loadProfile(fixture('routing'));
+  assert.equal(p.routing.max_points, 500);
+  assert.equal(p.routing.map_grid_e6, 2000);
+  assert.equal(p.routing.map_min_span_km, 5);
+  assert.equal(Object.hasOwn(p.routing, 'audience'), false, 'audience has no default');
+  const full = loadProfile(fixture('routing-full'));
+  assert.deepEqual([full.routing.max_points, full.routing.map_grid_e6, full.routing.map_min_span_km], [120, 4000, 7.5]);
+  const coarser = validateProfile(withRouting((r) => { r.map_grid_e6 = 2001; r.map_min_span_km = 5.5; r.max_points = 1; }));
+  assert.deepEqual([coarser.routing.map_grid_e6, coarser.routing.map_min_span_km, coarser.routing.max_points], [2001, 5.5, 1]);
+});
+
+test('the map floors refuse a smaller value, naming the key (GRD-002 is signed against them)', () => {
+  rejects(withRouting((r) => { r.map_grid_e6 = 1999; }), /\/routing\/map_grid_e6 must be >= 2000/);
+  rejects(withRouting((r) => { r.map_grid_e6 = 0; }), /\/routing\/map_grid_e6 must be >= 2000/);
+  rejects(withRouting((r) => { r.map_grid_e6 = 2500.5; }), /\/routing\/map_grid_e6 must be integer/);
+  rejects(withRouting((r) => { r.map_min_span_km = 4.9; }), /\/routing\/map_min_span_km must be >= 5/);
+  rejects(withRouting((r) => { r.map_min_span_km = '5'; }), /\/routing\/map_min_span_km must be number/);
+  rejects(withRouting((r) => { r.max_points = 0; }), /\/routing\/max_points must be >= 1/);
+  rejects(withRouting((r) => { r.max_points = 10.5; }), /\/routing\/max_points must be integer/);
+  rejects(withRouting((r) => { r.max_points = 5001; }), /\/routing\/max_points must be <= 5000/);
+});
+
+test('the map defaults are filled after the profile is read: what the client wrote stays as written', () => {
+  for (const name of ['routing', 'routing-audience']) {
+    const input = parsed(name);
+    const before = JSON.stringify(input);
+    const p = validateProfile(input);
+    assert.equal(JSON.stringify(input), before, name);
+    assert.equal(Object.hasOwn(input.routing, 'map_grid_e6'), false, name);
+    assert.equal(p.routing.map_grid_e6, 2000, name);
+  }
+  const input = withAudience((a) => { delete a.crew_leads; });
+  const p = validateProfile(input);
+  assert.deepEqual(p.routing.audience.crew_leads, []);
+  assert.equal(Object.hasOwn(input.routing.audience, 'crew_leads'), false);
+});
+
+test('a valid audience loads as declared, frozen', () => {
+  const p = loadProfile(fixture('routing-audience'));
+  assert.deepEqual(p.routing.audience, parsed('routing-audience').routing.audience);
+  assert.ok(Object.isFrozen(p.routing.audience.crew_leads[0]));
+});
+
+test('the audience refuses an undeclared key, naming it', () => {
+  rejects(withAudience((a) => { a.all_crews = 'NOT_DECLARED'; }), /^\[profile\] refusing to start: \/routing\/audience\/all_crews "NOT_DECLARED" is not a declared resource key$/);
+  rejects(withAudience((a) => { a.own_crew = 'NOT_DECLARED'; }), /\/routing\/audience\/own_crew "NOT_DECLARED" is not a declared resource key/);
+  rejects(withAudience((a) => { a.all_crews = 'routing_all'; }), /\/routing\/audience\/all_crews must match pattern/);
+  rejects(withAudience((a) => { delete a.own_crew; }), /\/routing\/audience must have required property 'own_crew'/);
+  rejects(withAudience((a) => { delete a.all_crews; }), /\/routing\/audience must have required property 'all_crews'/);
+  // One key for both would let every crew lead see every crew.
+  rejects(withAudience((a) => { a.own_crew = a.all_crews; }), /\/routing\/audience\/own_crew must not be the same key as all_crews/);
+});
+
+test('the audience refuses a crew lead not in users, the same user twice, or a lead without the own_crew grant, naming the key', () => {
+  rejects(
+    withAudience((a) => { a.crew_leads[1].user = 'nobody'; }),
+    /^\[profile\] refusing to start: \/routing\/audience\/crew_leads\/1\/user "nobody" is not in users$/,
+  );
+  rejects(
+    withAudience((a) => { a.crew_leads.push({ user: 'lead-a', crew_id: 'v2' }); }),
+    /^\[profile\] refusing to start: \/routing\/audience\/crew_leads has duplicate user "lead-a"$/,
+  );
+  rejects(
+    withAudience((a) => { a.crew_leads.push({ user: 'member', crew_id: 'v3' }); }),
+    /^\[profile\] refusing to start: \/routing\/audience\/crew_leads\/2\/user "member" does not hold the own_crew grant "ROUTING_OWN_CREW"$/,
+  );
+  // The dispatcher's all_crews grant is not own_crew; nor is the admin role.
+  rejects(withAudience((a) => { a.crew_leads[0].user = 'dispatch'; }), /\/routing\/audience\/crew_leads\/0\/user "dispatch" does not hold the own_crew grant/);
+  rejects(withAudience((a) => { a.crew_leads[0].user = 'admin'; }), /\/routing\/audience\/crew_leads\/0\/user "admin" does not hold the own_crew grant/);
+  rejects(withAudience((a) => { a.crew_leads[0].crew_id = 'crew:v1'; }), /\/routing\/audience\/crew_leads\/0\/crew_id must match pattern/);
+  rejects(withAudience((a) => { delete a.crew_leads[0].crew_id; }), /\/routing\/audience\/crew_leads\/0 must have required property 'crew_id'/);
+  // Two leads may share a crew.
+  assert.equal(validateProfile(withAudience((a) => { a.crew_leads[1].crew_id = 'v1'; })).routing.audience.crew_leads[1].crew_id, 'v1');
 });
 
 test('routing refuses a bad identifier, naming the key', () => {

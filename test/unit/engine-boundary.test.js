@@ -7,8 +7,12 @@
 //   - the routing engine (kit/runtime/routing/**) requires only
 //     kit/runtime/scoring, kit/runtime/errors and its own files, and its code
 //     uses no clock, randomness, async or process state (AD-R1, Story 12.1);
-//   - only kit/runtime/data/index.js requires kit/runtime/data/travel.js, and
-//     that file requires only kit/runtime/errors (AD-R9, Story 13.2).
+//   - only kit/runtime/data/index.js and kit/runtime/data/map.js require
+//     kit/runtime/data/travel.js, and that file requires only
+//     kit/runtime/errors (AD-R9, Story 13.2);
+//   - only kit/runtime/archetypes/routing-map/** and kit/runtime/data/**
+//     require kit/runtime/data/map.js (mapPoints), and that file requires only
+//     ./travel and kit/runtime/errors (AD-R13, Story 15.2).
 // App dirs scanned: APLABS_APP_DIR when set, <repo>/app (a fork) and
 // examples/*/app (template dev), plus kit/templates/module and
 // kit/templates/connector always, so the check never passes by scanning nothing.
@@ -213,6 +217,7 @@ test('the routing check catches a require outside the rule, a name of examples/ 
   fs.writeFileSync(path.join(dir, 'sub', 'x.js'), "require('../../routing/ok');\n");
   fs.writeFileSync(path.join(dir, 'bad.js'), [
     "require('../data');",
+    "require('../data/map');",
     "require('../routing-map');",
     "require('../slack/modal');",
     "require('node:fs');",
@@ -227,6 +232,7 @@ test('the routing check catches a require outside the rule, a name of examples/ 
   assert.deepEqual(routingProblems(root), [
     'kit/runtime/routing/bad.js: names examples/',
     "kit/runtime/routing/bad.js: requires '../data' (outside routing, scoring and errors)",
+    "kit/runtime/routing/bad.js: requires '../data/map' (outside routing, scoring and errors)",
     "kit/runtime/routing/bad.js: requires '../routing-map' (outside routing, scoring and errors)",
     "kit/runtime/routing/bad.js: requires '../slack/modal' (outside routing, scoring and errors)",
     "kit/runtime/routing/bad.js: requires 'node:fs' (outside routing, scoring and errors)",
@@ -242,10 +248,11 @@ test('the routing check catches a require outside the rule, a name of examples/ 
 
 // travelMatrix's template and checks (Story 13.2, AD-R9): kit/runtime/data/
 // travel.js may require only kit/runtime/errors (no DuckDB, no runner), and
-// only kit/runtime/data/index.js may require it, so the one place a forbidden
+// only kit/runtime/data/index.js (and map.js, mapPoints' pure template, which
+// reuses its helpers; Story 15.2) may require it, so the one place a forbidden
 // column is dropped is inside createData's closure. Tests may load it.
 const TRAVEL_READ = 'kit/runtime/data/travel.js';
-const TRAVEL_READ_USERS = ['kit/runtime/data/index.js'];
+const TRAVEL_READ_USERS = ['kit/runtime/data/index.js', 'kit/runtime/data/map.js'];
 const TRAVEL_READ_DEPS = ['kit/runtime/errors.js'];
 const SCANNED = ['kit', 'scripts', 'examples', 'app'];
 
@@ -306,4 +313,78 @@ test('the travelMatrix check catches another requirer and a template that reache
     "kit/runtime/slack/x.js: requires '../data/travel'",
     "examples/acme/app/y.js: requires 'ap-labs/kit/runtime/data/travel'",
   ]);
+});
+
+// mapPoints (Story 15.2, AD-R13): kit/runtime/data/map.js may require only
+// ./travel and kit/runtime/errors (no DuckDB, no runner, no sql guard), and
+// only kit/runtime/archetypes/routing-map/** and kit/runtime/data/** may
+// require it: it is not on the data object modules get and not in the sdk, so
+// no module, adapter, job or other engine file can reach pixel positions.
+const MAP_READ = 'kit/runtime/data/map.js';
+const MAP_READ_USER_DIRS = ['kit/runtime/data/', 'kit/runtime/archetypes/routing-map/'];
+const MAP_READ_DEPS = ['kit/runtime/errors.js', TRAVEL_READ];
+
+function mapReadProblems(root = ROOT) {
+  const problems = [];
+  const target = path.join(root, MAP_READ);
+  if (fs.existsSync(target)) {
+    for (const m of fs.readFileSync(target, 'utf8').matchAll(IMPORT)) {
+      const spec = m[2] || m[4] || m[6] || m[8];
+      if (!MAP_READ_DEPS.includes(resolved(spec, target, root))) problems.push(`${MAP_READ}: requires '${spec}'`);
+    }
+  }
+  for (const dir of SCANNED.map((d) => path.join(root, d)).filter((d) => fs.existsSync(d))) {
+    for (const file of jsFiles(dir)) {
+      const rel = slash(path.relative(root, file));
+      if (MAP_READ_USER_DIRS.some((d) => rel.startsWith(d))) continue;
+      for (const m of fs.readFileSync(file, 'utf8').matchAll(IMPORT)) {
+        const spec = m[2] || m[4] || m[6] || m[8];
+        if (resolved(spec, file, root) === MAP_READ || /(^|\/)kit\/runtime\/data\/map(\.js)?$/.test(spec)) {
+          problems.push(`${rel}: requires '${spec}'`);
+        }
+      }
+    }
+  }
+  return problems;
+}
+
+test('only the routing-map archetype and kit/runtime/data require the mapPoints read, which requires only ./travel and errors (AD-R13)', () => {
+  assert.ok(fs.existsSync(path.join(ROOT, MAP_READ)));
+  assert.deepEqual(mapReadProblems(), []);
+});
+
+test('the mapPoints check catches any other requirer (the sdk, a module, the engine) and a template that reaches DuckDB or the runner', (t) => {
+  const root = tmpDir(t);
+  for (const d of ['kit/runtime/data', 'kit/runtime/archetypes/routing-map/sub', 'kit/runtime/archetypes/scoped-pull', 'kit/runtime/sdk', 'kit/runtime/routing', 'kit/runtime/routing-map', 'examples/acme/app', 'scripts']) {
+    fs.mkdirSync(path.join(root, d), { recursive: true });
+  }
+  fs.writeFileSync(path.join(root, 'kit/runtime/data/index.js'), "require('./map');\n");
+  fs.writeFileSync(path.join(root, 'kit/runtime/archetypes/routing-map/index.js'), "require('../../data/map');\n");
+  fs.writeFileSync(path.join(root, 'kit/runtime/archetypes/routing-map/sub/x.js'), "require('../../../data/map.js');\n");
+  const duckdb = ['@duckdb', 'node-api'].join('/'); // spelled apart: runtime-data.test.js scans for the literal
+  fs.writeFileSync(path.join(root, MAP_READ), [
+    "require('./travel');",
+    "require('../errors');",
+    `require('${duckdb}');`,
+    "require('./index');",
+    "require('../sql');",
+  ].join('\n'));
+  fs.writeFileSync(path.join(root, 'kit/runtime/sdk/index.js'), "require('../data/map');\n");
+  fs.writeFileSync(path.join(root, 'kit/runtime/routing/x.js'), "require('../data/map');\n");
+  fs.writeFileSync(path.join(root, 'kit/runtime/routing-map/svg.js'), "require('../data/map.js');\n");
+  fs.writeFileSync(path.join(root, 'kit/runtime/archetypes/scoped-pull/x.js'), "require('../../data/map');\n");
+  fs.writeFileSync(path.join(root, 'examples/acme/app/y.js'), "require('ap-labs/kit/runtime/data/map');\n");
+  fs.writeFileSync(path.join(root, 'scripts/z.js'), "require('../kit/runtime/data/map');\n");
+  // Sorted: the order files are listed in depends on the file system.
+  assert.deepEqual(mapReadProblems(root).sort(), [
+    `${MAP_READ}: requires '${duckdb}'`,
+    `${MAP_READ}: requires './index'`,
+    `${MAP_READ}: requires '../sql'`,
+    "kit/runtime/archetypes/scoped-pull/x.js: requires '../../data/map'",
+    "kit/runtime/routing/x.js: requires '../data/map'",
+    "kit/runtime/routing-map/svg.js: requires '../data/map.js'",
+    "kit/runtime/sdk/index.js: requires '../data/map'",
+    "scripts/z.js: requires '../kit/runtime/data/map'",
+    "examples/acme/app/y.js: requires 'ap-labs/kit/runtime/data/map'",
+  ].sort());
 });

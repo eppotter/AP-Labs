@@ -46,10 +46,16 @@ const LLM_DEFAULTS = Object.freeze({
 
 // The routing block's defaults (AD-R10, Story 13.1). The block itself has no
 // default: absent means routing is off. Filled only on a copy, so the parsed
-// profile (what the client wrote) is never changed.
+// profile (what the client wrote) is never changed. The map keys (Story 15.2,
+// AD-R10, AD-R13): map_grid_e6 and map_min_span_km are also their floors (the
+// schema refuses a smaller value; GRD-002 is signed against them). audience
+// has no default: absent means no one is in the map's audience.
 const ROUTING_DEFAULTS = Object.freeze({
   min_travel_minutes: 5,
   max_pairs: 10000,
+  max_points: 500,
+  map_grid_e6: 2000,
+  map_min_span_km: 5,
   gap_fill: Object.freeze({ horizon_days: 14, limit: 5 }),
 });
 
@@ -57,8 +63,9 @@ const LIMIT_ORDER = Object.freeze(['earliest_start', 'default_start', 'aim_finis
 
 // What the schema cannot say about routing: each coordinate column must also be
 // forbidden to every other query (AD-R9), node kinds are unique (they prefix
-// node ids), a node's lat and lon are two columns, and the day limits are in order.
-function routingProblems(routing, forbidden) {
+// node ids), a node's lat and lon are two columns, the day limits are in order,
+// and the map audience (AD-R17) names declared keys and known, granted people.
+function routingProblems(routing, forbidden, p) {
   const problems = [];
   const banned = new Set(forbidden);
   const nodes = routing.coordinates.nodes;
@@ -74,6 +81,29 @@ function routingProblems(routing, forbidden) {
     const [before, key] = [LIMIT_ORDER[i - 1], LIMIT_ORDER[i]];
     if (routing.limits[key] < routing.limits[before]) problems.push(`/routing/limits/${key} must not be before ${before}`);
   }
+  if (routing.audience) problems.push(...audienceProblems(routing.audience, p));
+  return problems;
+}
+
+// The map audience (AD-R17): both keys declared in resources and different
+// (or every crew lead would see every crew); each crew lead a known user,
+// listed once, holding the own_crew grant.
+function audienceProblems(audience, p) {
+  const problems = [];
+  const keys = new Set(p.resources.map((r) => r.key));
+  for (const key of ['all_crews', 'own_crew']) {
+    if (!keys.has(audience[key])) problems.push(`/routing/audience/${key} "${audience[key]}" is not a declared resource key`);
+  }
+  if (audience.all_crews === audience.own_crew) problems.push('/routing/audience/own_crew must not be the same key as all_crews');
+  const users = new Map(p.users.map((u) => [u.id, u]));
+  for (const d of duplicates(audience.crew_leads.map((l) => l.user))) problems.push(`/routing/audience/crew_leads has duplicate user "${d}"`);
+  audience.crew_leads.forEach((lead, i) => {
+    const user = users.get(lead.user);
+    if (!user) problems.push(`/routing/audience/crew_leads/${i}/user "${lead.user}" is not in users`);
+    else if (!user.grants.includes(audience.own_crew)) {
+      problems.push(`/routing/audience/crew_leads/${i}/user "${lead.user}" does not hold the own_crew grant "${audience.own_crew}"`);
+    }
+  });
   return problems;
 }
 
@@ -216,7 +246,8 @@ function validateProfile(profile, file) {
   if (!p.users.some((u) => u.role === 'admin')) problems.push('`users` must include at least one admin');
   if (p.routing) {
     p.routing = { ...ROUTING_DEFAULTS, ...p.routing, gap_fill: { ...ROUTING_DEFAULTS.gap_fill, ...p.routing.gap_fill } };
-    problems.push(...routingProblems(p.routing, p.sql.forbidden_columns));
+    if (p.routing.audience) p.routing.audience = { crew_leads: [], ...p.routing.audience };
+    problems.push(...routingProblems(p.routing, p.sql.forbidden_columns, p));
   }
 
   if (problems.length) throw new ProfileError(problems.join('; '), file);

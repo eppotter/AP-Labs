@@ -56,6 +56,12 @@
 // profile's declared coordinate columns from the forbidden list for its own
 // static template and returns only { from_node, to_node, minutes }. run()
 // still refuses every forbidden column.
+//
+// mapPoints(nodeIds, frame) (Story 15.2, AD-R13) is the second, built the
+// same way from ./map: it returns only { node, x, y } pixel positions. It is
+// not a key of the data object: createData attaches it through ./map's
+// private side table, and only the routing-map archetype reaches it, as
+// map.mapPoints(data, nodeIds, frame).
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -64,6 +70,7 @@ const sqlGuard = require('../sql');
 const { DataUnavailable: DataUnavailableError } = require('../errors');
 const md = require('./motherduck');
 const travel = require('./travel');
+const map = require('./map');
 
 const REPO = path.resolve(__dirname, '../../..');
 const SOURCE = 'local fixture';
@@ -417,7 +424,8 @@ function createData({
   // JSON-safe objects (BIGINT as a string). Rejects with QueryRefusedError
   // (guardrail or parameters), DataUnavailableError, or (local only) DuckDB's
   // own error. Closure-private: run() passes the profile's forbidden list,
-  // travelMatrix the one travel.travelForbidden makes; nothing else calls it.
+  // travelMatrix and mapPoints the one travel.travelForbidden makes; nothing
+  // else calls it.
   async function execute(sql, params, declared, forbidden) {
     const verdict = sqlGuard.checkSql(sql, { forbiddenColumns: forbidden });
     if (!verdict.ok) throw new QueryRefusedError(verdict.rule, verdict.detail);
@@ -495,7 +503,30 @@ function createData({
     instance = null;
   }
 
-  return Object.freeze({ open, run, travelMatrix, describe, close });
+  // The second governed coordinate read (Story 15.2, AD-R13; template and
+  // checks in ./map). Resolves [{ node, x, y }] (integer pixels) for the
+  // requested nodes that have a position, in the order asked; rejects only
+  // with a fixed-text RoutingFault. Coordinates never leave DuckDB. Not a key
+  // of the object below: attached to it through ./map only.
+  async function mapPoints(nodeIds, frame) {
+    try {
+      const routing = map.routingOf(profile);
+      const box = map.checkFrame(frame);
+      map.checkIds(nodeIds, routing);
+      if (!nodeIds.length) return [];
+      const forbidden = travel.travelForbidden(forbiddenColumns, routing);
+      const sql = map.pointsSql(routing);
+      travel.checkColumnTypes(await execute(travel.COLUMN_TYPES_SQL, {}, [], forbiddenColumns), routing);
+      const rows = await execute(sql, map.pointsParams(nodeIds, box, routing), map.POINTS_PARAMS, forbidden);
+      return map.points(rows, nodeIds, box);
+    } catch (err) {
+      throw map.faultFor(err);
+    }
+  }
+
+  const data = Object.freeze({ open, run, travelMatrix, describe, close });
+  map.attach(data, mapPoints);
+  return data;
 }
 
 module.exports = {
