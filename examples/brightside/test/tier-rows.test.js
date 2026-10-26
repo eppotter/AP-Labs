@@ -22,6 +22,9 @@ const ROWS = {
   'kit/runtime/sql/guardrail.js': 'T3',
   'kit/runtime/data/index.js': 'T3',
   'kit/runtime/llm/index.js': 'T3',
+  // Story 13.3: the routing engine is a declared T2 for Brightside.
+  'kit/runtime/routing/index.js': 'T2',
+  'kit/runtime/routing/contract.js': 'T2',
 };
 
 function tierCli(paths) {

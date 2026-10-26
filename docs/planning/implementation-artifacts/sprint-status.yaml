@@ -130,7 +130,7 @@ development_status:
   epic-13: in-progress
   13-1-the-profile-s-routing-block: done
   13-2-travelmatrix-the-one-coordinate-read-path: review
-  13-3-brightside-forbids-the-coordinates-and-declares-routing: backlog
+  13-3-brightside-forbids-the-coordinates-and-declares-routing: review
   epic-13-retrospective: optional
 
   epic-14: backlog
