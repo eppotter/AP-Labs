@@ -12,6 +12,13 @@
 // privateMetadata }) for the view it renders in: a form has input blocks, and
 // Slack rejects a modal with an input block and no submit.
 //
+// Map images (Story 15.1): a pushed view may be given view options
+// ({ callbackId, notifyOnClose }) that every render keeps unless a message
+// overrides them, so a map view asks Slack for view_closed (notify_on_close)
+// from its first push. show(message, { replace: true }) shows only that
+// message, dropping the earlier replies (a map replaces the one before it).
+// The view's id is readable once pushed.
+//
 // Slack's limits: a modal title is at most 24 characters, a view at most 100
 // blocks, a section's text at most 3000 characters. Titles are cut with "…",
 // long text is split into several sections by the shared splitter
@@ -58,7 +65,7 @@ function messageBlocks(message) {
 // Slack requires one on any view with an input block). private_metadata is
 // the hub id unless privateMetadata says otherwise; never person data.
 function modalView({
-  title, blocks, hubId, close = 'Close', keepTail = 0, callbackId = 'hub:view', submit, privateMetadata,
+  title, blocks, hubId, close = 'Close', keepTail = 0, callbackId = 'hub:view', submit, privateMetadata, notifyOnClose = false,
 }) {
   return {
     type: 'modal',
@@ -66,6 +73,7 @@ function modalView({
     title: { type: 'plain_text', text: modalTitle(title), emoji: false },
     close: { type: 'plain_text', text: close, emoji: false },
     ...(submit ? { submit: { type: 'plain_text', text: modalTitle(submit), emoji: false } } : {}),
+    ...(notifyOnClose ? { notify_on_close: true } : {}),
     private_metadata: String(privateMetadata !== undefined ? privateMetadata : (hubId || '')),
     blocks: limitBlocks(blocks, { keepTail }),
   };
@@ -74,13 +82,16 @@ function modalView({
 // The view a module message renders in: Back, callback hub:module, unless the
 // message carries its own modal options (a form's submit, callback and
 // metadata).
-function moduleView({ title, hubId, blocks, message }) {
-  const opts = (message && typeof message === 'object' && message.modal) || {};
+function moduleView({
+  title, hubId, blocks, message, defaults = {},
+}) {
+  const opts = { ...defaults, ...((message && typeof message === 'object' && message.modal) || {}) };
   return modalView({
     title, hubId, blocks, close: 'Back',
     callbackId: opts.callbackId || 'hub:module',
     submit: opts.submit,
     privateMetadata: opts.privateMetadata,
+    notifyOnClose: opts.notifyOnClose === true,
   });
 }
 
@@ -105,14 +116,17 @@ function failureReason(err) {
 // pushes the view with that message the first time; later calls append. With
 // loading(), the view is pushed at once with "Loading…", and the first show()
 // replaces it. Calls run one at a time so each update carries the latest hash.
-function pushedView({ client, triggerId, title, hubId }) {
+function pushedView({
+  client, triggerId, title, hubId, viewOptions = {},
+}) {
   let view = null; // { id, hash } once pushed
-  const replies = [];
+  let replies = [];
   let queue = Promise.resolve();
   const render = () => moduleView({
     title, hubId,
     blocks: replies.length ? replies.flatMap(messageBlocks) : textBlocks(LOADING),
     message: replies.at(-1),
+    defaults: viewOptions,
   });
   const push = async () => {
     const res = await client.views.push({ trigger_id: triggerId, view: render() });
@@ -129,13 +143,15 @@ function pushedView({ client, triggerId, title, hubId }) {
   };
   return {
     get pushed() { return view !== null; },
+    get id() { return view && typeof view.id === 'string' ? view.id : null; },
     loading: () => step(async () => { if (!view) await push(); }),
-    show: (message) => step(async () => {
-      replies.push(message);
+    show: (message, { replace = false } = {}) => step(async () => {
+      const before = replies;
+      replies = replace ? [message] : [...replies, message];
       try {
         await (view ? update() : push());
       } catch (err) {
-        replies.pop();
+        replies = before;
         throw err;
       }
     }),

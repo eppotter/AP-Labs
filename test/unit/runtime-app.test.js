@@ -645,3 +645,76 @@ test('health: a data or AI setup throw after the listener started closes the lis
     await assert.rejects(getHealth(port), (err) => err.code === 'ECONNREFUSED');
   }
 });
+
+// --- Story 15.1: the map-file sweep runs whatever the jobs switch says ----------
+
+const { createStore } = require('../../kit/runtime/store');
+
+// The fixture app plus a dev-only map-check module (a temp copy).
+function mapApp(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-app-map-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.cpSync(APP_DIR, dir, { recursive: true });
+  const mod = path.join(dir, 'modules/map-check');
+  fs.mkdirSync(mod, { recursive: true });
+  fs.writeFileSync(path.join(mod, 'manifest.json'), JSON.stringify({
+    id: 'map-check', hub: 'alpha', label: 'Map check', description: 'A test picture.', resource: 'OPEN_THING', archetype: 'handler', environments: ['dev'], handler: 'handler.js',
+  }));
+  fs.writeFileSync(path.join(mod, 'handler.js'), 'module.exports = async () => {};\n');
+  return dir;
+}
+
+// A Slack fake that already holds F9, a map file a previous process uploaded.
+class SlackWithOldFile extends FakeSlackApp {
+  constructor(options) {
+    super(options);
+    this.files.add('F9');
+  }
+}
+
+test('map sweep: with a map module, the sweep runs at start-up with jobs off by the profile or by APLABS_JOBS_OFF, and the startup line names it', async (t) => {
+  const appDir = mapApp(t);
+  for (const extra of [{}, { APLABS_JOBS_OFF: '1' }, { APLABS_JOBS_OFF: '0', APLABS_PROFILE: path.join(__dirname, '../fixtures/runtime/profile-jobs.yml') }]) {
+    let now = Date.parse('2026-11-02T15:00:00Z');
+    const store = createStore({ now: () => now });
+    store.addMapFile('F9', 'U1:V1'); // left by a previous process
+    now += 16 * 60 * 1000;
+    const timers = fakeTimers();
+    const res = await boot(env({ APLABS_APP_DIR: appDir, ...extra }), { App: SlackWithOldFile, store, now: () => now, timers });
+    assert.equal(res.code, 0, JSON.stringify(extra));
+    assert.match(res.entries[0].jobs, /^off \(/, JSON.stringify(extra));
+    assert.deepEqual(res.entries[0].engine_jobs, ['sweep-map-files']);
+    assert.equal(res.engineJobs.running('sweep-map-files'), true);
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(res.app.deleted, ['F9'], JSON.stringify(extra));
+    assert.equal(store.mapFileCount(), 0);
+    assert.equal(timers.pending.size, 1, 'the next sweep is armed');
+    assert.equal([...timers.pending][0].ms, 5 * 60 * 1000);
+    res.engineJobs.stop();
+  }
+});
+
+test('map sweep: no map module, or one hidden in this environment, runs no sweep', async (t) => {
+  const appDir = mapApp(t);
+  for (const e of [env(), env({ APLABS_APP_DIR: appDir, APLABS_ENV: 'prod' })]) {
+    const timers = fakeTimers();
+    const res = await boot(e, { timers });
+    assert.equal(res.code, 0);
+    assert.deepEqual(res.entries[0].engine_jobs, []);
+    assert.equal(res.engineJobs.running('sweep-map-files'), false);
+    assert.equal(timers.pending.size, 0);
+  }
+});
+
+test('map sweep: shutdown stops the engine jobs with the scheduler, before Slack', async () => {
+  const order = [];
+  await shutdown({
+    app: { stop: async () => { order.push('slack'); } },
+    data: { close: () => order.push('data') },
+    jobs: { stop: () => order.push('jobs') },
+    engineJobs: { stop: () => order.push('engine jobs') },
+    log: createLog({ write: () => {} }),
+    exit: () => order.push('exit'),
+  }, 'SIGTERM');
+  assert.deepEqual(order, ['jobs', 'engine jobs', 'slack', 'data', 'exit']);
+});

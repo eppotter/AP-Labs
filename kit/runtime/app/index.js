@@ -59,6 +59,15 @@
 // connectors.js, the only engine file that loads a connector), and hands them
 // to the hubs. A connector that can't be created refuses to start.
 //
+// Story 15.1: the kit's own engine jobs (kit/runtime/jobs ENGINE_JOBS) run
+// whatever jobs.enabled and APLABS_JOBS_OFF say. The map-file sweep is needed
+// whenever a module that uploads map images is shown in this environment; it
+// gets the store and the Slack client, starts after Slack connects (its first
+// run deletes what a previous process left), runs every 5 minutes and stops
+// on shutdown. The hubs get the map-file lifecycle (kit/runtime/slack/image),
+// ready only while the sweep runs, so a map module fails closed without it.
+// The startup line names the engine jobs it runs.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
@@ -79,6 +88,8 @@ const llm = require('../llm');
 const jobs = require('../jobs');
 const health = require('./health');
 const { createConnectors } = require('../archetypes/approval-write');
+const { createMapFiles } = require('../slack/image');
+const { NAME: SWEEP_MAP_FILES } = require('../jobs/sweep-map-files');
 
 const REPO = path.resolve(__dirname, '../../..');
 // The startup line's word for why the AI is off.
@@ -199,8 +210,9 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
 
 // Builds the Bolt app in Socket Mode with the redacting logger. App is
 // injectable so tests use a fake Slack client.
+// sweeping(name): true while that engine job runs (main's engine jobs).
 function createApp({
-  tokens, profile, registry, env, store, data, log, App, llm = null, connectors = null,
+  tokens, profile, registry, env, store, data, log, App, llm = null, connectors = null, sweeping = () => false,
 }) {
   const AppClass = App || require('@slack/bolt').App;
   const app = new AppClass({
@@ -214,7 +226,10 @@ function createApp({
     log.error('slack app error', { err });
   });
   registerGreeting(app, { profile, log, store });
-  registerHubs(app, { registry, profile, env, log, store, data, llm, connectors });
+  const mapFiles = createMapFiles({
+    store, client: app.client, log, sweeping: () => sweeping(SWEEP_MAP_FILES),
+  });
+  registerHubs(app, { registry, profile, env, log, store, data, llm, connectors, mapFiles });
   return app;
 }
 
@@ -272,8 +287,20 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   // createApp inside the try: a throw while building the app (it may carry a
   // token) still goes through the redacting logger.
   let app;
+  let engineJobs = null;
   try {
-    app = createApp({ ...cfg, store, data, log, App: deps.App, llm: ai, connectors });
+    app = createApp({
+      ...cfg, store, data, log, App: deps.App, llm: ai, connectors, sweeping: (name) => Boolean(engineJobs && engineJobs.running(name)),
+    });
+    // The kit's own jobs, whatever the jobs switch says (Story 15.1).
+    engineJobs = jobs.createEngineJobs({
+      names: jobs.engineJobsFor({ modules: cfg.registry.modules, env: cfg.env }),
+      store,
+      client: app.client,
+      log,
+      ...(deps.now ? { now: deps.now } : {}),
+      ...(deps.timers ? { timers: deps.timers } : {}),
+    });
     // Before start(): Bolt's start() resolves on the first connected event.
     if (healthState && !health.watchConnection(app, healthState)) {
       log.warn('health: no Socket Mode client to watch, so /healthz reports down after the grace period');
@@ -294,6 +321,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     data: dataState(data, remote),
     ai: aiStatus.on ? 'on' : `off (${AI_OFF_WORDS[aiStatus.reason]})`,
     jobs: jobs.jobsWords(cfg.jobsState, cfg.jobs),
+    engine_jobs: engineJobs.names,
     health: healthCheck ? `on (port ${healthCheck.port})` : 'off',
     instance: 'single instance',
   });
@@ -302,7 +330,10 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     jobs: cfg.jobsState.on ? cfg.jobs : [], log, data, now: clockOf(deps), ...(deps.timers ? { timers: deps.timers } : {}),
   });
   scheduler.start();
-  return { code: 0, app, log, data, connecting, llm: ai, jobs: scheduler, health: healthCheck, connectors };
+  engineJobs.start();
+  return {
+    code: 0, app, log, data, connecting, llm: ai, jobs: scheduler, engineJobs, health: healthCheck, connectors,
+  };
 }
 
 // The data, the store and the AI helper, set up after the health listener.
@@ -364,12 +395,15 @@ function installCrashHandlers(log, proc = process) {
   return crash('boot failed');
 }
 
-// SIGTERM or SIGINT: the scheduler stops scheduling first (a run in progress
-// is not awaited), then Slack stops, the health listener and the data close
+// SIGTERM or SIGINT: the scheduler and the engine jobs stop scheduling first
+// (a run in progress is not awaited), then Slack stops, the health listener and the data close
 // and the process exits.
-function shutdown({ app, data, jobs: scheduler, health: healthCheck, log, exit = (code) => process.exit(code) }, signal) {
+function shutdown({
+  app, data, jobs: scheduler, engineJobs = null, health: healthCheck, log, exit = (code) => process.exit(code),
+}, signal) {
   log.info('stopping', { signal });
   if (scheduler) scheduler.stop();
+  if (engineJobs) engineJobs.stop();
   return Promise.resolve()
     .then(() => app.stop())
     .catch((err) => log.error('could not stop Slack cleanly', { err }))
@@ -386,14 +420,18 @@ module.exports = { main, checkConfig, checkMotherDuckKeys, createApp, installCra
 if (require.main === module) {
   const log = createLog();
   const bootFailed = installCrashHandlers(log);
-  main({ deps: { log } }).then(({ code, app, data, jobs: scheduler, health: healthCheck }) => {
+  main({ deps: { log } }).then(({
+    code, app, data, jobs: scheduler, engineJobs, health: healthCheck,
+  }) => {
     if (code !== 0) {
       process.exitCode = code;
       // Bolt may hold the process open after a failed start.
       setImmediate(() => process.exit(code));
       return;
     }
-    const stop = (signal) => shutdown({ app, data, jobs: scheduler, health: healthCheck, log }, signal);
+    const stop = (signal) => shutdown({
+      app, data, jobs: scheduler, engineJobs, health: healthCheck, log,
+    }, signal);
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
   }).catch(bootFailed);

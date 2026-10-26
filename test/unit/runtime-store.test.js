@@ -136,3 +136,52 @@ test('sweep drops expired entries, and every 100th write sweeps', () => {
   assert.equal(store.sweep(), 0);
   assert.equal(store.get('session', 's46'), true);
 });
+
+// --- Story 15.1: the map-file record kind (AD-R15) ------------------------------
+
+const { MAP_FILE_TTL, MAX_MAP_FILES, StoreError } = require('../../kit/runtime/store');
+
+test('a map file is recorded with its owner and a 15-minute expiry, and stays recorded after it expires', () => {
+  const { clock, store } = clockStore();
+  assert.equal(MAP_FILE_TTL, 15 * MIN);
+  store.addMapFile('F1', 'U1:V1');
+  clock.t += 5 * MIN;
+  store.addMapFile('F2', 'U1:V1');
+  store.addMapFile('F3', 'U2:V2');
+  assert.deepEqual(store.mapFilesOf('U1:V1'), ['F1', 'F2']);
+  assert.deepEqual(store.mapFilesOf('U2:V2'), ['F3']);
+  assert.deepEqual(store.expiredMapFiles(), []);
+  clock.t = 1000 + 15 * MIN - 1;
+  assert.deepEqual(store.expiredMapFiles(), []);
+  clock.t = 1000 + 15 * MIN;
+  assert.deepEqual(store.expiredMapFiles(), ['F1']);
+  // An expired record is not dropped by reads, writes or sweep(): only its removal does.
+  for (let i = 0; i < 100; i += 1) store.set('event', `e${i}`, true);
+  store.sweep();
+  clock.t += 60 * MIN;
+  assert.deepEqual(store.expiredMapFiles(), ['F1', 'F2', 'F3']);
+  assert.deepEqual(store.mapFilesOf('U1:V1'), ['F1', 'F2']);
+  assert.equal(store.removeMapFile('F1'), true);
+  assert.equal(store.removeMapFile('F1'), false);
+  assert.deepEqual(store.expiredMapFiles(), ['F2', 'F3']);
+  assert.equal(store.mapFileCount(), 2);
+});
+
+test('a map file record refuses a bad id, a bad owner, a duplicate and a full table', () => {
+  const { store } = clockStore();
+  for (const id of ['', 'f1', 'F', 'D123', 'F1 ', 42, null]) assert.throws(() => store.addMapFile(id, 'o'), StoreError, String(id));
+  for (const owner of ['', 7, null, 'x'.repeat(201)]) assert.throws(() => store.addMapFile('F1', owner), StoreError, String(owner));
+  store.addMapFile('F1', 'o');
+  assert.throws(() => store.addMapFile('F1', 'o'), /already recorded/);
+  assert.throws(() => store.removeMapFile('nope'), StoreError);
+  for (let i = 2; i <= MAX_MAP_FILES; i += 1) store.addMapFile(`F${i}`, 'o');
+  assert.throws(() => store.addMapFile('FX', 'o'), /no room/);
+});
+
+test('map file records are separate from the namespaces: no namespace can read or overwrite them', () => {
+  const { store } = clockStore();
+  store.addMapFile('F1', 'o');
+  assert.throws(() => store.set('mapFile', 'F1', 1), /unknown store namespace/);
+  assert.ok(!Object.hasOwn(NAMESPACES, 'mapFile'));
+  assert.deepEqual(store.mapFilesOf('o'), ['F1']);
+});

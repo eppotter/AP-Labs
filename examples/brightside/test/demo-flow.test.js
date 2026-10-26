@@ -229,11 +229,12 @@ async function demo(t, { llmOff }) {
   const menuArgs = app.views[0].args;
   assert.equal(app.views[0].method, 'open');
   const entries = (view) => view.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id.replace(/:open$/, ''));
-  assert.deepEqual(entries(menuArgs.view).sort(), ['dataset', 'hello-world', 'labour-cost', 'outbox', 'unpaid-invoices', 'win-back']);
+  // map-check is the dev-only map check (Story 15.1, open like Say hello); Story 15.5 removes it.
+  assert.deepEqual(entries(menuArgs.view).sort(), ['dataset', 'hello-world', 'labour-cost', 'map-check', 'outbox', 'unpaid-invoices', 'win-back']);
   ctx.menu = { id: 'V1', type: 'modal', private_metadata: menuArgs.view.private_metadata, title: menuArgs.view.title };
   // Someone the profile doesn't know sees only the open-access entries.
   await app.dispatchCommand('/brightside', { user_id: 'U0NOTINPROFILE' });
-  assert.deepEqual(entries(app.views.at(-1).args.view).sort(), ['dataset', 'hello-world']);
+  assert.deepEqual(entries(app.views.at(-1).args.view).sort(), ['dataset', 'hello-world', 'map-check']);
 
   // Steps 2 and 3, then Change: the typed form, prefilled with the values.
   const firstConfirm = await askForTheList(ctx, { llmOff });

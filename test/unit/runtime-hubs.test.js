@@ -54,8 +54,11 @@ test('each hub file registers its slash command; one listener each handles Open,
   // Push, Approve and Cancel on an approval-write result (Story 10.2).
   for (const id of ['approval-write:push', 'approval-write:approve', 'approval-write:cancel']) assert.ok(app.actionListeners[4].pattern.test(id), id);
   assert.ok(!app.actionListeners[4].pattern.test('approval-write:open'));
-  // Two submits: the form's "Check values" and a follow-up question's answer (Story 9.4).
-  assert.deepEqual(app.viewListeners.map((v) => v.callbackId), ['scoped-pull:form', 'scoped-pull:answer']);
+  // A map view's view_closed (Story 15.1), then two submits: the form's
+  // "Check values" and a follow-up question's answer (Story 9.4).
+  assert.deepEqual(app.viewListeners.map((v) => v.callbackId), [
+    { callback_id: 'hub:map', type: 'view_closed' }, 'scoped-pull:form', 'scoped-pull:answer',
+  ]);
   assert.deepEqual([...app.eventListeners.keys()], ['team_join']);
 });
 
@@ -478,4 +481,232 @@ test('a long ephemeral text reply arrives whole, as sections Slack accepts, 50 b
     assert.equal(m.text, m.blocks[0].text.text);
   }
   assert.equal(long.flatMap((m) => m.blocks.map((b) => b.text.text)).join('\n'), body);
+});
+
+// --- Story 15.1: a private image in a modal (AD-R12, AD-R15) ---------------------
+
+const fs = require('node:fs');
+const { createMapFiles } = require('../../kit/runtime/slack/image');
+const { createEngineJobs } = require('../../kit/runtime/jobs');
+const { MAP_NOT_SHOWN, MAP_NEEDS_WINDOW } = require('../../kit/runtime/slack/hubs');
+
+const PNG = fs.readFileSync(path.join(__dirname, '../fixtures/routing-map/test-pattern.png'));
+const ALT = 'Route map: Test pattern, no crew, 0 stops';
+const MIN = 60 * 1000;
+const showPattern = async ({ reply }) => reply({ text: 'Map check.', image: { png: PNG, alt: ALT } });
+const mapCheck = (run = showPattern) => Object.freeze({
+  id: 'map-check', hub: 'alpha', label: 'Map check', description: 'd', resource: 'R', archetype: 'handler', environments: ['dev'], run,
+});
+const slackError = (code) => Object.assign(new Error(`An API error occurred: ${code}`), { data: { ok: false, error: code } });
+const imageBlocks = (view) => view.blocks.filter((b) => b.type === 'image');
+
+// The hubs with a map-file lifecycle. ready: whether the sweep runs.
+function mapSetup({
+  modules = [mapCheck()], sweeping = () => true, store = createStore(), client, noMapFiles = false,
+} = {}) {
+  const app = new FakeSlackApp({ views: true });
+  const log = quietLog();
+  const mapFiles = noMapFiles ? undefined : createMapFiles({ store, client: client === undefined ? app.client : client, log, sweeping });
+  registerHubs(app, {
+    registry: createRegistry({ hubs: registry.hubs, modules }), profile, env: 'dev', log, store, canUse: () => true, ...(mapFiles ? { mapFiles } : {}),
+  });
+  return { app, log, store, mapFiles };
+}
+
+test('map-check: Open pushes a Back view asking for view_closed, uploads the PNG shared nowhere, records it, then shows the image block', async () => {
+  const { app, store } = mapSetup();
+  const recordedAtShow = [];
+  const update = app.client.views.update;
+  app.client.views.update = async (args) => {
+    recordedAtShow.push(store.mapFilesOf('U1:V1').slice());
+    return update(args);
+  };
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  const [push] = calls(app, 'push');
+  assert.equal(push.view.close.text, 'Back');
+  assert.equal(push.view.notify_on_close, true);
+  assert.equal(push.view.callback_id, 'hub:map');
+  assert.deepEqual(viewTexts(push.view), [LOADING]);
+  // The upload: no channel, the fixed filename and title.
+  assert.equal(app.uploads.length, 1);
+  assert.deepEqual(Object.keys(app.uploads[0]).sort(), ['file', 'filename', 'title']);
+  assert.equal(app.uploads[0].filename, 'route-map.png');
+  assert.equal(app.uploads[0].title, 'Route map');
+  // Recorded before it was shown.
+  assert.deepEqual(recordedAtShow, [['F1']]);
+  const [shown] = calls(app, 'update');
+  assert.equal(shown.view_id, 'V1');
+  assert.equal(shown.view.notify_on_close, true);
+  assert.equal(shown.view.callback_id, 'hub:map');
+  assert.equal(shown.view.close.text, 'Back');
+  assert.deepEqual(imageBlocks(shown.view), [{ type: 'image', slack_file: { id: 'F1' }, alt_text: ALT }]);
+  assert.equal(shown.view.blocks[0].text.text, 'Map check.');
+  assert.ok(!JSON.stringify(app.views).includes('image_url'));
+  // Nothing anywhere else.
+  assert.deepEqual(app.posted, []);
+  assert.deepEqual(app.said, []);
+  assert.deepEqual(app.dms, []);
+  assert.deepEqual(app.deleted, []);
+});
+
+test('map-check exit, Back: returns to the hub menu (a pushed view) and view_closed deletes the file', async () => {
+  const { app, store, log } = mapSetup();
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  // Back on a pushed view pops it, back to the menu: the map was pushed, never opened over the menu.
+  assert.deepEqual(app.views.map((v) => v.method), ['push', 'update']);
+  // A view_closed for another person's view, or another view, deletes nothing.
+  await app.dispatchViewClosed('hub:map', { user: { id: 'U2' }, view: { id: 'V1' } });
+  await app.dispatchViewClosed('hub:map', { user: { id: 'U1' }, view: { id: 'V9' } });
+  assert.deepEqual(app.deleted, []);
+  assert.equal(await app.dispatchViewClosed('hub:map', { user: { id: 'U1' }, view: { id: 'V1' } }), 1);
+  assert.deepEqual(app.deleted, ['F1']);
+  assert.equal(store.mapFileCount(), 0);
+  assert.ok(log.lines.some((l) => l.msg === 'map view closed' && l.fields.deleted === 1 && l.fields.cleared === false));
+});
+
+test('map-check exit, Back with no view_closed: the sweep deletes the file within 20 minutes of upload (every clock frozen)', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.parse('2026-11-02T15:00:00Z') });
+  const store = createStore();
+  let jobs;
+  const { app, log } = mapSetup({ store, sweeping: () => jobs.running('sweep-map-files') });
+  jobs = createEngineJobs({ names: ['sweep-map-files'], store, client: app.client, log });
+  jobs.start();
+  t.mock.timers.tick(2 * MIN); // uploaded at 15:02, mid-cycle
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  const uploaded = Date.now();
+  let deletedAt = null;
+  for (let m = 1; m <= 25 && deletedAt === null; m += 1) {
+    t.mock.timers.tick(MIN);
+    for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
+    if (app.deleted.includes('F1')) deletedAt = Date.now();
+  }
+  assert.ok(deletedAt !== null, 'the sweep deleted the file');
+  assert.ok(deletedAt - uploaded <= 20 * MIN, `lived ${(deletedAt - uploaded) / MIN} minutes`);
+  assert.equal(store.mapFileCount(), 0);
+  jobs.stop();
+});
+
+test('map-check exit, Close (the X): view_closed with is_cleared deletes the file', async () => {
+  const { app, store, log } = mapSetup();
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  await app.dispatchViewClosed('hub:map', { user: { id: 'U1' }, view: { id: 'V1' }, is_cleared: true });
+  assert.deepEqual(app.deleted, ['F1']);
+  assert.equal(store.mapFileCount(), 0);
+  assert.ok(log.lines.some((l) => l.msg === 'map view closed' && l.fields.cleared === true));
+});
+
+test('map-check exit, upload failure: a plain message in the view with Back; nothing recorded; Slack\'s code logged, never the PNG', async () => {
+  const { app, store, log } = mapSetup();
+  app.filesFail = slackError('ratelimited');
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  const [shown] = calls(app, 'update');
+  assert.deepEqual(viewTexts(shown.view), [MAP_NOT_SHOWN]);
+  assert.equal(shown.view.close.text, 'Back');
+  assert.deepEqual(imageBlocks(shown.view), []);
+  assert.equal(store.mapFileCount(), 0);
+  const warn = log.lines.find((l) => l.msg === 'map not shown');
+  assert.deepEqual(warn.fields, { module: 'map-check', reason: 'ratelimited' });
+  assert.ok(!JSON.stringify(log.lines).includes('Buffer'));
+});
+
+test('map-check exit, expired trigger: the hub\'s existing path (in place on the menu, logged); nothing is uploaded', async () => {
+  const { app, log } = mapSetup();
+  // The click reaches the app after its trigger expired (over 3 seconds).
+  app.issueTrigger = (id) => { app.triggers.set(id, Date.now() - 4000); return id; };
+  await app.dispatchAction('map-check:open', { view: { ...MENU_VIEW, hash: 'hmenu' } });
+  assert.deepEqual(app.views.map((v) => v.method), ['push', 'update']);
+  const [update] = calls(app, 'update');
+  assert.equal(update.view_id, 'VMENU');
+  assert.deepEqual(viewTexts(update.view), [MAP_NEEDS_WINDOW]);
+  assert.deepEqual(app.uploads, []);
+  assert.deepEqual(fallbacks(log).map((l) => l.fields), [{ where: 'open', reason: 'expired_trigger_id', hub: 'alpha', via: 'views.update' }]);
+  assert.ok(log.lines.some((l) => l.msg === 'image refused' && l.fields.reason === 'no map view'));
+});
+
+test('a click on an old message menu (no modal) uploads nothing', async () => {
+  const { app } = mapSetup();
+  await app.dispatchAction('map-check:open');
+  assert.deepEqual(app.uploads, []);
+  assert.deepEqual(app.responded.map((r) => r.text), [MAP_NEEDS_WINDOW]);
+});
+
+test('a second map in the same view replaces the first, and the first file is deleted once the second shows (a view switch)', async () => {
+  const twice = mapCheck(async ({ reply }) => {
+    await reply({ image: { png: PNG, alt: ALT } });
+    await reply({ image: { png: PNG, alt: 'Route map: Test pattern, no crew, 1 stops' } });
+  });
+  const { app, store } = mapSetup({ modules: [twice] });
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  const [first, second] = calls(app, 'update');
+  assert.deepEqual(imageBlocks(first.view).map((b) => b.slack_file.id), ['F1']);
+  assert.deepEqual(imageBlocks(second.view).map((b) => b.slack_file.id), ['F2']);
+  assert.equal(second.view.blocks.length, 1);
+  assert.deepEqual(app.deleted, ['F1']);
+  assert.deepEqual(store.mapFilesOf('U1:V1'), ['F2']);
+});
+
+test('a map that uploads but cannot be shown is deleted at once', async () => {
+  const { app, store } = mapSetup();
+  const update = app.client.views.update;
+  app.client.views.update = async (args) => {
+    if (imageBlocks(args.view).length) throw slackError('hash_conflict');
+    return update(args);
+  };
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  assert.deepEqual(app.deleted, ['F1']);
+  assert.equal(store.mapFileCount(), 0);
+  assert.deepEqual(viewTexts(calls(app, 'update').at(-1).view), [PLAIN_ERROR]);
+});
+
+test('an image in any other module\'s reply is refused: nothing uploaded, the refusal logged, the plain error shown (F6)', async () => {
+  const sneaky = handlerModule('sneaky', async ({ reply }) => reply({ text: 'look', image: { png: PNG, alt: ALT } }));
+  // Not dev-only: map-check's id alone is not enough.
+  const wide = Object.freeze({ ...mapCheck(), environments: ['dev', 'prod'] });
+  for (const mod of [sneaky, wide]) {
+    const { app, log } = mapSetup({ modules: [mod] });
+    await app.dispatchAction(`${mod.id}:open`, { view: MENU_VIEW });
+    assert.deepEqual(app.uploads, [], mod.id);
+    assert.deepEqual(viewTexts(calls(app, 'update')[0].view), [PLAIN_ERROR], mod.id);
+    assert.ok(log.lines.some((l) => l.msg === 'image refused' && l.fields.module === mod.id && l.fields.reason === 'this module may not show images'), mod.id);
+    assert.ok(!JSON.stringify(log.lines).includes('Buffer'), mod.id);
+    const [push] = calls(app, 'push');
+    assert.ok(!('notify_on_close' in push.view), mod.id);
+  }
+});
+
+test('a free-text alt is refused before upload: the view says the map could not be shown', async () => {
+  const leaky = mapCheck(async ({ reply }) => reply({ image: { png: PNG, alt: '12 Elm Street, Springfield' } }));
+  const { app, log } = mapSetup({ modules: [leaky] });
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  assert.deepEqual(app.uploads, []);
+  assert.deepEqual(viewTexts(calls(app, 'update')[0].view), [MAP_NOT_SHOWN]);
+  assert.ok(!JSON.stringify(log.lines).includes('Elm'));
+});
+
+test('fail closed: with no store, no Slack files client, no sweep or no map-file lifecycle, map-check shows "not available" and opens no map view', async () => {
+  for (const opts of [{ store: null }, { client: {} }, { sweeping: () => false }, { noMapFiles: true }]) {
+    let ran = false;
+    const { app, log } = mapSetup({ ...opts, modules: [mapCheck(async () => { ran = true; })] });
+    await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+    const what = JSON.stringify(Object.keys(opts));
+    assert.equal(ran, false, what);
+    assert.deepEqual(app.uploads, [], what);
+    const [push] = calls(app, 'push');
+    assert.deepEqual(viewTexts(push.view), [NOT_AVAILABLE], what);
+    assert.equal(push.view.title.text, 'Not available', what);
+    assert.ok(!('notify_on_close' in push.view), what);
+    assert.notEqual(push.view.callback_id, 'hub:map', what);
+    assert.ok(log.lines.some((l) => l.msg === 'hub action refused' && l.fields.reason === 'map files cannot be cleaned up'), what);
+  }
+});
+
+test('the PNG bytes never reach a log line or any Slack call but the upload', async () => {
+  const { app, log } = mapSetup();
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  await app.dispatchViewClosed('hub:map', { user: { id: 'U1' }, view: { id: 'V1' } });
+  const b64 = PNG.toString('base64').slice(0, 60);
+  for (const text of [JSON.stringify(log.lines), JSON.stringify(app.views), JSON.stringify(app.responded)]) {
+    assert.ok(!text.includes('Buffer'));
+    assert.ok(!text.includes(b64));
+  }
 });

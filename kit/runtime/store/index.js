@@ -17,6 +17,21 @@
 // Every call is synchronous: nothing can run between a check and a consume.
 // Tests inject the clock. Expired entries read as absent and are swept on
 // later writes.
+//
+// Map files (Story 15.1, AD-R15) are a record kind of their own, not a
+// namespace: the id of each uploaded map image, its owner and its expiry (15
+// minutes after it was recorded). An expired record is NOT dropped: it stays
+// until its file is deleted and the record removed, so the sweep job
+// (kit/runtime/jobs/sweep-map-files) finds it and a failed delete is retried.
+// sweep() never touches them. A new process given the same store finds every
+// record the previous one left.
+//
+//   store.addMapFile(fileId, owner);   // throws StoreError on a bad id, owner,
+//                                      // a duplicate id or a full table
+//   store.mapFilesOf(owner);           // [fileId] still recorded for an owner
+//   store.expiredMapFiles();           // [fileId] whose expiry has passed
+//   store.removeMapFile(fileId);       // true when a record was removed
+//   store.mapFileCount();
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -34,6 +49,12 @@ const NAMESPACES = Object.freeze({
 });
 
 const SWEEP_EVERY = 100;
+
+// Map file records (Story 15.1).
+const MAP_FILE_TTL = 15 * MINUTE;
+const MAX_MAP_FILES = 1000;
+const FILE_ID = /^F[A-Z0-9]{1,40}$/;
+const MAX_OWNER = 200;
 
 class StoreError extends Error {
   constructor(message) {
@@ -155,7 +176,45 @@ function createStore({ now = () => Date.now() } = {}) {
     return entry ? entry.value : undefined;
   }
 
-  return { get, set, consume, finish, done, sweep };
+  // fileId → { owner, expires }, in recording order.
+  const mapFiles = new Map();
+
+  function checkFileId(id) {
+    if (typeof id !== 'string' || !FILE_ID.test(id)) throw new StoreError('a map file id must look like a Slack file id (F…)');
+  }
+
+  function addMapFile(id, owner) {
+    checkFileId(id);
+    if (typeof owner !== 'string' || !owner || owner.length > MAX_OWNER) {
+      throw new StoreError(`a map file owner must be a non-empty string of at most ${MAX_OWNER} characters`);
+    }
+    if (mapFiles.has(id)) throw new StoreError('that map file is already recorded');
+    if (mapFiles.size >= MAX_MAP_FILES) throw new StoreError(`no room for another map file (${MAX_MAP_FILES} recorded)`);
+    mapFiles.set(id, Object.freeze({ owner, expires: now() + MAP_FILE_TTL }));
+  }
+
+  function mapFilesOf(owner) {
+    const out = [];
+    for (const [id, r] of mapFiles) if (r.owner === owner) out.push(id);
+    return out;
+  }
+
+  function expiredMapFiles() {
+    const t = now();
+    const out = [];
+    for (const [id, r] of mapFiles) if (r.expires <= t) out.push(id);
+    return out;
+  }
+
+  function removeMapFile(id) {
+    checkFileId(id);
+    return mapFiles.delete(id);
+  }
+
+  return {
+    get, set, consume, finish, done, sweep,
+    addMapFile, mapFilesOf, expiredMapFiles, removeMapFile, mapFileCount: () => mapFiles.size,
+  };
 }
 
-module.exports = { createStore, NAMESPACES, StoreError };
+module.exports = { createStore, NAMESPACES, StoreError, MAP_FILE_TTL, MAX_MAP_FILES };

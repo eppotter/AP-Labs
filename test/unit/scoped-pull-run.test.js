@@ -348,17 +348,40 @@ test('previewText cuts long cells and shows at most 10 rows', () => {
 
 test('the fake Slack enforces files.uploadV2\'s required fields, and deliverCsv sends them', async () => {
   assert.equal(invalidUpload({ channel_id: 'D1', filename: 'a.csv', content: 'x' }), null);
-  assert.match(invalidUpload({ filename: 'a.csv', content: 'x' }), /channel_id/);
+  // Like Slack (Story 15.1), an upload with no channel is accepted: the file
+  // is shared nowhere. deliverCsv's own check is below.
+  assert.equal(invalidUpload({ filename: 'a.csv', content: 'x' }), null);
+  assert.match(invalidUpload({ channel_id: '', filename: 'a.csv', content: 'x' }), /channel_id/);
   assert.match(invalidUpload({ channel_id: 'D1', content: 'x' }), /filename/);
   assert.match(invalidUpload({ channel_id: 'D1', filename: 'a.csv', content: '' }), /content or file/);
+  assert.match(invalidUpload({ filename: 'a.png', file: Buffer.alloc(0) }), /non-empty/);
+  assert.match(invalidUpload({ filename: 'a.png', file: Buffer.from('x'), content: 'x' }), /not both/);
   assert.match(invalidUpload({ channels: 'C1', channel_id: 'D1', filename: 'a.csv', content: 'x' }), /retired/);
   const app = new FakeSlackApp({});
-  await assert.rejects(app.client.files.uploadV2({ filename: 'a.csv', content: 'x' }), (e) => e.data.error === 'invalid_arguments');
+  await assert.rejects(app.client.files.uploadV2({ content: 'x' }), (e) => e.data.error === 'invalid_arguments');
   const res = await deliverCsv({ client: app.client, person: 'U7', filename: 'a.csv', title: 'A', content: 'x', comment: 'c' });
   assert.deepEqual(res, { channel: 'D7', permalink: 'https://fake.slack.test/files/F1' });
   assert.deepEqual(app.uploads, [{ channel_id: 'D7', filename: 'a.csv', title: 'A', content: 'x', initial_comment: 'c' }]);
   assert.equal(permalinkOf({ files: [{ files: [{ id: 'F', permalink: 'javascript:x' }] }] }), null);
   await assert.rejects(deliverCsv({ client: {}, person: 'U7', filename: 'a', content: 'x' }), /no Slack files client/);
+});
+
+// Moved from the fake (Story 15.1, F2): the fake now accepts an unshared
+// upload as Slack does, so deliverCsv's own test proves the CSV always names
+// the person's DM as channel_id and is never uploaded anywhere else.
+test('deliverCsv always uploads to the person\'s DM (channel_id required), and refuses before uploading when it is not a DM', async () => {
+  const app = new FakeSlackApp({});
+  await deliverCsv({ client: app.client, person: 'U7', filename: 'a.csv', title: 'A', content: 'x', comment: 'c' });
+  assert.equal(app.uploads.length, 1);
+  assert.equal(typeof app.uploads[0].channel_id, 'string');
+  assert.equal(app.uploads[0].channel_id, app.dms[0].channel);
+  assert.match(app.uploads[0].channel_id, /^D[A-Z0-9]+$/);
+  for (const channel of ['C0123456789', 'G0123456789', 'U7', '', null]) {
+    const other = new FakeSlackApp({});
+    other.dmChannel = () => channel;
+    await assert.rejects(deliverCsv({ client: other.client, person: 'U7', filename: 'a.csv', content: 'x' }), /did not return a DM/, String(channel));
+    assert.deepEqual(other.uploads, [], String(channel));
+  }
 });
 
 // Story 9.4 hands the AI service to the hubs for one use: the plain-English
@@ -380,7 +403,7 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
     'store, log, run: createRunner({ data, log, admin, store, hooks }), read: llm ? createReader({ llm, log }) : null,',
   ]);
   const app = fs.readFileSync(path.join(ROOT, 'kit/runtime/app/index.js'), 'utf8');
-  assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, data, llm, connectors \}\)/);
+  assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, data, llm, connectors, mapFiles \}\)/);
   // The approval-write archetype (Story 10.2) shows rows too: none of its files reaches or names the AI.
   const writeDir = path.join(ROOT, 'kit/runtime/archetypes/approval-write');
   for (const f of fs.readdirSync(writeDir)) {
