@@ -16,9 +16,19 @@
 //                Text is mrkdwn; a long reply is split into sections Slack
 //                accepts, never cut off (kit/runtime/slack/format)
 // The SDK adds only what a handler or its test needs beyond that, plus what a
-// connector adapter and its test need (kit/templates/connector.md).
+// connector adapter and its test need (kit/templates/connector.md), plus the
+// routing engine and its one coordinate read (Story 13.2, AD-R9):
+//   routing        the engine (kit/runtime/routing): validateInput, travel,
+//                  rules and the entry points as they land
+//   travelMatrix   (data, fromIds, toIds) => rows { from_node, to_node,
+//                  minutes }: the drive-time rectangle from the query
+//                  runner's own travelMatrix; feed it to
+//                  routing.travel.fromMatrix. Coordinates never reach app code.
+//   RoutingFault   what both refuse with
 
 const { DataUnavailableError, QueryRefusedError } = require('../data');
+const routing = require('../routing');
+const { RoutingFault } = require('../errors');
 const { createLog } = require('../log');
 // Slack mrkdwn escaping for anything a handler shows from data (AD-17).
 const { escapeText } = require('../messages');
@@ -62,6 +72,16 @@ function testContext({
   };
 }
 
+// The drive-time rectangle for fromIds x toIds, read by data's travelMatrix
+// (the query runner's, built inside createData: kit/runtime/data/travel.js).
+// data without one is refused, never read some other way.
+function travelMatrix(data, fromIds, toIds) {
+  if (!data || typeof data.travelMatrix !== 'function') {
+    return Promise.reject(new RoutingFault({ field: 'travelMatrix', problem: 'data_unavailable' }));
+  }
+  return data.travelMatrix(fromIds, toIds);
+}
+
 // A logger for a test that creates a connector (create() needs one): it
 // redacts like the app's, and keeps its JSON lines in .lines instead of
 // printing them.
@@ -73,5 +93,5 @@ function testLog() {
 module.exports = {
   testContext, testLog, escapeText, toMrkdwn, DataUnavailableError, QueryRefusedError,
   defineConnector, connectorContract, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
-  PartialFailure,
+  PartialFailure, routing, travelMatrix, RoutingFault,
 };
