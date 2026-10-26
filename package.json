@@ -26,6 +26,7 @@
     "engage": "node kit/hooks/engage.js",
     "land": "node kit/land/cli.js",
     "template:release": "node kit/release/release.js",
+    "template:publish": "node kit/release/publish.js",
     "template:check": "node kit/release/check.js",
     "template:update": "node kit/release/update.js",
     "onboard": "node kit/onboard/cli.js",

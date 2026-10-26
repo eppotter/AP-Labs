@@ -1,7 +1,8 @@
 'use strict';
 
-// Throwaway git repos for the template release and check tests (Story 11.5)
-// and the template update tests (Story 11.6, makeUpdateRepos below).
+// Throwaway git repos for the template release and check tests (Story 11.5),
+// the template update tests (Story 11.6, makeUpdateRepos below) and the
+// distribution publish tests (plan template-dist D.2, makePublishRepos).
 // Nothing here reaches GitHub or the network: "origin" is a bare repo in a
 // temp dir, and gh is a fake that prints the check runs a test sets.
 //
@@ -28,7 +29,7 @@ const { spawnSync, execFileSync } = require('node:child_process');
 
 const REPO = path.resolve(__dirname, '../..');
 
-const PASSING_RUNS = Object.freeze(['test', 'clean-bones', 'container'].map((name) => Object.freeze({ name, status: 'completed', conclusion: 'success' })));
+const PASSING_RUNS = Object.freeze(['test', 'clean-bones', 'container', 'dist'].map((name) => Object.freeze({ name, status: 'completed', conclusion: 'success' })));
 
 const CHANGELOG = [
   '# Changelog',
@@ -156,6 +157,11 @@ const DEMO = Object.freeze({
   'profiles/demo/profile.yml': 'schema_version: 1\n',
 });
 
+// A planning doc of the template's own, so the update tests never depend on
+// this repo's docs/planning/ (a distribution copy has none, plan
+// template-dist B3).
+const PLANNING_DOC = Object.freeze({ path: 'docs/planning/temp-git-plan.md', text: 'A plan the template ships.\n' });
+
 const FORK_LEDGER_LINE = '<!-- This fork\'s own ledger. -->';
 
 // A CHANGELOG.md entry for version.
@@ -168,7 +174,8 @@ const changelogEntry = (version, mustDo = ['- Nothing.']) => [
  *   origin.git      the template's remote: the fork's `upstream`
  *   template/       the template: a real copy of this repo's files (as
  *                   test/fixtures/temp-fork.js's copy mode makes them), plus
- *                   the demo client above, tagged v1.0.0 and pushed
+ *                   the demo client above and PLANNING_DOC, tagged v1.0.0
+ *                   and pushed
  *   fork/           cloned from origin.git at v1.0.0, `origin` renamed to
  *                   `upstream`; the demo client deleted, the Stub Co client
  *                   (test/fixtures/fork/) added, its own line on top of the
@@ -191,6 +198,7 @@ function makeUpdateRepos() {
     h.git(h.work, ['init', '-q', '-b', 'main']);
     h.git(h.work, ['remote', 'add', 'origin', '../origin.git']);
     for (const [rel, text] of Object.entries(DEMO)) h.write(h.work, rel, text);
+    h.write(h.work, PLANNING_DOC.path, PLANNING_DOC.text);
     h.write(h.work, 'CHANGELOG.md', `# Changelog\n\n## Unreleased\n\n${changelogEntry('v1.0.0')}`);
     h.commit(h.work, 'template v1.0.0');
     h.git(h.work, ['tag', '-a', 'v1.0.0', '-m', 'v1.0.0']);
@@ -252,4 +260,79 @@ function withUpdate(h) {
   });
 }
 
-module.exports = { makeTemplate, makeUpdateRepos, PASSING_RUNS, CHANGELOG, REPO, DEMO, FORK_LEDGER_LINE };
+// ---- distribution releases (plan template-dist, Story D.2) ---------------
+
+// A tiny template's files for the publish tests: an engine, the internal
+// paths that never ship (with made-up deny words in them, never real names),
+// a ledger with rows, a stand-in example client and a symlink.
+const DENY_WORDS = Object.freeze(['zorblax', 'frimp']);
+const PUBLISH_FILES = Object.freeze({
+  'kit/runtime/a.js': "'use strict';\nmodule.exports = 1;\n",
+  'kit/lib/b.js': "'use strict';\nmodule.exports = 2;\n",
+  'profiles/_schema/profile.schema.json': '{ "type": "object", "properties": { "schema_version": { "const": 1 } } }\n',
+  'package.json': '{ "name": "tiny-template", "private": true }\n',
+  'README.md': 'A template.\n',
+  'CHANGELOG.md': CHANGELOG,
+  'docs/ledger.md': [
+    '# Build ledger', '', 'One row per PR.', '', '## Builds', '',
+    '| PR | Story | Summary |', '|---|---|---|', '| #1 | 1.1 | The first build. |', '| #2 | 1.2 | The second. |', '',
+  ].join('\n'),
+  'docs/reference/dist-deny.txt': `# Made-up words for the tests.\n${DENY_WORDS.join('\n')}\n`,
+  'docs/reference/notes.md': 'Notes on zorblax, which never ship.\n',
+  'docs/planning/plan.md': 'A plan about frimp.\n',
+  'docs/PLAN-v1.md': 'The plan.\n',
+  'docs/HANDOFF.md': 'The handoff.\n',
+  'examples/demo/README.md': 'The demo client.\n',
+});
+
+/**
+ * The repos a dist release needs, in one temp dir:
+ *   origin.git   the source template's remote
+ *   template/    the source template (PUBLISH_FILES and a symlink
+ *                docs/readme-link -> ../README.md), tagged v1.0.0
+ *                (annotated) and pushed with main to origin.git
+ *   dist.git     an empty bare repo, the template's `dist` remote, added
+ *                with --no-tags
+ * Returns the handle with distBare and release(version, edit), which runs
+ * edit(templateRoot) when given, commits, tags (annotated) and pushes main and
+ * the tag to origin.git. handle.copy() gives each test its own.
+ */
+function makePublishRepos() {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-temp-git-')));
+  fs.mkdirSync(path.join(dir, 'home'));
+  const h = handle(dir);
+  try {
+    h.git(dir, ['init', '-q', '--bare', '-b', 'main', h.bare]);
+    h.git(dir, ['init', '-q', '--bare', '-b', 'main', path.join(dir, 'dist.git')]);
+    h.git(dir, ['init', '-q', '-b', 'main', h.work]);
+    h.git(h.work, ['remote', 'add', 'origin', '../origin.git']);
+    h.git(h.work, ['remote', 'add', '--no-tags', 'dist', '../dist.git']);
+    for (const [rel, text] of Object.entries(PUBLISH_FILES)) h.write(h.work, rel, text);
+    fs.symlinkSync('../README.md', path.join(h.work, 'docs/readme-link'));
+    h.commit(h.work, 'template v1.0.0');
+    h.git(h.work, ['tag', '-a', 'v1.0.0', '-m', 'v1.0.0']);
+    h.git(h.work, ['push', '-q', 'origin', 'main', 'refs/tags/v1.0.0']);
+  } catch (err) {
+    h.cleanup();
+    throw err;
+  }
+  return withPublish(h);
+}
+
+function withPublish(h) {
+  const copy = h.copy;
+  return Object.assign(h, {
+    distBare: path.join(h.dir, 'dist.git'),
+    release(version, edit) {
+      if (edit) edit(h.work);
+      h.write(h.work, 'CHANGELOG.md', `${fs.readFileSync(path.join(h.work, 'CHANGELOG.md'), 'utf8')}\n<!-- ${version} -->\n`);
+      h.commit(h.work, `template ${version}`);
+      h.git(h.work, ['tag', '-a', version, '-m', version]);
+      h.git(h.work, ['push', '-q', 'origin', 'main', `refs/tags/${version}`]);
+      return h.git(h.work, ['rev-parse', 'HEAD']);
+    },
+    copy: () => withPublish(copy()),
+  });
+}
+
+module.exports = { makeTemplate, makeUpdateRepos, makePublishRepos, PASSING_RUNS, CHANGELOG, REPO, DEMO, PLANNING_DOC, FORK_LEDGER_LINE, DENY_WORDS, PUBLISH_FILES };

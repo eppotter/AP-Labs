@@ -17,7 +17,7 @@ const path = require('node:path');
 const YAML = require('yaml');
 const { validateProfile } = require('../../kit/lib/profile');
 const { tierOf } = require('../../kit/lib/tier');
-const { referencePatterns } = require('../../kit/lib/dist');
+const { referencePatterns, isExcluded, REFERENCE_DIR } = require('../../kit/lib/dist');
 
 const REPO = path.join(__dirname, '../..');
 const GUIDE = fs.readFileSync(path.join(REPO, 'docs/fork-guide.md'), 'utf8');
@@ -128,6 +128,9 @@ test('fork guide: every path it names exists, or a step creates or deletes it', 
     }
     const deleted = DELETED_BY_STEP.find((d) => rel === d || rel.startsWith(`${d}/`));
     if (deleted && !hasExample) continue;
+    // A distribution copy (no docs/reference/) ships without the excluded
+    // paths by design (plan template-dist), so the guide may still name them.
+    if (isExcluded(rel) && !exists(REFERENCE_DIR)) continue;
     if (!exists(rel)) problems.push(`${raw}: does not exist`);
   }
   assert.deepEqual(problems, []);

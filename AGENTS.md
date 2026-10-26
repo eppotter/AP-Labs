@@ -48,6 +48,7 @@ A consulting practice (Ely Potter, Steven Auslander). Companies want AI in their
 - **Steps only CI can run** (a docker build, the network off) are named as untested in the builder's report and the PR body. The first CI run is their test. If the check itself proves wrong, the fix states the changed acceptance criterion in the plan and the PR, and Ely is told.
 - **Profiles are untrusted input.** The schema rejects unknown keys. `.aplabs/**` always floors at T3.
 - **Secrets:** never read, print, log or commit tokens. Commands that need a credential (for example publishing the fixture) are run by Ely, not by an agent.
+- **Client forks get releases only through the distribution repo.** `npm run template:publish -- vX.Y.Z` builds the dist commit and tag locally; Ely pushes them. The Orchestrator never passes `--push` to `template:publish` and never pushes to the `dist` remote.
 - **Reference repos are read-only.** They are listed in `docs/reference/README.md`. Read them with `git -C <repo> show main:<path>`. Never check out branches, install or run anything in them.
 - **No reference-client specifics outside `docs/reference/`** (names, paths, Slack ids, data). The deny list is `docs/reference/dist-deny.txt`.
 
@@ -121,7 +122,6 @@ Scope changes mid-program: `bmad-correct-course`. Do not route to BMAD's build, 
 - Merge yourself only when the human driving the session is an approver for the repo. For this template repo, that is Ely.
 - Otherwise stop when the PR is ready, post `npm run notify -- --kind decision` @-mentioning the approver, and wait.
 - Template releases are tagged with `npm run template:release -- vX.Y.Z`; Ely pushes the tag. The Orchestrator never passes `--push` to `template:release` and never runs `git push --tags`.
-
 ### Model roles
 
 - By default Opus builds and Codex reviews. Do not route a build to Codex without the human's say-so.

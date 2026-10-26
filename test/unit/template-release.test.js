@@ -55,6 +55,7 @@ test('a passing release creates the annotated tag on main\'s head, locally only,
   assert.equal(res.code, 0, res.stderr);
   assert.match(res.stdout, /tagged v0\.2\.0 on main/);
   assert.match(res.stdout, /not pushed/);
+  assert.match(res.stdout, /then publish it to the dist repo: npm run template:publish -- v0\.2\.0$/m, 'the next step');
   assert.equal(r.git(r.work, ['cat-file', '-t', 'v0.2.0']), 'tag', 'an annotated tag');
   assert.equal(r.git(r.work, ['rev-parse', 'v0.2.0^{commit}']), head);
   assert.doesNotMatch(remoteTags(r), /v0\.2\.0/, 'nothing is pushed without --push');
@@ -70,6 +71,7 @@ test('--push pushes only that tag to origin', (t) => {
   const res = release(r, ['v0.2.0', '--push']);
   assert.equal(res.code, 0, res.stderr);
   assert.match(res.stdout, /pushed v0\.2\.0 to origin/);
+  assert.match(res.stdout, /npm run template:publish -- v0\.2\.0$/m, 'the next step');
   const tags = remoteTags(r);
   assert.match(tags, /refs\/tags\/v0\.2\.0$/m);
   assert.doesNotMatch(tags, /unrelated-local-tag/, 'never --tags');
@@ -157,6 +159,7 @@ test('refuses when a check failed, is still running, or a named job is missing',
     [[...PASSING_RUNS, { name: 'lint', status: 'in_progress', conclusion: null }], /lint \(in_progress\)/],
     [PASSING_RUNS.filter((c) => c.name !== 'container'), /the "container" check is missing/],
     [PASSING_RUNS.filter((c) => c.name !== 'clean-bones'), /the "clean-bones" check is missing/],
+    [PASSING_RUNS.filter((c) => c.name !== 'dist'), /the "dist" check is missing/],
     [[], /no checks are reported on main's head/],
   ];
   const r = ready(t);
@@ -196,7 +199,7 @@ test('checkRunProblems: a required job must succeed; other checks may be skipped
   assert.deepEqual(lib.checkRunProblems([...PASSING_RUNS, { name: 'docs', status: 'completed', conclusion: 'skipped' }]), []);
   const skippedRequired = PASSING_RUNS.map((c) => (c.name === 'test' ? { ...c, conclusion: 'skipped' } : c));
   assert.deepEqual(lib.checkRunProblems(skippedRequired), ['the "test" check did not succeed on main\'s head']);
-  assert.deepEqual(lib.REQUIRED_JOBS, ['test', 'clean-bones', 'container']);
+  assert.deepEqual(lib.REQUIRED_JOBS, ['test', 'clean-bones', 'container', 'dist']);
 });
 
 test('versions compare as numbers', () => {
