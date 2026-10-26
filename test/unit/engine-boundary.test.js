@@ -6,7 +6,9 @@
 //   - no engine file (kit/**, profiles/_schema/**) references examples/;
 //   - the routing engine (kit/runtime/routing/**) requires only
 //     kit/runtime/scoring, kit/runtime/errors and its own files, and its code
-//     uses no clock, randomness, async or process state (AD-R1, Story 12.1).
+//     uses no clock, randomness, async or process state (AD-R1, Story 12.1);
+//   - only kit/runtime/data/index.js requires kit/runtime/data/travel.js, and
+//     that file requires only kit/runtime/errors (AD-R9, Story 13.2).
 // App dirs scanned: APLABS_APP_DIR when set, <repo>/app (a fork) and
 // examples/*/app (template dev), plus kit/templates/module and
 // kit/templates/connector always, so the check never passes by scanning nothing.
@@ -235,5 +237,73 @@ test('the routing check catches a require outside the rule, a name of examples/ 
     'kit/runtime/routing/bad.js: uses async',
     'kit/runtime/routing/bad.js: uses await',
     'kit/runtime/routing/bad.js: uses process',
+  ]);
+});
+
+// travelMatrix's template and checks (Story 13.2, AD-R9): kit/runtime/data/
+// travel.js may require only kit/runtime/errors (no DuckDB, no runner), and
+// only kit/runtime/data/index.js may require it, so the one place a forbidden
+// column is dropped is inside createData's closure. Tests may load it.
+const TRAVEL_READ = 'kit/runtime/data/travel.js';
+const TRAVEL_READ_USERS = ['kit/runtime/data/index.js'];
+const TRAVEL_READ_DEPS = ['kit/runtime/errors.js'];
+const SCANNED = ['kit', 'scripts', 'examples', 'app'];
+
+function resolved(spec, file, root) {
+  if (!spec.startsWith('.')) return spec;
+  const rel = slash(path.relative(root, path.resolve(path.dirname(file), spec)));
+  return rel.endsWith('.js') ? rel : `${rel}.js`;
+}
+
+function travelReadProblems(root = ROOT) {
+  const problems = [];
+  const target = path.join(root, TRAVEL_READ);
+  if (fs.existsSync(target)) {
+    for (const m of fs.readFileSync(target, 'utf8').matchAll(IMPORT)) {
+      const spec = m[2] || m[4] || m[6] || m[8];
+      if (!TRAVEL_READ_DEPS.includes(resolved(spec, target, root))) problems.push(`${TRAVEL_READ}: requires '${spec}'`);
+    }
+  }
+  for (const dir of SCANNED.map((d) => path.join(root, d)).filter((d) => fs.existsSync(d))) {
+    for (const file of jsFiles(dir)) {
+      const rel = slash(path.relative(root, file));
+      if (rel === TRAVEL_READ || TRAVEL_READ_USERS.includes(rel)) continue;
+      for (const m of fs.readFileSync(file, 'utf8').matchAll(IMPORT)) {
+        const spec = m[2] || m[4] || m[6] || m[8];
+        if (resolved(spec, file, root) === TRAVEL_READ || /(^|\/)kit\/runtime\/data\/travel(\.js)?$/.test(spec)) {
+          problems.push(`${rel}: requires '${spec}'`);
+        }
+      }
+    }
+  }
+  return problems;
+}
+
+test('only kit/runtime/data/index.js requires the travelMatrix template, which requires only kit/runtime/errors (AD-R9)', () => {
+  assert.ok(fs.existsSync(path.join(ROOT, TRAVEL_READ)));
+  assert.deepEqual(travelReadProblems(), []);
+});
+
+test('the travelMatrix check catches another requirer and a template that reaches DuckDB or the runner', (t) => {
+  const root = tmpDir(t);
+  fs.mkdirSync(path.join(root, 'kit/runtime/data'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'kit/runtime/slack'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'examples/acme/app'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'kit/runtime/data/index.js'), "require('./travel');\n");
+  const duckdb = ['@duckdb', 'node-api'].join('/'); // spelled apart: runtime-data.test.js scans for the literal
+  fs.writeFileSync(path.join(root, TRAVEL_READ), [
+    "require('../errors');",
+    `require('${duckdb}');`,
+    "require('./index');",
+    "require('../sql');",
+  ].join('\n'));
+  fs.writeFileSync(path.join(root, 'kit/runtime/slack/x.js'), "require('../data/travel');\n");
+  fs.writeFileSync(path.join(root, 'examples/acme/app/y.js'), "require('ap-labs/kit/runtime/data/travel');\n");
+  assert.deepEqual(travelReadProblems(root), [
+    `${TRAVEL_READ}: requires '${duckdb}'`,
+    `${TRAVEL_READ}: requires './index'`,
+    `${TRAVEL_READ}: requires '../sql'`,
+    "kit/runtime/slack/x.js: requires '../data/travel'",
+    "examples/acme/app/y.js: requires 'ap-labs/kit/runtime/data/travel'",
   ]);
 });
