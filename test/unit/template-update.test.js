@@ -218,6 +218,61 @@ test('a clean upstream edit to the ledger or planning docs is not applied', { sk
   assert.match(body, /- `docs\/planning\/new-upstream-plan\.md`/);
 });
 
+// Plan ledger-rows (AC5): docs/ledger/ (the build files) is fork-owned.
+const BUILD_HEADER = '| PR | Date | Story | Kind | Tier | Summary | DEPs |\n|---|---|---|---|---|---|---|\n';
+const buildFile = (summary) => `${BUILD_HEADER}| pending | 2026-01-01 | — | infra | T1 | ${summary} | — |\n`;
+
+test('a template update keeps the fork\'s build files and adds none of the template\'s', { skip: slowSkip() }, (t) => {
+  const r = setup(t);
+  r.write(r.fork, 'docs/ledger/builds/fork-day-one.md', buildFile('The fork\'s own row.'));
+  r.forkCommit('fork: its own build file');
+  r.release('v1.1.0', (w) => {
+    r.write(w, 'docs/ledger/builds/fork-day-one.md', buildFile('An upstream row of the same name.'));
+    r.write(w, 'docs/ledger/builds/upstream-only.md', buildFile('An upstream row.'));
+    r.write(w, 'docs/ledger/README.md', 'An upstream README.\n');
+  });
+  const res = run(r);
+  assert.equal(res.code, 0, res.err);
+  assert.equal(show(r, BRANCH, 'docs/ledger/builds/fork-day-one.md'), buildFile('The fork\'s own row.').trimEnd());
+  assert.ok(!exists(r, BRANCH, 'docs/ledger/builds/upstream-only.md'));
+  assert.equal(exists(r, BRANCH, 'docs/ledger/README.md'), exists(r, 'main', 'docs/ledger/README.md'));
+  if (exists(r, 'main', 'docs/ledger/README.md')) assert.equal(show(r, BRANCH, 'docs/ledger/README.md'), show(r, 'main', 'docs/ledger/README.md'));
+  assert.match(prBody(r), /`docs\/ledger\/builds\/fork-day-one\.md`: kept the fork's version \(fork-owned\)/);
+});
+
+test('a fork made before docs/ledger/ passes ledger-check after the update, with its row in either place', { skip: slowSkip() }, (t) => {
+  const r = setup(t);
+  fs.rmSync(path.join(r.fork, 'docs/ledger'), { recursive: true, force: true });
+  r.forkCommit('fork: made before docs/ledger/ existed');
+  r.release('v1.1.0', (w) => {
+    r.write(w, 'docs/ledger/README.md', 'An upstream README.\n');
+    r.write(w, 'docs/ledger/builds/upstream-only.md', buildFile('An upstream row.'));
+  });
+  const res = run(r);
+  assert.equal(res.code, 0, res.err);
+  assert.ok(!exists(r, BRANCH, 'docs/ledger/README.md'), 'the update adds no docs/ledger/ to a fork without one');
+  assert.ok(!exists(r, BRANCH, 'docs/ledger/builds/upstream-only.md'));
+
+  const check = (head) => r.run('scripts/ledger-check.js', ['--base', 'main', '--head', head], r.fork);
+  // The old way: the update PR's row in docs/ledger.md.
+  r.git(r.fork, ['checkout', '-q', BRANCH]);
+  const lines = fs.readFileSync(path.join(r.fork, 'docs/ledger.md'), 'utf8').split('\n');
+  const header = lines.findIndex((l) => l.startsWith('| PR | Date |'));
+  lines.splice(header + 2, 0, '| pending | 2026-01-01 | — | infra | T3 | Takes template v1.1.0. | — |');
+  fs.writeFileSync(path.join(r.fork, 'docs/ledger.md'), lines.join('\n'));
+  r.commit(r.fork, 'ledger: the update row');
+  const old = check(BRANCH);
+  assert.equal(old.code, 0, old.stderr);
+  assert.match(old.stdout, /docs\/ledger\.md is updated/);
+  // The new way: a build file of its own, on a branch from the update.
+  r.git(r.fork, ['checkout', '-q', '-b', 'take/v1.1.0', `${BRANCH}~1`]);
+  r.write(r.fork, 'docs/ledger/builds/take-v1.1.0.md', buildFile('Takes template v1.1.0.'));
+  r.commit(r.fork, 'ledger: the update row, as a build file');
+  const fresh = check('take/v1.1.0');
+  assert.equal(fresh.code, 0, fresh.stderr);
+  assert.match(fresh.stdout, /docs\/ledger\/builds\/take-v1\.1\.0\.md is added/);
+});
+
 test('an upstream file under .aplabs/ or the app dir aborts with the fork unchanged', { skip: slowSkip() }, (t) => {
   const r = setup(t);
   r.release('v1.1.0', (w) => {

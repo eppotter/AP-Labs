@@ -220,12 +220,20 @@ test('fork guide: explains template updates with the real command (Story 11.6)',
   assert.match(s, /`upstream`/);
   assert.match(s, /\*\*adds\*\* to the template and never edits the engine/);
   assert.doesNotMatch(s, /coming|not built yet/i);
-  for (const p of ['docs/ledger.md', 'docs/planning/', '.aplabs/', 'package.json', 'package-lock.json', '.aplabs/template-version']) {
+  for (const p of ['docs/ledger.md', 'docs/ledger/', 'docs/planning/', '.aplabs/', 'package.json', 'package-lock.json', '.aplabs/template-version']) {
     assert.ok(s.includes(`\`${p}\``), `the update section names ${p}`);
   }
   assert.match(s, /npm install --package-lock-only --ignore-scripts/);
   assert.match(s, /schema_version/);
   assert.match(s, /What a fork must do/);
+});
+
+test('fork guide: the fork\'s rows go in build files, and an older fork keeps docs/ledger.md (plan ledger-rows)', () => {
+  const start = section('3. Remove the example client and start an empty ledger');
+  assert.ok(start.includes('`docs/ledger/builds/<branch>.md`'), 'day one names the build file');
+  assert.match(start, /no build files ship/);
+  const update = section('Taking a template update');
+  assert.match(update, /A fork made before `docs\/ledger\/` existed gets none from the update and keeps adding rows to `docs\/ledger\.md`/);
 });
 
 test('the Slack setup doc links the fork guide', () => {

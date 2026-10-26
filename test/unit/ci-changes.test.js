@@ -137,11 +137,20 @@ test('main: a push runs everything', (t) => {
 
 // --- the workflow shape -----------------------------------------------------
 
-test('ci.yml: every PR runs; main runs on a CHANGELOG.md push or by hand', () => {
+// Plan ledger-rows (AC6): PRs land without main merged in, so every push to
+// main runs every job again (#205 had limited it to CHANGELOG.md pushes).
+test('ci.yml: every PR runs, every push to main runs, and so does a run by hand', () => {
   assert.ok('pull_request' in CI.on);
   assert.equal(CI.on.pull_request, null, 'no path or branch filter on pull requests');
-  assert.deepEqual(CI.on.push, { branches: ['main'], paths: ['CHANGELOG.md'] });
+  assert.deepEqual(CI.on.push, { branches: ['main'] }, 'no path filter on main: every push runs');
   assert.ok('workflow_dispatch' in CI.on);
+});
+
+test('a push to main runs every job, whatever it changed', () => {
+  for (const files of [['docs/a.md'], ['CHANGELOG.md'], ['kit/a.js'], ['docs/ledger/builds/feat-x.md'], [], null]) {
+    const p = ch.plan('push', files);
+    assert.deepEqual([p.code, p.container], [true, true], JSON.stringify(files));
+  }
 });
 
 test('ci.yml: a PR cancels its superseded run; any other run has its own group and is never cancelled', () => {

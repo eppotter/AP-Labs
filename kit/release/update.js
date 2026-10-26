@@ -21,8 +21,8 @@
 //   - .aplabs/** or the fork's app dir (app/, or APLABS_APP_DIR): abort;
 //   - under a root the fork deleted on purpose (derived from what it deleted
 //     since its recorded release): removed again;
-//   - the fork's ledger and planning docs (UPDATE_RULES.forkOwned): reset to
-//     the fork's main;
+//   - the fork's ledger, its build files (docs/ledger/) and planning docs
+//     (UPDATE_RULES.forkOwned): reset to the fork's main;
 //   - package.json and package-lock.json: the package rule (B10): the
 //     template's package.json with the fork's appended dependencies
 //     re-applied, and the template's lockfile, regenerated with

@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| #220 | 2026-10-26 | — | infra | T3 | Two open PRs no longer conflict over the ledger or the sprint status: each build adds its one row in its own file, `docs/ledger/builds/<branch>.md`, which never ships to client forks and which a template update keeps. `ledger-check` fails a PR that deletes a build file, edits another PR's, reuses a branch name, or adds a row in two places, and `npm test` re-checks every row together. Story PRs stop editing `sprint-status.yaml` (the Orchestrator refreshes it per epic). CI runs on every push to `main` again, so two PRs that clash only together show within minutes of the merge. | — |

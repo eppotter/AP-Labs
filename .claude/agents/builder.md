@@ -47,6 +47,11 @@ sensible default and report it.
 - Never edit vendored skills under `.agents/`.
 - Never build shared infrastructure inline (new tables, connections, credentials, agents,
   skills): stop and report the gap.
+- The story's ledger row goes in its own build file, `docs/ledger/builds/<branch>.md` (the
+  branch name lowercased, `/` as `-`; see `docs/ledger/README.md`), never in `docs/ledger.md`.
+  A DEP row it opens goes in `docs/ledger.md` with the next free id.
+- Never edit `docs/planning/implementation-artifacts/sprint-status.yaml`: the Orchestrator
+  refreshes it once per epic.
 - After a review round, record each Refuter result with
   `npm run review -- --refute <id> <confirmed|not-reproduced|cannot-verify> --note "<evidence>"`
   and fix only the confirmed findings the Orchestrator hands you.

@@ -27,8 +27,9 @@
 //       (Story 11.6, review B9) treats each path a template merge changes:
 //         fork        .aplabs/** or the app dir: the update aborts, naming it
 //         package     package.json and package-lock.json: the package rule
-//         fork-owned  UPDATE_RULES.forkOwned (the fork's ledger and planning
-//                     docs): reset to the fork's main
+//         fork-owned  UPDATE_RULES.forkOwned (the fork's ledger, its build
+//                     files in docs/ledger/ and its planning docs): reset to
+//                     the fork's main
 //         deleted     under a root the fork deleted on purpose: removed again
 //         template    everything else: the template's version is taken (a
 //                     conflict here aborts the update)
@@ -184,10 +185,13 @@ function packageDelta(templatePkg, forkPkg, { templateLock, forkLock } = {}) {
 // The two path lists a template update applies after its merge (Q16, B9).
 // forkOwned: files the fork owns although the template ships them too; the
 // update keeps the fork's version (repo-relative roots: a root covers itself
-// and everything under it). deletedOnPurpose: not a list, derived per fork by
-// deletedRoots() from what it deleted since its recorded release.
+// and everything under it; under() adds the '/', so a folder root has none).
+// docs/ledger holds the fork's build files (plan ledger-rows); a fork made
+// before it existed has none, and the update leaves it so. deletedOnPurpose:
+// not a list, derived per fork by deletedRoots() from what it deleted since
+// its recorded release.
 const UPDATE_RULES = Object.freeze({
-  forkOwned: Object.freeze(['docs/ledger.md', 'docs/planning']),
+  forkOwned: Object.freeze(['docs/ledger.md', 'docs/planning', 'docs/ledger']),
   deletedOnPurpose: 'derived: deletedRoots(files at the recorded release, files on the fork\'s main)',
 });
 

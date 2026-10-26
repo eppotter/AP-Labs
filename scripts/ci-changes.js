@@ -10,8 +10,10 @@
 // outputs) and the reason on stderr. Only a pull_request run is ever narrowed:
 // it lists the files the PR's merge commit changes against its base (the
 // checkout of refs/pull/N/merge, HEAD^1..HEAD, fetch depth 2). Every other
-// event (a push to main, a manual run) runs everything, so template:release
-// always sees the four jobs succeed on main's head.
+// event (every push to main, a manual run) runs everything (plan ledger-rows:
+// PRs land without main merged in, so main's own run is where two PRs that
+// clash only together show), and template:release always sees the four jobs
+// succeed on main's head.
 //
 //   code       false only for a docs-only PR: the review tool's docs-only rule
 //              (kit/lib/review exemptionFor) AND every file under docs/. A .md

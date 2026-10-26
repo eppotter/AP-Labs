@@ -106,13 +106,13 @@ git rm -r examples/brightside profiles/brightside
 
 Leave `package.json` as it is, including `aplabs.appDirs`: it only adds folders to scan, and a missing one is fine. The `fixture:*` scripts in `package.json` name the example's folder, so they stop working in a fork; CI skips its fixture steps in a fork with no example. To build a synthetic fixture of your own, run the same tools on your folder (`node kit/fixture/build.js <your-fixture-dir>`).
 
-Then start the fork's own build ledger. `docs/ledger.md` arrives with no rows (the introduction, both headings and both table header rows only), so there is nothing to delete; just check it. The fork's first row is the day-one PR.
+Then start the fork's own build ledger. `docs/ledger.md` arrives with no rows (the introduction, both headings and both table header rows only), and `docs/ledger/` holds only its README (no build files ship), so there is nothing to delete; just check it. The fork's first row is the day-one PR, in its own build file, `docs/ledger/builds/<branch>.md` (see `docs/ledger/README.md`). DEP rows go in `docs/ledger.md`.
 
 ```bash
 node --test test/unit/ledger.test.js
 ```
 
-The fork also keeps its own `docs/planning/` (the distribution repo ships none). A template update leaves the fork's ledger and planning files as they are.
+The fork also keeps its own `docs/planning/` (the distribution repo ships none). A template update leaves the fork's ledger, its build files and its planning files as they are.
 
 ## 4. Record the template version
 
@@ -258,7 +258,7 @@ Then it:
 1. Fetches the release from `upstream` and merges it into a new branch, template/v0.3.0, made from `main`, with a merge commit.
 2. Sorts out the paths the release changed:
    - files the fork deleted on purpose since its recorded release (the example client, step 3) stay deleted, and new template files under those folders stay out;
-   - the fork's own `docs/ledger.md` and `docs/planning/` stay exactly as they are on `main`;
+   - the fork's own `docs/ledger.md`, `docs/ledger/` (its build files) and `docs/planning/` stay exactly as they are on `main`. A fork made before `docs/ledger/` existed gets none from the update and keeps adding rows to `docs/ledger.md`, which still passes the ledger check; to switch to build files, copy the README in from the release (`git checkout vX.Y.Z -- docs/ledger/README.md`);
    - `package.json` becomes the template's, with the fork's appended dependencies added back, and `package-lock.json` is regenerated (`npm install --package-lock-only --ignore-scripts`);
    - if the release touches the fork's own files (`.aplabs/` or the app dir `app/`), or any other file conflicts, it stops, leaves the fork exactly as it was and back on `main`, and names the files. It also stops if the template now ships a dependency the fork appended: remove the fork's entry on `main` first.
 3. Upgrades `.aplabs/profile.yml` when the release raises the profile's `schema_version`, keeping its comments, using the steps in `kit/lib/template/migrations`. It refuses a fork whose profile is on a newer version than the release.

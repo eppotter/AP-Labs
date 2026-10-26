@@ -2,8 +2,8 @@
 
 // The distribution tree (plan template-dist, Story D.1): what a client fork
 // receives. Clients never clone the source repo; they clone a distribution
-// repo whose commits are the release's files minus EXCLUDED, with the
-// ledger's rows emptied. This module holds the pure half, shared by the
+// repo whose commits are the release's files minus EXCLUDED (the build files
+// in docs/ledger/builds/ among them), with the ledger's rows emptied. This module holds the pure half, shared by the
 // tripwire test and the publish command (kit/release/publish.js, Story D.2):
 //
 //   EXCLUDED          the internal paths that never ship
@@ -37,7 +37,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { ENGINE_DIRS } = require('../../runtime/paths');
 
-const EXCLUDED = Object.freeze(['docs/reference', 'docs/planning', 'docs/PLAN-v1.md', 'docs/HANDOFF.md']);
+// docs/ledger/builds: the build files (plan ledger-rows), one row each, named
+// after their branch. Like the ledger's rows, none ships, and neither do their
+// names; docs/ledger/README.md (what goes in builds/) does.
+const EXCLUDED = Object.freeze(['docs/reference', 'docs/planning', 'docs/PLAN-v1.md', 'docs/HANDOFF.md', 'docs/ledger/builds']);
 const REFERENCE_DIR = 'docs/reference';
 const DENY_FILE = 'docs/reference/dist-deny.txt';
 const LEDGER_PATH = 'docs/ledger.md';
