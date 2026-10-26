@@ -21,7 +21,8 @@ other card stays **approved** as signed on 2026-10-25.
 <!-- The client's standing rules for any build. One rule card each (below). -->
 
 - GRD-001: the bot only reads data. No query writes, changes structure or attaches anything.
-- GRD-002: forbidden columns (coordinates included) are never named, and `SELECT *` is refused.
+- GRD-002: forbidden columns (coordinates included) are never named, and `SELECT *` is refused;
+  `travelMatrix` alone reads the coordinates and returns drive minutes only.
 - GRD-003: MotherDuck is read through the locked reader sequence; one accepted exception (`my_db`).
 - GRD-004: anything that writes to an outside system goes through the approval step, never a module.
 - GRD-005: the AI fills in a form and nothing else: no data rows, a spend breaker and an off switch.
@@ -115,17 +116,19 @@ exception_workflow and data_quality_guard.
 - rule: no query may name a column in the profile's `sql.forbidden_columns` (client phone, property
   street address, property postal code, and the four coordinate columns `properties.geo_lat_e6`,
   `properties.geo_lon_e6`, `crews.base_geo_lat_e6`, `crews.base_geo_lon_e6`), and while any is set,
-  `SELECT *` and whole-row references are refused. Email is allowed: the win-back push needs it.
+  `SELECT *` and whole-row references are refused. The coordinate columns have one named exception,
+  `travelMatrix` (below). Email is allowed: the win-back push needs it.
   `properties.access_method` holds a method, never a door code. NOT a rule about display: a column
   that is allowed can still be limited by who may use the entry (GRD-006).
 - coordinates (Story 13.3, route optimization): the four coordinate columns are forbidden before the
-  fixture gains them (Story 14.1). Only the kit's drive-time read (`travelMatrix`,
-  `kit/runtime/data`) may read them, and only the columns the profile's `routing.coordinates`
-  declares; it returns whole minutes between two places, never a latitude or longitude, and every
-  other forbidden column still applies to it. No coordinate value, street address or postal code
-  appears as text anywhere: Slack, logs, reasons, errors or AI input. NOT the map image: showing a
-  coarse map in the routing modal is a separate update to this card that Dana signs at Story 15.5
-  (DEP-025); until then no Brightside module shows a map.
+  fixture gains them (Story 14.1), and they stay forbidden to every query and every other read path.
+  The one named exception is the kit's drive-time read, `travelMatrix`
+  (`kit/runtime/data/travel.js`): it alone may read them, and only the columns the profile's
+  `routing.coordinates` declares. It returns whole-minute drive times between two places only, never
+  a latitude or longitude, and every other forbidden column still applies to it. No coordinate
+  value, street address or postal code appears as text anywhere: Slack, logs, reasons, errors or AI
+  input. NOT the map image: showing a coarse map in the routing modal is a separate update to this
+  card that Dana signs at Story 15.5 (DEP-025); until then no Brightside module shows a map.
 - owner: Dana Reyes
 - evidence: profile `sql.forbidden_columns` and `routing`; `kit/runtime/sql`; `fixture-tables.md`
   "Rules"; architecture-routing AD-R9 and AD-R10. The mock CRM's field list and the email

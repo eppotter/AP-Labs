@@ -31,6 +31,13 @@ test('GRD-002 names the four coordinate columns and is a draft again', () => {
   assert.match(grd, /\n- status: draft\b/);
 });
 
+test('GRD-002 names travelMatrix as the one coordinate exception, minutes only', () => {
+  const grd = card('GRD-002');
+  assert.match(grd, /stay forbidden to every query and every other read path/);
+  assert.match(grd, /one named exception is the kit's drive-time read, `travelMatrix`/);
+  assert.match(grd, /whole-minute drive times between two places only, never\s+a latitude or longitude/);
+});
+
 test('the crew-out rule is recorded as pending Dana Reyes (DEP-028)', () => {
   const text = read();
   assert.match(text, /lead is absent, or nobody on the crew is present/);

@@ -94,7 +94,8 @@ sql:
     - properties.street_address
     - properties.postal_code
     # Coordinates (Story 13.3, GRD-002): forbidden before the generator adds them
-    # (Story 14.1). Only travelMatrix reads them, and returns minutes only (AD-R9).
+    # (Story 14.1), and forbidden to every query and every other read path.
+    # travelMatrix is the one exception; it returns whole minutes only (AD-R9).
     - properties.geo_lat_e6
     - properties.geo_lon_e6
     - crews.base_geo_lat_e6
