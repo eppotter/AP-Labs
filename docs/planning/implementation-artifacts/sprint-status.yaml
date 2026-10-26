@@ -138,7 +138,7 @@ development_status:
   14-2-rules-absences-and-the-planted-scenarios-s1-s3: review
   14-3-the-brightside-adapter: review
   14-4-routing-truths-that-reconcile-under-npm-run-verify: backlog
-  14-5-a-read-only-cli-for-the-dispatcher: backlog
+  14-5-a-read-only-cli-for-the-dispatcher: review
   epic-14-retrospective: optional
 
   epic-15: backlog
