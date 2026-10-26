@@ -34,6 +34,7 @@ const DIST_SKIP = /^skipped: not the template source repo$/m;
 
 // Steps not run here, and why. Every other run step is.
 const NOT_RUN = Object.freeze({
+  'changes/Changed files': 'writes the job outputs to $GITHUB_OUTPUT; test/unit/ci-changes.test.js tests the script',
   'test/Install': 'npm ci downloads packages (network)',
   'test/Tests (unit, hook, acceptance)': 'the fast suite; CI runs it, not this copy',
   'test/Slow tests (fork copy, template update)': 'runs the ci-fork test itself (and the template-update test); CI runs it',
