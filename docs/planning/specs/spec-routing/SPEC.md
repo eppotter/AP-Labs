@@ -36,13 +36,21 @@ Field-service clients plan crews' days by hand, and when a day breaks (a cancell
 - **CAP-7**
   - **intent:** The Brightside demo data gains what routing needs (`data-design.md`): synthetic coordinates per property and per crew base, a future schedule, customer rules and crew absences, generated deterministically with the rest of the fixture.
   - **success:** Fixture integrity and synthetic-only checks pass; the same seed gives identical files; the routing truths are `truth` blocks in Brightside's `context/data.md` and match.
+- **CAP-8** (added 2026-10-26, Ely)
+  - **intent:** Map view in Slack. From the hub menu, a dispatcher or crew lead opens Routing, picks a day and a view, and a modal shows a plain map of the route with a short text list under it. A select menu in the modal switches between four views, redrawn in place: (a) booked vs optimized for a crew's day, with drive minutes for each; (b) before vs after a route change (cancellation or crew out), moved stops highlighted, cross-zone recommendations drawn differently; (c) all crews in a zone for a day, one color per crew; (d) gap fill: the gap on a crew's day and where the top five candidates sit relative to it. The map is a plain plot on a blank background (numbered stops, one line color per crew, zone outlines, crew base marker), drawn on our server as a PNG. Nothing goes to a map provider.
+  - **success:** The same input always gives the same drawing; every view renders on fixture inputs; the image holds no text; no coordinate, address or postal code appears in any text; every way out of the modal has a test; a live check in dev Slack shows the image in the modal.
+- **CAP-9** (added 2026-10-26, Ely)
+  - **intent:** Audience. Dispatchers see every crew. A crew lead sees only their own crew: every view is filtered to that crew before any position is read. Who is a crew lead, and of which crew, lives in the client profile, not in code. Dana Reyes signs off the audience.
+  - **success:** Tests show a crew lead's map and text hold only their crew's stops, a crew lead with no crew mapping is refused, and access is re-checked on every view switch.
 
 ## Constraints
 
 - Deterministic solver: no LLM anywhere in routing, and no dependency on Epic 9 (plain-English parameters). Inputs are typed.
 - Objective order is fixed: never break a hard rule; then keep the same crew where possible (preferred-crew penalty); then minimize drive time; then finish by the aim-finish time (18:00 soft; 23:00 is the hard limit). Each has its own position in the cost tuple, and a lower priority never trades against a higher one. A stop that cannot be placed without breaking a hard rule is returned unplaced with a reason.
 - Suggest only. Nothing is written back to any scheduling system; techs call customers and update by hand.
-- Coordinates are internal inputs only: never shown in Slack, never sent to an LLM, never in a reason. Address columns (`properties.street_address`, `postal_code`) stay forbidden and are not used.
+- No location as text, ever: no coordinate value, street address or postal code appears as text anywhere (Slack text, logs, reasons, LLM input). Address columns (`properties.street_address`, `postal_code`) stay forbidden and are not used.
+- **Map image rule (changed 2026-10-26, Ely; a T3 guardrail change, Dana Reyes signs it at Story 15.5):** a rendered map image is allowed. It is shown only inside the routing modal, only to the routing audience (CAP-9), never posted to a channel and never sent to an LLM. Plainly: the image reveals approximate locations. It has no street tiles, scale or axis values, but anyone who knows where two of the places are can line it up with a real map. How approximate, in numbers: every place is rounded to a grid cell about 220 m north-south and 140 to 190 m east-west, so a marker is within about 150 m of the real place and never closer; every map covers at least 5 km each way; each image file is deleted from Slack within 20 minutes of upload. The module runs in dev only until Dana signs (Story 15.6 turns on prod). This replaces the earlier rule that coordinates never reach Slack in any form.
+- Map drawing is offline: no map provider, no network call. A street basemap waits for the maps connector.
 - Crew-day hard limits come from configuration, not code. The fixture generator's values are the demo defaults: earliest start 06:00, latest finish 23:00, 15-minute slots.
 - Gap-fill candidates come only from scheduled visits in the next 14 days after the gap's date. Ranking uses closeness to the gap, flexibility, how soon the next visit is due, and window fit; reuse `kit/runtime/scoring` (declared weights, a reason per row) where it fits.
 - Generic in the kit: no Brightside names, zones or ids in engine code; Brightside wiring ships later as example modules.
@@ -54,7 +62,8 @@ Field-service clients plan crews' days by hand, and when a day breaks (a cancell
 - A real maps or routing API (a later connector).
 - Write-back to a scheduling system, or approve-and-push (approval-write archetype, later).
 - Any LLM in solving, ranking or parameter filling.
-- Slack UX, access key and hub wiring (deferred to the Brightside phase).
+- Slack UX beyond the routing map modal (Epic 15): no channel posts, no new slash command (Routing opens from the hub menu), no buttons that act on a plan.
+- A street basemap or map tiles (waits for the maps connector).
 - Live traffic or time-of-day travel speeds.
 - Multi-day optimization beyond the 14-day candidate pull.
 - Crew skills or equipment matching.
@@ -62,15 +71,21 @@ Field-service clients plan crews' days by hand, and when a day breaks (a cancell
 ## Success signal
 
 - On the Brightside fixture, given a planted broken day (a cancelled afternoon visit on crew 2 at as_of+2, and crew 7 out sick at as_of+3), the engine returns the gap's top-five candidates and the orphaned stops' placements exactly as the known-answer truths state, every row with a plain reason and no coordinates in the output, and `npm run verify` reconciles them offline.
+- In dev Slack, a dispatcher opens Routing for S3's day and switches through all four views, and a crew lead sees only their own crew; no location appears as text and the image never leaves the modal.
 
 ## Assumptions
 
-- Dispatcher is the first user; crews later. Neither changes the engine.
+- Dispatchers and crew leads are the Slack users (Ely, 2026-10-26); other crew members later. None of this changes the engine.
 - "Flexibility" for gap-fill is a `flexible` flag the adapter sets on each candidate: true when the stop has no hard day-of-week or time-of-day rule. No new rule type; the engine never infers it.
 - A crew's base is its day's start and end point for drive-time estimates.
 - One day at a time is enough for v1; the 14-day pull only feeds candidates, it does not re-plan those days.
 
 ## Open Questions
+
+Open (Epic 15, added 2026-10-26):
+- **Private image in a modal:** whether Slack shows a privately uploaded file (no channel) in a modal image block is unverified. Story 15.1 live-checks it. Fallback: send the image to the requester's own DM with the bot and link it from the modal; that fallback needs Dana Reyes's yes, because the image then sits in a DM rather than only in the modal.
+- **Crew lead and gap-fill candidates:** candidates can be customers booked on other crews. Default until Dana decides: a crew lead sees only candidates booked on their own crew; the rest are counted, not named or drawn.
+- **Audience list:** which Brightside people are dispatchers and which are crew leads of which crew (Dana Reyes; blocks Story 15.5 only).
 
 Resolved 2026-10-26 (architect T3 review): latest finish (23:00 hard, 18:00 soft, own cost position); day and window strictness (per rule instance, default hard); quality bar (booked-order bar plus a known-optimal unit test); unabsorbable stops (unplaced, call to rebook); the 14-day schedule (separate `scheduled_visits` table, data-design §2). The original questions stay below for the record.
 

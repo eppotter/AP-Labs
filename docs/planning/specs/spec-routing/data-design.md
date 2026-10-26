@@ -62,11 +62,28 @@ detour / speed inside DuckDB, rounds to 1e-6 before rounding up, and returns int
 Every DuckDB error becomes a fixed-text RoutingFault. Coordinates never reach JS module code, logs,
 Slack or an LLM.
 
+Map read path (added 2026-10-26 for the Slack map, Epic 15; SQLsmith to confirm the SQL at Story
+15.2): a second read, `mapPoints(nodeIds, frame)`, in the same closure and under the same guard,
+cap and refusal tests. `frame` is `{ width, height, padding }` integers within kit bounds. One static
+template projects the requested nodes inside DuckDB. First it snaps each micro-degree value to
+the `routing.map_grid_e6` grid (default 2000, about 220 m north-south), rounding to the nearest
+multiple. Then x comes from longitude scaled by the cosine of the box's middle latitude, y from
+latitude flipped so north is up, both fitted to the bounding box of the requested nodes only, with
+each side widened around its centre to at least `routing.map_min_span_km` (default 5), plus
+padding, centred, then rounded to integers. It returns `node, x, y` (INTEGER pixels) and never a
+latitude or longitude. One node, or nodes in one cell, sit at the frame's centre. Capped at
+`routing.max_points` (default 500). Duplicate node ids are refused; an unknown id, or a node whose
+coordinate is null, is left out of the result (the caller treats a missing node as a fault). It is not on the data object modules receive and not in the
+sdk; only the routing-map archetype may require it. Pixel positions are not coordinates, but they
+still trace the layout: they stay in process memory, never in text or logs (architecture AD-R12,
+AD-R13).
+
 - **T3 profile change:** add the 4 columns to `sql.forbidden_columns` and a new `routing:` block
   (coordinates, speed_kmh, detour_factor, min_travel_minutes = 5). The profile JSON Schema rejects
   unknown keys, so the schema changes too (profiles/**).
 - **T3 kit change** (computed: `kit/runtime/data/**` is an engine T3 floor): `travelMatrix` in
-  kit/runtime/data. A test must prove no other caller can drop a forbidden column.
+  kit/runtime/data. A test must prove no other caller can drop a forbidden column. `mapPoints`
+  (Story 15.2) is the same kind of change and gets the same tests.
 
 ## 4. Engine input contract (kit never reads Brightside tables)
 
@@ -161,7 +178,9 @@ unit test (Story 12.3).
 - **Moving up:** cadence spacing (default: not closer than half the cadence to the previous visit).
   A plan's later visits do not shift.
 - **Cross-zone:** allowed but flagged in `moves[]`. Zone comes from crews.zone_id vs clients.zone_id.
-- **Audience:** output is for ops schedulers: crew names, client name, city, times. Never
-  coordinates, street address or postal code. Drive minutes are fine (history already has them).
+- **Audience:** output is for dispatchers and crew leads (a crew lead sees only their own crew):
+  crew names, client name, city, times. Never coordinates, street address or postal code as text.
+  Drive minutes are fine (history already has them). The map image shows approximate locations and
+  is allowed only inside the routing modal (SPEC constraints, changed 2026-10-26).
 - **Squeezed days:** about 30 historical crew-days exceed the day. The future generator must keep
   every crew-day within 06:00-23:00 or squeeze it, and the planted S3 near-limit day must fit exactly.
