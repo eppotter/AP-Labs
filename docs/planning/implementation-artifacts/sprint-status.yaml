@@ -127,8 +127,8 @@ development_status:
   12-5-fill-a-gap-with-ranked-candidates: backlog
   epic-12-retrospective: optional
 
-  epic-13: backlog
-  13-1-the-profile-s-routing-block: backlog
+  epic-13: in-progress
+  13-1-the-profile-s-routing-block: review
   13-2-travelmatrix-the-one-coordinate-read-path: backlog
   13-3-brightside-forbids-the-coordinates-and-declares-routing: backlog
   epic-13-retrospective: optional

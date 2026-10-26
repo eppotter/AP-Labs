@@ -266,3 +266,5 @@ Then it:
 5. Pushes the branch to `origin` and opens a PR in the fork. The PR copies the release's "What a fork must do" lines and lists every path it handled, the package files and any profile change.
 
 Read the PR like any other: do what "What a fork must do" says, check the profile diff if there is one, and merge it through the normal review. `.aplabs/` changes are T3, so the update PR always gets the full review.
+
+**Take the update before adding a new profile block.** The profile schema refuses unknown keys, so a kit older than a block refuses a profile that uses it. For example, a kit from before the routing block refuses a profile with a `routing:` key. Take the template update first, then add the block to `.aplabs/profile.yml`.
