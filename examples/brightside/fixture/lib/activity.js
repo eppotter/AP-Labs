@@ -589,4 +589,4 @@ function buildActivity(rng, reference, { asOf, targets = null }) {
   return toRows(ctx, plans, visits, invoices);
 }
 
-module.exports = { buildActivity };
+module.exports = { buildActivity, scheduleDays };

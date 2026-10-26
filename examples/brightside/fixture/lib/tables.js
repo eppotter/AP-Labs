@@ -7,8 +7,11 @@
 // (zones to properties); Story 7.2 the activity tables and fixture_meta.
 // The labour, home-detail and scheduling build (lib/operations.js) added
 // staff, pay_rates and timesheets, and appended columns to crew_memberships,
-// properties and visits. Appended columns always go last, so every earlier
-// column keeps its place and its values.
+// properties and visits. The routing build (lib/routing.js) appended
+// coordinates to crews and properties and added scheduled_visits,
+// service_rules and staff_absences. Appended
+// columns and tables always go last, so every earlier column keeps its place
+// and its values.
 
 const TABLES = [
   {
@@ -40,6 +43,11 @@ const TABLES = [
       { name: 'crew_id', type: 'INTEGER', pk: true },
       { name: 'zone_id', type: 'VARCHAR', notNull: true, references: 'zones' },
       { name: 'name', type: 'VARCHAR', notNull: true },
+      // The crew's base (appended, lib/routing.js): synthetic micro-degrees,
+      // near its zone's first city. Forbidden columns (profile
+      // sql.forbidden_columns); only travelMatrix reads them.
+      { name: 'base_geo_lat_e6', type: 'INTEGER', notNull: true },
+      { name: 'base_geo_lon_e6', type: 'INTEGER', notNull: true },
     ],
   },
   {
@@ -121,6 +129,11 @@ const TABLES = [
       // How the crew gets in: key, lockbox, client_home or door_code_on_file.
       // Never the code or key itself.
       { name: 'access_method', type: 'VARCHAR', notNull: true },
+      // Location (appended, lib/routing.js): synthetic micro-degrees inside
+      // the fixture box, near the city's synthetic centre. Forbidden columns;
+      // only travelMatrix reads them.
+      { name: 'geo_lat_e6', type: 'INTEGER', notNull: true },
+      { name: 'geo_lon_e6', type: 'INTEGER', notNull: true },
     ],
   },
   {
@@ -232,6 +245,76 @@ const TABLES = [
       { name: 'clock_out', type: 'TIMESTAMP', notNull: true },
       { name: 'minutes', type: 'INTEGER', notNull: true },
     ],
+  },
+  {
+    // The booked schedule after as_of (lib/routing.js): each active plan's
+    // visits from the next cadence date after its last history visit through
+    // fixture_meta schedule_horizon_end, on the plan's crew. Kept apart from
+    // visits so integrity-no-date-after-as-of keeps its scope. Its ids overlap
+    // visit_id's: a view of both tables is a UNION ALL with a source column.
+    name: 'scheduled_visits',
+    columns: [
+      { name: 'scheduled_visit_id', type: 'INTEGER', pk: true },
+      { name: 'property_id', type: 'INTEGER', notNull: true, references: 'properties' },
+      { name: 'plan_id', type: 'INTEGER', notNull: true, references: 'plans' },
+      { name: 'crew_id', type: 'INTEGER', notNull: true, references: 'crews' },
+      { name: 'package_id', type: 'VARCHAR', notNull: true, references: 'packages' },
+      // After as_of, on or before schedule_horizon_end.
+      { name: 'visit_date', type: 'DATE', notNull: true },
+      // scheduled or cancelled.
+      { name: 'status', type: 'VARCHAR', notNull: true },
+      // When the status was set, on or before as_of: the plan's start for a
+      // scheduled visit, the day of the call for a cancelled one.
+      { name: 'status_changed_on', type: 'DATE', notNull: true },
+      // As in visits: morning (scheduled_start before 12:00) or afternoon.
+      { name: 'arrival_window', type: 'VARCHAR', notNull: true },
+      { name: 'scheduled_start', type: 'TIME', notNull: true },
+      { name: 'scheduled_minutes', type: 'INTEGER', notNull: true },
+      // The whole crew's labour for the visit: scheduled_minutes is this over
+      // the crew's headcount, rounded to 15, at least 30 (unless the day was
+      // squeezed), so a short-handed crew's time can be worked out again.
+      { name: 'labour_minutes', type: 'INTEGER', notNull: true },
+      // 1..n within the crew's day (crew_id, visit_date), cancelled visits
+      // included. The booked order: cities in a random order, stops shuffled
+      // within each city. Deliberately not optimal.
+      { name: 'route_order', type: 'INTEGER', notNull: true },
+      // Drive minutes from the previous stop, or from the crew's base for
+      // route_order 1: travelMatrix's figure for the two places.
+      { name: 'travel_minutes_from_previous', type: 'INTEGER', notNull: true },
+    ],
+  },
+  {
+    // A customer's rules for its visits (lib/routing.js), long form: one row
+    // per (property, rule type), so a new rule type needs no schema change.
+    // Every rule matches the property's own booked visits (integrity-rules).
+    name: 'service_rules',
+    columns: [
+      { name: 'rule_id', type: 'INTEGER', pk: true },
+      { name: 'property_id', type: 'INTEGER', notNull: true, references: 'properties' },
+      // preferred_crew, day_of_week or time_of_day.
+      { name: 'rule_type', type: 'VARCHAR', notNull: true },
+      // preferred_crew: a crew_id; day_of_week: ISO day names in week order,
+      // separated by | (MON|THU); time_of_day: morning or afternoon.
+      { name: 'value', type: 'VARCHAR', notNull: true },
+      // soft for preferred_crew, hard for the other two.
+      { name: 'strength', type: 'VARCHAR', notNull: true },
+    ],
+    unique: [['property_id', 'rule_type']],
+  },
+  {
+    // A staff member off for a day after as_of, as known on as_of
+    // (lib/routing.js). Only staff whose membership covers the day. No
+    // reason is kept: why someone is off is their business.
+    name: 'staff_absences',
+    columns: [
+      { name: 'absence_id', type: 'INTEGER', pk: true },
+      { name: 'staff_id', type: 'INTEGER', notNull: true, references: 'staff' },
+      // After as_of, on or before schedule_horizon_end.
+      { name: 'absence_date', type: 'DATE', notNull: true },
+      // On or before as_of.
+      { name: 'reported_on', type: 'DATE', notNull: true },
+    ],
+    unique: [['staff_id', 'absence_date']],
   },
   {
     name: 'fixture_meta',

@@ -132,7 +132,10 @@ Planted scenarios, seeded at fixed ids and dates by the routing stream:
   far for its cadence.
 - **S3 sick crew:** the lead and one member of crew 7 are absent on as_of+3, so the crew is out.
   Its 6 orphans fit onto the 2 other crews in its zone except one. That one must go cross-zone,
-  because one zone crew-day is planted near the 23:00 limit.
+  because each other zone crew has one morning-only stop placed so nothing can start before noon
+  ahead of it, leaving the morning-only orphan no in-zone slot. (Amended 2026-10-26, Story 14.2:
+  the zone's real load on as_of+3 is too small for any crew-day to sit near 23:00. Answer
+  unchanged: 5 / 1 / 0.)
 
 | id | statement | run | expect |
 |---|---|---|---|
@@ -183,4 +186,4 @@ unit test (Story 12.3).
   Drive minutes are fine (history already has them). The map image shows approximate locations and
   is allowed only inside the routing modal (SPEC constraints, changed 2026-10-26).
 - **Squeezed days:** about 30 historical crew-days exceed the day. The future generator must keep
-  every crew-day within 06:00-23:00 or squeeze it, and the planted S3 near-limit day must fit exactly.
+  every crew-day within 06:00-23:00 or squeeze it, and S3's planted morning-only stops must fit exactly.
