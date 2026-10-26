@@ -15,7 +15,9 @@ rows_plan_price_changes,1013
 rows_plans,1584
 rows_properties,2186
 rows_scheduled_visits,1720
+rows_service_rules,781
 rows_staff,89
+rows_staff_absences,5
 rows_timesheets,115302
 rows_visits,40895
 rows_zones,5

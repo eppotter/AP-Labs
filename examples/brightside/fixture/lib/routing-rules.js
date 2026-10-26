@@ -1,21 +1,29 @@
 'use strict';
 
-// The rules for the routing data (lib/routing.js): coordinates and the booked
-// schedule. The generator refuses to write output that breaks one; the SQL
-// checks test the same rules on the built database:
+// The rules for the routing data (lib/routing.js): coordinates, the booked
+// schedule, the customers' rules and staff absences. The generator refuses
+// to write output that breaks one; the SQL checks test the same rules on the
+// built database:
 //   synthetic-coordinates            every coordinate inside the fixture box
 //   integrity-scheduled-route-order  route_order 1..n per crew-day
 //   integrity-scheduled-schedule     times fit the day and the drives
 //   integrity-scheduled-after-as-of  dates after as_of, statuses set by then
 //   integrity-scheduled-cadence      each active plan's dates follow its cadence
-// One rule here goes further than SQL can without reading coordinates: each
-// booked drive is travelMatrix's figure for its two places.
-// Keys, foreign keys, NOT NULL and unique columns are checked in rules.js.
+//   integrity-rules                  rule values valid; booked visits keep
+//                                    every hard rule
+//   integrity-staff-absences         absences after as_of, reported by then,
+//                                    on a membership that covers the day
+// Two rules here go further than SQL can: each booked drive is travelMatrix's
+// figure for its two places (SQL would have to read coordinates), and a
+// booked visit is on its plan's own crew unless the planted scenarios moved
+// it (SQL allows any crew of the plan crew's zone; it cannot know which
+// visits were planted). Keys, foreign keys, NOT NULL and unique columns are
+// checked in rules.js.
 
 const { toDay, toIso } = require('./days');
 const { scheduleDays } = require('./activity');
 const { EARLIEST_START, LATEST_FINISH, NOON, SLOT_MINUTES, MIN_SCHEDULED } = require('./operations');
-const { travelMinutes, BOX, MIN_TRAVEL_MINUTES, SCHEDULE_HORIZON_DAYS } = require('./routing');
+const { travelMinutes, isoWeekday, BOX, MIN_TRAVEL_MINUTES, SCHEDULE_HORIZON_DAYS, DAY_NAMES, RULE_STRENGTH } = require('./routing');
 
 const TIME = /^(\d\d):(\d\d):00$/;
 const STATUSES = new Set(['scheduled', 'cancelled']);
@@ -84,7 +92,8 @@ function checkDates(tables, asOf, fail) {
 // Each active plan has exactly its cadence dates after as_of through the
 // horizon, on its property, package and crew; an ended plan has none. The
 // first is the next cadence date after the plan's last history visit.
-function checkCadence(tables, asOf, fail) {
+function checkCadence(tables, asOf, reassigned, fail) {
+  const zoneOf = new Map(tables.crews.map((c) => [c.crew_id, c.zone_id]));
   const asOfDay = toDay(asOf);
   const horizonEnd = asOfDay + SCHEDULE_HORIZON_DAYS;
   const history = groupBy(tables.visits.filter((v) => v.plan_id !== null), 'plan_id');
@@ -105,7 +114,9 @@ function checkCadence(tables, asOf, fail) {
     }
     for (const v of own) {
       if (v.property_id !== plan.property_id || v.package_id !== plan.package_id) fail(`scheduled_visits ${v.scheduled_visit_id}: not plan ${plan.plan_id}'s property and package`);
-      if (last && v.crew_id !== last.crew_id) fail(`scheduled_visits ${v.scheduled_visit_id}: not plan ${plan.plan_id}'s crew`);
+      if (last && v.crew_id !== last.crew_id && !(reassigned.has(v.scheduled_visit_id) && zoneOf.get(v.crew_id) === zoneOf.get(last.crew_id))) {
+        fail(`scheduled_visits ${v.scheduled_visit_id}: not plan ${plan.plan_id}'s crew`);
+      }
     }
   }
   for (const v of tables.scheduled_visits) {
@@ -113,14 +124,73 @@ function checkCadence(tables, asOf, fail) {
   }
 }
 
-function checkRouting(tables, { asOf }) {
+const DAY_VALUE = new RegExp(`^(${DAY_NAMES.join('|')})(\\|(${DAY_NAMES.join('|')}))*$`);
+const WINDOWS = new Set(['morning', 'afternoon']);
+
+// Each rule's value is valid for its type, at its type's strength, and every
+// booked (scheduled) visit of the property keeps it: on one of its days, in
+// its window, on its preferred crew. A preferred crew is in the property's
+// zone. Days are in week order with no repeat.
+function checkServiceRules(tables, fail) {
+  const crews = new Map(tables.crews.map((c) => [c.crew_id, c]));
+  const zones = new Set((tables.zones || []).map((z) => z.zone_id));
+  const clientZone = new Map(tables.clients.map((c) => [c.client_id, c.zone_id]));
+  const zoneOfProperty = new Map(tables.properties.map((p) => [p.property_id, clientZone.get(p.client_id)]));
+  const booked = groupBy(tables.scheduled_visits.filter((v) => v.status === 'scheduled'), 'property_id');
+  for (const r of tables.service_rules) {
+    const where = `service_rules ${r.rule_id}`;
+    if (!(r.rule_type in RULE_STRENGTH)) { fail(`${where}: rule_type ${r.rule_type} is not preferred_crew, day_of_week or time_of_day`); continue; }
+    if (r.strength !== RULE_STRENGTH[r.rule_type]) fail(`${where}: ${r.rule_type} is ${RULE_STRENGTH[r.rule_type]}, not ${r.strength}`);
+    const visits = booked.get(r.property_id) || [];
+    if (r.rule_type === 'preferred_crew') {
+      const crew = /^\d+$/.test(r.value) ? crews.get(Number(r.value)) : undefined;
+      if (!crew) { fail(`${where}: preferred_crew ${r.value} is not a crew`); continue; }
+      // A crew whose zone is unknown is a foreign-key finding (rules.js).
+      if (zones.has(crew.zone_id) && crew.zone_id !== zoneOfProperty.get(r.property_id)) fail(`${where}: preferred crew ${r.value} is not in the property's zone`);
+      if (visits.some((v) => v.crew_id !== crew.crew_id)) fail(`${where}: a booked visit is not on preferred crew ${r.value}`);
+    } else if (r.rule_type === 'day_of_week') {
+      const days = String(r.value).split('|');
+      const order = days.map((d) => DAY_NAMES.indexOf(d));
+      if (!DAY_VALUE.test(r.value) || order.some((d, i) => i > 0 && d <= order[i - 1])) { fail(`${where}: day_of_week ${r.value} is not ISO day names in week order`); continue; }
+      for (const v of visits) {
+        if (!days.includes(DAY_NAMES[isoWeekday(toDay(v.visit_date)) - 1])) fail(`${where}: scheduled_visits ${v.scheduled_visit_id} on ${v.visit_date} is not on ${r.value}`);
+      }
+    } else {
+      if (!WINDOWS.has(r.value)) { fail(`${where}: time_of_day ${r.value} is not morning or afternoon`); continue; }
+      for (const v of visits) {
+        if (v.arrival_window !== r.value) fail(`${where}: scheduled_visits ${v.scheduled_visit_id} is booked in the ${v.arrival_window}, not the ${r.value}`);
+      }
+    }
+  }
+}
+
+// Each absence is after as_of through the horizon, reported on or before
+// as_of, by someone whose membership covers the day (end_date inclusive).
+function checkAbsences(tables, asOf, fail) {
+  const horizonEnd = toIso(toDay(asOf) + SCHEDULE_HORIZON_DAYS);
+  const memberships = groupBy(tables.crew_memberships, 'staff_id');
+  for (const a of tables.staff_absences) {
+    const where = `staff_absences ${a.absence_id}`;
+    if (!(a.absence_date > asOf && a.absence_date <= horizonEnd)) fail(`${where}: absence_date ${a.absence_date} is outside after ${asOf} to ${horizonEnd}`);
+    if (!(a.reported_on <= asOf)) fail(`${where}: reported_on ${a.reported_on} is after as_of ${asOf}`);
+    const covers = (memberships.get(a.staff_id) || []).some((m) => m.start_date <= a.absence_date && (m.end_date === null || m.end_date >= a.absence_date));
+    if (!covers) fail(`${where}: staff ${a.staff_id} has no membership on ${a.absence_date}`);
+  }
+}
+
+// `reassigned` holds the scheduled_visit_ids the planted scenarios moved to
+// another crew of the same zone; with none planted, every visit is on its
+// plan's crew.
+function checkRouting(tables, { asOf, reassigned = new Set() }) {
   const problems = [];
   const fail = (msg) => problems.push(msg);
   if (!tables.scheduled_visits) return problems;
   checkCoordinates(tables, fail);
   checkSchedule(tables, fail);
   checkDates(tables, asOf, fail);
-  checkCadence(tables, asOf, fail);
+  checkCadence(tables, asOf, reassigned, fail);
+  if (tables.service_rules) checkServiceRules(tables, fail);
+  if (tables.staff_absences) checkAbsences(tables, asOf, fail);
   return problems;
 }
 

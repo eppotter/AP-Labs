@@ -63,12 +63,14 @@ test('Dataset replies privately with the local fixture, its version, as-of date 
     'Fixture version: 4',
     'As of: 2026-09-30',
     'Published: local build',
-    'Tables (17):',
+    'Tables (19):',
   ]);
   assert.ok(lines.includes('• visits: 40,895'));
   assert.ok(lines.includes('• zones: 5'));
   assert.ok(lines.includes('• timesheets: 115,302'));
   assert.ok(lines.includes('• scheduled_visits: 1,720'));
+  assert.ok(lines.includes('• service_rules: 781'));
+  assert.ok(lines.includes('• staff_absences: 5'));
 });
 
 test('with no data file, the app still starts and Dataset says plainly the data is unavailable', async (t) => {

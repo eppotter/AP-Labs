@@ -1,5 +1,9 @@
--- Each active plan's booked visits follow its cadence on its own property, package and crew.
--- The first is one step (7 days, 14 days or a month) after the plan's last
+-- Each active plan's booked visits follow its cadence on its own property, package and zone.
+-- A booked visit is on the plan's crew (its last history visit's), or on
+-- another crew of that crew's zone: a dispatcher may move a visit within its
+-- zone on its own day (the planted routing scenarios do). The generator's
+-- rules go further and allow that only for the planted visits; SQL cannot
+-- tell which those are. The first is one step (7 days, 14 days or a month) after the plan's last
 -- history visit and each next one a step after the one before; an active plan
 -- whose next step falls on or before schedule_horizon_end has it booked; a
 -- plan that ended (on or before as_of, the plan ending on as_of included) has
@@ -35,14 +39,16 @@ FROM booked b
 JOIN step p ON p.plan_id = b.plan_id
 WHERE p.end_date IS NOT NULL
 UNION ALL
-SELECT 'not the plan''s property, package or crew', b.scheduled_visit_id
+SELECT 'not the plan''s property, package or zone', b.scheduled_visit_id
 FROM booked b
 JOIN step p ON p.plan_id = b.plan_id
 LEFT JOIN last_visit l ON l.plan_id = b.plan_id
+LEFT JOIN crews bc ON bc.crew_id = b.crew_id
+LEFT JOIN crews lc ON lc.crew_id = l.crew_id
 WHERE l.plan_id IS NULL
    OR b.property_id <> p.property_id
    OR b.package_id <> p.package_id
-   OR b.crew_id <> l.crew_id
+   OR (b.crew_id <> l.crew_id AND (bc.zone_id IS NULL OR lc.zone_id IS NULL OR bc.zone_id <> lc.zone_id))
 UNION ALL
 SELECT 'off cadence', b.scheduled_visit_id
 FROM booked b

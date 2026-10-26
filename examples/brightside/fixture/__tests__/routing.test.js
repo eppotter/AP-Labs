@@ -14,6 +14,7 @@ const zlib = require('node:zlib');
 const { generate, readSeedConfig, storedName, GENERATOR_VERSION } = require('../generate');
 const { checkRouting } = require('../lib/routing-rules');
 const routing = require('../lib/routing');
+const { S2 } = require('../lib/scenarios');
 const { ZONES, AS_OF } = require('../lib/reference');
 const { EARLIEST_START, DAY_START, AIM_TO_FINISH, LATEST_FINISH, SLOT_MINUTES } = require('../lib/operations');
 const { loadProfile } = require('../../../../kit/lib/profile');
@@ -73,7 +74,8 @@ function project(text, columns) {
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
 let recorded;
-const recordedTables = () => (recorded ??= generate(readSeedConfig()).tables);
+const recordedRun = () => (recorded ??= generate(readSeedConfig()));
+const recordedTables = () => recordedRun().tables;
 
 test('generator v4: seed.json and fixture_meta record it, and fixture_meta gains the horizon and the new table\'s count', () => {
   assert.equal(GENERATOR_VERSION, 4);
@@ -159,7 +161,7 @@ test('every coordinate is a whole micro-degree inside the synthetic ocean box', 
   assert.deepEqual(small, t.crews.map((c) => [c.base_geo_lat_e6, c.base_geo_lon_e6]));
 });
 
-test('drives between a zone\'s city centres are 10 to 35 minutes; booked drives inside one city 5 to 15', () => {
+test('drives between a zone\'s city centres are 10 to 35 minutes; booked drives inside one city 5 to 15, but to S2\'s estate', () => {
   const at = (city) => ({ lat: -40000000 + Math.round(routing.CITY_KM[city][1] * 8993), lon: -130000000 + Math.round(routing.CITY_KM[city][0] * 11740) });
   for (const zone of ZONES) {
     for (const a of zone.cities) {
@@ -172,10 +174,12 @@ test('drives between a zone\'s city centres are 10 to 35 minutes; booked drives 
   }
   const t = recordedTables();
   const city = new Map(t.properties.map((p) => [p.property_id, p.city]));
+  // S2's planted estate sits over 5 km off Pinecrest's homes (lib/scenarios.js).
+  const estate = new Set(Object.keys(S2.estate).map(Number));
   const route = new Map(t.scheduled_visits.map((v) => [`${v.crew_id}|${v.visit_date}|${v.route_order}`, v]));
   for (const v of t.scheduled_visits) {
     const prev = route.get(`${v.crew_id}|${v.visit_date}|${v.route_order - 1}`);
-    if (prev && city.get(prev.property_id) === city.get(v.property_id)) {
+    if (prev && city.get(prev.property_id) === city.get(v.property_id) && estate.has(prev.property_id) === estate.has(v.property_id)) {
       assert.ok(v.travel_minutes_from_previous >= 5 && v.travel_minutes_from_previous <= 15, `${v.scheduled_visit_id}: ${v.travel_minutes_from_previous}`);
     }
   }
@@ -234,7 +238,12 @@ test('the booked schedule: active plans only, after as_of through the horizon, t
   for (const m of t.crew_memberships) if (m.end_date === null) heads.set(m.crew_id, (heads.get(m.crew_id) || 0) + 1);
   const unsqueezed = sv.filter((v) => v.scheduled_minutes === Math.max(30, Math.round(v.labour_minutes / heads.get(v.crew_id) / 15) * 15));
   assert.ok(unsqueezed.length > sv.length * 0.95, `${unsqueezed.length} of ${sv.length}`);
-  assert.deepEqual(checkRouting(t, { asOf: AS_OF }), []);
+  // The planted scenarios moved seven visits to another crew of their zone.
+  const { reassigned } = recordedRun();
+  assert.deepEqual(reassigned, [27, 79, 80, 100, 172, 184, 191]);
+  assert.deepEqual(checkRouting(t, { asOf: AS_OF, reassigned: new Set(reassigned) }), []);
+  assert.ok(checkRouting(t, { asOf: AS_OF }).every((p) => /not plan \d+'s crew/.test(p)), 'without the planted list, only those seven fail');
+  assert.equal(checkRouting(t, { asOf: AS_OF }).length, 7);
 });
 
 test('the routing rules catch each broken rule', () => {
@@ -257,6 +266,21 @@ test('the routing rules catch each broken rule', () => {
     [(t) => { const v = first(t); v.package_id = v.package_id === 'deep' ? 'standard' : 'deep'; }, /not plan \d+'s property and package/],
     [(t) => { const v = first(t); v.crew_id = v.crew_id === 1 ? 2 : 1; }, /not plan \d+'s crew/],
     [(t) => { t.scheduled_visits.find((v) => v.visit_date > '2026-10-01').visit_date = '2026-09-30'; }, /visit_date 2026-09-30 is outside/],
+    // Story 14.2: service_rules and staff_absences.
+    [(t) => { t.service_rules[0].rule_type = 'favourite_colour'; }, /rule_type favourite_colour is not/],
+    [(t) => { t.service_rules.find((r) => r.rule_type === 'day_of_week').strength = 'soft'; }, /day_of_week is hard, not soft/],
+    [(t) => { t.service_rules.find((r) => r.rule_type === 'preferred_crew').value = '99'; }, /preferred_crew 99 is not a crew/],
+    [(t) => { const r = t.service_rules.find((x) => x.rule_type === 'preferred_crew'); r.value = r.value === '1' ? '15' : '1'; }, /is not in the property's zone|is not on preferred crew/],
+    [(t) => { t.service_rules.find((r) => r.rule_type === 'day_of_week').value = 'SUN|MON'; }, /day_of_week SUN\|MON is not ISO day names in week order|is not on SUN\|MON/],
+    [(t) => { t.service_rules.find((r) => r.rule_type === 'day_of_week').value = 'MON,TUE'; }, /day_of_week MON,TUE is not ISO day names in week order/],
+    [(t) => { const r = t.service_rules.find((x) => x.rule_type === 'time_of_day'); r.value = r.value === 'morning' ? 'afternoon' : 'morning'; }, /is booked in the (morning|afternoon), not the/],
+    [(t) => { t.service_rules.find((r) => r.rule_type === 'time_of_day').value = 'evening'; }, /time_of_day evening is not morning or afternoon/],
+    [(t) => { t.staff_absences.push({ absence_id: 999, staff_id: t.crew_memberships.find((m) => m.end_date === null).staff_id, absence_date: '2026-10-29', reported_on: AS_OF }); }, /staff_absences 999: absence_date 2026-10-29 is outside/],
+    [(t) => { t.staff_absences.push({ absence_id: 999, staff_id: t.crew_memberships.find((m) => m.end_date === null).staff_id, absence_date: '2026-10-20', reported_on: '2026-10-01' }); }, /staff_absences 999: reported_on 2026-10-01 is after as_of/],
+    [(t) => {
+      const open = new Set(t.crew_memberships.filter((m) => m.end_date === null).map((m) => m.staff_id));
+      t.staff_absences.push({ absence_id: 999, staff_id: t.staff.find((x) => !open.has(x.staff_id)).staff_id, absence_date: '2026-10-20', reported_on: AS_OF });
+    }, /staff_absences 999: staff \d+ has no membership on 2026-10-20/],
   ];
   for (const [mutate, expected] of cases) {
     const copy = JSON.parse(JSON.stringify(tables));
