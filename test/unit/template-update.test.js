@@ -13,7 +13,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { makeUpdateRepos, FORK_LEDGER_LINE } = require('../fixtures/temp-git');
+const { makeUpdateRepos, FORK_LEDGER_LINE, PLANNING_DOC } = require('../fixtures/temp-git');
 const { main: update, parseArgs } = require('../../kit/release/update');
 const lib = require('../../kit/lib/template');
 const { slowSkip } = require('../fixtures/slow');
@@ -201,7 +201,7 @@ test('the fork\'s ledger is kept on a conflict', { skip: slowSkip() }, (t) => {
 
 test('a clean upstream edit to the ledger or planning docs is not applied', { skip: slowSkip() }, (t) => {
   const r = setup(t);
-  const planning = r.git(r.work, ['ls-files', 'docs/planning']).split('\n')[0];
+  const planning = PLANNING_DOC.path; // the fixture's own, never this repo's
   r.release('v1.1.0', (w) => {
     editFile(w, 'docs/ledger.md', (s) => `${s}\nA clean upstream line.\n`);
     editFile(w, planning, (s) => `${s}\nA clean upstream line.\n`);

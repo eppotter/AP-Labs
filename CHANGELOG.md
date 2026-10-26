@@ -13,9 +13,10 @@ A fork records the release it is built from in `.aplabs/template-version`
 
 1. Write this release's entry below in a normal PR, with "What changed" and "What a fork must do", and get it reviewed and merged.
 2. Re-pin the base image digest in `Dockerfile` (the newest `node:24` Debian slim, amd64) in its own PR, and let the `container` job pass on it.
-3. Wait until every check on `main`'s head has passed (`test`, `clean-bones` and `container` among them).
+3. Wait until every check on `main`'s head has passed (`test`, `clean-bones`, `container` and `dist` among them).
 4. On a clean, up-to-date `main`, run `npm run template:release -- vX.Y.Z`. It tags locally and refuses, naming the reason, if anything above is not true.
 5. Ely pushes the tag (`git push origin refs/tags/vX.Y.Z`, or the command again with `--push`). The Orchestrator never pushes tags.
+6. Run `npm run template:publish -- vX.Y.Z`; Ely pushes the dist commit and tag (the command it prints, or the command again with `--push`). The Orchestrator never pushes to the `dist` remote.
 
 ## Unreleased
 

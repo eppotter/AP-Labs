@@ -12,14 +12,16 @@
 //   - CHANGELOG.md has its "## vX.Y.Z" entry with "What changed" and "What a
 //     fork must do" (written and reviewed in a normal PR first: this command
 //     never writes the changelog, Q19);
-//   - every check on main's head passed, and the test, clean-bones and
-//     container jobs are among them, read through gh (APLABS_GH_BIN, as
+//   - every check on main's head passed, and the test, clean-bones,
+//     container and dist jobs are among them, read through gh (APLABS_GH_BIN, as
 //     `npm run land` does). A missing, failed or still-running check refuses.
 //
 // Then it creates the annotated tag locally on main's head. It pushes that
 // one tag (never --tags) only with --push, which a human passes: the
 // Orchestrator never does (AGENTS.md). package.json's version is left alone:
-// the tag is the version (Q19).
+// the tag is the version (Q19). Either way it ends with the next step: the
+// release reaches client forks through the dist repo (`npm run
+// template:publish -- vX.Y.Z`, plan template-dist).
 //
 // Exit codes: 0 tagged, 1 refused or failed, 2 usage.
 
@@ -153,8 +155,10 @@ function main(argv, env = process.env, deps = {}) {
     return 1;
   }
   out(`template:release: tagged ${version} on main at ${head.slice(0, 12)} (local only).`);
+  const next = `template:release: then publish it to the dist repo: npm run template:publish -- ${version}`;
   if (!push) {
     out(`template:release: not pushed. A human pushes it: git push origin refs/tags/${version}`);
+    out(next);
     return 0;
   }
   const pushed = lib.git(root, ['push', 'origin', `refs/tags/${version}`]);
@@ -163,6 +167,7 @@ function main(argv, env = process.env, deps = {}) {
     return 1;
   }
   out(`template:release: pushed ${version} to origin.`);
+  out(next);
   return 0;
 }
 

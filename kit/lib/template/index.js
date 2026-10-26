@@ -38,7 +38,7 @@ const PROFILE_REL = '.aplabs/profile.yml';
 const RECORD_REL = '.aplabs/template-version';
 const CHANGELOG_REL = 'CHANGELOG.md';
 // The jobs a release needs on main's head, besides every other check passing.
-const REQUIRED_JOBS = Object.freeze(['test', 'clean-bones', 'container']);
+const REQUIRED_JOBS = Object.freeze(['test', 'clean-bones', 'container', 'dist']);
 const VERSION_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const SHA_RE = /^[0-9a-f]{64}$/;
 const NO_RECORD = `fork without a template record; run \`npm run template:check -- --record vX.Y.Z\``;

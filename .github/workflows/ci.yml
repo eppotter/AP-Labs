@@ -87,6 +87,30 @@ jobs:
       - name: Clean bones
         run: npm run clean-bones
 
+  dist:
+    # The distribution tree (plan template-dist, Story D.2): what client forks
+    # receive, the release minus the internal paths (kit/lib/dist EXCLUDED)
+    # with the ledger's rows emptied. On every PR it builds that tree for
+    # HEAD, scans it with the deny list, checks its engine fingerprint, and
+    # runs check, test and test:slow inside it, so a release whose dist tree
+    # would break can't be cut (a required job). Skipped in a fork and in the
+    # dist repo itself (neither has docs/reference/). No secrets.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Distribution tree builds and passes its tests
+        run: |
+          if [ -f .aplabs/profile.yml ] || [ ! -d docs/reference ]; then echo "skipped: not the template source repo"; exit 0; fi
+          npm run template:publish -- --check
+
   container:
     # The app runs in a container (Story 11.2): build the image, then run its
     # smoke test inside it with no network, a read-only filesystem (only /tmp

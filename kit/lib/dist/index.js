@@ -4,7 +4,7 @@
 // receives. Clients never clone the source repo; they clone a distribution
 // repo whose commits are the release's files minus EXCLUDED, with the
 // ledger's rows emptied. This module holds the pure half, shared by the
-// tripwire test and (Story D.2) the publish command:
+// tripwire test and the publish command (kit/release/publish.js, Story D.2):
 //
 //   EXCLUDED          the internal paths that never ship
 //   isExcluded        true when a repo path is one of them, or under one
@@ -19,12 +19,21 @@
 //   scanDist          checks every shipped path and text blob against it
 //   formatHit         one hit as `file:line`, never the matched text
 //
+// and the git half, shared by `template:publish -- vX.Y.Z` and
+// `template:publish -- --check` (Story D.2):
+//
+//   buildDistTree     a commit's tree as shipped, written as a git tree object
+//                     (refusing gitlinks, symlinks into excluded paths and any
+//                     deny-list hit)
+//   engineProblem     null when two commits have the same engine fingerprint
+//
 // The deny list lives in docs/reference/, which is itself excluded, so the
 // names it lists never ship. A hit reports the file, the line and the
 // pattern's number, never the matched text, so a log or CI output never
 // repeats a name either.
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { ENGINE_DIRS } = require('../../runtime/paths');
 
@@ -157,6 +166,173 @@ function formatHit(h) {
   return h.line ? `${h.file}:${h.line}: deny pattern ${h.pattern}` : `${h.file} (path): deny pattern ${h.pattern}`;
 }
 
+// ---- the git half (Story D.2) -------------------------------------------
+
+// Lazy, so the pure half above loads without the template helpers.
+const template = () => require('../template');
+
+const GITLINK = '160000';
+const SYMLINK = '120000';
+
+// Splits `git ls-tree -r -z --full-tree` output into { mode, type, oid, path }.
+function parseTree(out) {
+  return out.split('\0').filter(Boolean).map((line) => {
+    const tab = line.indexOf('\t');
+    const [mode, type, oid] = line.slice(0, tab).split(' ');
+    return { mode, type, oid, path: line.slice(tab + 1) };
+  });
+}
+
+// The blobs for oids, read with one `git cat-file --batch`: Map oid -> Buffer.
+function readBlobs(root, oids, env) {
+  const unique = [...new Set(oids)];
+  const blobs = new Map();
+  if (!unique.length) return blobs;
+  const r = template().git(root, ['cat-file', '--batch'], { encoding: 'buffer', input: `${unique.join('\n')}\n`, env });
+  if (!r.ok) throw new Error(`dist: could not read the blobs: ${r.stderr || 'git cat-file failed'}`);
+  const buf = r.stdout;
+  let at = 0;
+  for (const oid of unique) {
+    const nl = buf.indexOf(0x0a, at);
+    const header = buf.subarray(at, nl).toString('utf8').split(' ');
+    const size = Number(header[2]);
+    if (header[0] !== oid || header[1] !== 'blob' || !Number.isSafeInteger(size)) throw new Error(`dist: could not read the blob ${oid}`);
+    blobs.set(oid, buf.subarray(nl + 1, nl + 1 + size));
+    at = nl + 1 + size + 1;
+  }
+  return blobs;
+}
+
+// Where a symlink at rel pointing at target resolves, repo-relative (POSIX).
+// An absolute target, or one that leaves the repo, resolves outside it ('').
+function symlinkTarget(rel, target) {
+  if (path.posix.isAbsolute(target)) return '';
+  const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(rel), target)).replace(/\/$/, '');
+  return resolved === '..' || resolved.startsWith('../') ? '' : resolved;
+}
+
+/**
+ * The distribution tree of a commit (ref) in the repo at root: its tree with
+ * every excluded path removed and the ledger transformed (transformLedger),
+ * written into the repo's objects through a temporary index (the repo's own
+ * index is never touched). The deny list is read from that commit's tree, not
+ * the worktree. It refuses, naming every problem: an unsafe exclusion list, a
+ * gitlink, a symlink whose target resolves into an excluded path, a deny list
+ * that does not load, and any deny hit in a shipped path or text blob.
+ *
+ * Returns { tree, source, files, binary, mentions, problems }: tree is the
+ * written tree's id (null when there are problems); source the commit's id;
+ * files the number of shipped entries; binary the shipped blobs with a NUL
+ * byte (listed, N7); mentions the shipped text files that name an excluded
+ * path (a warning only, N8).
+ */
+function buildDistTree(root, ref, { env, excluded = EXCLUDED } = {}) {
+  const { git } = template();
+  const result = { tree: null, source: null, files: 0, binary: [], mentions: [], problems: [] };
+  const fail = (p) => {
+    result.problems.push(p);
+    return result;
+  };
+  try {
+    assertExclusionsSafe(excluded);
+  } catch (e) {
+    return fail(e.message);
+  }
+  const commit = git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { env });
+  if (!commit.ok) return fail(`dist: could not read ${ref}`);
+  const source = commit.stdout.trim();
+  result.source = source;
+
+  let patterns = null;
+  try {
+    patterns = loadDenyList((rel) => {
+      const r = git(root, ['cat-file', 'blob', `${source}:${rel}`], { encoding: 'buffer', env });
+      return r.ok ? r.stdout : null;
+    });
+  } catch (e) {
+    result.problems.push(`${e.message} (read from ${ref}'s tree)`);
+  }
+
+  const listed = git(root, ['ls-tree', '-r', '-z', '--full-tree', source], { env });
+  if (!listed.ok) return fail(`dist: could not list ${ref}'s tree: ${listed.stderr || 'git ls-tree failed'}`);
+  const shipped = [];
+  for (const e of parseTree(listed.stdout)) {
+    if (e.mode === GITLINK) {
+      result.problems.push(`dist: ${e.path} is a gitlink (a submodule); the distribution tree refuses gitlinks`);
+      continue;
+    }
+    if (!isExcluded(e.path, excluded)) shipped.push(e);
+  }
+  let blobs;
+  try {
+    blobs = readBlobs(root, shipped.map((e) => e.oid), env);
+  } catch (e) {
+    return fail(e.message);
+  }
+  const files = [];
+  for (const e of shipped) {
+    const bytes = blobs.get(e.oid);
+    if (e.mode === SYMLINK) {
+      const to = symlinkTarget(e.path, bytes.toString('utf8'));
+      if (to && isExcluded(to, excluded)) result.problems.push(`dist: ${e.path} is a symlink into the excluded path ${to}`);
+    }
+    files.push({ path: e.path, mode: e.mode, oid: e.oid, content: e.mode === SYMLINK ? bytes : shippedContent(e.path, bytes) });
+  }
+  if (patterns) {
+    const { hits, binary } = scanDist(files, patterns);
+    result.binary = binary;
+    for (const h of hits) result.problems.push(`dist: deny-list hit: ${formatHit(h)}`);
+  }
+  for (const f of files) {
+    if (f.mode === SYMLINK || f.content.includes(0)) continue;
+    const text = f.content.toString('utf8');
+    if (excluded.some((x) => text.includes(x))) result.mentions.push(f.path);
+  }
+  result.files = files.length;
+  if (result.problems.length) return result;
+
+  // The transformed ledger as a new blob; every other entry keeps its id.
+  const ledger = files.find((f) => f.path === LEDGER_PATH);
+  if (ledger) {
+    const h = git(root, ['hash-object', '-w', '--stdin'], { input: ledger.content, env });
+    if (!h.ok) return fail(`dist: could not write the ledger blob: ${h.stderr}`);
+    ledger.oid = h.stdout.trim();
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-dist-index-'));
+  try {
+    const idxEnv = { ...(env || process.env), GIT_INDEX_FILE: path.join(dir, 'index') };
+    const info = files.map((f) => `${f.mode} ${f.oid}\t${f.path}\0`).join('');
+    const add = git(root, ['update-index', '-z', '--index-info'], { input: info, env: idxEnv });
+    if (!add.ok) return fail(`dist: could not fill the temporary index: ${add.stderr}`);
+    const tree = git(root, ['write-tree'], { env: idxEnv });
+    if (!tree.ok) return fail(`dist: could not write the tree: ${tree.stderr}`);
+    result.tree = tree.stdout.trim();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  return result;
+}
+
+/**
+ * null when commit a (in rootA) and commit b (in rootB, default rootA) have
+ * the same engine fingerprint (kit/lib/template refFingerprint); otherwise
+ * the problem, naming each differing file.
+ */
+function engineProblem(rootA, a, b, rootB = rootA) {
+  const { refFingerprint, diffFiles } = template();
+  let x;
+  let y;
+  try {
+    x = refFingerprint(rootA, a);
+    y = refFingerprint(rootB, b);
+  } catch (e) {
+    return `dist: ${e.message}`;
+  }
+  if (x.sha256 === y.sha256) return null;
+  const diffs = diffFiles(x.files, y.files).map((d) => `${d.path} (${d.change})`);
+  return `dist: the distribution tree's engine fingerprint is not the source's: ${diffs.join(', ') || 'the engine differs'}`;
+}
+
 module.exports = {
   EXCLUDED,
   REFERENCE_DIR,
@@ -170,4 +346,7 @@ module.exports = {
   referencePatterns,
   scanDist,
   formatHit,
+  symlinkTarget,
+  buildDistTree,
+  engineProblem,
 };

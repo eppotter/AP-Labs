@@ -27,6 +27,10 @@ const FIXTURE_STEPS = Object.freeze([
   'test/Fixture checks pass (integrity, synthetic-only)',
 ]);
 const ENGINE_STEP = 'test/Engine untouched (forks only)';
+// Plan template-dist D.2: the dist job runs only in the template source repo.
+const DIST_STEP = 'dist/Distribution tree builds and passes its tests';
+const DIST_GUARD = 'if [ -f .aplabs/profile.yml ] || [ ! -d docs/reference ]; then echo "skipped: not the template source repo"; exit 0; fi';
+const DIST_SKIP = /^skipped: not the template source repo$/m;
 
 // Steps not run here, and why. Every other run step is.
 const NOT_RUN = Object.freeze({
@@ -36,6 +40,7 @@ const NOT_RUN = Object.freeze({
   'test/Ledger row': 'pull requests only; compares with the base branch fetched from origin',
   'clean-bones/Install': 'npm ci downloads packages (network)',
   'clean-bones/Clean bones': 'runs the full suite in a copy, which this test is part of',
+  'dist/Install': 'npm ci downloads packages (network)',
   'container/Build the image': 'docker build pulls the base image (network)',
   'container/Show the image (user, platform, size)': 'needs the image the build step makes',
   'container/Smoke test inside the image (no network, read-only, fake Slack)': 'needs the image the build step makes',
@@ -85,6 +90,43 @@ test('ci.yml: the three fixture steps start with the fork guard, and the engine 
   assert.ok(engine, 'the engine check step is in the test job');
   assert.match(engine.run, /^if \[ -f \.aplabs\/profile\.yml \]; then\n\s+npm run template:check\n/);
   assert.equal(engine.if, undefined, 'never skipped by a step condition');
+  const distStep = all.find((s) => s.key === DIST_STEP);
+  assert.ok(distStep, 'the dist job has its check step');
+  assert.deepEqual(distStep.run.trim().split('\n'), [DIST_GUARD, 'npm run template:publish -- --check']);
+  assert.equal(distStep.if, undefined, 'never skipped by a step condition');
+});
+
+test('ci.yml: the dist job is read-only, has no secrets and uses only checkout and setup-node', () => {
+  const doc = YAML.parse(fs.readFileSync(CI, 'utf8'));
+  const job = doc.jobs.dist;
+  assert.ok(job, 'a dist job');
+  assert.deepEqual(job.permissions, { contents: 'read' });
+  const text = YAML.stringify(job);
+  assert.doesNotMatch(text, /secrets\.|\$\{\{/, 'no secrets or expressions');
+  const uses = job.steps.filter((s) => s.uses).map((s) => s.uses.split('@')[0]);
+  assert.deepEqual(uses, ['actions/checkout', 'actions/setup-node']);
+  assert.deepEqual(job.steps.filter((s) => s.run).map((s) => s.name), ['Install', 'Distribution tree builds and passes its tests']);
+});
+
+test('the dist guard skips in a fork and in a copy without docs/reference/; the template source runs the step', (t) => {
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'aplabs-dist-guard-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const at = (profile, reference) => {
+    fs.rmSync(path.join(dir, '.aplabs'), { recursive: true, force: true });
+    fs.rmSync(path.join(dir, 'docs'), { recursive: true, force: true });
+    if (profile) {
+      fs.mkdirSync(path.join(dir, '.aplabs'));
+      fs.writeFileSync(path.join(dir, '.aplabs/profile.yml'), 'x: 1\n');
+    }
+    if (reference) fs.mkdirSync(path.join(dir, 'docs/reference'), { recursive: true });
+    const r = runStep(dir, `${DIST_GUARD}\necho ran`);
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  assert.equal(at(false, true), 'ran', 'the template source repo');
+  assert.equal(at(true, true), 'skipped: not the template source repo', 'a fork');
+  assert.equal(at(false, false), 'skipped: not the template source repo', 'the dist repo (no docs/reference/)');
+  assert.equal(at(true, false), 'skipped: not the template source repo', 'a fork of the dist repo');
 });
 
 test('the fork guard skips only in a fork without the example; the template always runs the step', (t) => {
@@ -145,7 +187,8 @@ test('a clean-bones-style fork copy passes every ci.yml run step that needs no n
     assert.equal(r.status, 0, `${s.key} failed in a fork copy:\n${r.stdout.slice(-2000)}\n${r.stderr.slice(-2000)}`);
     if (FIXTURE_STEPS.includes(s.key)) assert.match(r.stdout, /^skipped: no example client in this fork$/m, s.key);
     if (s.key === ENGINE_STEP) assert.match(r.stdout, /engine is untouched since v0\.0\.1/);
+    if (s.key === DIST_STEP) assert.match(r.stdout, DIST_SKIP, 'the dist job skips in a fork (review B5)');
     ran.push(s.key);
   }
-  for (const key of [...FIXTURE_STEPS, ENGINE_STEP, 'test/Syntax', 'test/Verify harness']) assert.ok(ran.includes(key), `ran ${key}`);
+  for (const key of [...FIXTURE_STEPS, ENGINE_STEP, DIST_STEP, 'test/Syntax', 'test/Verify harness']) assert.ok(ran.includes(key), `ran ${key}`);
 });
