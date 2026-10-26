@@ -35,9 +35,11 @@ const { buildActivity } = require('./lib/activity');
 const { TRUTH_IDS, computeTruths } = require('./lib/truths');
 const { buildOperations, OPERATIONS_STREAM } = require('./lib/operations');
 const { checkOperations } = require('./lib/operations-rules');
+const { buildRouting, scheduleHorizonEnd, ROUTING_STREAM } = require('./lib/routing');
+const { checkRouting } = require('./lib/routing-rules');
 
 // Bump when a change to this code changes the output for the same seed.
-const GENERATOR_VERSION = 3;
+const GENERATOR_VERSION = 4;
 
 const FIXTURE_DIR = __dirname;
 const SEED_FILE = path.join(FIXTURE_DIR, 'seed.json');
@@ -68,6 +70,7 @@ function fixtureMeta(config, tables) {
     { key: 'as_of', value: AS_OF },
     { key: 'generator_version', value: String(GENERATOR_VERSION) },
     { key: 'history_start', value: HISTORY_START },
+    { key: 'schedule_horizon_end', value: scheduleHorizonEnd(AS_OF) },
     { key: 'seed', value: String(config.seed) },
   ];
   for (const table of TABLES) {
@@ -111,9 +114,13 @@ function generate(config) {
   // above is final, so no earlier draw or value moves.
   const opsRng = createRng(deriveSeed(seed, OPERATIONS_STREAM));
   Object.assign(tables, buildOperations(opsRng, tables, { historyStart: HISTORY_START, asOf: AS_OF }));
+  // Coordinates and the booked schedule (Story 14.1): their own stream too,
+  // after the operations tables are final.
+  const routingRng = createRng(deriveSeed(seed, ROUTING_STREAM));
+  Object.assign(tables, buildRouting(routingRng, tables, { zones: ZONES, asOf: AS_OF }));
   tables.fixture_meta = fixtureMeta(config, tables);
   const ruleOpts = { zones: ZONES, historyStart: HISTORY_START, asOf: AS_OF };
-  const problems = checkRules(tables, ruleOpts).concat(checkOperations(tables, ruleOpts));
+  const problems = checkRules(tables, ruleOpts).concat(checkOperations(tables, ruleOpts), checkRouting(tables, ruleOpts));
   if (problems.length > 0) {
     throw new Error(`generated data breaks ${problems.length} rule(s):\n  ${problems.slice(0, 20).join('\n  ')}`);
   }
