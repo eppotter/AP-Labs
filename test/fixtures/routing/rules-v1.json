@@ -1,0 +1,98 @@
+{
+  "_comment": "Synthetic slots for Story 12.2's v1 rule tests. Not client data. Times are minutes after local midnight; 2026-11-01 is a Sunday (the DST change), 2026-11-02 a Monday, 2026-11-03 a Tuesday.",
+  "ctx": {
+    "day": "2026-11-02",
+    "limits": { "earliestStart": 360, "defaultStart": 480, "aimFinish": 1080, "latestFinish": 1380, "startRoundTo": 5 }
+  },
+  "cases": [
+    {
+      "name": "crew-day-limits passes inside the crew day",
+      "ruleId": "crew-day-limits",
+      "stop": { "stopId": "s1", "rules": [] },
+      "slot": { "crewId": "c1", "start": 480, "finish": 570 },
+      "ok": true,
+      "reason": "within the crew day (06:00 to 23:00)"
+    },
+    {
+      "name": "crew-day-limits fails a start before the earliest start",
+      "ruleId": "crew-day-limits",
+      "stop": { "stopId": "s1", "rules": [] },
+      "slot": { "crewId": "c1", "start": 330, "finish": 420 },
+      "ok": false,
+      "reason": "starts at 05:30, before the crew day's earliest start of 06:00"
+    },
+    {
+      "name": "crew-day-limits fails a finish after the latest finish",
+      "ruleId": "crew-day-limits",
+      "stop": { "stopId": "s1", "rules": [] },
+      "slot": { "crewId": "c1", "start": 1350, "finish": 1395 },
+      "ok": false,
+      "reason": "finishes at 23:15, after the crew day's latest finish of 23:00"
+    },
+    {
+      "name": "day-of-week passes on an allowed day",
+      "ruleId": "day-of-week",
+      "stop": { "stopId": "s2", "rules": [{ "ruleId": "day-of-week", "value": [3, 1] }] },
+      "slot": { "crewId": "c1", "start": 480, "finish": 540 },
+      "ok": true,
+      "reason": "Monday is one of the customer's days"
+    },
+    {
+      "name": "day-of-week fails on a day the customer does not allow",
+      "ruleId": "day-of-week",
+      "day": "2026-11-03",
+      "stop": { "stopId": "s2", "rules": [{ "ruleId": "day-of-week", "value": [3, 1, 7] }] },
+      "slot": { "crewId": "c1", "start": 480, "finish": 540 },
+      "ok": false,
+      "reason": "the customer's days are Monday, Wednesday or Sunday, not Tuesday"
+    },
+    {
+      "name": "time-of-day passes a start inside the window",
+      "ruleId": "time-of-day",
+      "stop": { "stopId": "s3", "rules": [{ "ruleId": "time-of-day", "value": { "startFrom": 480, "startBefore": 720 } }] },
+      "slot": { "crewId": "c1", "start": 600, "finish": 690 },
+      "ok": true,
+      "reason": "starts at 10:00, inside the customer's window (08:00 to before 12:00)"
+    },
+    {
+      "name": "time-of-day fails a start at the window's end",
+      "ruleId": "time-of-day",
+      "stop": { "stopId": "s3", "rules": [{ "ruleId": "time-of-day", "value": { "startFrom": 480, "startBefore": 720 } }] },
+      "slot": { "crewId": "c1", "start": 720, "finish": 810 },
+      "ok": false,
+      "reason": "starts at 12:00, outside the customer's window (08:00 to before 12:00)"
+    },
+    {
+      "name": "preferred-crew passes on the preferred crew",
+      "ruleId": "preferred-crew",
+      "stop": { "stopId": "s4", "rules": [{ "ruleId": "preferred-crew", "value": "c1" }] },
+      "slot": { "crewId": "c1", "start": 480, "finish": 540 },
+      "ok": true,
+      "reason": "on crew c1, the preferred crew"
+    },
+    {
+      "name": "preferred-crew fails on another crew",
+      "ruleId": "preferred-crew",
+      "stop": { "stopId": "s4", "rules": [{ "ruleId": "preferred-crew", "value": "c1" }] },
+      "slot": { "crewId": "c2", "start": 480, "finish": 540 },
+      "ok": false,
+      "reason": "on crew c2, not the preferred crew c1"
+    },
+    {
+      "name": "aim-finish passes a finish at the aim-finish time",
+      "ruleId": "aim-finish",
+      "stop": { "stopId": "s5", "rules": [] },
+      "slot": { "crewId": "c1", "start": 990, "finish": 1080 },
+      "ok": true,
+      "reason": "finishes at 18:00, by the aim-finish time of 18:00"
+    },
+    {
+      "name": "aim-finish fails a finish past the aim-finish time",
+      "ruleId": "aim-finish",
+      "stop": { "stopId": "s5", "rules": [] },
+      "slot": { "crewId": "c1", "start": 1030, "finish": 1120 },
+      "ok": false,
+      "reason": "finishes at 18:40, 40 minutes past the aim-finish time of 18:00"
+    }
+  ]
+}

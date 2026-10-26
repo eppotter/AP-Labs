@@ -57,6 +57,9 @@ const ROUTING_WORDS = Object.freeze({
   unknown_crew: ({ field }) => `"${field}" names a crew that isn't in the day`,
   duplicate: ({ field }) => `"${field}" appears more than once`,
   no_travel: ({ from, to }) => `there is no drive time from ${from} to ${to}`,
+  unknown_rule: ({ field }) => `"${field}" names a rule that isn't registered`,
+  not_overridable: ({ field }) => `"${field}" tries to change a rule that is always hard`,
+  not_function: ({ field }) => `"${field}" is not a check the engine can run`,
 });
 
 // The AI service's refusals (Story 9.1). Each points to the typed form, which

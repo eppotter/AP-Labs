@@ -183,4 +183,4 @@ function validateInput(input) {
   return input;
 }
 
-module.exports = { validateInput, NODE, ID };
+module.exports = { validateInput, NODE, ID, RULE_ID };
