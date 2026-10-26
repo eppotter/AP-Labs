@@ -1,0 +1,184 @@
+{
+  "_comment": "Synthetic day for Story 12.3. Monday 2026-11-02. x1 must start between 22:00 and 22:55 but takes 90 minutes, so it always finishes after the crew day ends at 23:00; x2 is only allowed on Tuesday or Wednesday. Neither can be placed without a hard break. Not client data; minutes come from made-up grid points that are not in the file.",
+  "input": {
+    "day": "2026-11-02",
+    "asOf": "2026-10-30",
+    "limits": {
+      "earliestStart": 360,
+      "defaultStart": 480,
+      "aimFinish": 1080,
+      "latestFinish": 1380,
+      "startRoundTo": 5
+    },
+    "crews": [
+      {
+        "crewId": "c1",
+        "zoneId": "z1",
+        "baseNode": "crew:c1",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      }
+    ],
+    "stops": [
+      {
+        "stopId": "x1",
+        "node": "property:x1",
+        "currentCrewId": "c1",
+        "routeOrder": 1,
+        "labourMinutes": 270,
+        "serviceMinutes": 90,
+        "locked": false,
+        "rules": [
+          {
+            "ruleId": "time-of-day",
+            "value": {
+              "startFrom": 1320,
+              "startBefore": 1375
+            }
+          }
+        ]
+      },
+      {
+        "stopId": "x2",
+        "node": "property:x2",
+        "currentCrewId": "c1",
+        "routeOrder": 2,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": [
+          {
+            "ruleId": "day-of-week",
+            "value": [
+              2,
+              3
+            ]
+          }
+        ]
+      },
+      {
+        "stopId": "y1",
+        "node": "property:y1",
+        "currentCrewId": "c1",
+        "routeOrder": 3,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "y2",
+        "node": "property:y2",
+        "currentCrewId": "c1",
+        "routeOrder": 4,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": []
+      }
+    ]
+  },
+  "matrix": [
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:x1",
+      "minutes": 9
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:x2",
+      "minutes": 11
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:y1",
+      "minutes": 13
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:y2",
+      "minutes": 16
+    },
+    {
+      "from_node": "property:x1",
+      "to_node": "crew:c1",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:x1",
+      "to_node": "property:x2",
+      "minutes": 6
+    },
+    {
+      "from_node": "property:x1",
+      "to_node": "property:y1",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:x1",
+      "to_node": "property:y2",
+      "minutes": 8
+    },
+    {
+      "from_node": "property:x2",
+      "to_node": "crew:c1",
+      "minutes": 11
+    },
+    {
+      "from_node": "property:x2",
+      "to_node": "property:x1",
+      "minutes": 6
+    },
+    {
+      "from_node": "property:x2",
+      "to_node": "property:y1",
+      "minutes": 12
+    },
+    {
+      "from_node": "property:x2",
+      "to_node": "property:y2",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:y1",
+      "to_node": "crew:c1",
+      "minutes": 13
+    },
+    {
+      "from_node": "property:y1",
+      "to_node": "property:x1",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:y1",
+      "to_node": "property:x2",
+      "minutes": 12
+    },
+    {
+      "from_node": "property:y1",
+      "to_node": "property:y2",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:y2",
+      "to_node": "crew:c1",
+      "minutes": 16
+    },
+    {
+      "from_node": "property:y2",
+      "to_node": "property:x1",
+      "minutes": 8
+    },
+    {
+      "from_node": "property:y2",
+      "to_node": "property:x2",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:y2",
+      "to_node": "property:y1",
+      "minutes": 9
+    }
+  ]
+}
