@@ -1,8 +1,8 @@
 ---
 owner: Dana Reyes          # the named client person who owns this file
-signed_off: 2026-10-25  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
-signed_off_by: "Dana Reyes (Ely as Dana Reyes, 2026-10-25)"  # who signed off: the owner, recorded by a facilitator
-updated: 2026-10-25        # ISO date of the last edit
+signed_off: pending  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
+signed_off_by: ""  # who signed off: the owner, recorded by a facilitator
+updated: 2026-10-26        # ISO date of the last edit
 ---
 
 # Guardrails
@@ -11,20 +11,24 @@ Written by the Onboarder for Architect. Most of this mirrors `.aplabs/profile.ym
 profile rather than copy it, and propose profile changes to the Orchestrator instead of editing it.
 
 In this template repo Brightside's profile is `profiles/brightside/profile.yml` (a fork keeps it at
-`.aplabs/profile.yml`). Every card below is **approved**: Dana Reyes signed it off on 2026-10-25
-(Ely as Dana Reyes).
+`.aplabs/profile.yml`). Dana Reyes signed off this file on 2026-10-25 (Ely as Dana Reyes). Story 13.3
+(route optimization) changed it on 2026-10-26, so the file awaits her sign-off again (DEP-028): GRD-002
+now names the four coordinate columns and GRD-008 records the crew-out rule, both **draft**. Every
+other card stays **approved** as signed on 2026-10-25.
 
 ## Guardrails
 
 <!-- The client's standing rules for any build. One rule card each (below). -->
 
 - GRD-001: the bot only reads data. No query writes, changes structure or attaches anything.
-- GRD-002: forbidden columns are never named, and `SELECT *` is refused.
+- GRD-002: forbidden columns (coordinates included) are never named, and `SELECT *` is refused;
+  `travelMatrix` alone reads the coordinates and returns drive minutes only.
 - GRD-003: MotherDuck is read through the locked reader sequence; one accepted exception (`my_db`).
 - GRD-004: anything that writes to an outside system goes through the approval step, never a module.
 - GRD-005: the AI fills in a form and nothing else: no data rows, a spend breaker and an off switch.
 - GRD-006: pay rates are open for the demo, but Labour cost is for owner and admin only, totals only.
 - GRD-007: the data is synthetic, and publishing it is a human step.
+- GRD-008: a crew is out for the day when its lead is absent, or nobody on it is present (draft).
 
 ## Protected systems
 
@@ -110,14 +114,27 @@ exception_workflow and data_quality_guard.
 ### GRD-002: Forbidden columns
 - type: access_rule
 - rule: no query may name a column in the profile's `sql.forbidden_columns` (client phone, property
-  street address, property postal code), and while any is set, `SELECT *` and whole-row references
-  are refused. Email is allowed: the win-back push needs it. `properties.access_method` holds a
-  method, never a door code. NOT a rule about display: a column that is allowed can still be
-  limited by who may use the entry (GRD-006).
+  street address, property postal code, and the four coordinate columns `properties.geo_lat_e6`,
+  `properties.geo_lon_e6`, `crews.base_geo_lat_e6`, `crews.base_geo_lon_e6`), and while any is set,
+  `SELECT *` and whole-row references are refused. The coordinate columns have one named exception,
+  `travelMatrix` (below). Email is allowed: the win-back push needs it.
+  `properties.access_method` holds a method, never a door code. NOT a rule about display: a column
+  that is allowed can still be limited by who may use the entry (GRD-006).
+- coordinates (Story 13.3, route optimization): the four coordinate columns are forbidden before the
+  fixture gains them (Story 14.1), and they stay forbidden to every query and every other read path.
+  The one named exception is the kit's drive-time read, `travelMatrix`
+  (`kit/runtime/data/travel.js`): it alone may read them, and only the columns the profile's
+  `routing.coordinates` declares. It returns whole-minute drive times between two places only, never
+  a latitude or longitude, and every other forbidden column still applies to it. No coordinate
+  value, street address or postal code appears as text anywhere: Slack, logs, reasons, errors or AI
+  input. NOT the map image: showing a coarse map in the routing modal is a separate update to this
+  card that Dana signs at Story 15.5 (DEP-025); until then no Brightside module shows a map.
 - owner: Dana Reyes
-- evidence: profile `sql.forbidden_columns`; `kit/runtime/sql`; `fixture-tables.md` "Rules". The
-  mock CRM's field list and the email connector's contact shape leave these columns out too.
-- status: approved
+- evidence: profile `sql.forbidden_columns` and `routing`; `kit/runtime/sql`; `fixture-tables.md`
+  "Rules"; architecture-routing AD-R9 and AD-R10. The mock CRM's field list and the email
+  connector's contact shape leave these columns out too.
+- status: draft (the coordinate columns were added on 2026-10-26 and await Dana Reyes's sign-off,
+  DEP-028; the rest was approved on 2026-10-25)
 
 ### GRD-003: MotherDuck reader lockdown
 - type: access_rule
@@ -190,3 +207,16 @@ exception_workflow and data_quality_guard.
 - owner: Dana Reyes
 - evidence: `fixture-tables.md` "Rules" and "Validation"; `docs/runtime/motherduck-publish.md`.
 - status: approved
+
+### GRD-008: A crew out for the day
+- type: classification
+- rule: for route optimization, a crew is out for the day (`available: false`), and its stops need a
+  new crew, when its lead is absent, or nobody on the crew is present. A crew with its lead and at
+  least one person present works the day with fewer people, and its visits take longer. NOT a rule
+  about who may see a route, and NOT a change to any booked visit: routing only suggests.
+- edge_cases: who counts as the lead on a day the usual lead is swapped; a member present for part
+  of the day. Both wait for Dana Reyes.
+- owner: Dana Reyes
+- evidence: data-design §4 and architecture-routing AD-R1 (the adapter, Story 14.3); absences come
+  from `staff_absences` (Story 14.2).
+- status: draft (pending Dana Reyes's confirmation, DEP-028)

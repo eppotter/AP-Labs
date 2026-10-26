@@ -1,0 +1,374 @@
+{
+  "_comment": "Synthetic day for Story 12.4: crew c1 in zone east is out. c2, the only other crew in zone east, is booked with two 7-hour stops, so the 4-hour stop k1 fits only on crew c3 in zone west; the 30-minute stop k2 still fits on c2. Monday 2026-11-02. Not client data; minutes come from made-up grid points that are not in the file.",
+  "input": {
+    "day": "2026-11-02",
+    "asOf": "2026-10-30",
+    "limits": {
+      "earliestStart": 360,
+      "defaultStart": 480,
+      "aimFinish": 1080,
+      "latestFinish": 1380,
+      "startRoundTo": 5
+    },
+    "crews": [
+      {
+        "crewId": "c1",
+        "zoneId": "east",
+        "baseNode": "crew:c1",
+        "headcountPlanned": 3,
+        "headcountPresent": 0,
+        "available": false
+      },
+      {
+        "crewId": "c2",
+        "zoneId": "east",
+        "baseNode": "crew:c2",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      },
+      {
+        "crewId": "c3",
+        "zoneId": "west",
+        "baseNode": "crew:c3",
+        "headcountPlanned": 3,
+        "headcountPresent": 3,
+        "available": true
+      }
+    ],
+    "stops": [
+      {
+        "stopId": "k1",
+        "node": "property:k1",
+        "currentCrewId": "c1",
+        "routeOrder": 1,
+        "labourMinutes": 720,
+        "serviceMinutes": 240,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "k2",
+        "node": "property:k2",
+        "currentCrewId": "c1",
+        "routeOrder": 2,
+        "labourMinutes": 90,
+        "serviceMinutes": 30,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "m1",
+        "node": "property:m1",
+        "currentCrewId": "c2",
+        "routeOrder": 1,
+        "labourMinutes": 1260,
+        "serviceMinutes": 420,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "m2",
+        "node": "property:m2",
+        "currentCrewId": "c2",
+        "routeOrder": 2,
+        "labourMinutes": 1260,
+        "serviceMinutes": 420,
+        "locked": false,
+        "rules": []
+      },
+      {
+        "stopId": "p1",
+        "node": "property:p1",
+        "currentCrewId": "c3",
+        "routeOrder": 1,
+        "labourMinutes": 180,
+        "serviceMinutes": 60,
+        "locked": false,
+        "rules": []
+      }
+    ]
+  },
+  "matrix": [
+    {
+      "from_node": "crew:c1",
+      "to_node": "crew:c2",
+      "minutes": 5
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "crew:c3",
+      "minutes": 20
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:k1",
+      "minutes": 9
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:k2",
+      "minutes": 5
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:m1",
+      "minutes": 7
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:m2",
+      "minutes": 6
+    },
+    {
+      "from_node": "crew:c1",
+      "to_node": "property:p1",
+      "minutes": 23
+    },
+    {
+      "from_node": "crew:c2",
+      "to_node": "crew:c1",
+      "minutes": 5
+    },
+    {
+      "from_node": "crew:c2",
+      "to_node": "crew:c3",
+      "minutes": 24
+    },
+    {
+      "from_node": "crew:c2",
+      "to_node": "property:k1",
+      "minutes": 13
+    },
+    {
+      "from_node": "crew:c2",
+      "to_node": "property:k2",
+      "minutes": 5
+    },
+    {
+      "from_node": "crew:c2",
+      "to_node": "property:m1",
+      "minutes": 5
+    },
+    {
+      "from_node": "crew:c2",
+      "to_node": "property:m2",
+      "minutes": 5
+    },
+    {
+      "from_node": "crew:c2",
+      "to_node": "property:p1",
+      "minutes": 27
+    },
+    {
+      "from_node": "crew:c3",
+      "to_node": "crew:c1",
+      "minutes": 20
+    },
+    {
+      "from_node": "crew:c3",
+      "to_node": "crew:c2",
+      "minutes": 24
+    },
+    {
+      "from_node": "crew:c3",
+      "to_node": "property:k1",
+      "minutes": 13
+    },
+    {
+      "from_node": "crew:c3",
+      "to_node": "property:k2",
+      "minutes": 23
+    },
+    {
+      "from_node": "crew:c3",
+      "to_node": "property:m1",
+      "minutes": 27
+    },
+    {
+      "from_node": "crew:c3",
+      "to_node": "property:m2",
+      "minutes": 25
+    },
+    {
+      "from_node": "crew:c3",
+      "to_node": "property:p1",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:k1",
+      "to_node": "crew:c1",
+      "minutes": 9
+    },
+    {
+      "from_node": "property:k1",
+      "to_node": "crew:c2",
+      "minutes": 13
+    },
+    {
+      "from_node": "property:k1",
+      "to_node": "crew:c3",
+      "minutes": 13
+    },
+    {
+      "from_node": "property:k1",
+      "to_node": "property:k2",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:k1",
+      "to_node": "property:m1",
+      "minutes": 14
+    },
+    {
+      "from_node": "property:k1",
+      "to_node": "property:m2",
+      "minutes": 13
+    },
+    {
+      "from_node": "property:k1",
+      "to_node": "property:p1",
+      "minutes": 14
+    },
+    {
+      "from_node": "property:k2",
+      "to_node": "crew:c1",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:k2",
+      "to_node": "crew:c2",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:k2",
+      "to_node": "crew:c3",
+      "minutes": 23
+    },
+    {
+      "from_node": "property:k2",
+      "to_node": "property:k1",
+      "minutes": 10
+    },
+    {
+      "from_node": "property:k2",
+      "to_node": "property:m1",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:k2",
+      "to_node": "property:m2",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:k2",
+      "to_node": "property:p1",
+      "minutes": 24
+    },
+    {
+      "from_node": "property:m1",
+      "to_node": "crew:c1",
+      "minutes": 7
+    },
+    {
+      "from_node": "property:m1",
+      "to_node": "crew:c2",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:m1",
+      "to_node": "crew:c3",
+      "minutes": 27
+    },
+    {
+      "from_node": "property:m1",
+      "to_node": "property:k1",
+      "minutes": 14
+    },
+    {
+      "from_node": "property:m1",
+      "to_node": "property:k2",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:m1",
+      "to_node": "property:m2",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:m1",
+      "to_node": "property:p1",
+      "minutes": 28
+    },
+    {
+      "from_node": "property:m2",
+      "to_node": "crew:c1",
+      "minutes": 6
+    },
+    {
+      "from_node": "property:m2",
+      "to_node": "crew:c2",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:m2",
+      "to_node": "crew:c3",
+      "minutes": 25
+    },
+    {
+      "from_node": "property:m2",
+      "to_node": "property:k1",
+      "minutes": 13
+    },
+    {
+      "from_node": "property:m2",
+      "to_node": "property:k2",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:m2",
+      "to_node": "property:m1",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:m2",
+      "to_node": "property:p1",
+      "minutes": 27
+    },
+    {
+      "from_node": "property:p1",
+      "to_node": "crew:c1",
+      "minutes": 23
+    },
+    {
+      "from_node": "property:p1",
+      "to_node": "crew:c2",
+      "minutes": 27
+    },
+    {
+      "from_node": "property:p1",
+      "to_node": "crew:c3",
+      "minutes": 5
+    },
+    {
+      "from_node": "property:p1",
+      "to_node": "property:k1",
+      "minutes": 14
+    },
+    {
+      "from_node": "property:p1",
+      "to_node": "property:k2",
+      "minutes": 24
+    },
+    {
+      "from_node": "property:p1",
+      "to_node": "property:m1",
+      "minutes": 28
+    },
+    {
+      "from_node": "property:p1",
+      "to_node": "property:m2",
+      "minutes": 27
+    }
+  ]
+}
