@@ -101,6 +101,15 @@
 // view_closed on a map view (Back, or the X) deletes all of that view's
 // files; if it never arrives, the sweep deletes them within 20 minutes. The
 // PNG is never logged: refusals and failures log a reason only.
+// Fail closed (PR #222 review): an image is honoured only on that path, a
+// module's reply from Open. Every other way a message reaches the person (a
+// form, "How was this made?" or approval click, a form or answer submit, a
+// form's open, Help, a reply's ephemeral or in-place fallback) passes through
+// screened(), which refuses a message carrying an image: the refusal is
+// logged (where, and a reason; never the PNG), the person gets the plain
+// error, and nothing is uploaded or sent. The renderers (modal.messageBlocks,
+// format.messageParts) throw on an image as a backstop. A map view switch
+// (Story 15.4) must run the same lifecycle as showImage, not a new path.
 
 const access = require('../access');
 const {
@@ -138,6 +147,10 @@ const MAP_NEEDS_WINDOW = "The map opens in its own window, which Slack didn't op
 const MAP_VIEW_CALLBACK = 'hub:map';
 const MAP_VIEW = Object.freeze({ callbackId: MAP_VIEW_CALLBACK, notifyOnClose: true });
 const hasImage = (message) => Boolean(message && typeof message === 'object' && Object.hasOwn(message, 'image'));
+// An image anywhere a reply could be sent from: the message, or the text it
+// falls back to when there is no view.
+const carriesImage = (message) => hasImage(message)
+  || Boolean(message && typeof message === 'object' && hasImage(message.ephemeralFallback));
 
 function defaultCanUse(profile) {
   return (person, mod) => access.decide(profile, person.user, mod.resource);
@@ -213,6 +226,13 @@ function registerHubs(app, {
     .filter((m) => isVisible(m, env) && decide(person, m) === 'allowed');
   const notSetUp = (person) => (person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin })));
   const fellBack = (where, reason, hub, via) => log.info('hub modal fallback', { where, reason, hub: hub || null, ...(via ? { via } : {}) });
+  // A message on any path but the map lifecycle: one carrying an image is
+  // refused and replaced by the plain error (fail closed).
+  const screened = (where, message) => {
+    if (!carriesImage(message)) return message;
+    log.warn('image refused', { where, reason: 'not on the map view path' });
+    return PLAIN_ERROR;
+  };
   // The runner keeps each result as shown, so "Back to the list" can put it
   // back; Back rebuilds the Push button with the same hook.
   const hooks = keepingResult(pushHooks, store, log);
@@ -279,7 +299,7 @@ function registerHubs(app, {
     if (!fromModal(body) || !hasViews(client)) {
       fellBack(where, fromModal(body) ? 'no views client' : 'not from a modal', hubId);
       return {
-        modal: false, loading: async () => {}, reply: viaEphemeral, viewId: () => null,
+        modal: false, loading: async () => {}, reply: (m) => viaEphemeral(screened(where, m)), viewId: () => null,
       };
     }
     const view = pushedView({
@@ -326,10 +346,11 @@ function registerHubs(app, {
         return message === undefined ? undefined : fallback(message);
       }
     };
+    const show = guarded((m, opts) => view.show(m, opts));
     return {
       modal: true,
       loading: guarded(() => view.loading()),
-      reply: guarded((m, opts) => view.show(m, opts)),
+      reply: (m, opts) => show(screened(where, m), opts),
       // The pushed view's id, or null when the replies go anywhere else.
       viewId: () => (fallback || !view.pushed ? null : view.id),
     };
@@ -507,12 +528,15 @@ function registerHubs(app, {
 
   // A scoped-pull form's submit ("Check values"). The answer goes in the ack:
   // errors beside the inputs, or the Confirm screen (or a refusal) in place.
-  const submittedView = (view, message) => moduleView({
-    title: view && view.title && view.title.text,
-    hubId: parseMetadata(view && view.private_metadata).hubId,
-    blocks: messageBlocks(message),
-    message,
-  });
+  const submittedView = (view, message, where) => {
+    const shown = screened(where, message);
+    return moduleView({
+      title: view && view.title && view.title.text,
+      hubId: parseMetadata(view && view.private_metadata).hubId,
+      blocks: messageBlocks(shown),
+      message: shown,
+    });
+  };
   // The follow-up question's submit (Story 9.4) is answered the same way.
   for (const [callback, name, step] of [[FORM_CALLBACK, 'hub:form-submit', 'submit'], [ANSWER_CALLBACK, 'hub:form-answer', 'answer']]) {
     app.view(callback, handleView(name, ({ body }) => {
@@ -521,8 +545,8 @@ function registerHubs(app, {
       const { sessionId } = parseMetadata(view.private_metadata);
       const res = scopedPull[step]({ sessionId, person: person.id, state: view.state, resolve: resolveForm(person, callback) });
       if (res.errors) return { response_action: 'errors', errors: res.errors };
-      return { response_action: 'update', view: submittedView(view, res.message) };
-    }, { log, onError: ({ body }) => ({ response_action: 'update', view: submittedView(body && body.view, PLAIN_ERROR) }) }));
+      return { response_action: 'update', view: submittedView(view, res.message, `form-${step}`) };
+    }, { log, onError: ({ body }) => ({ response_action: 'update', view: submittedView(body && body.view, PLAIN_ERROR, `form-${step}`) }) }));
   }
 
   // The Confirm screen's buttons. Each click updates the view it came from.
@@ -537,7 +561,7 @@ function registerHubs(app, {
     const { hubId } = parseMetadata(from.private_metadata);
     const view = updatedView({ client, view: from, title: from.title && from.title.text, hubId });
     const show = async (message, opts) => {
-      const status = await view.show(message, opts);
+      const status = await view.show(screened('form', message), opts);
       if (status === 'dropped') log.info('stale view result dropped', { action: verb, reason: 'hash_conflict' });
       if (status === 'forced') log.info('stale view replaced by a confirmed result', { action: verb, reason: 'hash_conflict' });
       return status;
@@ -572,7 +596,7 @@ function registerHubs(app, {
     const { hubId } = parseMetadata(from.private_metadata);
     const view = updatedView({ client, view: from, title: from.title && from.title.text, hubId });
     const show = async (message) => {
-      const status = await view.show(message);
+      const status = await view.show(screened('provenance', message));
       if (status === 'dropped') log.info('stale view result dropped', { action: 'provenance', reason: 'hash_conflict' });
       return status;
     };
@@ -610,7 +634,7 @@ function registerHubs(app, {
     const { hubId } = parseMetadata(from.private_metadata);
     const view = updatedView({ client, view: from, title: from.title && from.title.text, hubId });
     const show = async (message) => {
-      const status = await view.show(message);
+      const status = await view.show(screened('approval', message));
       if (status === 'dropped') log.info('stale view result dropped', { action: verb, reason: 'hash_conflict' });
       return status;
     };

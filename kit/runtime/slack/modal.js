@@ -28,7 +28,7 @@
 // Text passes through unchanged: it is already escaped by whoever built it
 // (kit/runtime/messages, registry/menu, the module's own escapeText).
 
-const { textBlocks } = require('./format');
+const { textBlocks, refuseImage } = require('./format');
 
 const MAX_BLOCKS = 100;
 const MAX_TITLE = 24;
@@ -54,8 +54,11 @@ function limitBlocks(blocks, { keepTail = 0, max = MAX_BLOCKS } = {}) {
   return [...head, note, ...tail];
 }
 
-// The blocks a reply shows in a view: its own blocks, else its text.
+// The blocks a reply shows in a view: its own blocks, else its text. A
+// message carrying an image is never rendered (fail closed, PR #222 review):
+// only the hub's map lifecycle shows one, as an image block it built itself.
 function messageBlocks(message) {
+  refuseImage(message);
   if (typeof message === 'string') return textBlocks(message);
   if (message && Array.isArray(message.blocks) && message.blocks.length) return message.blocks;
   return textBlocks((message && message.text) || '');

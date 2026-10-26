@@ -19,6 +19,8 @@
 // Thread history is never turned into AI messages in V1: a thread can hold
 // result rows, and rows never reach the AI (NFR9). Nothing here reads a thread.
 
+const { ImageError } = require('./image');
+
 // Slack allows 3000 characters in a section; 2900 leaves headroom.
 const SECTION_LIMIT = 2900;
 // Slack allows 50 blocks in one message (a modal view allows 100).
@@ -166,11 +168,25 @@ const textBlocks = (text) => splitText(text).map((t) => ({ type: 'section', text
 // Raw markdown straight to section blocks.
 const formatBlocks = (markdown) => textBlocks(toMrkdwn(markdown));
 
+// A message carrying an image (Story 15.1) is never sent or rendered as an
+// ordinary reply: only the hub's map lifecycle (kit/runtime/slack/hubs
+// showImage) uploads it and shows the block it built. Anything else throws a
+// fixed-text ImageError before a Slack call, so the bytes go nowhere (fail
+// closed, PR #222 review). The hub screens replies first and logs the
+// refusal; this is the backstop.
+function refuseImage(message) {
+  const m = message && typeof message === 'object' ? message : null;
+  if (m && (Object.hasOwn(m, 'image') || (m.ephemeralFallback && typeof m.ephemeralFallback === 'object' && Object.hasOwn(m.ephemeralFallback, 'image')))) {
+    throw new ImageError('not on the map view path');
+  }
+}
+
 // A reply as the messages to send it as (ephemeral replies). Text that fits
 // one section stays a plain text message; longer text becomes section blocks,
 // at most 50 per message, with the first piece as the notification text.
 // A message that brings its own blocks is sent as it is.
 function messageParts(message) {
+  refuseImage(message);
   const m = typeof message === 'string' ? { text: message } : (message || { text: '' });
   if (Array.isArray(m.blocks) && m.blocks.length) return [m];
   const text = String(m.text == null ? '' : m.text);
@@ -185,5 +201,5 @@ function messageParts(message) {
 }
 
 module.exports = {
-  toMrkdwn, splitText, textBlocks, formatBlocks, messageParts, SECTION_LIMIT, MAX_MESSAGE_BLOCKS,
+  toMrkdwn, splitText, textBlocks, formatBlocks, messageParts, refuseImage, SECTION_LIMIT, MAX_MESSAGE_BLOCKS,
 };
