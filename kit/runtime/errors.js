@@ -174,8 +174,10 @@ class ScoringFault extends RuntimeRefusal {
 // model (an unknown key) or could not draw (the rasterizer did not load, drew
 // nothing usable, or drew over its size cap), or refused an SVG holding a
 // reference or style (unsafe_svg), or street tiles that are not checked
-// 256 x 256 PNGs or do not cover the frame (basemap_invalid, Story 15.10).
-// A setup fault in the
+// 256 x 256 PNGs or do not cover the frame (basemap_invalid, Story 15.10),
+// or an evaluateOrder order that leaves out one of the crew's stops
+// (missing_stop), names a stop not in the day (unknown_stop) or one on
+// another crew (other_crew_stop, Story 15.12). A setup fault in the
 // adapter, so no plan is shown. field is a path like "stops[2].node"; the
 // value itself is never carried. details: { field, problem }, plus { from,
 // to } (node ids) when problem is 'no_travel'. problem is one of
@@ -186,6 +188,7 @@ const ROUTING_PROBLEMS = Object.freeze([
   'unknown_rule', 'not_overridable', 'not_function', 'unknown_weight', 'bad_weights',
   'routing_off', 'too_many_pairs', 'not_coordinate_column', 'shared_column_name', 'no_position', 'data_unavailable', 'query_refused', 'query_failed',
   'unknown_key', 'renderer_unavailable', 'renderer_failed', 'image_too_large', 'unsafe_svg', 'basemap_invalid',
+  'missing_stop', 'unknown_stop', 'other_crew_stop',
 ]);
 class RoutingFault extends RuntimeRefusal {
   constructor(details) {
