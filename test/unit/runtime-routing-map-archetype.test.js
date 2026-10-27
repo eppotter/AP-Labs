@@ -784,7 +784,7 @@ test('no log line, Slack call or error holds the points or an x/y key; none hold
     await open(ctx, user);
     for (const v of ['change', 'zone', 'gap', 'compare']) await click(ctx, 'routing-map:view', pick(v), { user });
   }
-  const broken = setup({ mapPoints: async (d, ids, frame) => (await fx.fakeMapPoints()(d, ids, frame)).slice(1) });
+  const broken = setup({ mapPoints: async (d, ids, frame) => { const r = await fx.fakeMapPoints()(d, ids, frame); return { ...r, points: r.points.slice(1) }; } });
   await open(broken);
   const failing = setup({ render: () => { throw new RoutingFault({ field: 'map image', problem: 'renderer_failed' }); } });
   await open(failing);
@@ -802,6 +802,68 @@ test('no log line, Slack call or error holds the points or an x/y key; none hold
     }
   }
   assert.ok(ctx.models.length > 0, 'the renderer did get points');
+});
+
+// Every object reachable from v that holds a mosaic key (no cycles followed twice).
+const MOSAIC_KEYS = Object.keys(fx.FAKE_MOSAIC);
+function holdsMosaic(v, seen = new Set()) {
+  if (v === null || typeof v !== 'object' || seen.has(v)) return false;
+  seen.add(v);
+  if (Buffer.isBuffer(v)) return false;
+  if (Object.hasOwn(v, 'mosaic') || ['tx0', 'ty0', 'ox', 'oy'].some((k) => Object.hasOwn(v, k))) return true;
+  return Object.values(v).some((x) => holdsMosaic(x, seen));
+}
+
+test('Story 15.8: the renderer gets the points only; the mosaic reaches no renderer, log line, Slack call or error (AD-R20)', async () => {
+  const mapPoints = fx.fakeMapPoints();
+  const reads = [];
+  const spy = async (...args) => { const r = await mapPoints(...args); reads.push(r); return r; };
+  const ctx = setup({ mapPoints: spy });
+  const users = [U.dispatch, U.leadA, U.leadB, U.ghost, U.none];
+  for (const user of users) {
+    await open(ctx, user);
+    for (const v of ['change', 'zone', 'gap', 'compare']) await click(ctx, 'routing-map:view', pick(v), { user });
+  }
+  // The error exits too: a node missing, a render fault.
+  const broken = setup({
+    mapPoints: async (d, ids, frame) => { const r = await fx.fakeMapPoints()(d, ids, frame); return { ...r, points: r.points.slice(1) }; },
+  });
+  await open(broken);
+  const failing = setup({ render: () => { throw new RoutingFault({ field: 'map image', problem: 'renderer_failed' }); } });
+  await open(failing);
+  assert.ok(ctx.models.length > 0 && reads.length === ctx.models.length, 'every read was drawn');
+  // The renderer gets exactly the read's points, and nothing of the mosaic.
+  ctx.models.forEach(({ model }, i) => {
+    assert.equal(model.points, reads[i].points, 'the points the read returned, as returned');
+    assert.equal(holdsMosaic(model), false, 'the model holds no mosaic');
+    for (const k of MOSAIC_KEYS) assert.equal(Object.hasOwn(model, k), false, `the model has no ${k}`);
+  });
+  const big = [fx.FAKE_MOSAIC.tx0, fx.FAKE_MOSAIC.ty0].map(String);
+  for (const c of [ctx, broken, failing]) {
+    const errors = c.log.lines.filter((l) => l.fields && l.fields.err).map((l) => l.fields.err);
+    const records = [
+      ['log', c.log.lines], ['views', c.app.views], ['uploads', c.app.uploads.map(({ file, ...rest }) => rest)],
+      ['deleted', c.app.deleted], ['responded', c.app.responded], ['posted', c.app.posted], ['errors', errors],
+    ];
+    for (const [name, rec] of records) {
+      assert.equal(holdsMosaic(rec), false, `${name} holds a mosaic or a tile key`);
+      const text = JSON.stringify(rec) + (name === 'errors' ? errors.map((e) => `${e && e.message} ${e && e.stack}`).join('\n') : '');
+      for (const n of big) assert.ok(!text.includes(n), `${name} holds a tile number`);
+      assert.ok(!/mosaic|tx0|ty0/.test(text), `${name} names the mosaic`);
+    }
+  }
+});
+
+test('Story 15.8: a read with no points list draws nothing: an engine fault (no_position), at the error exit', async () => {
+  for (const shape of [[], null, { mosaic: fx.FAKE_MOSAIC }, { points: 'none', mosaic: null }]) {
+    const ctx = setup({ mapPoints: async () => shape });
+    await open(ctx);
+    await errorExit(ctx, PLAN_FAILED);
+    assert.deepEqual(ctx.log.lines.find((l) => l.msg === 'routing map not drawn').fields, {
+      module: 'routing', view: 'compare', field: 'mapPoints', problem: 'no_position',
+    }, JSON.stringify(shape));
+    assert.deepEqual(ctx.app.uploads, []);
+  }
 });
 
 // --- exits -------------------------------------------------------------------------------------------
@@ -903,7 +965,9 @@ test('exit, an engine fault: a plain message in the view with Back; the fault lo
 
 test('exit, a node missing from mapPoints: an engine fault, at the error exit', async () => {
   const points = fx.fakeMapPoints();
-  const ctx = setup({ mapPoints: async (d, ids, frame) => (await points(d, ids, frame)).filter((p) => p.node !== 'property:s3') });
+  const ctx = setup({
+    mapPoints: async (d, ids, frame) => { const r = await points(d, ids, frame); return { ...r, points: r.points.filter((p) => p.node !== 'property:s3') }; },
+  });
   await open(ctx);
   await errorExit(ctx, PLAN_FAILED);
   assert.deepEqual(ctx.log.lines.find((l) => l.msg === 'routing map not drawn').fields, {

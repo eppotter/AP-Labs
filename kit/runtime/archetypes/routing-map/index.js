@@ -47,7 +47,10 @@
 // (./views), the labels for the node ids that scope may see, mapPoints for
 // only those ids, the renderer (kit/runtime/routing-map), then showMap. The
 // points and the SVG stay in this function: never logged, kept or sent. Logs
-// carry the module, the view and fixed reasons only.
+// carry the module, the view and fixed reasons only. mapPoints also returns
+// the tile mosaic under the points (Story 15.8, AD-R20): tile numbers are
+// rough locations, so the mosaic goes nowhere yet, not to the renderer, the
+// logs, Slack or an error (Story 15.10 passes it to the tile fetcher only).
 //
 // Exits: Back and Close (view_closed, else the sweep: the hub), an error (a
 // plain message in the view, with Back), an expired trigger (the hub's
@@ -301,8 +304,10 @@ function createRoutingMap({
     };
     if (plan.empty) return { plain: textMessage(s, plan.empty(n), headOf(st)) };
     const nodes = unique(plan.nodes);
-    const points = await mapPoints(data, nodes, FRAME);
-    const placed = new Set(Array.isArray(points) ? points.map((p) => p && p.node) : []);
+    // Only the points are taken; the mosaic is left behind (AD-R20).
+    const read = await mapPoints(data, nodes, FRAME);
+    const points = read && Array.isArray(read.points) ? read.points : [];
+    const placed = new Set(points.map((p) => p && p.node));
     // A requested node with no position is an engine fault (AD-R13, F16).
     if (!nodes.every((node) => placed.has(node))) throw fault('mapPoints', 'no_position');
     const built = plan.build(n);
