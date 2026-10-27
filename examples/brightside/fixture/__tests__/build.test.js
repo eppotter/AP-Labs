@@ -62,8 +62,9 @@ test('Brightside builds in under 60 seconds with every table at its fixture_meta
 // moved it from 3+80453e2a90d0; Story 14.2 (service_rules, staff_absences
 // and the planted scenarios, still v4: unpublished) from 4+c090cded7e68;
 // Story 15.7 (generator v5: the coordinates move to Columbus) from
-// 4+dd14e6d231b7.
-const VERSION_AS_PLAIN_CSV = '5+5dc9a0ad58fb';
+// 4+dd14e6d231b7; its fix (generator v6: no point on water) from
+// 5+5dc9a0ad58fb.
+const VERSION_AS_PLAIN_CSV = '6+37b2437c36e6';
 
 // A copy of the fixture with every seed unzipped to plain seeds/<table>.csv.
 function plainCopy(t) {

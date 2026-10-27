@@ -60,7 +60,7 @@ test('Dataset replies privately with the local fixture, its version, as-of date 
   assert.deepEqual(lines.slice(0, 6), [
     '*Dataset*',
     'Source: local fixture (brightside.duckdb)',
-    'Fixture version: 5',
+    'Fixture version: 6',
     'As of: 2026-09-30',
     'Published: local build',
     'Tables (19):',
@@ -69,7 +69,7 @@ test('Dataset replies privately with the local fixture, its version, as-of date 
   assert.ok(lines.includes('• zones: 5'));
   assert.ok(lines.includes('• timesheets: 115,302'));
   assert.ok(lines.includes('• scheduled_visits: 1,720'));
-  assert.ok(lines.includes('• service_rules: 781'));
+  assert.ok(lines.includes('• service_rules: 780'));
   assert.ok(lines.includes('• staff_absences: 5'));
 });
 

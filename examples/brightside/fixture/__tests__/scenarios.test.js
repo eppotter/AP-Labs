@@ -43,7 +43,7 @@ test('targets.json keeps truths as they were and holds the routing targets under
     'route-change-s2-count', 'route-change-s3-crosszone']);
   assert.deepEqual(routing, {
     'scheduled-stops-next-14d': 825,
-    'route-optimize-s1-drive': 139,
+    'route-optimize-s1-drive': 140,
     'route-change-s2-top': S2.bestFill,
     'route-change-s2-count': 2,
     'route-change-s3-crosszone': { in_zone: 5, cross_zone: 1, unplaced: 0 },
@@ -79,8 +79,8 @@ test('the generator plants the routing targets, and refuses when one misses', ()
   const config = readSeedConfig();
   const got = routingFigures(tables(), { asOf: AS_OF });
   for (const id of ROUTING_TARGET_IDS.filter((x) => x !== 'route-change-s3-crosszone')) assert.equal(got[id], config.routing[id], id);
-  assert.throws(() => generate({ ...config, routing: { ...config.routing, 'route-optimize-s1-drive': 140 } }),
-    /planted routing figures missed: route-optimize-s1-drive 139 \(target 140\)/);
+  assert.throws(() => generate({ ...config, routing: { ...config.routing, 'route-optimize-s1-drive': 141 } }),
+    /planted routing figures missed: route-optimize-s1-drive 140 \(target 141\)/);
   assert.throws(() => generate({ ...config, routing: { ...config.routing, 'route-change-s3-crosszone': { in_zone: 6, cross_zone: 1, unplaced: 0 } } }),
     /route-change-s3-crosszone adds up to 7, not crew 7's 6 stops/);
   // The scenarios' ids fit the recorded seed only.

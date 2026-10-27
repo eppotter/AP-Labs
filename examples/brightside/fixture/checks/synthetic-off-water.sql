@@ -1,0 +1,143 @@
+-- Synthetic only: no home or crew base sits on water in the Columbus box.
+-- protected-columns: properties.geo_lat_e6, properties.geo_lon_e6, crews.base_geo_lat_e6, crews.base_geo_lon_e6
+-- The four are forbidden columns; this check may name them because the
+-- validator never prints a row's values, only how many rows came back.
+-- The water is lib/water.js WATER: rough, hand-drawn outlines with a margin,
+-- not map data, one row per edge (micro-degrees, the last vertex joining the
+-- first), as SELECTs, not a VALUES list (the SQL guard reads a string in
+-- FROM as a path). A point is on water when an eastward ray from it crosses
+-- its outline an odd number of times (each edge holds its lower end, not its
+-- upper one; whole-number products, so exact). Each place is tested as is
+-- and snapped to the map grid (routing.map_grid_e6 2000, half away from
+-- zero), where its marker is drawn; `form` keeps the two apart when they
+-- are the same point. One row per place at fault.
+WITH water AS (
+  SELECT 'Alum Creek Reservoir' AS body, 40172000 AS lat1, -82995000 AS lon1, 40172000 AS lat2, -82940000 AS lon2
+  UNION ALL SELECT 'Alum Creek Reservoir', 40172000, -82940000, 40215000, -82935000
+  UNION ALL SELECT 'Alum Creek Reservoir', 40215000, -82935000, 40260000, -82937000
+  UNION ALL SELECT 'Alum Creek Reservoir', 40260000, -82937000, 40310000, -82945000
+  UNION ALL SELECT 'Alum Creek Reservoir', 40310000, -82945000, 40310000, -82992000
+  UNION ALL SELECT 'Alum Creek Reservoir', 40310000, -82992000, 40260000, -83002000
+  UNION ALL SELECT 'Alum Creek Reservoir', 40260000, -83002000, 40215000, -83002000
+  UNION ALL SELECT 'Alum Creek Reservoir', 40215000, -83002000, 40172000, -82995000
+  UNION ALL SELECT 'Hoover Reservoir', 40100000, -82902000, 40100000, -82862000
+  UNION ALL SELECT 'Hoover Reservoir', 40100000, -82862000, 40150000, -82852000
+  UNION ALL SELECT 'Hoover Reservoir', 40150000, -82852000, 40232000, -82858000
+  UNION ALL SELECT 'Hoover Reservoir', 40232000, -82858000, 40232000, -82896000
+  UNION ALL SELECT 'Hoover Reservoir', 40232000, -82896000, 40150000, -82910000
+  UNION ALL SELECT 'Hoover Reservoir', 40150000, -82910000, 40100000, -82902000
+  UNION ALL SELECT 'O''Shaughnessy Reservoir', 40143000, -83140000, 40143000, -83106000
+  UNION ALL SELECT 'O''Shaughnessy Reservoir', 40143000, -83106000, 40200000, -83113000
+  UNION ALL SELECT 'O''Shaughnessy Reservoir', 40200000, -83113000, 40285000, -83128000
+  UNION ALL SELECT 'O''Shaughnessy Reservoir', 40285000, -83128000, 40285000, -83165000
+  UNION ALL SELECT 'O''Shaughnessy Reservoir', 40285000, -83165000, 40200000, -83150000
+  UNION ALL SELECT 'O''Shaughnessy Reservoir', 40200000, -83150000, 40143000, -83140000
+  UNION ALL SELECT 'Griggs Reservoir', 39985000, -83102000, 39985000, -83074000
+  UNION ALL SELECT 'Griggs Reservoir', 39985000, -83074000, 40030000, -83080000
+  UNION ALL SELECT 'Griggs Reservoir', 40030000, -83080000, 40076000, -83094000
+  UNION ALL SELECT 'Griggs Reservoir', 40076000, -83094000, 40076000, -83122000
+  UNION ALL SELECT 'Griggs Reservoir', 40076000, -83122000, 40030000, -83106000
+  UNION ALL SELECT 'Griggs Reservoir', 40030000, -83106000, 39985000, -83102000
+  UNION ALL SELECT 'Scioto River (Dublin)', 40156000, -83120000, 40121000, -83112000
+  UNION ALL SELECT 'Scioto River (Dublin)', 40121000, -83112000, 40101000, -83106000
+  UNION ALL SELECT 'Scioto River (Dublin)', 40101000, -83106000, 40081000, -83102000
+  UNION ALL SELECT 'Scioto River (Dublin)', 40081000, -83102000, 40071000, -83100000
+  UNION ALL SELECT 'Scioto River (Dublin)', 40071000, -83100000, 40069000, -83112000
+  UNION ALL SELECT 'Scioto River (Dublin)', 40069000, -83112000, 40079000, -83114000
+  UNION ALL SELECT 'Scioto River (Dublin)', 40079000, -83114000, 40099000, -83118000
+  UNION ALL SELECT 'Scioto River (Dublin)', 40099000, -83118000, 40119000, -83124000
+  UNION ALL SELECT 'Scioto River (Dublin)', 40119000, -83124000, 40154000, -83132000
+  UNION ALL SELECT 'Scioto River (Dublin)', 40154000, -83132000, 40156000, -83120000
+  UNION ALL SELECT 'Scioto River (downtown)', 39997000, -83087000, 39994000, -83085000
+  UNION ALL SELECT 'Scioto River (downtown)', 39994000, -83085000, 39983000, -83066000
+  UNION ALL SELECT 'Scioto River (downtown)', 39983000, -83066000, 39973000, -83042000
+  UNION ALL SELECT 'Scioto River (downtown)', 39973000, -83042000, 39967000, -83018000
+  UNION ALL SELECT 'Scioto River (downtown)', 39967000, -83018000, 39961000, -83000000
+  UNION ALL SELECT 'Scioto River (downtown)', 39961000, -83000000, 39945000, -82998000
+  UNION ALL SELECT 'Scioto River (downtown)', 39945000, -82998000, 39929000, -83002000
+  UNION ALL SELECT 'Scioto River (downtown)', 39929000, -83002000, 39931000, -83016000
+  UNION ALL SELECT 'Scioto River (downtown)', 39931000, -83016000, 39945000, -83012000
+  UNION ALL SELECT 'Scioto River (downtown)', 39945000, -83012000, 39955000, -83012000
+  UNION ALL SELECT 'Scioto River (downtown)', 39955000, -83012000, 39957000, -83022000
+  UNION ALL SELECT 'Scioto River (downtown)', 39957000, -83022000, 39963000, -83048000
+  UNION ALL SELECT 'Scioto River (downtown)', 39963000, -83048000, 39973000, -83074000
+  UNION ALL SELECT 'Scioto River (downtown)', 39973000, -83074000, 39986000, -83095000
+  UNION ALL SELECT 'Scioto River (downtown)', 39986000, -83095000, 39993000, -83099000
+  UNION ALL SELECT 'Scioto River (downtown)', 39993000, -83099000, 39997000, -83087000
+  UNION ALL SELECT 'Scioto River (south)', 39934000, -83001000, 39925000, -83001000
+  UNION ALL SELECT 'Scioto River (south)', 39925000, -83001000, 39901000, -82991000
+  UNION ALL SELECT 'Scioto River (south)', 39901000, -82991000, 39870000, -82988000
+  UNION ALL SELECT 'Scioto River (south)', 39870000, -82988000, 39841000, -82988000
+  UNION ALL SELECT 'Scioto River (south)', 39841000, -82988000, 39811000, -82984000
+  UNION ALL SELECT 'Scioto River (south)', 39811000, -82984000, 39782000, -82978000
+  UNION ALL SELECT 'Scioto River (south)', 39782000, -82978000, 39742000, -82971000
+  UNION ALL SELECT 'Scioto River (south)', 39742000, -82971000, 39692000, -82961000
+  UNION ALL SELECT 'Scioto River (south)', 39692000, -82961000, 39688000, -82989000
+  UNION ALL SELECT 'Scioto River (south)', 39688000, -82989000, 39738000, -82999000
+  UNION ALL SELECT 'Scioto River (south)', 39738000, -82999000, 39778000, -83006000
+  UNION ALL SELECT 'Scioto River (south)', 39778000, -83006000, 39809000, -83012000
+  UNION ALL SELECT 'Scioto River (south)', 39809000, -83012000, 39839000, -83016000
+  UNION ALL SELECT 'Scioto River (south)', 39839000, -83016000, 39870000, -83016000
+  UNION ALL SELECT 'Scioto River (south)', 39870000, -83016000, 39899000, -83019000
+  UNION ALL SELECT 'Scioto River (south)', 39899000, -83019000, 39925000, -83019000
+  UNION ALL SELECT 'Scioto River (south)', 39925000, -83019000, 39936000, -83015000
+  UNION ALL SELECT 'Scioto River (south)', 39936000, -83015000, 39934000, -83001000
+  UNION ALL SELECT 'Olentangy River', 39952000, -83016000, 39959000, -83019000
+  UNION ALL SELECT 'Olentangy River', 39959000, -83019000, 39973000, -83028000
+  UNION ALL SELECT 'Olentangy River', 39973000, -83028000, 39990000, -83033000
+  UNION ALL SELECT 'Olentangy River', 39990000, -83033000, 40005000, -83031000
+  UNION ALL SELECT 'Olentangy River', 40005000, -83031000, 40019000, -83035000
+  UNION ALL SELECT 'Olentangy River', 40019000, -83035000, 40039000, -83038000
+  UNION ALL SELECT 'Olentangy River', 40039000, -83038000, 40059000, -83043000
+  UNION ALL SELECT 'Olentangy River', 40059000, -83043000, 40080000, -83045000
+  UNION ALL SELECT 'Olentangy River', 40080000, -83045000, 40101000, -83041000
+  UNION ALL SELECT 'Olentangy River', 40101000, -83041000, 40120000, -83038000
+  UNION ALL SELECT 'Olentangy River', 40120000, -83038000, 40149000, -83043000
+  UNION ALL SELECT 'Olentangy River', 40149000, -83043000, 40173000, -83053000
+  UNION ALL SELECT 'Olentangy River', 40173000, -83053000, 40199000, -83063000
+  UNION ALL SELECT 'Olentangy River', 40199000, -83063000, 40239000, -83073000
+  UNION ALL SELECT 'Olentangy River', 40239000, -83073000, 40309000, -83083000
+  UNION ALL SELECT 'Olentangy River', 40309000, -83083000, 40311000, -83067000
+  UNION ALL SELECT 'Olentangy River', 40311000, -83067000, 40241000, -83057000
+  UNION ALL SELECT 'Olentangy River', 40241000, -83057000, 40201000, -83047000
+  UNION ALL SELECT 'Olentangy River', 40201000, -83047000, 40177000, -83037000
+  UNION ALL SELECT 'Olentangy River', 40177000, -83037000, 40151000, -83027000
+  UNION ALL SELECT 'Olentangy River', 40151000, -83027000, 40120000, -83022000
+  UNION ALL SELECT 'Olentangy River', 40120000, -83022000, 40099000, -83025000
+  UNION ALL SELECT 'Olentangy River', 40099000, -83025000, 40080000, -83029000
+  UNION ALL SELECT 'Olentangy River', 40080000, -83029000, 40061000, -83027000
+  UNION ALL SELECT 'Olentangy River', 40061000, -83027000, 40041000, -83022000
+  UNION ALL SELECT 'Olentangy River', 40041000, -83022000, 40021000, -83019000
+  UNION ALL SELECT 'Olentangy River', 40021000, -83019000, 40005000, -83015000
+  UNION ALL SELECT 'Olentangy River', 40005000, -83015000, 39990000, -83017000
+  UNION ALL SELECT 'Olentangy River', 39990000, -83017000, 39977000, -83012000
+  UNION ALL SELECT 'Olentangy River', 39977000, -83012000, 39965000, -83005000
+  UNION ALL SELECT 'Olentangy River', 39965000, -83005000, 39958000, -83000000
+  UNION ALL SELECT 'Olentangy River', 39958000, -83000000, 39952000, -83016000
+),
+places AS (
+  SELECT 'properties' AS source, p.property_id AS id, CAST(p.geo_lat_e6 AS BIGINT) AS lat, CAST(p.geo_lon_e6 AS BIGINT) AS lon
+  FROM properties p
+  UNION ALL
+  SELECT 'crews', c.crew_id, CAST(c.base_geo_lat_e6 AS BIGINT), CAST(c.base_geo_lon_e6 AS BIGINT)
+  FROM crews c
+),
+points AS (
+  SELECT source, id, 'as is' AS form, lat, lon FROM places WHERE lat IS NOT NULL AND lon IS NOT NULL
+  UNION ALL
+  SELECT source, id, 'snapped', sign(lat) * ((abs(lat) + 1000) // 2000) * 2000, sign(lon) * ((abs(lon) + 1000) // 2000) * 2000
+  FROM places WHERE lat IS NOT NULL AND lon IS NOT NULL
+),
+inside AS (
+  SELECT pt.source, pt.id
+  FROM points pt
+  JOIN water w ON (w.lat1 > pt.lat) <> (w.lat2 > pt.lat)
+  WHERE CASE WHEN w.lat2 > w.lat1
+    THEN (pt.lon - w.lon1) * CAST(w.lat2 - w.lat1 AS BIGINT) < CAST(w.lon2 - w.lon1 AS BIGINT) * (pt.lat - w.lat1)
+    ELSE (pt.lon - w.lon1) * CAST(w.lat2 - w.lat1 AS BIGINT) > CAST(w.lon2 - w.lon1 AS BIGINT) * (pt.lat - w.lat1)
+  END
+  GROUP BY pt.source, pt.id, pt.form, w.body
+  HAVING count(w.lat1) % 2 = 1
+)
+SELECT DISTINCT source, id
+FROM inside
