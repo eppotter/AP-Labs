@@ -28,7 +28,8 @@
 //     0 to 19), else 19.
 //   - frame is exactly { width, height, padding }, integers within the kit's
 //     bounds (width and height 200 to 2000, padding 0 to 200, and the padding
-//     leaves room to draw). Anything else is refused.
+//     leaves at least one pixel to draw in on the tighter side once one pixel
+//     is kept for rounding). Anything else is refused.
 //   - nodeIds is a list of at most max_points kind-prefixed ids of a declared
 //     kind, each once (the same id check travelMatrix uses).
 //   - the coordinate columns pass travelMatrix's checks: the shared-name
@@ -36,7 +37,9 @@
 // Then one static template runs with the profile's forbidden columns minus
 // exactly the declared coordinate columns. Inside DuckDB it:
 //   1. snaps each micro-degree value to the map_grid_e6 grid (to the nearest
-//      multiple, half away from zero): nothing after this sees a finer value;
+//      multiple, half away from zero): nothing after this sees a finer value
+//      (the inner names carry a _map_ prefix, so none can match a bare column
+//      name a client forbids);
 //   2. takes only the requested nodes' box and widens it around its centre to
 //      at least map_min_span_km each way (north-south in degrees of latitude;
 //      east-west at the box's poleward edge, where a degree of longitude is
@@ -45,20 +48,25 @@
 //      y south: north up) and picks the largest whole zoom z <= max_zoom at
 //      which the widened box fits inside the frame's padding (with one pixel
 //      kept for rounding). Tiles are drawn at their native 256 px, never
-//      scaled, so the map only zooms out from the box: the frame may show up
-//      to twice the box each way, never less than the floor;
+//      scaled, so the map only zooms out from the box: on the frame's tighter
+//      axis it may show up to twice the box, on the other more (the frame's
+//      shape is not the box's), never less than the floor;
 //   4. centres the box (its middle longitude and latitude) in the frame on a
 //      whole-pixel corner, so a lone node is centred and each marker
 //      and the tiles under it share one pixel grid, and returns per node its
 //      pixel and the mosaic: tiles tx0..tx0+cols-1 by ty0..ty0+rows-1 at zoom
 //      z, the first drawn at (ox, oy), ox and oy in (-256, 0], covering the
 //      frame. The mosaic columns are null when the widened box reaches beyond
-//      ±85.0511° (Web Mercator's edge) or across the antimeridian, or when the
-//      frame's tiles fall off the world.
+//      ±85.0511° (Web Mercator's edge) or across the antimeridian (its
+//      widened box, or nodes more than 180° of longitude apart, which is a
+//      cluster straddling it read the long way round), or when the frame's
+//      tiles fall off the world.
 // Here the rows are checked: the mosaic columns must be the same on every
 // row (else query_failed) and cover the frame; more than MAX_TILES tiles is
-// no mosaic. Tile numbers are rough locations (about 2 km): process memory
-// only, never logged, passed only to the tile fetcher (AD-R19, R20). A node
+// no mosaic. Tile numbers are rough locations, a tile from about 15 km across
+// (zoom 11) down to about 60 m (zoom 19), and with ox and oy they give the
+// frame's position to the pixel: so they stay in process memory, are never
+// logged, and go only to the tile fetcher (AD-R19, R20). A node
 // with no row (an unknown id, or a null coordinate) is left out; the rest
 // return in the order asked. Every failure is a RoutingFault with fixed words
 // naming mapPoints.
@@ -131,7 +139,9 @@ function checkFrame(frame) {
     if (v < lo || v > hi) throw fault(`frame.${key}`, 'out_of_range');
   }
   const { width, height, padding } = frame;
-  if (2 * padding >= Math.min(width, height)) throw fault('frame.padding', 'out_of_range');
+  // The room left to draw in, less the pixel kept for rounding (the zoom's
+  // log2 needs it above zero).
+  if (Math.min(width, height) - 2 * padding - 1 < 1) throw fault('frame.padding', 'out_of_range');
   return Object.freeze({ width, height, padding });
 }
 
@@ -157,7 +167,7 @@ const D = (param) => `CAST($${param} AS DOUBLE)`;
 // and numbers are bound parameters.
 function pointsSql(routing) {
   const nodes = travel.nodeSources(routing).map((s) => [
-    `  SELECT '${s.kind}:' || CAST(${s.id} AS VARCHAR) AS node, ${s.lat} AS lat_e6, ${s.lon} AS lon_e6`,
+    `  SELECT '${s.kind}:' || CAST(${s.id} AS VARCHAR) AS node, ${s.lat} AS _map_lat_e6, ${s.lon} AS _map_lon_e6`,
     `  FROM ${s.table}`,
     `  WHERE ${s.lat} IS NOT NULL AND ${s.lon} IS NOT NULL`,
   ].join('\n')).join('\n  UNION ALL\n');
@@ -171,22 +181,23 @@ function pointsSql(routing) {
     // Snapped to the grid first: nothing after this sees a finer position.
     's AS (',
     '  SELECT node,',
-    '    round(CAST(lat_e6 AS DOUBLE) / $grid_e6) * $grid_e6 / 1e6 AS lat,',
-    '    round(CAST(lon_e6 AS DOUBLE) / $grid_e6) * $grid_e6 / 1e6 AS lon',
+    '    round(CAST(_map_lat_e6 AS DOUBLE) / $grid_e6) * $grid_e6 / 1e6 AS _map_lat,',
+    '    round(CAST(_map_lon_e6 AS DOUBLE) / $grid_e6) * $grid_e6 / 1e6 AS _map_lon',
     '  FROM nodes',
     "  WHERE list_contains(string_split($node_ids, ','), node)",
     '),',
     // The requested nodes' box: its centre, its sides in degrees, the
-    // north-south side widened to the minimum span.
+    // north-south side widened to the minimum span; raw_lon, the nodes'
+    // own east-west spread, kept for the antimeridian check.
     'b AS (',
-    '  SELECT (min(lat) + max(lat)) / 2 AS mid_lat, (min(lon) + max(lon)) / 2 AS mid_lon,',
-    `    greatest(max(lat) - min(lat), ${D('min_span_km')} / (${kmPerDegree})) AS deg_lat,`,
-    '    max(lon) - min(lon) AS deg_lon',
+    '  SELECT (min(_map_lat) + max(_map_lat)) / 2 AS mid_lat, (min(_map_lon) + max(_map_lon)) / 2 AS mid_lon,',
+    `    greatest(max(_map_lat) - min(_map_lat), ${D('min_span_km')} / (${kmPerDegree})) AS deg_lat,`,
+    '    max(_map_lon) - min(_map_lon) AS deg_lon, max(_map_lon) - min(_map_lon) AS raw_lon',
     '  FROM s',
     '),',
     // The east-west side widened at the box's poleward edge.
     'w AS (',
-    '  SELECT mid_lat - deg_lat / 2 AS lat_lo, mid_lat + deg_lat / 2 AS lat_hi, mid_lat, mid_lon,',
+    '  SELECT mid_lat - deg_lat / 2 AS lat_lo, mid_lat + deg_lat / 2 AS lat_hi, mid_lat, mid_lon, raw_lon,',
     `    greatest(deg_lon, ${D('min_span_km')} / (${kmPerDegree}`,
     `      * cos(radians(least(greatest(abs(mid_lat - deg_lat / 2), abs(mid_lat + deg_lat / 2)), ${MAX_LAT}))))) AS deg_lon`,
     '  FROM b',
@@ -194,13 +205,15 @@ function pointsSql(routing) {
     // The widened box in Web Mercator, the world as 1 x 1, and its centre
     // line (the middle latitude's y: Mercator stretches poleward, so the box
     // is not even about it); on_world when it stays inside ±MAX_LAT and does
-    // not cross the antimeridian.
+    // not cross the antimeridian: neither the widened box, nor nodes more
+    // than 180° apart (a cluster straddling it, read the long way round).
     'm AS (',
     `  SELECT ${mercX('mid_lon - deg_lon / 2')} AS mx_lo, ${mercX('mid_lon + deg_lon / 2')} AS mx_hi,`,
     `    ${mercY('lat_hi')} AS my_lo,`,
     `    ${mercY('lat_lo')} AS my_hi,`,
     `    ${mercY('mid_lat')} AS my_mid,`,
-    `    lat_lo >= -${MAX_LAT} AND lat_hi <= ${MAX_LAT} AND mid_lon - deg_lon / 2 >= -180 AND mid_lon + deg_lon / 2 <= 180 AS on_world`,
+    `    lat_lo >= -${MAX_LAT} AND lat_hi <= ${MAX_LAT} AND mid_lon - deg_lon / 2 >= -180 AND mid_lon + deg_lon / 2 <= 180`,
+    '      AND raw_lon <= 180 AS on_world',
     '  FROM w',
     '),',
     // The largest whole zoom, at most max_zoom, at which the box, centred on
@@ -236,8 +249,8 @@ function pointsSql(routing) {
     '  FROM t',
     ')',
     'SELECT s.node AS node,',
-    `  CAST(round(${mercX('s.lon')} * k.world - k.left_px) AS INTEGER) AS x,`,
-    `  CAST(round(${mercY('s.lat')} * k.world - k.top_px) AS INTEGER) AS y,`,
+    `  CAST(round(${mercX('s._map_lon')} * k.world - k.left_px) AS INTEGER) AS x,`,
+    `  CAST(round(${mercY('s._map_lat')} * k.world - k.top_px) AS INTEGER) AS y,`,
     mosaic('k.zoom', 'z') + ',',
     mosaic('k.tx0', 'tx0') + ',',
     mosaic('k.ty0', 'ty0') + ',',

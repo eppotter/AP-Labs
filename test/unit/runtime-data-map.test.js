@@ -104,7 +104,8 @@ function byHand(ids, frame, routing, { maxZoom = 19, positions = POSITIONS } = {
   const my = [mercY(latHi), mercY(latLo)];
   const myMid = mercY(midLat);
   const myHalf = Math.max(my[1] - myMid, myMid - my[0]);
-  const onWorld = latLo >= -MAX_LAT && latHi <= MAX_LAT && midLon - degLon / 2 >= -180 && midLon + degLon / 2 <= 180;
+  const onWorld = latLo >= -MAX_LAT && latHi <= MAX_LAT && midLon - degLon / 2 >= -180 && midLon + degLon / 2 <= 180
+    && Math.max(...lons) - Math.min(...lons) <= 180;
   const room = (side) => frame[side] - 2 * frame.padding - 1;
   const fit = Math.min(room('width') / (TILE * Math.max(mx[1] - mx[0], 1e-15)), room('height') / (TILE * Math.max(2 * myHalf, 1e-15)));
   const z = Math.min(maxZoom, Math.floor(Math.log2(fit)));
@@ -314,7 +315,6 @@ test('routing.basemap.max_zoom caps the zoom; absent, 19 is the cap; a value out
   // tiles cannot cover it: no mosaic, and the point is still centred.
   const world = await read(withBasemap({ max_zoom: 0 }));
   assert.deepEqual(world, { points: [{ node: 'site:s1', x: 400, y: 300 }], mosaic: null });
-  const offline1 = offline(t, withBasemap({ max_zoom: 19 }));
   const checks = t.mock.method(sqlGuard, 'checkSql');
   for (const bad of [20, -1, 1.5, '19', null, Number.NaN]) {
     await assert.rejects(mapPoints(offline(t, withBasemap({ max_zoom: bad })), ['site:s1'], FRAME), refused('routing.basemap.max_zoom', 'out_of_range'), String(bad));
@@ -323,7 +323,13 @@ test('routing.basemap.max_zoom caps the zoom; absent, 19 is the cap; a value out
     await assert.rejects(mapPoints(offline(t, withBasemap(bad)), ['site:s1'], FRAME), refused('routing.basemap', 'not_object'), JSON.stringify(bad));
   }
   assert.equal(checks.mock.callCount(), 0, 'nothing reached the guard or DuckDB');
-  await assert.rejects(mapPoints(offline1, ['site:s1'], FRAME), refused('mapPoints', 'data_unavailable'), '19 is allowed');
+  checks.mock.restore();
+  // 19, the top of the range, is allowed: the read runs on the built file and
+  // gives the same map as no cap at all.
+  const top = await read(withBasemap({ max_zoom: 19 }));
+  assert.deepEqual(top, expected(['site:s1'], FRAME, profileWith().routing, { maxZoom: 19 }));
+  assert.deepEqual(top, free);
+  assertCovers(top.mosaic, FRAME);
 });
 
 test('the mosaic covers the frame for every frame shape, and the points share its pixel grid', async (t) => {
@@ -435,6 +441,24 @@ test('a box crossing the antimeridian has no mosaic; the points still return', a
   for (const p of both.points) assert.ok(p.x >= FRAME.padding && p.x <= FRAME.width - FRAME.padding);
 });
 
+test('a wide cluster straddling the antimeridian (nodes more than 180° apart) has no mosaic; the points still return', async (t) => {
+  // 170°E and 170°W are 20° apart across the antimeridian, but read as a box
+  // they span 340° the long way round, a box that stays inside ±180°: without
+  // the spread check it would get a whole-world mosaic.
+  const profile = profileWith();
+  const dir = fixtureWith(t, [[-17000000, 170000000], [-17000000, -170000000]]);
+  const data = await source(t, profile, dir);
+  const positions = positionsIn(path.join(dir, 'seeds'));
+  const frame = { width: 1000, height: 600, padding: 0 };
+  const got = await mapPoints(data, ['site:s1', 'site:s2'], frame);
+  assert.equal(got.mosaic, null);
+  assert.equal(got.points.length, 2);
+  assert.deepEqual(got, expected(['site:s1', 'site:s2'], frame, profile.routing, { positions }));
+  for (const p of got.points) assert.ok(p.x >= 0 && p.x <= frame.width && p.y >= 0 && p.y <= frame.height);
+  // Each alone is well inside the world: its mosaic is there.
+  for (const id of ['site:s1', 'site:s2']) assertCovers((await mapPoints(data, [id], frame)).mosaic, frame);
+});
+
 test('a box reaching beyond ±85.0511° has no mosaic; the points still return, inside the frame', async (t) => {
   assert.equal(map.MAX_LAT, 85.0511287798066);
   const profile = profileWith();
@@ -485,6 +509,9 @@ test('a frame out of bounds or of the wrong shape is refused before running', as
     [{ width: 800, height: 600, padding: -1 }, 'frame.padding', 'out_of_range'],
     [{ width: 800, height: 600, padding: 201 }, 'frame.padding', 'out_of_range'],
     [{ width: 200, height: 600, padding: 100 }, 'frame.padding', 'out_of_range'],
+    // No room left to draw in once the rounding pixel is kept (201 - 200 - 1 = 0).
+    [{ width: 201, height: 201, padding: 100 }, 'frame.padding', 'out_of_range'],
+    [{ width: 800, height: 201, padding: 100 }, 'frame.padding', 'out_of_range'],
     [{ width: 800, height: 600, padding: 20, zoom: 4 }, 'frame.zoom', 'out_of_range'],
   ];
   for (const [frame, field, problem] of cases) {
@@ -492,7 +519,7 @@ test('a frame out of bounds or of the wrong shape is refused before running', as
   }
   assert.equal(checks.mock.callCount(), 0, 'nothing reached the guard or DuckDB');
   // The bounds themselves are allowed (and then fail only for want of the file).
-  for (const frame of [{ width: 200, height: 200, padding: 0 }, { width: 2000, height: 2000, padding: 200 }, { width: 201, height: 201, padding: 100 }]) {
+  for (const frame of [{ width: 200, height: 200, padding: 0 }, { width: 2000, height: 2000, padding: 200 }, { width: 201, height: 201, padding: 99 }]) {
     await assert.rejects(mapPoints(data, ['site:s1'], frame), refused('mapPoints', 'data_unavailable'), JSON.stringify(frame));
   }
 });
@@ -614,7 +641,7 @@ test('the Earth radius is travelMatrix\'s (6371.0088 km), and the grid snap come
   assert.equal(travel.EARTH_RADIUS_KM, 6371.0088);
   const sql = map.pointsSql(profileWith().routing);
   assert.equal(sql.split('6371.0088').length - 1, 2, 'both km-per-degree factors use it');
-  assert.ok(sql.indexOf('$grid_e6') < sql.indexOf('min(lat)'), 'snapped before the box is taken');
+  assert.ok(sql.indexOf('$grid_e6') < sql.indexOf('min(_map_lat)'), 'snapped before the box is taken');
   assert.ok(!/lat_e6|lon_e6/.test(sql.slice(sql.indexOf('\nb AS ('))), 'nothing after the snap sees the raw values');
 });
 
