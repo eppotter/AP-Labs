@@ -60,7 +60,7 @@ test('Dataset replies privately with the local fixture, its version, as-of date 
   assert.deepEqual(lines.slice(0, 6), [
     '*Dataset*',
     'Source: local fixture (brightside.duckdb)',
-    'Fixture version: 4',
+    'Fixture version: 5',
     'As of: 2026-09-30',
     'Published: local build',
     'Tables (19):',

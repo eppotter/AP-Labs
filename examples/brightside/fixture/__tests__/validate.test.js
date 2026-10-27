@@ -112,6 +112,15 @@ test('data.md holds the five routing truths (Story 14.4): planted targets, toler
   assert.equal(routingExpect('route-change-s3-crosszone'), 510);
 });
 
+// Story 15.7 (AD-R22): data.md says where the points are and that a drive
+// time is an estimate from straight-line distance, not road time.
+test('data.md says the points are random in Columbus and a drive time is haversine x detour / speed, not road time', () => {
+  const text = fs.readFileSync(path.join(contextDirFor(PROFILE_FILE), 'data.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(text, /random synthetic point in the Columbus, Ohio area \(generator v5, Story 15\.7\): none is or comes from a real address/);
+  assert.match(text, /straight-line \(haversine\) distance × the profile's detour factor ÷ its speed/);
+  assert.match(text, /not road time/);
+});
+
 test('each truth runs as npm run verify runs it and matches its target; no output line holds a coordinate', async () => {
   const { out } = await builtFixture();
   // As verify passes it: no APLABS_PROFILE, the governing profile in

@@ -316,6 +316,13 @@ through `travelMatrix`, which returns whole minutes and never a coordinate (GRD-
 is n days after as_of. They are not signed off yet: until Dana Reyes confirms them they are
 `unverified` and SQLsmith must not rely on them.
 
+Every property and crew base sits at a random synthetic point in the Columbus, Ohio area
+(generator v5, Story 15.7): none is or comes from a real address. A drive time is the straight-line
+(haversine) distance × the profile's detour factor ÷ its speed, rounded up to a whole minute and
+never below its minimum: an estimate, not road time. Moving the points from the open ocean (v4)
+to Columbus changed some booked drive times and start times; the five figures below were worked
+out again from `travelMatrix` for v5 and came out as v4's.
+
 ```truth
 id: scheduled-stops-next-14d
 statement: "825 stops are booked (status scheduled, not cancelled) from the day after as_of through as_of + 14, the 14th day included."
