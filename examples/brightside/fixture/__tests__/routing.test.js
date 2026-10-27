@@ -3,8 +3,9 @@
 // Story 14.1: the fixture gains synthetic coordinates and a booked schedule
 // after as_of (generator v4). Story 15.7: the coordinates move to a box in
 // Columbus, Ohio (generator v5); only the box's centre and bounds change, so
-// every draw and every non-routing value stays as v4 had it. Example tests (AD-1 carve-out): they read
-// Brightside's own fixture and go with it in a fork.
+// every draw and every non-routing value stays as v4 had it. Fix to 15.7: no
+// point on water (generator v6, lib/water.js). Example tests (AD-1
+// carve-out): they read Brightside's own fixture and go with it in a fork.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -78,6 +79,26 @@ const V4_SEEDS = {
 // v4's fixture_meta keys v3 did not have: the routing tables' counts are v4's.
 const V4_META = { rows_scheduled_visits: '1720', rows_service_rules: '781', rows_staff_absences: '5', schedule_horizon_end: '2026-10-28' };
 
+// Fix to Story 15.7 (generator v6, points off water): v5's routing tables cut
+// back the same way, recorded from the committed v5 files before the v6
+// generator ran. A redrawn point and three moved cities change drive times
+// and starts, and so 8 booked arrival windows and the time_of_day rules drawn
+// from them; every other value stays v5's. service_rules is pinned without
+// rule_id (a dropped rule renumbers the rest) and without its time_of_day rows.
+const V5_MOVED = {
+  properties: ['geo_lat_e6', 'geo_lon_e6'],
+  crews: ['base_geo_lat_e6', 'base_geo_lon_e6'],
+  scheduled_visits: ['arrival_window', 'scheduled_start', 'travel_minutes_from_previous'],
+  service_rules: ['rule_id'],
+};
+const V5_SEEDS = {
+  scheduled_visits: ['scheduled_visit_id,property_id,plan_id,crew_id,package_id,visit_date,status,status_changed_on,scheduled_minutes,labour_minutes,route_order', '099a6929f48f14f868971fe70748ac340490eca186463568ef3ff6d53fafa9d6'],
+  service_rules: ['property_id,rule_type,value,strength', 'c4efbeea14de7f7dfd3835a675d3dacd09ef623808f68cabae181855006d682c'],
+  staff_absences: ['absence_id,staff_id,absence_date,reported_on', '55fadd7fe56e73d2752eac529b0ae7526b16d4e40161d74fd572e3590060317c'],
+};
+// v6's routing counts: one time_of_day rule fell away with its window.
+const V6_META = { rows_scheduled_visits: '1720', rows_service_rules: '780', rows_staff_absences: '5', schedule_horizon_end: '2026-10-28' };
+
 const seedText = (table) => {
   const file = path.join(FIXTURE_DIR, storedName(`seeds/${table}.csv`));
   return file.endsWith('.gz') ? zlib.gunzipSync(fs.readFileSync(file)).toString('utf8') : fs.readFileSync(file, 'utf8');
@@ -98,11 +119,11 @@ let recorded;
 const recordedRun = () => (recorded ??= generate(readSeedConfig()));
 const recordedTables = () => recordedRun().tables;
 
-test('generator v5: seed.json and fixture_meta record it, and fixture_meta has the horizon and the new table\'s count', () => {
-  assert.equal(GENERATOR_VERSION, 5);
-  assert.equal(readSeedConfig().generator_version, 5);
+test('generator v6: seed.json and fixture_meta record it, and fixture_meta has the horizon and the new table\'s count', () => {
+  assert.equal(GENERATOR_VERSION, 6);
+  assert.equal(readSeedConfig().generator_version, 6);
   const meta = Object.fromEntries(recordedTables().fixture_meta.map((m) => [m.key, m.value]));
-  assert.equal(meta.generator_version, '5');
+  assert.equal(meta.generator_version, '6');
   assert.equal(meta.schedule_horizon_end, '2026-10-28', 'as_of + 28 days');
   assert.equal(meta.rows_scheduled_visits, String(recordedTables().scheduled_visits.length));
 });
@@ -115,21 +136,27 @@ test('every v3 column of every v3 seed is unchanged byte for byte', () => {
   for (const [key, value] of Object.entries(V3_META)) assert.equal(meta[key], value, `fixture_meta ${key}`);
 });
 
-test('v5 keeps every v4 value but the coordinates and the booked drive times and starts, and every v4 row count', () => {
-  for (const [table, [header, digest]] of Object.entries(V4_SEEDS)) {
-    assert.equal(sha256(project(seedText(table), header.split(','))), digest, `${table}: a v4 column changed`);
+// v6 replaced the v5 test that pinned v4's routing values: v6 moves arrival
+// windows and time_of_day rules on purpose (see V5_SEEDS). V4_SEEDS and
+// V4_META stay as the record of v4.
+test('v6 keeps every v5 value but the coordinates, the booked drives, starts and windows and the time_of_day rules', () => {
+  assert.ok(V4_SEEDS && V4_META && V4_MOVED, 'v4\'s record is kept');
+  const untimed = (text) => text.split('\n').filter((l) => !l.includes(',time_of_day,')).join('\n');
+  for (const [table, [header, digest]] of Object.entries(V5_SEEDS)) {
+    const cut = project(seedText(table), header.split(','));
+    assert.equal(sha256(table === 'service_rules' ? untimed(cut) : cut), digest, `${table}: a v5 value changed`);
   }
   // The columns left out of the pins are exactly the moved ones.
-  for (const [table, moved] of Object.entries(V4_MOVED)) {
-    const pinned = (V4_SEEDS[table] || V3_SEEDS[table])[0].split(',');
+  for (const [table, moved] of Object.entries(V5_MOVED)) {
+    const pinned = (V5_SEEDS[table] || V3_SEEDS[table])[0].split(',');
     const columns = seedText(table).split('\n')[0].split(',');
-    assert.deepEqual(columns.filter((c) => !pinned.includes(c)), moved, `${table}: only the drive columns are unpinned`);
+    assert.deepEqual(columns.filter((c) => !pinned.includes(c)), moved, `${table}: only the moved columns are unpinned`);
   }
-  for (const table of [...Object.keys(V3_SEEDS), ...Object.keys(V4_SEEDS)].filter((t) => !V4_MOVED[t])) {
-    assert.equal(seedText(table).split('\n')[0], (V4_SEEDS[table] || V3_SEEDS[table])[0], `${table}: every column is pinned`);
+  for (const table of [...Object.keys(V3_SEEDS), ...Object.keys(V5_SEEDS)].filter((t) => !V5_MOVED[t])) {
+    assert.equal(seedText(table).split('\n')[0], (V5_SEEDS[table] || V3_SEEDS[table])[0], `${table}: every column is pinned`);
   }
   const meta = Object.fromEntries(seedText('fixture_meta').trim().split('\n').slice(1).map((l) => l.split(',')));
-  for (const [key, value] of Object.entries(V4_META)) assert.equal(meta[key], value, `fixture_meta ${key}`);
+  for (const [key, value] of Object.entries(V6_META)) assert.equal(meta[key], value, `fixture_meta ${key}`);
 });
 
 test('only the routing columns and table are new', () => {
@@ -182,7 +209,8 @@ test('synthetic-coordinates declares exactly the four coordinate columns in its 
   assert.equal(coords.sql.split(`NOT BETWEEN ${BOX.latMin} AND ${BOX.latMax}`).length - 1, 2, 'both latitudes against BOX');
   assert.equal(coords.sql.split(`NOT BETWEEN ${BOX.lonMin} AND ${BOX.lonMax}`).length - 1, 2, 'both longitudes against BOX');
   assert.equal((coords.sql.match(/NOT BETWEEN/g) || []).length, 4);
-  for (const c of checks.filter((x) => x.id !== 'synthetic-coordinates')) {
+  // Fix to 15.7: synthetic-off-water reads them too, under the same header (water.test.js).
+  for (const c of checks.filter((x) => x.id !== 'synthetic-coordinates' && x.id !== 'synthetic-off-water')) {
     assert.doesNotMatch(c.sql, /geo_l(at|on)_e6/, `${c.id} reads no coordinate`);
   }
   for (const id of ['integrity-scheduled-route-order', 'integrity-scheduled-schedule', 'integrity-scheduled-after-as-of', 'integrity-scheduled-cadence']) {
@@ -190,20 +218,21 @@ test('synthetic-coordinates declares exactly the four coordinate columns in its 
   }
 });
 
-test('every coordinate is a whole micro-degree inside the Columbus box, and only the centre and box moved from v4', () => {
+test('every coordinate is a whole micro-degree inside the Columbus box; v6 moved only three city centres off water', () => {
   const { BOX } = routing;
   // Random points in Columbus, Ohio, round numbers, never taken from an address.
   assert.deepEqual(routing.CENTRE, { lat: 40000000, lon: -83000000 });
   assert.deepEqual(BOX, { latMin: 39700000, latMax: 40300000, lonMin: -83400000, lonMax: -82600000 });
-  // Every other coordinate constant is v4's, so every random draw is too.
+  // Every other coordinate constant is v4's but three city centres, which v6
+  // moved off water; no constant takes part in a draw, so every draw is v4's.
   assert.equal(routing.LAT_E6_PER_KM, 8993);
   assert.equal(routing.LON_E6_PER_KM, 11740);
   assert.equal(routing.JITTER_KM, 2.5);
   assert.deepEqual(routing.BASE_OFFSET_KM, [[-1, -1.5], [0, -1.5], [1, -1.5]]);
   assert.deepEqual(routing.CITY_KM, {
-    Centerpoint: [0, 0], Midtown: [4, 3], Oldmarket: [-3, 4],
-    Fernhill: [-5, 16], Northvale: [2, 21], Pinecrest: [6, 15],
-    Clayfield: [-6, -15], Riverbend: [1, -21], Southmere: [5, -14],
+    Centerpoint: [0, 0], Midtown: [4, 3], Oldmarket: [-0.5, 6],
+    Fernhill: [-5, 16], Northvale: [0, 18.5], Pinecrest: [6, 15],
+    Clayfield: [-6, -15], Riverbend: [4, -20], Southmere: [5, -14],
     Eastbrook: [15, -4], Harborview: [21, 2], Sunridge: [15, 5],
     Stonegate: [-15, 4], Westfall: [-21, -1], Willowmere: [-14, -5],
   });
@@ -310,6 +339,9 @@ test('the routing rules catch each broken rule', () => {
   const cases = [
     [(t) => { t.properties[0].geo_lat_e6 = -1000000; }, /properties 1: coordinates outside the synthetic box/],
     [(t) => { t.crews[0].base_geo_lon_e6 = 0; }, /crews 1: base coordinates outside/],
+    // Fix to 15.7: a point on water, as is or only once snapped to the map grid.
+    [(t) => { Object.assign(t.properties[0], { geo_lat_e6: 40200000, geo_lon_e6: -82970000 }); }, /properties 1: coordinates on water \(Alum Creek Reservoir\)/],
+    [(t) => { Object.assign(t.crews[0], { base_geo_lat_e6: 40120000, base_geo_lon_e6: -82880000 }); }, /crews 1: base coordinates on water \(Hoover Reservoir\)/],
     [(t) => { first(t).travel_minutes_from_previous += 1; }, /travel is not travelMatrix's figure/],
     [(t) => { first(t).route_order = 9; }, /route_order is not 1 to/],
     [(t) => { const v = first(t); v.arrival_window = v.arrival_window === 'morning' ? 'afternoon' : 'morning'; }, /arrival_window .* disagrees/],

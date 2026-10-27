@@ -79,7 +79,7 @@ Record the outcome in the Story 15.5 PR, one line per step.
 
 ## Street map live check (Story 15.11, Ely, dev Slack)
 
-Brightside's profile turns the street map on (`routing.basemap`: OpenStreetMap's free tiles, dev and demo only). **Untested until you run it.** Start the bot as above; the fixture must be generator v5 (Columbus). Note each result in the Story 15.11 PR, one line each.
+Brightside's profile turns the street map on (`routing.basemap`: OpenStreetMap's free tiles, dev and demo only). **Untested until you run it.** Start the bot as above; the fixture must be generator v6 (Columbus, no point on water). Note each result in the Story 15.11 PR, one line each.
 
 1. **Four views** (Booked vs optimized, Route change, Zone, Gap fill): each shows streets, markers on streets. Note any marker on water.
 2. **Credit:** "© OpenStreetMap contributors" shows under the picture on desktop and iOS.

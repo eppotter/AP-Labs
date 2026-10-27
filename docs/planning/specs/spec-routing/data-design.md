@@ -22,6 +22,20 @@ the four coordinate columns and `scheduled_visits`' `scheduled_start` and
 `travel_minutes_from_previous` (39 of 1,720 rows) differ from v4; every other value of every table
 is byte-identical (a test diffs them), and every row count is v4's (1,720 scheduled visits, 781
 rules, 5 absences).
+**Amended 2026-10-27 (fix to Story 15.7, after Ely's live check found a stop on Alum Creek
+Reservoir):** generator v6 keeps every point off the box's big water. `lib/water.js` holds rough,
+hand-drawn outlines (not map data, a margin of at least 250 m) of Alum Creek, Hoover,
+O'Shaughnessy and Griggs reservoirs and bands along the Scioto and the Olentangy. A property whose
+point falls in one, as is or snapped to the map grid (`map_grid_e6` 2000), takes its two usual
+draws from the routing stream and is drawn again from its own stream (`routing-water`) until dry,
+so no other draw moves. Three city centres that sat on water moved onto land, inside their zone's
+drive bounds: Oldmarket [-3, 4] to [-0.5, 6], Northvale [2, 21] to [0, 18.5], Riverbend [1, -21]
+to [4, -20] (km from the centre). Crew bases did not move. `synthetic-off-water.sql` and the
+generator's rules refuse a point on water. Built: 134 homes redrawn and 404 moved with their city;
+every draw and every non-routing value is v5's. The changed start times flip 8 booked arrival
+windows, and the three `time_of_day` rules drawn from them follow: two change window and one
+falls away (780 rules, was 781). Booked visits (1,720) and absences (5) keep their counts. S1's booked drive goes from 139 to 140 minutes; 825 stops, S2 762 of 2 and S3
+5 / 1 / 0 are unchanged; no plant changed.
 
 | Table / columns | Grain | Keys | How generated |
 |---|---|---|---|
@@ -188,6 +202,9 @@ breaks, the plant is adjusted, never the engine, and the PR says so. The S1 book
 S2's top property and count may change; the 14-day stop count should not.
 Built (Story 15.7): re-computed from `travelMatrix` on v5, every figure is v4's: 825 stops, S1 139
 booked minutes, S2 top property 762 with 2 candidates, S3 5 / 1 / 0. No plant changed.
+Built (fix to 15.7, generator v6, points off water): re-computed from `travelMatrix` on v6, S1's
+booked drive is 140 minutes (was 139); 825 stops, S2 762 of 2 and S3 5 / 1 / 0 are unchanged. No
+plant changed.
 
 | id | statement | run | expect |
 |---|---|---|---|

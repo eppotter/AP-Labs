@@ -26,6 +26,7 @@ const { TRUTH_IDS } = require('../lib/truths');
 const { ROUTING_TARGET_IDS } = require('../lib/scenarios');
 const { packS3, TRUTH_IDS: ROUTING_TRUTH_IDS } = require('../truths/routing');
 const { generate, writeFiles } = require('../generate');
+const { WATER, onWater, snap } = require('../lib/water');
 
 const REPO = path.resolve(__dirname, '..', '..', '..', '..');
 const FIXTURE_DIR = path.join(__dirname, '..');
@@ -58,7 +59,7 @@ test.after(async () => {
 test('every check in checks/ passes on the committed seeds, with Brightside\'s forbidden columns', async (t) => {
   const { out } = await builtFixture();
   const checks = loadChecks(FIXTURE_DIR);
-  assert.equal(checks.length, 30);
+  assert.equal(checks.length, 31);
   const results = await validate({ checks, db: out, forbiddenColumns: FORBIDDEN });
   assert.deepEqual(results.filter((r) => r.outcome !== 'pass'), []);
 });
@@ -112,11 +113,42 @@ test('data.md holds the five routing truths (Story 14.4): planted targets, toler
   assert.equal(routingExpect('route-change-s3-crosszone'), 510);
 });
 
+// Fix to Story 15.7: synthetic-off-water.sql and lib/water.js agree point for
+// point. The check runs on the built file with its two tables swapped for a
+// grid of test points across every water outline's box (CTEs shadow the
+// tables), each point as a property and as a crew base.
+test('synthetic-off-water finds exactly the points lib/water.js calls wet, as is or snapped', async () => {
+  const { out } = await builtFixture();
+  const sql = fs.readFileSync(path.join(FIXTURE_DIR, 'checks', 'synthetic-off-water.sql'), 'utf8');
+  const points = [];
+  for (const w of WATER) {
+    const lats = w.ring.map((v) => v[0]);
+    const lons = w.ring.map((v) => v[1]);
+    const [lat0, lat1, lon0, lon1] = [Math.min(...lats) - 3000, Math.max(...lats) + 3000, Math.min(...lons) - 3000, Math.max(...lons) + 3000];
+    for (let i = 0; i <= 12; i++) {
+      for (let j = 0; j <= 12; j++) points.push([Math.round(lat0 + ((lat1 - lat0) * i) / 12) + 1000, Math.round(lon0 + ((lon1 - lon0) * j) / 12) - 1000]);
+    }
+    // Every vertex, and a point 1 e6 off it each way, and a half-grid point.
+    for (const [lat, lon] of w.ring) points.push([lat, lon], [lat - 1, lon + 1], [lat + 1, lon - 1], [lat - 1000, lon + 1000]);
+  }
+  // Outside as is, inside once snapped: just under Alum Creek's south edge.
+  points.push([40171100, -82960000]);
+  const rows = points.map(([lat, lon], i) => `SELECT ${i + 1} AS property_id, ${lat} AS geo_lat_e6, ${lon} AS geo_lon_e6, ${i + 1} AS crew_id, ${lat} AS base_geo_lat_e6, ${lon} AS base_geo_lon_e6`);
+  const swapped = sql.replace(/^WITH water AS \(/m, `WITH test_points AS (\n${rows.join('\nUNION ALL ')}\n),\nproperties AS (SELECT property_id, geo_lat_e6, geo_lon_e6 FROM test_points),\ncrews AS (SELECT crew_id, base_geo_lat_e6, base_geo_lon_e6 FROM test_points),\nwater AS (`);
+  assert.notEqual(swapped, sql, 'the check opens WITH water AS (');
+  const got = await readRows(out, swapped);
+  const want = points.flatMap(([lat, lon], i) => (onWater(lat, lon) ? [`crews|${i + 1}`, `properties|${i + 1}`] : []));
+  assert.deepEqual(got.map((r) => `${r.source}|${r.id}`).sort(), want.sort());
+  assert.ok(want.length > 200 && want.length < points.length * 2 - 200, `a mix of wet and dry points: ${want.length / 2} of ${points.length}`);
+  assert.ok(want.includes(`properties|${points.length}`) && snap(40171100) === 40172000, 'the snapped-only point is wet');
+});
+
 // Story 15.7 (AD-R22): data.md says where the points are and that a drive
 // time is an estimate from straight-line distance, not road time.
 test('data.md says the points are random in Columbus and a drive time is haversine x detour / speed, not road time', () => {
   const text = fs.readFileSync(path.join(contextDirFor(PROFILE_FILE), 'data.md'), 'utf8').replace(/\s+/g, ' ');
   assert.match(text, /random synthetic point in the Columbus, Ohio area \(generator v5, Story 15\.7\): none is or comes from a real address/);
+  assert.match(text, /Since generator v6 none sits on the area's big water/);
   assert.match(text, /straight-line \(haversine\) distance × the profile's detour factor ÷ its speed/);
   assert.match(text, /not road time/);
 });
@@ -465,6 +497,11 @@ const BREAKS = [
     // A property placed outside the synthetic box (Story 14.1).
     check: 'synthetic-coordinates',
     pick: (t_) => () => { t_.properties.rows[3].geo_lat_e6 = '-1000000'; },
+  },
+  {
+    // A property placed on Alum Creek Reservoir, inside the box (fix to Story 15.7).
+    check: 'synthetic-off-water',
+    pick: (t_) => () => { Object.assign(t_.properties.rows[4], { geo_lat_e6: '40200000', geo_lon_e6: '-82970000' }); },
   },
   {
     // A gap in a booked crew-day's route: its last stop renumbered past the

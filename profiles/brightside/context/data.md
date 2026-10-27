@@ -2,7 +2,7 @@
 owner: Dana Reyes          # the named client person who owns this file
 signed_off: 2026-10-25  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
 signed_off_by: "Dana Reyes (Ely as Dana Reyes, 2026-10-25)"  # who signed off: the owner, recorded by a facilitator
-updated: 2026-10-26        # ISO date of the last edit
+updated: 2026-10-27        # ISO date of the last edit
 ---
 
 # Data canon
@@ -317,11 +317,14 @@ is n days after as_of. They are not signed off yet: until Dana Reyes confirms th
 `unverified` and SQLsmith must not rely on them.
 
 Every property and crew base sits at a random synthetic point in the Columbus, Ohio area
-(generator v5, Story 15.7): none is or comes from a real address. A drive time is the straight-line
+(generator v5, Story 15.7): none is or comes from a real address. Since generator v6 none sits on
+the area's big water either (the reservoirs and the Scioto and Olentangy, from rough hand-drawn
+outlines with a margin, not map data). A drive time is the straight-line
 (haversine) distance × the profile's detour factor ÷ its speed, rounded up to a whole minute and
 never below its minimum: an estimate, not road time. Moving the points from the open ocean (v4)
 to Columbus changed some booked drive times and start times; the five figures below were worked
-out again from `travelMatrix` for v5 and came out as v4's.
+out again from `travelMatrix` for v5 and came out as v4's. Moving them off water (v6) changed
+S1's booked drive from 139 to 140 minutes; the other four came out as v5's.
 
 ```truth
 id: scheduled-stops-next-14d
@@ -335,9 +338,9 @@ signed_off: pending
 
 ```truth
 id: route-optimize-s1-drive
-statement: "S1, crew 4 on as_of+1 (seven stops booked back and forth between cities): the booked day drives 139 minutes. The check fails unless the suggested day drives no longer, and neither day breaks a hard rule or leaves a stop unplaced."
+statement: "S1, crew 4 on as_of+1 (seven stops booked back and forth between cities): the booked day drives 140 minutes. The check fails unless the suggested day drives no longer, and neither day breaks a hard rule or leaves a stop unplaced."
 run: [node, examples/brightside/fixture/truths/routing.js, route-optimize-s1-drive]
-expect: 139
+expect: 140
 tolerance: 0
 owner: Dana Reyes
 signed_off: pending

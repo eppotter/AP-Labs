@@ -35,12 +35,12 @@ const { buildActivity } = require('./lib/activity');
 const { TRUTH_IDS, computeTruths } = require('./lib/truths');
 const { buildOperations, OPERATIONS_STREAM } = require('./lib/operations');
 const { checkOperations } = require('./lib/operations-rules');
-const { buildRouting, scheduleHorizonEnd, ROUTING_STREAM } = require('./lib/routing');
+const { buildRouting, scheduleHorizonEnd, ROUTING_STREAM, WATER_STREAM } = require('./lib/routing');
 const { checkRouting } = require('./lib/routing-rules');
 const { createPlant, checkScenarios, checkRoutingTargets, missedRoutingTargets } = require('./lib/scenarios');
 
 // Bump when a change to this code changes the output for the same seed.
-const GENERATOR_VERSION = 5;
+const GENERATOR_VERSION = 6;
 
 const FIXTURE_DIR = __dirname;
 const SEED_FILE = path.join(FIXTURE_DIR, 'seed.json');
@@ -129,8 +129,11 @@ function generate(config) {
   // routing targets, the scenarios S1 to S3 are planted on top.
   const routing = config.routing || null;
   const plant = routing ? createPlant() : null;
+  // A point that fell on water is drawn again from a third stream, so the
+  // routing stream's draws do not move (generator v6).
   const routingRng = createRng(deriveSeed(seed, ROUTING_STREAM));
-  Object.assign(tables, buildRouting(routingRng, tables, { zones: ZONES, asOf: AS_OF, plant }));
+  const waterRng = createRng(deriveSeed(seed, WATER_STREAM));
+  Object.assign(tables, buildRouting(routingRng, tables, { zones: ZONES, asOf: AS_OF, plant, waterRng }));
   tables.fixture_meta = fixtureMeta(config, tables);
   const ruleOpts = { zones: ZONES, historyStart: HISTORY_START, asOf: AS_OF };
   const problems = checkRules(tables, ruleOpts).concat(

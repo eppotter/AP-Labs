@@ -17,13 +17,16 @@
 //
 // Coordinates are synthetic: random points in a box around a round-number
 // point in Columbus, Ohio (Story 15.7, AD-R22), so a street map can sit under
-// the plot. A point may land near a real street or home, or on water, but
-// none is or comes from a real address. Micro-degrees (degrees x 1e6) as
-// whole numbers. Each of the 15 cities has a fixed centre, laid out in km from
-// the box's centre so that same-city drives are about 5-12 minutes and drives
-// between a zone's cities about 10-35, as the history's travel bounds show.
-// A property sits within 2.5 km of its city's centre on each axis. A crew's base
-// sits near its zone's first city, with no randomness.
+// the plot. A point may land near a real street or home, but none is or
+// comes from a real address, and none is on water (generator v6): a point
+// that falls in one of lib/water.js's rough outlines, as is or snapped to the
+// map grid, is drawn again from its own stream (WATER_STREAM), so every other
+// draw stays where it was. Micro-degrees (degrees x 1e6) as whole numbers.
+// Each of the 15 cities has a fixed centre, laid out in km from the box's
+// centre so that same-city drives are about 5-12 minutes and drives between a
+// zone's cities about 10-35, as the history's travel bounds show. A property
+// sits within 2.5 km of its city's centre on each axis. A crew's base sits
+// near its zone's first city, with no randomness.
 //
 // Drive minutes are travelMatrix's (kit/runtime/data, Story 13.2): haversine
 // km on a 6371.0088 km sphere x detour_factor / speed_kmh x 60, rounded to
@@ -32,6 +35,7 @@
 // checks every booked leg against the same formula run in DuckDB.
 
 const { toDay, toIso } = require('./days');
+const { onWater } = require('./water');
 const { scheduleDays } = require('./activity');
 const {
   labourMinutes, clockTime, ceilTo,
@@ -39,6 +43,9 @@ const {
 } = require('./operations');
 
 const ROUTING_STREAM = 'routing';
+// The redraws of a point that fell on water (generator v6).
+const WATER_STREAM = 'routing-water';
+const MAX_REDRAWS = 1000;
 
 // travelMatrix's constants and Brightside's profile routing block.
 const EARTH_RADIUS_KM = 6371.0088;
@@ -57,6 +64,7 @@ const CANCEL_NOTICE_DAYS = 6;
 // latitude is 111.195 km; of longitude, that x cos(40 degrees)). Generator v5
 // moved only CENTRE and BOX (from the open South Pacific, v4); the per-km
 // scales, jitter, city and base offsets are v4's, so every draw is unchanged.
+// Generator v6 moved three city centres off water (CITY_KM below).
 const CENTRE = { lat: 40000000, lon: -83000000 };
 const LAT_E6_PER_KM = 8993;
 const LON_E6_PER_KM = 11740;
@@ -65,11 +73,14 @@ const JITTER_KM = 2.5;
 const BOX = { latMin: 39700000, latMax: 40300000, lonMin: -83400000, lonMax: -82600000 };
 
 // City centres in km [east, north] of the box's centre. Central's cities sit
-// closer together, as the history's shorter central drives show.
+// closer together, as the history's shorter central drives show. Generator
+// v6 moved three whose centre was on water onto land, keeping the zone's
+// drive bounds: Oldmarket from [-3, 4] (the Olentangy), Northvale from
+// [2, 21] (Alum Creek Reservoir) and Riverbend from [1, -21] (the Scioto).
 const CITY_KM = {
-  Centerpoint: [0, 0], Midtown: [4, 3], Oldmarket: [-3, 4],
-  Fernhill: [-5, 16], Northvale: [2, 21], Pinecrest: [6, 15],
-  Clayfield: [-6, -15], Riverbend: [1, -21], Southmere: [5, -14],
+  Centerpoint: [0, 0], Midtown: [4, 3], Oldmarket: [-0.5, 6],
+  Fernhill: [-5, 16], Northvale: [0, 18.5], Pinecrest: [6, 15],
+  Clayfield: [-6, -15], Riverbend: [4, -20], Southmere: [5, -14],
   Eastbrook: [15, -4], Harborview: [21, 2], Sunridge: [15, 5],
   Stonegate: [-15, 4], Westfall: [-21, -1], Willowmere: [-14, -5],
 };
@@ -117,17 +128,23 @@ function travelMinutes(from, to) {
 
 // ---- coordinates ----------------------------------------------------------
 
-function placeProperties(rng, properties) {
+// Each property takes its two draws from `rng`, on water or not, so no
+// later draw moves. A point on water is drawn again, in the same square
+// around its city's centre, from `waterRng` until it is dry.
+function placeProperties(rng, properties, waterRng) {
   const latJitter = Math.round(JITTER_KM * LAT_E6_PER_KM);
   const lonJitter = Math.round(JITTER_KM * LON_E6_PER_KM);
   return properties.map((p) => {
     const centre = CITY_CENTRES.get(p.city);
     if (!centre) throw new Error(`properties ${p.property_id}: city ${p.city} has no synthetic centre`);
-    return {
-      ...p,
-      geo_lat_e6: centre.lat + rng.int(-latJitter, latJitter),
-      geo_lon_e6: centre.lon + rng.int(-lonJitter, lonJitter),
-    };
+    let lat = centre.lat + rng.int(-latJitter, latJitter);
+    let lon = centre.lon + rng.int(-lonJitter, lonJitter);
+    for (let tries = 0; onWater(lat, lon); tries++) {
+      if (tries === MAX_REDRAWS) throw new Error(`properties ${p.property_id}: no dry point near ${p.city}'s centre`);
+      lat = centre.lat + waterRng.int(-latJitter, latJitter);
+      lon = centre.lon + waterRng.int(-lonJitter, lonJitter);
+    }
+    return { ...p, geo_lat_e6: lat, geo_lon_e6: lon };
   });
 }
 
@@ -368,9 +385,10 @@ function buildAbsences(rng, tables, { asOf, plant }) {
 // Returns the two extended tables, scheduled_visits, service_rules and
 // staff_absences. `tables` is read, never changed: the extended tables are
 // new row objects with the columns appended. `plant` (lib/scenarios.js, the
-// recorded seed only) plants S1 to S3.
-function buildRouting(rng, tables, { zones, asOf, plant = null }) {
-  let properties = placeProperties(rng, tables.properties);
+// recorded seed only) plants S1 to S3. `waterRng` (WATER_STREAM) redraws a
+// point that fell on water.
+function buildRouting(rng, tables, { zones, asOf, plant = null, waterRng }) {
+  let properties = placeProperties(rng, tables.properties, waterRng);
   if (plant) properties = plant.coordinates(properties, point);
   const crews = placeCrews(tables.crews, zones);
   const scheduledVisits = buildSchedule(rng, tables, { properties, crews, asOf, plant });
@@ -384,6 +402,7 @@ const scheduleHorizonEnd = (asOf) => toIso(toDay(asOf) + SCHEDULE_HORIZON_DAYS);
 
 module.exports = {
   buildRouting,
+  placeProperties,
   travelMinutes,
   isoWeekday,
   dayList,
@@ -393,6 +412,7 @@ module.exports = {
   DAY_NAMES,
   RULE_STRENGTH,
   ROUTING_STREAM,
+  WATER_STREAM,
   SCHEDULE_HORIZON_DAYS,
   EARTH_RADIUS_KM,
   SPEED_KMH,

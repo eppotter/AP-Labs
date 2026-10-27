@@ -5,6 +5,8 @@
 // to write output that breaks one; the SQL checks test the same rules on the
 // built database:
 //   synthetic-coordinates            every coordinate inside the fixture box
+//   synthetic-off-water              no coordinate on lib/water.js's water,
+//                                    as is or snapped to the map grid
 //   integrity-scheduled-route-order  route_order 1..n per crew-day
 //   integrity-scheduled-schedule     times fit the day and the drives
 //   integrity-scheduled-after-as-of  dates after as_of, statuses set by then
@@ -24,6 +26,7 @@ const { toDay, toIso } = require('./days');
 const { scheduleDays } = require('./activity');
 const { EARLIEST_START, LATEST_FINISH, NOON, SLOT_MINUTES, MIN_SCHEDULED } = require('./operations');
 const { travelMinutes, isoWeekday, BOX, MIN_TRAVEL_MINUTES, SCHEDULE_HORIZON_DAYS, DAY_NAMES, RULE_STRENGTH } = require('./routing');
+const { waterAt } = require('./water');
 
 const TIME = /^(\d\d):(\d\d):00$/;
 const STATUSES = new Set(['scheduled', 'cancelled']);
@@ -41,12 +44,16 @@ const groupBy = (rows, key) => {
 const inBox = (lat, lon) => Number.isSafeInteger(lat) && Number.isSafeInteger(lon)
   && lat >= BOX.latMin && lat <= BOX.latMax && lon >= BOX.lonMin && lon <= BOX.lonMax;
 
+// A point is refused on water as is or snapped to the map grid (the marker
+// is drawn there); the message names the water, never the point.
 function checkCoordinates(tables, fail) {
   for (const p of tables.properties) {
     if (!inBox(p.geo_lat_e6, p.geo_lon_e6)) fail(`properties ${p.property_id}: coordinates outside the synthetic box`);
+    else if (waterAt(p.geo_lat_e6, p.geo_lon_e6)) fail(`properties ${p.property_id}: coordinates on water (${waterAt(p.geo_lat_e6, p.geo_lon_e6)})`);
   }
   for (const c of tables.crews) {
     if (!inBox(c.base_geo_lat_e6, c.base_geo_lon_e6)) fail(`crews ${c.crew_id}: base coordinates outside the synthetic box`);
+    else if (waterAt(c.base_geo_lat_e6, c.base_geo_lon_e6)) fail(`crews ${c.crew_id}: base coordinates on water (${waterAt(c.base_geo_lat_e6, c.base_geo_lon_e6)})`);
   }
 }
 
