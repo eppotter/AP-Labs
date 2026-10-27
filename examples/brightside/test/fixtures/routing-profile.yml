@@ -1,14 +1,22 @@
 # Test fixture for Brightside's routing adapter test (Story 14.3): the
 # fixture's forbidden columns, the four coordinate columns among them, and a
 # routing block with the generator's day (06:00 / 08:00 / 18:00 / 23:00,
-# 15-minute slots), 40 km/h and a 1.3 detour. Tests read this, never
-# profiles/brightside/profile.yml. Deleted with the example in a fork.
+# 15-minute slots), 40 km/h and a 1.3 detour. Story 15.5 adds the routing
+# map's audience for the Routing module test: a dispatcher (every crew), the
+# lead of crew 8 (S3's zone) and a member with neither key. Every name and
+# Slack id is made up. Tests read this, never profiles/brightside/profile.yml.
+# Deleted with the example in a fork.
 schema_version: 1
 client: { id: routing-fixture, name: Routing Fixture Co }
 resources:
   - { key: HELLO_WORLD, label: Say hello, open_access: true }
+  - { key: ROUTING_ALL_CREWS, label: Routing map for every crew, admin_grantable: false }
+  - { key: ROUTING_OWN_CREW, label: Routing map for one's own crew, admin_grantable: false }
 users:
   - { id: ada, name: Ada Admin, role: admin, identities: { slack: U0FIXTUREADA } }
+  - { id: dee, name: Dee Dispatch, role: member, grants: [ROUTING_ALL_CREWS], identities: { slack: U0FIXTUREDEE } }
+  - { id: lee, name: Lee Lead, role: member, grants: [ROUTING_OWN_CREW], identities: { slack: U0FIXTURELEE } }
+  - { id: mo, name: Mo Member, role: member, identities: { slack: U0FIXTUREMO } }
 sql:
   forbidden_columns:
     - clients.phone
@@ -27,3 +35,8 @@ routing:
   detour_factor: 1.3
   min_travel_minutes: 5
   limits: { earliest_start: 360, default_start: 480, aim_finish: 1080, latest_finish: 1380, slot_minutes: 15 }
+  audience:
+    all_crews: ROUTING_ALL_CREWS
+    own_crew: ROUTING_OWN_CREW
+    crew_leads:
+      - { user: lee, crew_id: "8" }

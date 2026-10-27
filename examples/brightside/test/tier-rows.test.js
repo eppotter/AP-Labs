@@ -25,6 +25,14 @@ const ROWS = {
   // Story 13.3: the routing engine is a declared T2 for Brightside.
   'kit/runtime/routing/index.js': 'T2',
   'kit/runtime/routing/contract.js': 'T2',
+  // Story 15.5: the routing map's renderer and archetype are declared T2 for
+  // Brightside; its access filter and image upload stay T3 (ENGINE_T3).
+  'kit/runtime/routing-map/svg.js': 'T2',
+  'kit/runtime/routing-map/png.js': 'T2',
+  'kit/runtime/archetypes/routing-map/index.js': 'T2',
+  'kit/runtime/archetypes/routing-map/views.js': 'T2',
+  'kit/runtime/archetypes/routing-map/audience.js': 'T3',
+  'kit/runtime/slack/image.js': 'T3',
 };
 
 function tierCli(paths) {

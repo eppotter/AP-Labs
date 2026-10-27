@@ -336,6 +336,7 @@ Result: AD-R15's primary path holds (no DM fallback). Story 15.4 may proceed; it
 **And** the dev-only `map-check` module is removed
 **And** this story adds no screen code (the screens are 15.4's); the live check walks them
 **Live check (Ely, dev Slack; untested until run):** a dispatcher opens Routing for as_of+3 and switches through all four views; a crew lead sees only their crew; every exit is tried once; no location appears as text; the image appears nowhere outside the modal. The result is recorded in the PR.
+**Audience, as built (2026-10-26, Ely's call):** a dev placeholder pending DEP-024. Dana Reyes's audience list has not arrived, so the profile declares the two resource keys (neither conferred by the admin role) and the audience, with Dana (the user Ely drives in dev) the one dispatcher and `crew_leads` empty. Safe because the module is dev-only (F12). The crew-lead live check waits for the list; the profile is updated when it arrives. Steps: `docs/runtime/routing-map.md`. The fixture-driven module test is `examples/brightside/test/routing-module.test.js` (app `__tests__` may require only `#sdk`); `app/routing/__tests__/module.test.js` covers the adapter contract on hand-made rows.
 
 ### Story 15.6: Routing goes to prod after the guardrail is signed
 **Implements:** FR8 · **Estimate:** S · **Tier:** T3 (gated by the GRD-002 sign-off, AD-R12; the Orchestrator confirms with the tier tool) · **Architecture:** AD-R12

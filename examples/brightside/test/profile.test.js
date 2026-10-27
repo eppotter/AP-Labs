@@ -67,3 +67,22 @@ test('routing declares property and crew nodes and the generator limits', () => 
   });
   assert.equal(p.routing.min_travel_minutes, 5);
 });
+
+// Story 15.5 (AD-R17): the routing map's two resource keys, neither conferred
+// by the admin role, and its audience. A dev placeholder until Dana Reyes
+// confirms the real audience (DEP-024): Dana (the user Ely drives in dev) is
+// the one dispatcher and no crew leads are listed. When the list arrives,
+// update the profile and this test with it.
+test('the routing audience: two keys by name only; a dev placeholder with Dana as the one dispatcher (DEP-024)', () => {
+  const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
+  assert.deepEqual(p.routing.audience, { all_crews: 'ROUTING_ALL_CREWS', own_crew: 'ROUTING_OWN_CREW', crew_leads: [] });
+  for (const key of ['ROUTING_ALL_CREWS', 'ROUTING_OWN_CREW']) {
+    assert.equal(p.resources.find((r) => r.key === key).admin_grantable, false, key);
+  }
+  const holders = (key) => p.users.filter((u) => (u.grants || []).includes(key)).map((u) => u.id);
+  assert.deepEqual(holders('ROUTING_ALL_CREWS'), ['dana']);
+  assert.deepEqual(holders('ROUTING_OWN_CREW'), []);
+  // The map floors Dana signs GRD-002 against.
+  assert.equal(p.routing.map_grid_e6, 2000);
+  assert.equal(p.routing.map_min_span_km, 5);
+});

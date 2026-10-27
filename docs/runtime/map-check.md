@@ -1,5 +1,7 @@
 # The map check: live check for Story 15.1
 
+> **Removed in Story 15.5.** The dev-only **Map check (dev)** module is gone from the `/brightside` menu; the Routing module replaced it, and its live check is in `routing-map.md`. This page stays as the record of Story 15.1's live check (run 2026-10-26; the outcome is under Story 15.1 in `docs/planning/planning-artifacts/epics-routing.md`). The steps below can no longer be run.
+
 A human step for Ely in the `aplabs-demo` dev workspace. It answers seven questions about how Slack treats a privately uploaded image in a modal (AD-R15). The tests can't answer them: they use a fake Slack, so each item below is **untested until you run it**. Story 15.4 waits on the result (the 15.1 DEP in `docs/planning/planning-artifacts/epics-routing.md`).
 
 The map check is a dev-only option on the `/brightside` menu, **Map check (dev)**. It shows a fixed test picture (colour bars over a checkerboard, no client data), uploaded the way a route map will be. Story 15.5 removes it.

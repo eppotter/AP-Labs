@@ -11,6 +11,13 @@
 //   const gap = await adapter.gapInput({ day, crewId });
 //   sdk.routing.fillGap(gap.input, { travel: gap.travel, horizonDays: routing.gap_fill.horizon_days })
 //
+// The routing map (Story 15.5, AD-R16, AD-R17): the same object is the
+// routing-map archetype's adapter (modules/routing/adapter.js re-exports
+// createAdapter): asOf(), input({ day, view, scope }) and labels({ day,
+// nodeIds, scope }). labels.sql returns only a crew's name, or a property's
+// client name and city, and is filtered by the scope (a crew lead's labels
+// name no other crew).
+//
 // data is a full data object from createData (it has travelMatrix). A
 // module's or job's ctx.data has only run and describe, so it is refused
 // (sdk.travelMatrix rejects with RoutingFault data_unavailable). routing is
@@ -63,6 +70,7 @@ const SQL = Object.freeze({
   day: fs.readFileSync(path.join(__dirname, 'day.sql'), 'utf8'),
   crews: fs.readFileSync(path.join(__dirname, 'crews.sql'), 'utf8'),
   candidates: fs.readFileSync(path.join(__dirname, 'candidates.sql'), 'utf8'),
+  labels: fs.readFileSync(path.join(__dirname, 'labels.sql'), 'utf8'),
 });
 const AS_OF_SQL = "SELECT value FROM fixture_meta WHERE key = 'as_of'";
 
@@ -74,6 +82,7 @@ const ISO_DAYS = Object.freeze({ MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6,
 const STRENGTHS = Object.freeze(['hard', 'soft']);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const DIGITS = /^\d+$/;
+const NODE_ID = /^(crew|property):(\d+)$/;
 
 const fault = (field, problem) => new RoutingFault({ field, problem });
 const propertyNode = (id) => `property:${id}`;
@@ -265,16 +274,42 @@ function createAdapter({ data, routing } = {}) {
     return { input, travel: await travelFor(rects) };
   }
 
+  // A candidate's service time on the gap crews: the gap crew's headcount
+  // that day; with more than one gap crew (the map's gap view for a
+  // dispatcher), the longest of theirs, so a fill is never suggested that
+  // would not fit the crew with the fewest people. The booked minutes when
+  // every gap crew is out.
+  function candidateService(row, gapCrews) {
+    const working = gapCrews.filter((c) => c.available);
+    if (!working.length) return row.scheduled_minutes;
+    return Math.max(...working.map((c) => serviceFor(row.labour_minutes, c.headcountPresent, slot)));
+  }
+
   // The gap day's input for fillGap: every crew and booked stop that day (so
-  // a property visited that day is never offered), crewId's cancelled visits,
-  // and the candidates. A candidate's service time uses crewId's headcount.
-  async function gapInput({ day, crewId } = {}) {
-    if (crewId === undefined || crewId === null) throw fault('crewId', 'missing');
+  // a property visited that day is never offered), the gap crews' cancelled
+  // visits, and the candidates. gapCrewIds: the crews whose gaps are filled,
+  // or null for every crew with a cancelled visit that day.
+  async function gapDay(day, gapCrewIds) {
     const booked = await bookedDay(day);
-    const crew = booked.crews.find((c) => c.crewId === String(crewId));
-    if (!crew) throw fault('crewId', 'unknown_crew');
-    const cancelled = booked.cancelled.filter((c) => c.currentCrewId === crew.crewId);
-    const rows = await data.run(SQL.candidates, { day, horizon_days: horizonDays }, { declared: ['day', 'horizon_days'] });
+    let gapCrews;
+    if (gapCrewIds === null) {
+      const withGaps = new Set(booked.cancelled.map((c) => c.currentCrewId));
+      gapCrews = booked.crews.filter((c) => withGaps.has(c.crewId));
+    } else {
+      gapCrews = gapCrewIds.map((id) => {
+        const crew = booked.crews.find((c) => c.crewId === String(id));
+        if (!crew) throw fault('crewId', 'unknown_crew');
+        return crew;
+      });
+    }
+    const gapIds = new Set(gapCrews.map((c) => c.crewId));
+    const cancelled = booked.cancelled.filter((c) => gapIds.has(c.currentCrewId));
+    // No cancelled visit on the gap crews (a crew lead whose crew has no gap
+    // that day, or a day with none): no candidates are read, so a lead's
+    // view reads nothing about other crews' visits.
+    const rows = cancelled.length
+      ? await data.run(SQL.candidates, { day, horizon_days: horizonDays }, { declared: ['day', 'horizon_days'] })
+      : [];
     const candidates = rows.map((row) => {
       const cadenceDays = CADENCE_DAYS[row.frequency];
       if (!cadenceDays) throw fault('plans.frequency', 'out_of_range');
@@ -284,7 +319,7 @@ function createAdapter({ data, routing } = {}) {
         node: propertyNode(row.property_id),
         currentCrewId: String(row.crew_id),
         labourMinutes: row.labour_minutes,
-        serviceMinutes: crew.available ? serviceFor(row.labour_minutes, crew.headcountPresent, slot) : row.scheduled_minutes,
+        serviceMinutes: candidateService(row, gapCrews),
         locked: false,
         rules,
         plannedDate: row.visit_date,
@@ -300,26 +335,98 @@ function createAdapter({ data, routing } = {}) {
     // stops and cancelled visits in start order; a run of cancelled visits
     // is one gap, between the stop before it (or the crew's base) and the
     // stop after it (or the end of the day).
-    const seq = [
-      ...booked.stops.filter((s) => s.currentCrewId === crew.crewId).map((stop) => ({ stop, cancelled: false })),
-      ...cancelled.map((stop) => ({ stop, cancelled: true })),
-    ].sort((a, b) => a.stop.start - b.stop.start || compareIds(a.stop.stopId, b.stop.stopId));
     const candNodes = candidates.map((c) => c.node);
     const rects = [];
-    for (let k = 0; k < seq.length; k += 1) {
-      if (!seq[k].cancelled || (k > 0 && seq[k - 1].cancelled)) continue;
-      let end = k;
-      while (end + 1 < seq.length && seq[end + 1].cancelled) end += 1;
-      const prev = k > 0 ? seq[k - 1].stop.node : crew.baseNode;
-      const next = end + 1 < seq.length ? seq[end + 1].stop.node : null;
-      rects.push([[prev], next === null ? candNodes : [...candNodes, next]]);
-      if (next !== null) rects.push([candNodes, [next]]);
-      k = end;
+    for (const crew of gapCrews) {
+      const seq = [
+        ...booked.stops.filter((s) => s.currentCrewId === crew.crewId).map((stop) => ({ stop, cancelled: false })),
+        ...cancelled.filter((s) => s.currentCrewId === crew.crewId).map((stop) => ({ stop, cancelled: true })),
+      ].sort((a, b) => a.stop.start - b.stop.start || compareIds(a.stop.stopId, b.stop.stopId));
+      for (let k = 0; k < seq.length; k += 1) {
+        if (!seq[k].cancelled || (k > 0 && seq[k - 1].cancelled)) continue;
+        let end = k;
+        while (end + 1 < seq.length && seq[end + 1].cancelled) end += 1;
+        const prev = k > 0 ? seq[k - 1].stop.node : crew.baseNode;
+        const next = end + 1 < seq.length ? seq[end + 1].stop.node : null;
+        rects.push([[prev], next === null ? candNodes : [...candNodes, next]]);
+        if (next !== null) rects.push([candNodes, [next]]);
+        k = end;
+      }
     }
     return { input, travel: await travelFor(rects) };
   }
 
-  return Object.freeze({ dayInput, gapInput });
+  // The gap day's input for one crew's gaps. A candidate's service time uses
+  // crewId's headcount.
+  async function gapInput({ day, crewId } = {}) {
+    if (crewId === undefined || crewId === null) throw fault('crewId', 'missing');
+    return gapDay(day, [crewId]);
+  }
+
+  // --- The routing map (Story 15.5, AD-R16): the routing-map archetype's
+  // adapter contract (kit/runtime/archetypes/routing-map), over dayInput,
+  // gapDay and labels.sql.
+
+  const leadOf = (scope) => (scope && scope.all !== true && typeof scope.crewId === 'string' ? scope.crewId : null);
+  const isUnknownCrew = (err) => err instanceof RoutingFault && ['crewIds', 'crewId'].includes(err.details.field)
+    && err.details.problem === 'unknown_crew';
+
+  // { input, travel } for one map view. compare and zone are cut to a crew
+  // lead's crew; change and gap are not (the engine needs the other crews to
+  // place a sick crew's stops, and a lead's gap candidates come from every
+  // crew). A dispatcher's gap view fills every crew's gaps (the archetype
+  // shows the picked crew's). A lead whose crew is not in the day gets the
+  // whole day, so the archetype's configuration check refuses them (never
+  // an empty map).
+  async function input({ day, view, scope } = {}) {
+    const lead = leadOf(scope);
+    if (view === 'gap') {
+      if (lead === null) return gapDay(day, null);
+      try {
+        return await gapDay(day, [lead]);
+      } catch (err) {
+        if (!isUnknownCrew(err)) throw err;
+        return dayInput({ day });
+      }
+    }
+    if (lead !== null && (view === 'compare' || view === 'zone')) {
+      try {
+        return await dayInput({ day, crewIds: [lead] });
+      } catch (err) {
+        if (!isUnknownCrew(err)) throw err;
+      }
+    }
+    return dayInput({ day });
+  }
+
+  // Per asked node id, { crewName } for a crew and { clientName, city } for
+  // a property, and nothing else (labels.sql). Filtered by scope: a crew
+  // lead's labels name no other crew. An id the data does not know is left
+  // out (the archetype then shows "Crew <id>" or "a stop").
+  async function labels({ nodeIds, scope } = {}) {
+    if (!Array.isArray(nodeIds)) throw fault('nodeIds', 'not_list');
+    const crewIds = [];
+    const propertyIds = [];
+    for (const node of nodeIds) {
+      const m = NODE_ID.exec(typeof node === 'string' ? node : '');
+      if (!m) throw fault('nodeIds', 'bad_node');
+      (m[1] === 'crew' ? crewIds : propertyIds).push(m[2]);
+    }
+    const lead = leadOf(scope);
+    const out = {};
+    if (!nodeIds.length || (lead !== null && !DIGITS.test(lead))) return out;
+    const rows = await data.run(SQL.labels, {
+      crew_ids: unique(crewIds).join(','), property_ids: unique(propertyIds).join(','), crew_id: lead === null ? '' : lead,
+    }, { declared: ['crew_ids', 'property_ids', 'crew_id'] });
+    for (const r of rows) {
+      out[r.node] = r.node.startsWith('crew:') ? { crewName: r.crew_name } : { clientName: r.client_name, city: r.city };
+    }
+    return out;
+  }
+
+  return Object.freeze({
+    asOf, input, labels, dayInput, gapInput,
+  });
 }
 
 module.exports = { createAdapter, SQL, isoDaysOf, serviceFor, isFlexible, CADENCE_DAYS };
