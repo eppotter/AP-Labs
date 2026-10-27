@@ -86,3 +86,27 @@ test('the routing audience: two keys by name only; a dev placeholder with Dana a
   assert.equal(p.routing.map_grid_e6, 2000);
   assert.equal(p.routing.map_min_span_km, 5);
 });
+
+// Story 15.11 (AD-R18): Brightside turns the street map on with OpenStreetMap's
+// free tiles (dev and the demo only; a fork sets its own provider, DEP-031).
+// The User-Agent names the app and a contact (DEP-030), never the client,
+// since every tile request carries it to the provider. The Routing module
+// stays dev-only until Dana Reyes signs GRD-002 (DEP-025, Story 15.6).
+test('routing.basemap: OpenStreetMap tiles, its credit, a contact and no client name in the User-Agent', () => {
+  const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
+  const b = p.routing.basemap;
+  assert.equal(b.url_template, 'https://tile.openstreetmap.org/{z}/{x}/{y}.png');
+  assert.equal(b.attribution, '© OpenStreetMap contributors');
+  assert.equal(b.attribution_url, 'https://www.openstreetmap.org/copyright');
+  assert.equal(b.max_zoom, 19);
+  assert.equal(b.cache_days, 7);
+  assert.match(b.user_agent, /^aplabs-routing-map\/[0-9.]+ \(\+mailto:[^\s@()]+@[^\s@()]+\)$/);
+  const ua = b.user_agent.toLowerCase();
+  const names = [p.client.id, p.client.name, ...p.client.name.split(/\s+/), ...p.users.flatMap((u) => [u.id, ...u.name.split(/\s+/)])];
+  for (const name of names) assert.ok(!ua.includes(name.toLowerCase()), `the User-Agent names no client or client person (${name})`);
+});
+
+test('the Routing module stays dev-only with the street map on', () => {
+  const manifest = require('../app/modules/routing/manifest.json');
+  assert.deepEqual(manifest.environments, ['dev']);
+});

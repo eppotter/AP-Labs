@@ -76,3 +76,18 @@ Real Slack only, so each step is **untested until you run it**. About 10 minutes
 **A note, no change:** clicking the image offers Open in Browser, Copy Link and Share (15.1 item 5). This is written into GRD-002 for Dana's sign-off (DEP-025).
 
 Record the outcome in the Story 15.5 PR, one line per step.
+
+## Street map live check (Story 15.11, Ely, dev Slack)
+
+Brightside's profile turns the street map on (`routing.basemap`: OpenStreetMap's free tiles, dev and demo only). **Untested until you run it.** Start the bot as above; the fixture must be generator v5 (Columbus). Note each result in the Story 15.11 PR, one line each.
+
+1. **Four views** (Booked vs optimized, Route change, Zone, Gap fill): each shows streets, markers on streets. Note any marker on water.
+2. **Credit:** "© OpenStreetMap contributors" shows under the picture on desktop and iOS.
+3. **Kill switch:** restart with `APLABS_BASEMAP_OFF=1`: the plain map and the short note.
+4. **Bad host:** point `url_template` at a host that doesn't answer (a local copy of the profile): the plain map and the note within about 8 s.
+5. **Modal image:** the larger PNG shows. Note its size and how long it takes to draw.
+6. **Provider:** OpenStreetMap answers 200 (no `forbidden`, `rate_limited` or `server_error` in the terminal).
+7. **Cache:** re-open the same view: the debug log's tile-request count is 0 (a count only, never a tile number).
+8. **15.1 carry-overs:** Close (the X) sends `view_closed` (`map view closed`); a second person's Files search finds nothing (steps 8 and 10 above).
+
+Production waits for Dana's sign-off of GRD-002's reworded map image rule (DEP-025, Story 15.6).
