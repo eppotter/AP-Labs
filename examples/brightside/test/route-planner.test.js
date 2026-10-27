@@ -16,7 +16,8 @@
 // plausible for the Columbus box; the SQL route() runs passes the guardrail
 // with the six coordinate columns forbidden and names none; and nothing it
 // returns holds a coordinate (the Office's too), a street address or a
-// postal code.
+// postal code. Last, the module through the hub and Story 15.14's editor on
+// the real data: a dispatcher's Show stops and one ↓, and a crew lead's day.
 //
 // An example test (architecture carve-out): it reads Brightside's app dir and
 // fixture, and is deleted with the example in a fork. Its profile comes from
@@ -437,4 +438,101 @@ test('nothing route() returns holds a coordinate (the Office\'s too), a street a
   const leaks = secrets.filter((r) => !/^\d{5}$/.test(r.v)).concat(own).filter((r) => holdsToken(text, r.v));
   assert.deepEqual(leaks, []);
   for (const v of ['40122000', '-82908000', '40.122', '-82.908']) assert.ok(!text.includes(v), v);
+});
+
+// ---- the module through the hub (Story 15.14's editor, the real data) ----------
+
+const { createRegistry } = require('../../../kit/runtime/registry');
+const { registerHubs } = require('../../../kit/runtime/slack/hubs');
+const { createStore } = require('../../../kit/runtime/store');
+const { createMapFiles } = require('../../../kit/runtime/slack/image');
+const { renderPng } = require('../../../kit/runtime/routing-map');
+const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
+
+const HUB = JSON.parse(fs.readFileSync(path.join(APP, 'hubs/brightside.json'), 'utf8'));
+const PLANNER = JSON.parse(fs.readFileSync(path.join(APP, 'modules/route-planner/manifest.json'), 'utf8'));
+const MENU = Object.freeze({ id: 'VMENU', type: 'modal', private_metadata: HUB.id });
+const slackOf = (id) => ({ id: profile.users.find((u) => u.id === id).identities.slack, name: id });
+
+function quietLog() {
+  const lines = [];
+  const rec = (level) => (msg, fields) => lines.push({ level, msg, fields });
+  return { lines, debug: rec('debug'), info: rec('info'), warn: rec('warn'), error: rec('error') };
+}
+
+function hub() {
+  const app = new FakeSlackApp({ views: true });
+  app.checkHashes = true;
+  const log = quietLog();
+  const store = createStore();
+  const mapFiles = createMapFiles({
+    store, client: app.client, log, sweeping: () => true, sleep: async () => {},
+  });
+  const mod = Object.freeze({ ...PLANNER, file: 'modules/route-planner/manifest.json', createAdapter });
+  registerHubs(app, {
+    registry: createRegistry({ hubs: [HUB], modules: [mod] }), profile, env: 'dev', log, store, data, mapFiles,
+    routingMap: { render: renderPng, editor: { mapDelayMs: 0 } },
+  });
+  return { app, log };
+}
+
+const viewOf = (app) => app.views.at(-1).args.view;
+const sectionTexts = (view) => view.blocks.filter((b) => b.type === 'section').map((b) => b.text.text);
+const settle = async (n = 30) => { for (let i = 0; i < n; i += 1) await new Promise((r) => { setImmediate(r); }); };
+function act(ctx, which, payload, user) {
+  const v = viewOf(ctx.app);
+  const from = {
+    id: 'V1', type: 'modal', hash: ctx.app.hashes.get('V1'), private_metadata: v.private_metadata, title: v.title,
+  };
+  return ctx.app.dispatchAction(`routing-map:${which}`, { user, view: from, ...payload });
+}
+
+test('through the hub: a dispatcher opens Plan a route, picks crew 4 on S1\'s day and sees the Office loop, the totals and the map', async () => {
+  const ctx = hub();
+  const user = slackOf('dee');
+  const day = dayOf(1);
+  await ctx.app.dispatchAction(`${PLANNER.id}:open`, { user, view: MENU });
+  await act(ctx, 'crew', { action: { type: 'static_select', selected_option: { value: '4', text: { type: 'plain_text', text: '4' } } } }, user);
+  await act(ctx, 'day', { action: { type: 'datepicker', selected_date: day } }, user);
+  await act(ctx, 'show', { value: 'show' }, user);
+  await settle();
+  const view = viewOf(ctx.app);
+  const texts = sectionTexts(view);
+  assert.match(texts[0], /\nDrive (\d+ h )?\d+ min · about \d+ km · last stop done \d\d:\d\d · back at Office \d\d:\d\d · /);
+  assert.match(texts[1], /^Office · leave \d\d:\d\d$/);
+  assert.match(texts.at(-1), /^Office · back \d\d:\d\d/);
+  const stops = (await crewsWithStops(day)).find(([id]) => id === '4')[1];
+  assert.equal(texts.filter((t) => /^\d+\. /.test(t)).length, stops);
+  const image = view.blocks.find((b) => b.type === 'image');
+  assert.ok(image, 'the map is shown');
+  assert.match(image.alt_text, /^Route map: Planned route, .+, \d+ stops$/);
+
+  // ↓ on the first stop: the order changes, the list stays whole.
+  const first = view.blocks.find((b) => b.type === 'actions' && /^routing-map:move:/.test(b.block_id)).elements.find((e) => e.action_id === 'routing-map:down');
+  await act(ctx, 'down', { value: first.value }, user);
+  await settle();
+  const moved = sectionTexts(viewOf(ctx.app)).filter((t) => /^\d+\. /.test(t));
+  assert.equal(moved.length, stops);
+  assert.notDeepEqual(moved.map((t) => t.split(' · ')[1]), texts.filter((t) => /^\d+\. /.test(t)).map((t) => t.split(' · ')[1]));
+
+  // No coordinate (the Office's too), address or postal code in Slack or the logs.
+  const out = JSON.stringify(ctx.app.views) + JSON.stringify(ctx.log.lines);
+  for (const v of ['40122000', '-82908000', '40.122', '-82.908']) assert.ok(!out.includes(v), v);
+  const addresses = await raw.run("SELECT p.street_address AS v FROM properties p WHERE p.city IS NOT NULL");
+  assert.deepEqual(addresses.filter((r) => holdsToken(out, r.v)), []);
+});
+
+test('through the hub: a crew lead gets their own crew\'s day from the Office', async () => {
+  const ctx = hub();
+  const user = slackOf('lee');
+  const lead = profile.routing.audience.crew_leads.find((l) => l.user === 'lee').crew_id;
+  const day = dayOf(S3.dayOffset);
+  await ctx.app.dispatchAction(`${PLANNER.id}:open`, { user, view: MENU });
+  await act(ctx, 'day', { action: { type: 'datepicker', selected_date: day } }, user);
+  await act(ctx, 'show', { value: 'show' }, user);
+  await settle();
+  const texts = sectionTexts(viewOf(ctx.app));
+  const stops = (await crewsWithStops(day)).find(([id]) => id === lead)[1];
+  assert.match(texts[1], /^Office · leave /);
+  assert.equal(texts.filter((t) => /^\d+\. /.test(t)).length, stops);
 });

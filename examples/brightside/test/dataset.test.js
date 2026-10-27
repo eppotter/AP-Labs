@@ -60,10 +60,10 @@ test('Dataset replies privately with the local fixture, its version, as-of date 
   assert.deepEqual(lines.slice(0, 6), [
     '*Dataset*',
     'Source: local fixture (brightside.duckdb)',
-    'Fixture version: 6',
+    'Fixture version: 7',
     'As of: 2026-09-30',
     'Published: local build',
-    'Tables (19):',
+    'Tables (20):',
   ]);
   assert.ok(lines.includes('• visits: 40,895'));
   assert.ok(lines.includes('• zones: 5'));
@@ -71,6 +71,7 @@ test('Dataset replies privately with the local fixture, its version, as-of date 
   assert.ok(lines.includes('• scheduled_visits: 1,720'));
   assert.ok(lines.includes('• service_rules: 780'));
   assert.ok(lines.includes('• staff_absences: 5'));
+  assert.ok(lines.includes('• depots: 1'));
 });
 
 test('with no data file, the app still starts and Dataset says plainly the data is unavailable', async (t) => {
