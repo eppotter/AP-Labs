@@ -84,6 +84,8 @@ const GUARDED = {
   // Story 15.4 (F13): the routing map's audience and its image path.
   'kit/runtime/archetypes/routing-map/audience.js': 'kit/runtime/archetypes/routing-map/audience.js',
   'kit/runtime/slack/image.js': 'kit/runtime/slack/image.js',
+  // Story 15.9 (AD-R19): the street-map tile fetcher.
+  'kit/runtime/basemap/**': 'kit/runtime/basemap/cache.js',
 };
 
 test('ENGINE_T3 lists exactly the guarded paths, and is frozen', () => {
@@ -110,6 +112,20 @@ test('Story 15.4 (F13): the routing map\'s audience and its image path are T3 un
     assert.ok(ENGINE_T3.includes(p), p);
     for (const prof of [minimal, profile, lowered, routingProfile]) assert.equal(tierOf(prof, p), 'T3', p);
     assert.equal(isEngineFloor(p), true, p);
+  }
+});
+
+test('Story 15.9 (AD-R19): the street-map tile fetcher is T3 under any profile', () => {
+  const minimal = validateProfile({ schema_version: 1, client: { id: 'm', name: 'M' }, users: [{ id: 'a', name: 'A', role: 'admin' }] });
+  const basemapProfile = loadProfile(path.join(__dirname, '../fixtures/profiles/routing-basemap.yml'));
+  assert.ok(ENGINE_T3.includes('kit/runtime/basemap/**'));
+  for (const p of ['kit/runtime/basemap/index.js', 'kit/runtime/basemap/cache.js', 'kit/runtime/basemap/deep/x.js', 'KIT/Runtime/Basemap/index.js', './kit/runtime/basemap/index.js']) {
+    for (const prof of [minimal, profile, lowered, basemapProfile]) assert.equal(tierOf(prof, p), 'T3', p);
+    assert.equal(isEngineFloor(p), true, p);
+  }
+  for (const p of ['kit/runtime/basemap.js', 'kit/runtime/basemaps/x.js', 'docs/kit/runtime/basemap/x.md']) {
+    assert.notEqual(tierOf(minimal, p), 'T3', p);
+    assert.equal(isEngineFloor(p), false, p);
   }
 });
 

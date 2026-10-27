@@ -19,7 +19,12 @@
 //     Story 15.3);
 //   - the routing-map archetype (kit/runtime/archetypes/routing-map/**)
 //     requires only its allowed parts, never the AI service, the runner or
-//     the rasterizer, and names no client (AD-R16, Story 15.4).
+//     the rasterizer, and names no client (AD-R16, Story 15.4);
+//   - the street-map tile fetcher (kit/runtime/basemap/**) requires only
+//     kit/runtime/errors and its own files and names no client; only
+//     kit/runtime/archetypes/routing-map/** and scripts/smoke-routing-map.js
+//     require it, so kit/runtime/routing-map/** never does (AD-R19,
+//     Story 15.9).
 // App dirs scanned: APLABS_APP_DIR when set, <repo>/app (a fork) and
 // examples/*/app (template dev), plus kit/templates/module and
 // kit/templates/connector always, so the check never passes by scanning nothing.
@@ -515,6 +520,7 @@ const ARCHETYPE_DIR = 'kit/runtime/archetypes/routing-map';
 const ARCHETYPE_ALLOWED = [
   'kit/runtime/routing', 'kit/runtime/routing-map', 'kit/runtime/routing-map/svg', 'kit/runtime/data/map', 'kit/runtime/access',
   'kit/runtime/errors', 'kit/runtime/messages', 'kit/runtime/scoring', 'kit/runtime/slack/format', 'kit/runtime/slack/image',
+  'kit/runtime/basemap',
 ];
 
 function archetypeProblems(root = ROOT) {
@@ -565,4 +571,92 @@ test('the archetype check catches the AI service, the runner, the rasterizer, a 
     `${ARCHETYPE_DIR}/index.js: requires '../../routing-map/png'`,
     `${ARCHETYPE_DIR}/index.js: requires 'node:fs'`,
   ]);
+});
+
+// The street-map tile fetcher (Story 15.9, AD-R19): the bot's one outbound
+// connection to the tile provider. kit/runtime/basemap/** requires only
+// kit/runtime/errors and its own files (no Slack, no data, no store, no
+// package, no node: built-in: Node's global fetch is passed in), and names no
+// client. Only the routing-map archetype and the smoke script may require it;
+// the renderer (kit/runtime/routing-map/**) never does. Tests may load it.
+const BASEMAP_DIR = 'kit/runtime/basemap';
+const BASEMAP_USERS = ['kit/runtime/archetypes/routing-map/', 'scripts/smoke-routing-map.js'];
+const namesBasemap = (spec, file, root) => (spec.startsWith('.')
+  ? resolved(spec, file, root).startsWith(`${BASEMAP_DIR}/`) || resolved(spec, file, root) === `${BASEMAP_DIR}.js`
+  : /(^|\/)kit\/runtime\/basemap(\/|$)/.test(spec));
+
+function basemapProblems(root = ROOT) {
+  const problems = [];
+  const dir = path.join(root, BASEMAP_DIR);
+  const names = clientNames(root);
+  for (const file of fs.existsSync(dir) ? jsFiles(dir) : []) {
+    const rel = slash(path.relative(root, file));
+    const text = fs.readFileSync(file, 'utf8');
+    if (EXAMPLES.test(text)) problems.push(`${rel}: names examples/`);
+    names.forEach((re, i) => { if (re.test(withoutComments(text)) || re.test(rel)) problems.push(`${rel}: holds client name ${i + 1}`); });
+    for (const m of text.matchAll(IMPORT)) {
+      const spec = m[2] || m[4] || m[6] || m[8];
+      const target = spec.startsWith('.') ? resolved(spec, file, root) : null;
+      const ok = target !== null && (target === 'kit/runtime/errors.js' || target.startsWith(`${BASEMAP_DIR}/`));
+      if (!ok) problems.push(`${rel}: requires '${spec}' (outside basemap and errors)`);
+    }
+  }
+  for (const d of SCANNED.map((s) => path.join(root, s)).filter((s) => fs.existsSync(s))) {
+    for (const file of jsFiles(d)) {
+      const rel = slash(path.relative(root, file));
+      if (rel.startsWith(`${BASEMAP_DIR}/`) || BASEMAP_USERS.some((u) => (u.endsWith('/') ? rel.startsWith(u) : rel === u))) continue;
+      for (const m of fs.readFileSync(file, 'utf8').matchAll(IMPORT)) {
+        const spec = m[2] || m[4] || m[6] || m[8];
+        if (namesBasemap(spec, file, root)) problems.push(`${rel}: requires '${spec}' (only ${BASEMAP_USERS.join(', ')} may)`);
+      }
+    }
+  }
+  return problems;
+}
+
+test('the tile fetcher requires only errors and itself, names no client, and only the archetype and smoke script require it (AD-R19)', () => {
+  assert.ok(jsFiles(path.join(ROOT, BASEMAP_DIR)).length >= 2, 'the fetcher is scanned');
+  assert.deepEqual(basemapProblems(), []);
+});
+
+test('the tile fetcher check catches a require outside the rule, a client name, and every other requirer', (t) => {
+  const root = tmpDir(t);
+  for (const d of [BASEMAP_DIR, 'kit/runtime/archetypes/routing-map/sub', 'kit/runtime/routing-map', 'kit/runtime/slack', 'kit/runtime/sdk', 'examples/acme/app', 'scripts']) {
+    fs.mkdirSync(path.join(root, d), { recursive: true });
+  }
+  fs.writeFileSync(path.join(root, 'kit/runtime/errors.js'), '');
+  fs.writeFileSync(path.join(root, BASEMAP_DIR, 'cache.js'), "require('../errors');\n");
+  fs.writeFileSync(path.join(root, BASEMAP_DIR, 'index.js'), [
+    "require('./cache');",
+    "require('../errors.js');",
+    "require('../slack/image');",
+    "require('../data');",
+    "require('node:https');",
+    "require('undici');",
+    "const CLIENT = 'Acme';",
+  ].join('\n'));
+  // Allowed requirers.
+  fs.writeFileSync(path.join(root, 'kit/runtime/archetypes/routing-map/index.js'), "require('../../basemap');\n");
+  fs.writeFileSync(path.join(root, 'kit/runtime/archetypes/routing-map/sub/x.js'), "require('../../../basemap/index.js');\n");
+  fs.writeFileSync(path.join(root, 'scripts/smoke-routing-map.js'), "require('../kit/runtime/basemap');\n");
+  // Everyone else.
+  fs.writeFileSync(path.join(root, 'kit/runtime/routing-map/svg.js'), "require('../basemap');\n");
+  fs.writeFileSync(path.join(root, 'kit/runtime/slack/x.js'), "require('../basemap/cache');\n");
+  fs.writeFileSync(path.join(root, 'kit/runtime/sdk/index.js'), "require('../basemap');\n");
+  fs.writeFileSync(path.join(root, 'examples/acme/app/y.js'), "require('ap-labs/kit/runtime/basemap');\n");
+  fs.writeFileSync(path.join(root, 'scripts/other.js'), "require('../kit/runtime/basemap/index.js');\n");
+  const only = `(only ${BASEMAP_USERS.join(', ')} may)`;
+  // Sorted: the order files are listed in depends on the file system.
+  assert.deepEqual(basemapProblems(root).sort(), [
+    `${BASEMAP_DIR}/index.js: holds client name 1`,
+    `${BASEMAP_DIR}/index.js: requires '../slack/image' (outside basemap and errors)`,
+    `${BASEMAP_DIR}/index.js: requires '../data' (outside basemap and errors)`,
+    `${BASEMAP_DIR}/index.js: requires 'node:https' (outside basemap and errors)`,
+    `${BASEMAP_DIR}/index.js: requires 'undici' (outside basemap and errors)`,
+    `kit/runtime/routing-map/svg.js: requires '../basemap' ${only}`,
+    `kit/runtime/slack/x.js: requires '../basemap/cache' ${only}`,
+    `kit/runtime/sdk/index.js: requires '../basemap' ${only}`,
+    `examples/acme/app/y.js: requires 'ap-labs/kit/runtime/basemap' ${only}`,
+    `scripts/other.js: requires '../kit/runtime/basemap/index.js' ${only}`,
+  ].sort());
 });

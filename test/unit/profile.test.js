@@ -223,6 +223,124 @@ test('the audience refuses a crew lead not in users, the same user twice, or a l
   assert.equal(validateProfile(withAudience((a) => { a.crew_leads[1].crew_id = 'v1'; })).routing.audience.crew_leads[1].crew_id, 'v1');
 });
 
+// Story 15.9 (AD-R18): the optional street map source. Absent = no street map.
+const withBasemap = (edit) => {
+  const p = parsed('routing-basemap');
+  edit(p.routing.basemap, p);
+  return p;
+};
+const basemapRefuses = (key, edit, pattern) => rejects(withBasemap(edit), new RegExp(`^\\[profile\\] refusing to start: /routing/basemap/${key} ${pattern}`));
+
+test('a basemap block loads with its defaults (max_zoom 19, cache_days 7, max_cached_tiles 512); no block means no basemap', () => {
+  const p = loadProfile(fixture('routing-basemap'));
+  assert.deepEqual(p.routing.basemap, { ...parsed('routing-basemap').routing.basemap, max_zoom: 19, cache_days: 7, max_cached_tiles: 512 });
+  assert.ok(Object.isFrozen(p.routing.basemap));
+  for (const name of ['routing', 'routing-full', 'routing-audience']) {
+    assert.equal(Object.hasOwn(loadProfile(fixture(name)).routing, 'basemap'), false, name);
+  }
+  const input = parsed('routing-basemap');
+  validateProfile(input);
+  assert.equal(Object.hasOwn(input.routing.basemap, 'max_zoom'), false, 'defaults do not touch what the client wrote');
+});
+
+test('basemap values the client sets win, within their ranges', () => {
+  const p = validateProfile(withBasemap((b) => Object.assign(b, { max_zoom: 0, cache_days: 30, max_cached_tiles: 64 })));
+  assert.deepEqual([p.routing.basemap.max_zoom, p.routing.basemap.cache_days, p.routing.basemap.max_cached_tiles], [0, 30, 64]);
+  basemapRefuses('max_zoom', (b) => { b.max_zoom = 20; }, 'must be <= 19');
+  basemapRefuses('max_zoom', (b) => { b.max_zoom = -1; }, 'must be >= 0');
+  basemapRefuses('max_zoom', (b) => { b.max_zoom = 18.5; }, 'must be integer');
+  basemapRefuses('cache_days', (b) => { b.cache_days = 6; }, 'must be >= 7');
+  basemapRefuses('cache_days', (b) => { b.cache_days = 0; }, 'must be >= 7');
+  basemapRefuses('max_cached_tiles', (b) => { b.max_cached_tiles = 63; }, 'must be >= 64');
+  basemapRefuses('max_cached_tiles', (b) => { b.max_cached_tiles = 4097; }, 'must be <= 4096');
+});
+
+test('the basemap refuses an unknown key and a missing one, naming it', () => {
+  rejects(withBasemap((b) => { b.api_key = 'x'; }), /\/routing\/basemap has unknown key "api_key"/);
+  rejects(withBasemap((b) => { b.subdomains = ['a', 'b']; }), /\/routing\/basemap has unknown key "subdomains"/);
+  for (const key of ['url_template', 'attribution', 'attribution_url', 'user_agent']) {
+    rejects(withBasemap((b) => { delete b[key]; }), new RegExp(`/routing/basemap must have required property '${key}'`));
+  }
+});
+
+test('the basemap refuses a url_template that is not a plain https URL to a named host, naming the key', () => {
+  const t = (url) => (b) => { b.url_template = url; };
+  basemapRefuses('url_template', t('http://tiles.example.org/{z}/{x}/{y}.png'), 'must be an https URL');
+  basemapRefuses('url_template', t('ftp://tiles.example.org/{z}/{x}/{y}.png'), 'must be an https URL');
+  basemapRefuses('url_template', t('//tiles.example.org/{z}/{x}/{y}.png'), 'must be an https URL');
+  basemapRefuses('url_template', t('https://user:pw@tiles.example.org/{z}/{x}/{y}.png'), 'must not hold a user name or password');
+  basemapRefuses('url_template', t('https://user@tiles.example.org/{z}/{x}/{y}.png'), 'must not hold a user name or password');
+  for (const host of ['127.0.0.1', '10.0.0.8', '[::1]', '[fe80::1]', '2130706433', '0x7f000001', '169.254.169.254']) {
+    basemapRefuses('url_template', t(`https://${host}/{z}/{x}/{y}.png`), 'must not name an IP address');
+  }
+  for (const host of ['localhost', 'LOCALHOST', 'localhost.', 'tiles.localhost', 'localhost:8443']) {
+    basemapRefuses('url_template', t(`https://${host}/{z}/{x}/{y}.png`), 'must not name localhost');
+  }
+  basemapRefuses('url_template', t('https://tiles/{z}/{x}/{y}.png'), 'must name a full host name');
+  basemapRefuses('url_template', t('https://tiles.example.org/{z}/{x}/{y}.png?key=abc'), 'must not hold a query');
+  basemapRefuses('url_template', t('https://tiles.example.org/{z}/{x}/{y}.png?'), 'must not hold a query');
+  basemapRefuses('url_template', t('https://tiles.example.org/{z}/{x}/{y}.png#top'), 'must not hold a fragment');
+});
+
+test('the basemap refuses a url_template without exactly one each of {z}, {x}, {y}, or with other braces', () => {
+  const t = (url) => (b) => { b.url_template = url; };
+  basemapRefuses('url_template', t('https://tiles.example.org/{x}/{y}.png'), 'must hold exactly one \\{z\\}');
+  basemapRefuses('url_template', t('https://tiles.example.org/{z}/{z}/{x}/{y}.png'), 'must hold exactly one \\{z\\}');
+  basemapRefuses('url_template', t('https://tiles.example.org/{z}/{y}.png'), 'must hold exactly one \\{x\\}');
+  basemapRefuses('url_template', t('https://tiles.example.org/{z}/{x}/{y}/{y}.png'), 'must hold exactly one \\{y\\}');
+  basemapRefuses('url_template', t('https://tiles.example.org/{z}/{x}/{y}{r}.png'), 'must hold no placeholder other than');
+  basemapRefuses('url_template', t('https://{s}.tiles.example.org/{z}/{x}/{y}.png'), 'must hold no placeholder other than');
+  basemapRefuses('url_template', t('https://tiles.example.org/{z}/{x}/{y}.png}'), 'must hold no placeholder other than');
+  basemapRefuses('url_template', t('https://tiles.example.org/{Z}/{z}/{x}/{y}.png'), 'must hold no placeholder other than');
+  basemapRefuses('url_template', t('https://{z}.example.org/{x}/{y}.png'), 'must keep \\{z\\}, \\{x\\} and \\{y\\} in the path');
+  basemapRefuses('url_template', t('https://tiles.example.org/{z}/{x} /{y}.png'), 'must not hold spaces');
+  // A port and a path prefix are fine.
+  assert.equal(validateProfile(withBasemap(t('https://tiles.example.org:8443/osm/{z}/{x}/{y}.png'))).routing.basemap.max_zoom, 19);
+});
+
+test('the basemap refuses a bad attribution or attribution_url, naming the key', () => {
+  const a = (text) => (b) => { b.attribution = text; };
+  basemapRefuses('attribution', a(''), 'must not be empty');
+  basemapRefuses('attribution', a('   '), 'must not be empty');
+  basemapRefuses('attribution', a('x'.repeat(121)), 'must be at most 120 characters');
+  for (const ch of ['<', '>', '&', '*', '_', '~', '`', '|']) {
+    basemapRefuses('attribution', a(`Map ${ch} data`), 'must not hold any of');
+  }
+  basemapRefuses('attribution', a('Map\ndata'), 'must be one line');
+  assert.equal(validateProfile(withBasemap(a('x'.repeat(120)))).routing.basemap.attribution.length, 120);
+  const u = (link) => (b) => { b.attribution_url = link; };
+  basemapRefuses('attribution_url', u('http://tiles.example.org/copyright'), 'must be an https URL');
+  basemapRefuses('attribution_url', u('https://tiles.example.org/a|b'), 'must not hold spaces or any of');
+  basemapRefuses('attribution_url', u('https://tiles.example.org/<b>'), 'must not hold spaces or any of');
+  basemapRefuses('attribution_url', u('https://x:y@tiles.example.org/c'), 'must not hold a user name or password');
+  basemapRefuses('attribution_url', u('https://127.0.0.1/c'), 'must not name an IP address');
+  basemapRefuses('attribution_url', u('not a url'), 'must not hold spaces');
+  basemapRefuses('attribution_url', u('copyright'), 'is not a valid URL');
+});
+
+test('the basemap refuses a user_agent with no contact, or a library default, naming the key', () => {
+  const ua = (text) => (b) => { b.user_agent = text; };
+  basemapRefuses('user_agent', ua('aplabs-routing-map/1.0'), 'must hold a contact');
+  basemapRefuses('user_agent', ua('aplabs-routing-map/1.0 (+http://example.org/contact)'), 'must hold a contact');
+  basemapRefuses('user_agent', ua('aplabs-routing-map/1.0 (someone at example)'), 'must hold a contact');
+  for (const lib of ['node', 'undici', 'node-fetch/1.0', 'axios/1.7.2', 'python-requests/2.31', 'curl/8.4.0', 'Wget/1.21', 'Go-http-client/1.1', 'okhttp/4.9', 'Mozilla/5.0 (Macintosh)', 'Java/21']) {
+    basemapRefuses('user_agent', ua(`${lib} (+https://example.org/contact)`), "must name this app, not a library's or browser's default");
+  }
+  basemapRefuses('user_agent', ua('aplabs/1.0 (ops@example.org)\r\nX-Evil: 1'), 'must be printable ASCII on one line');
+  basemapRefuses('user_agent', ua('aplabs/1.0 (ops@example.org) ✓'), 'must be printable ASCII on one line');
+  for (const good of ['aplabs-routing-map/0.3.0 (+ops@example.org)', 'aplabs-routing-map/0.3.0 (+https://example.org/contact)']) {
+    assert.equal(validateProfile(withBasemap(ua(good))).routing.basemap.user_agent, good);
+  }
+});
+
+test('every basemap refusal is listed in one error, each naming its key', () => {
+  const p = withBasemap((b) => Object.assign(b, { url_template: 'http://x/{z}', attribution: '', attribution_url: 'http://x', user_agent: 'curl/8' }));
+  assert.throws(() => validateProfile(p), (err) => {
+    for (const key of ['url_template', 'attribution', 'attribution_url', 'user_agent']) assert.match(err.message, new RegExp(`/routing/basemap/${key} `));
+    return true;
+  });
+});
+
 test('routing refuses a bad identifier, naming the key', () => {
   for (const bad of ['Sites', 'sites;drop', 'sites.x', '"sites"', '1sites', '', 'a'.repeat(64)]) {
     rejects(withRouting((r) => { r.coordinates.nodes[0].table = bad; }), /\/routing\/coordinates\/nodes\/0\/table must match pattern/);

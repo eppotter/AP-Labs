@@ -174,7 +174,7 @@
     },
 
     "routing": {
-      "description": "Route optimization (kit/runtime/routing, travelMatrix in kit/runtime/data). Optional; absent = routing off. coordinates.nodes names where each kind of stop keeps its position, as micro-degree INTEGER columns; every lat_column and lon_column must also be in sql.forbidden_columns (as table.column), so no other query can read them. Travel minutes = straight-line distance x detour_factor / speed_kmh, rounded up, never below min_travel_minutes (default 5). max_pairs caps one travel rectangle (default 10000). limits are minutes after local midnight, in order (earliest_start <= default_start <= aim_finish <= latest_finish), plus slot_minutes, the start-time step. gap_fill: horizon_days (default 14), limit (default 5) and optional weights that override the engine's ranking weights by input name. The routing map (mapPoints in kit/runtime/data, AD-R13): max_points (default 500), map_grid_e6 (default 2000, the floor) and map_min_span_km (default 5, the floor); audience (AD-R17) says who sees it.",
+      "description": "Route optimization (kit/runtime/routing, travelMatrix in kit/runtime/data). Optional; absent = routing off. coordinates.nodes names where each kind of stop keeps its position, as micro-degree INTEGER columns; every lat_column and lon_column must also be in sql.forbidden_columns (as table.column), so no other query can read them. Travel minutes = straight-line distance x detour_factor / speed_kmh, rounded up, never below min_travel_minutes (default 5). max_pairs caps one travel rectangle (default 10000). limits are minutes after local midnight, in order (earliest_start <= default_start <= aim_finish <= latest_finish), plus slot_minutes, the start-time step. gap_fill: horizon_days (default 14), limit (default 5) and optional weights that override the engine's ranking weights by input name. The routing map (mapPoints in kit/runtime/data, AD-R13): max_points (default 500), map_grid_e6 (default 2000, the floor) and map_min_span_km (default 5, the floor); audience (AD-R17) says who sees it. basemap (AD-R18, optional) puts a street map under it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["coordinates", "speed_kmh", "detour_factor", "limits"],
@@ -257,6 +257,21 @@
                 }
               }
             }
+          }
+        },
+        "basemap": {
+          "description": "A street map under the routing map (AD-R18, kit/runtime/basemap). Optional; absent = no street map and no tile request (the kit has no default provider). url_template is an https URL with exactly one each of {z}, {x} and {y} in its path and no other braces, no user name or password, no IP address or localhost host, no query and no fragment. attribution is the provider's credit, shown under the picture (1 to 120 characters, none of < > & * _ ~ ` |); attribution_url is the https page it links to. user_agent is sent with every tile request: it names the app and a contact (an email address or an https URL), never a library's default. max_zoom 0 to 19 (default 19), cache_days 7 or more (default 7, used when the provider sends no cache headers), max_cached_tiles 64 to 4096 (default 512, tiles kept in memory).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url_template", "attribution", "attribution_url", "user_agent"],
+          "properties": {
+            "url_template": { "type": "string", "maxLength": 300 },
+            "attribution": { "type": "string" },
+            "attribution_url": { "type": "string", "maxLength": 300 },
+            "user_agent": { "type": "string", "maxLength": 200 },
+            "max_zoom": { "type": "integer", "minimum": 0, "maximum": 19 },
+            "cache_days": { "type": "integer", "minimum": 7, "maximum": 365 },
+            "max_cached_tiles": { "type": "integer", "minimum": 64, "maximum": 4096 }
           }
         }
       }
