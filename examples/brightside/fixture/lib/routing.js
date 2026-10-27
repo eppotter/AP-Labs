@@ -15,8 +15,10 @@
 // recorded seed, lib/scenarios.js plants S1 to S3 on top (data-design §5);
 // planting draws nothing.
 //
-// Coordinates are synthetic: a box in the open South Pacific, far from any
-// coast, so no value names a real place. Micro-degrees (degrees x 1e6) as
+// Coordinates are synthetic: random points in a box around a round-number
+// point in Columbus, Ohio (Story 15.7, AD-R22), so a street map can sit under
+// the plot. A point may land near a real street or home, or on water, but
+// none is or comes from a real address. Micro-degrees (degrees x 1e6) as
 // whole numbers. Each of the 15 cities has a fixed centre, laid out in km from
 // the box's centre so that same-city drives are about 5-12 minutes and drives
 // between a zone's cities about 10-35, as the history's travel bounds show.
@@ -52,13 +54,15 @@ const CANCEL_CHANCE = 0.02;
 const CANCEL_NOTICE_DAYS = 6;
 
 // The box's centre and how many micro-degrees one km is there (1 degree of
-// latitude is 111.195 km; of longitude, that x cos(40 degrees)).
-const CENTRE = { lat: -40000000, lon: -130000000 };
+// latitude is 111.195 km; of longitude, that x cos(40 degrees)). Generator v5
+// moved only CENTRE and BOX (from the open South Pacific, v4); the per-km
+// scales, jitter, city and base offsets are v4's, so every draw is unchanged.
+const CENTRE = { lat: 40000000, lon: -83000000 };
 const LAT_E6_PER_KM = 8993;
 const LON_E6_PER_KM = 11740;
 const JITTER_KM = 2.5;
 // Every coordinate lies inside this box (checks/synthetic-coordinates.sql).
-const BOX = { latMin: -40300000, latMax: -39700000, lonMin: -130400000, lonMax: -129600000 };
+const BOX = { latMin: 39700000, latMax: 40300000, lonMin: -83400000, lonMax: -82600000 };
 
 // City centres in km [east, north] of the box's centre. Central's cities sit
 // closer together, as the history's shorter central drives show.
@@ -395,5 +399,10 @@ module.exports = {
   DETOUR_FACTOR,
   MIN_TRAVEL_MINUTES,
   BOX,
+  CENTRE,
+  LAT_E6_PER_KM,
+  LON_E6_PER_KM,
+  JITTER_KM,
   CITY_KM,
+  BASE_OFFSET_KM,
 };

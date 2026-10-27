@@ -17,6 +17,11 @@ from open ocean to a real US metro, Columbus, Ohio, so a street map can sit unde
 unchanged and the row counts should not move. GENERATOR_VERSION goes to 5; every non-routing
 column stays byte-identical to v4. Points stay random, never taken from an address; a marker may
 land on water (no land mask). Drive time stays haversine × detour ÷ speed, not road time.
+Built (Story 15.7): `CENTRE` 40.000000, −83.000000 and `BOX` 39.7 to 40.3 N, 82.6 to 83.4 W. Only
+the four coordinate columns and `scheduled_visits`' `scheduled_start` and
+`travel_minutes_from_previous` (39 of 1,720 rows) differ from v4; every other value of every table
+is byte-identical (a test diffs them), and every row count is v4's (1,720 scheduled visits, 781
+rules, 5 absences).
 
 | Table / columns | Grain | Keys | How generated |
 |---|---|---|---|
@@ -181,6 +186,8 @@ re-pins `targets.json` `routing` and the `data.md` truths. The shapes must hold:
 booked with 0 hard breaks; S2 the afternoon gap on crew 2 at as_of+2; S3 5 / 1 / 0. If one
 breaks, the plant is adjusted, never the engine, and the PR says so. The S1 booked minutes and
 S2's top property and count may change; the 14-day stop count should not.
+Built (Story 15.7): re-computed from `travelMatrix` on v5, every figure is v4's: 825 stops, S1 139
+booked minutes, S2 top property 762 with 2 candidates, S3 5 / 1 / 0. No plant changed.
 
 | id | statement | run | expect |
 |---|---|---|---|
