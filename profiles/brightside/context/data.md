@@ -326,6 +326,12 @@ to Columbus changed some booked drive times and start times; the five figures be
 out again from `travelMatrix` for v5 and came out as v4's. Moving them off water (v6) changed
 S1's booked drive from 139 to 140 minutes; the other four came out as v5's.
 
+The `depots` table (generator v7, Story 15.15) holds one row, the Office: where every crew starts
+and ends in Plan a route. It is the one point that is not random (a point Ely chose in Westerville,
+rounded to 0.002°, GRD-007), its two coordinate columns are forbidden like the others (GRD-002), and
+it is only ever called "Office". Routing's four views and the five routing truths still start from
+each crew's base, so v7 changed no other table and no truth.
+
 ```truth
 id: scheduled-stops-next-14d
 statement: "825 stops are booked (status scheduled, not cancelled) from the day after as_of through as_of + 14, the 14th day included."

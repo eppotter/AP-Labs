@@ -51,11 +51,13 @@ test('the four coordinate columns are forbidden', () => {
   }
 });
 
-test('routing declares property and crew nodes and the generator limits', () => {
+test('routing declares property, crew and depot nodes and the generator limits', () => {
   const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
   assert.deepEqual(p.routing.coordinates.nodes, [
     { kind: 'property', table: 'properties', id_column: 'property_id', lat_column: 'geo_lat_e6', lon_column: 'geo_lon_e6' },
     { kind: 'crew', table: 'crews', id_column: 'crew_id', lat_column: 'base_geo_lat_e6', lon_column: 'base_geo_lon_e6' },
+    // Story 15.15 (AD-R23): the Office, a row in the data's depots table.
+    { kind: 'depot', table: 'depots', id_column: 'depot_id', lat_column: 'geo_lat_e6', lon_column: 'geo_lon_e6' },
   ]);
   // 06:00, 08:00, 18:00 and 23:00 as minutes after local midnight; 15-minute slots.
   assert.deepEqual(p.routing.limits, {
@@ -109,4 +111,18 @@ test('routing.basemap: OpenStreetMap tiles, its credit, a contact and no client 
 test('the Routing module stays dev-only with the street map on', () => {
   const manifest = require('../app/modules/routing/manifest.json');
   assert.deepEqual(manifest.environments, ['dev']);
+});
+
+// Story 15.15 (AD-R23, AD-R26): the Office. Its two coordinate columns are
+// forbidden in the same PR as the depots table; routing.depot names its node
+// and label, never a position. Plan a route is dev-only until Story 15.6
+// (after DEP-025 and DEP-032).
+test('the Office: its columns forbidden, routing.depot a node and a label, and Plan a route dev-only', () => {
+  const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
+  for (const column of ['depots.geo_lat_e6', 'depots.geo_lon_e6']) assert.ok(p.sql.forbidden_columns.includes(column), `${column} forbidden`);
+  assert.deepEqual(p.routing.depot, { node: 'depot:office', label: 'Office' });
+  const manifest = require('../app/modules/route-planner/manifest.json');
+  assert.deepEqual(manifest.environments, ['dev']);
+  assert.equal(manifest.label, 'Plan a route');
+  assert.equal(manifest.screen, 'route-editor');
 });

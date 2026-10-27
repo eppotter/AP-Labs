@@ -186,6 +186,13 @@ CREATE TABLE staff_absences (
   UNIQUE (staff_id, absence_date)
 );
 
+CREATE TABLE depots (
+  depot_id VARCHAR PRIMARY KEY,
+  name VARCHAR NOT NULL,
+  geo_lat_e6 INTEGER NOT NULL,
+  geo_lon_e6 INTEGER NOT NULL
+);
+
 CREATE TABLE fixture_meta (
   key VARCHAR PRIMARY KEY,
   value VARCHAR NOT NULL

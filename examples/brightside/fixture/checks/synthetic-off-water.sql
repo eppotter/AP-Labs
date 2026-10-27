@@ -1,6 +1,6 @@
--- Synthetic only: no home or crew base sits on water in the Columbus box.
--- protected-columns: properties.geo_lat_e6, properties.geo_lon_e6, crews.base_geo_lat_e6, crews.base_geo_lon_e6
--- The four are forbidden columns; this check may name them because the
+-- Synthetic only: no home, crew base or the Office sits on water in the Columbus box.
+-- protected-columns: properties.geo_lat_e6, properties.geo_lon_e6, crews.base_geo_lat_e6, crews.base_geo_lon_e6, depots.geo_lat_e6, depots.geo_lon_e6
+-- The six are forbidden columns; this check may name them because the
 -- validator never prints a row's values, only how many rows came back.
 -- The water is lib/water.js WATER: rough, hand-drawn outlines with a margin,
 -- not map data, one row per edge (micro-degrees, the last vertex joining the
@@ -116,11 +116,14 @@ WITH water AS (
   UNION ALL SELECT 'Olentangy River', 39958000, -83000000, 39952000, -83016000
 ),
 places AS (
-  SELECT 'properties' AS source, p.property_id AS id, CAST(p.geo_lat_e6 AS BIGINT) AS lat, CAST(p.geo_lon_e6 AS BIGINT) AS lon
+  SELECT 'properties' AS source, CAST(p.property_id AS VARCHAR) AS id, CAST(p.geo_lat_e6 AS BIGINT) AS lat, CAST(p.geo_lon_e6 AS BIGINT) AS lon
   FROM properties p
   UNION ALL
-  SELECT 'crews', c.crew_id, CAST(c.base_geo_lat_e6 AS BIGINT), CAST(c.base_geo_lon_e6 AS BIGINT)
+  SELECT 'crews', CAST(c.crew_id AS VARCHAR), CAST(c.base_geo_lat_e6 AS BIGINT), CAST(c.base_geo_lon_e6 AS BIGINT)
   FROM crews c
+  UNION ALL
+  SELECT 'depots', d.depot_id, CAST(d.geo_lat_e6 AS BIGINT), CAST(d.geo_lon_e6 AS BIGINT)
+  FROM depots d
 ),
 points AS (
   SELECT source, id, 'as is' AS form, lat, lon FROM places WHERE lat IS NOT NULL AND lon IS NOT NULL

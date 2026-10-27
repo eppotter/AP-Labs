@@ -230,6 +230,7 @@ These are template-owned. A fix to any of them goes to the template as a PR ther
 - **Real connectors need a durable idempotency store** and their own dedupe keys (step 8).
 - **Scheduled jobs can't write or post** (step 8).
 - **The routing street map needs your own tile provider.** Set it in the profile's `routing.basemap` (DEP-031). OpenStreetMap's free tiles, which the Brightside demo uses, are not for production and can be withdrawn.
+- **Plan a route starts every crew at your own office.** Add a row to your data's depots table, forbid its two coordinate columns, declare its node source and set the profile's `routing.depot` (node and label). Never copy Brightside's Office.
 - **No secrets, ever,** in the repo, a log, a PR or a chat.
 
 ## Checking the engine is untouched

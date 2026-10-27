@@ -91,3 +91,16 @@ Brightside's profile turns the street map on (`routing.basemap`: OpenStreetMap's
 8. **15.1 carry-overs:** Close (the X) sends `view_closed` (`map view closed`); a second person's Files search finds nothing (steps 8 and 10 above).
 
 Production waits for Dana's sign-off of GRD-002's reworded map image rule (DEP-025, Story 15.6).
+
+## Plan a route live check (Story 15.15, Ely, dev Slack)
+
+**Plan a route** (`examples/brightside/app/modules/route-planner/`, dev only) reorders one crew's day from the Office (`routing.depot`, the one `depots` row). **Untested until you run it.** First `npm run fixture:build`: the local data must be generator v7 (it has the Office). Start the bot as above. Note each result in the Story 15.15 PR, one line each, with seconds where asked.
+
+1. **Open:** `/brightside`, **Open** on **Plan a route**, pick a crew and as_of+3 (**2026-10-03**), **Show stops**: the Office marker and the loop, the totals line at the top.
+2. **Fast taps:** tap ↓ three times fast on one stop: the list follows each tap without jumping, and the map lands on the final order. Note the seconds.
+3. **Optimize,** then **Reset to booked**: the order changes, then returns to the booked one.
+4. **Rule break:** move a morning stop late: a warning shows under it and the count at the top rises.
+5. **Ways out:** **Change crew or day**, then **Back**; open again and close with the **X**: the terminal shows the files deleted both times (also 15.1's open Close item).
+6. **iOS,** once: the buttons can be tapped and the layout stays put.
+
+The MotherDuck copy has no Office until Ely republishes v7 (DEP-033): until then, run this on the local fixture. Production waits for DEP-025 and DEP-032 (Story 15.6).

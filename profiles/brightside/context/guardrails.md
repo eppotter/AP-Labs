@@ -17,8 +17,10 @@ now names the four coordinate columns and GRD-008 records the crew-out rule, bot
 added the routing map image rule to GRD-002 (DEP-025), also for her sign-off, and Story 15.11
 reworded it for the street map under the picture (still DEP-025, **draft**). Story 15.7 added the
 Columbus coordinates line to GRD-007 (with DEP-025), **draft** too; its follow-up fix on 2026-10-27
-keeps every point off the area's big water (still DEP-025, **draft**). Every other card stays
-**approved** as signed on 2026-10-25.
+keeps every point off the area's big water (still DEP-025, **draft**). Story 15.15 (Plan a route,
+2026-10-27) added the Office and a route's total distance to GRD-002 and the Office exception to
+GRD-007, **pending** Dana Reyes's sign-off (DEP-032). Every other card stays **approved** as signed on
+2026-10-25.
 
 ## Guardrails
 
@@ -29,12 +31,15 @@ keeps every point off the area's big water (still DEP-025, **draft**). Every oth
   `travelMatrix` alone reads the coordinates and returns drive minutes only. Draft update: a coarse
   map picture (about 150 m) on a street map, only in the Routing window, deleted within 20 minutes;
   the street-map provider learns the area viewed and when, never which stops or customers.
+  Pending update (DEP-032): an estimated distance too, only a route's total shown; the Office has
+  its own marker and is never shown by address.
 - GRD-003: MotherDuck is read through the locked reader sequence; one accepted exception (`my_db`).
 - GRD-004: anything that writes to an outside system goes through the approval step, never a module.
 - GRD-005: the AI fills in a form and nothing else: no data rows, a spend breaker and an off switch.
 - GRD-006: pay rates are open for the demo, but Labour cost is for owner and admin only, totals only.
 - GRD-007: the data is synthetic, and publishing it is a human step. Draft update: the coordinates
-  are random points in the Columbus area, none from a real address and none on water.
+  are random points in the Columbus area, none from a real address and none on water. Pending
+  update (DEP-032): the Office is the one point that is not random.
 - GRD-008: a crew is out for the day when its lead is absent, or nobody on it is present (draft).
 
 ## Protected systems
@@ -126,7 +131,8 @@ exception_workflow and data_quality_guard.
 - type: access_rule
 - rule: no query may name a column in the profile's `sql.forbidden_columns` (client phone, property
   street address, property postal code, and the four coordinate columns `properties.geo_lat_e6`,
-  `properties.geo_lon_e6`, `crews.base_geo_lat_e6`, `crews.base_geo_lon_e6`), and while any is set,
+  `properties.geo_lon_e6`, `crews.base_geo_lat_e6`, `crews.base_geo_lon_e6`, and since Story 15.15
+  the Office's two, `depots.geo_lat_e6` and `depots.geo_lon_e6`), and while any is set,
   `SELECT *` and whole-row references are refused. The coordinate columns have one named exception,
   `travelMatrix` (below). Email is allowed: the win-back push needs it.
   `properties.access_method` holds a method, never a door code. NOT a rule about display: a column
@@ -135,8 +141,11 @@ exception_workflow and data_quality_guard.
   fixture gains them (Story 14.1), and they stay forbidden to every query and every other read path.
   The one named exception is the kit's drive-time read, `travelMatrix`
   (`kit/runtime/data/travel.js`): it alone may read them, and only the columns the profile's
-  `routing.coordinates` declares. It returns whole-minute drive times between two places only, never
-  a latitude or longitude, and every other forbidden column still applies to it. No coordinate
+  `routing.coordinates` declares. It returns whole-minute drive times and an estimated distance
+  (straight line × 1.3, in tenths of a km) between two places only, never a latitude or longitude,
+  and every other forbidden column still applies to it. Only a route's total distance is shown, in whole km; the distance of one leg
+  is never shown or logged. (The distance words are Story 15.15's, pending Dana Reyes's sign-off,
+  DEP-032.) No coordinate
   value, street address or postal code appears as text anywhere: Slack, logs, reasons, errors or AI
   input. NOT the map image: that is the update below, which Dana signs separately.
 - map image (Story 15.5, reworded for the street map by Story 15.11; update for Dana Reyes's
@@ -182,15 +191,29 @@ exception_workflow and data_quality_guard.
   - NOT a change to the forbidden columns: they stay forbidden to every query, and no coordinate
     goes to the street-map provider. Until Dana signs this update, the Routing module runs in dev
     only (Story 15.6 adds production after her sign-off).
+- the Office and Plan a route (Story 15.15, update for Dana Reyes's sign-off, pending DEP-032): The
+  Office, where every crew starts and ends in Plan a route, is a point in the data's `depots` table.
+  Its coordinate columns are forbidden like the others. The map shows it with its own marker. It is
+  called 'Office' in the list, never by address.
+  - **Where the picture shows.** Plan a route's window shows the same kind of picture as Routing's,
+    to the same audience, deleted the same way. Its header shows the route's total distance in whole
+    km ("about 64 km"); a leg's distance never shows.
+  - **Held for the window's life.** So a reorder reads nothing new, the stops' pixel positions are
+    kept in the bot's memory while the window is open (15 minutes, longer while in use), and dropped
+    when it closes or expires. They are never logged, stored or sent.
+  - NOT a change to who sees it: the same audience as Routing. Until Dana signs this update, Plan a
+    route runs in dev only (Story 15.6 adds production after DEP-025 and DEP-032).
 - owner: Dana Reyes
 - evidence: profile `sql.forbidden_columns` and `routing` (`map_grid_e6` 2000, `map_min_span_km`
-  5, `audience`, `basemap`); `kit/runtime/sql`; `kit/runtime/data/map.js`; `kit/runtime/basemap`;
+  5, `audience`, `basemap`, `depot`); `kit/runtime/sql`; `kit/runtime/data/map.js`; `kit/runtime/basemap`;
   `fixture-tables.md` "Rules"; architecture-routing AD-R9, AD-R10, AD-R12, AD-R13, AD-R15,
-  AD-R17 and AD-R18; Story 15.1's live check in `epics-routing.md`. The mock CRM's field list and the email connector's contact shape leave
+  AD-R17, AD-R18 and AD-R23 to AD-R27; Story 15.1's live check in `epics-routing.md`. The mock CRM's field list and the email connector's contact shape leave
   these columns out too.
 - status: draft (the coordinate columns were added on 2026-10-26 and await Dana Reyes's sign-off,
   DEP-028; the map image update was added on 2026-10-26 and reworded for the street map the same
-  day (Story 15.11), and awaits her sign-off, DEP-025; the rest was approved on 2026-10-25)
+  day (Story 15.11), and awaits her sign-off, DEP-025; the distance words and the Office were
+  added on 2026-10-27 (Story 15.15), pending her sign-off, DEP-032; the rest was approved on
+  2026-10-25)
 
 ### GRD-003: MotherDuck reader lockdown
 - type: access_rule
@@ -263,15 +286,20 @@ exception_workflow and data_quality_guard.
   real streets and homes, never on the area's big water (reservoirs, the Scioto and the Olentangy,
   from rough hand-drawn outlines, not map data; generator v6), and none is or comes from a real
   address.
+- the Office (Story 15.15, update for Dana Reyes's sign-off, pending DEP-032): One point is not
+  random: the Office, a point Ely chose in Westerville, rounded to 0.002° (about 150 m). It is the
+  one row of the `depots` table (generator v7); no street address for it is written anywhere.
 - failure_modes: a real-looking email or phone (caught by `synthetic-email.sql` and
   `synthetic-phone.sql`); a stale or hand-edited build (publish refuses it); a coordinate outside
   the Columbus box (caught by `synthetic-coordinates.sql`) or on water (caught by
-  `synthetic-off-water.sql`).
+  `synthetic-off-water.sql`), the Office's included.
 - owner: Dana Reyes
 - evidence: `fixture-tables.md` "Rules" and "Validation"; `docs/runtime/motherduck-publish.md`;
-  `examples/brightside/fixture/lib/routing.js` (`CENTRE`, `BOX`; generator v6) and `lib/water.js`.
+  `examples/brightside/fixture/lib/routing.js` (`CENTRE`, `BOX`; generator v6; `OFFICE`, generator
+  v7) and `lib/water.js`.
 - status: draft (approved 2026-10-25; the coordinates line was added on 2026-10-26, its off-water
-  words on 2026-10-27, and awaits Dana Reyes's sign-off with DEP-025)
+  words on 2026-10-27, and awaits Dana Reyes's sign-off with DEP-025; the Office exception was added
+  on 2026-10-27, pending her sign-off, DEP-032)
 
 ### GRD-008: A crew out for the day
 - type: classification

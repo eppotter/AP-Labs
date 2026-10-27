@@ -116,20 +116,29 @@ sql:
     - properties.geo_lon_e6
     - crews.base_geo_lat_e6
     - crews.base_geo_lon_e6
+    # The Office (Story 15.15, AD-R23): a point Ely chose, rounded to 0.002 degrees,
+    # forbidden like the others in the same PR that adds the depots table.
+    - depots.geo_lat_e6
+    - depots.geo_lon_e6
 
 # Route optimization (AD-R10). Each node kind's coordinate columns (micro-degree
-# INTEGER) must also be in sql.forbidden_columns above. The engine knows only the
-# kinds property and crew. Limits are minutes after local midnight, the
+# INTEGER) must also be in sql.forbidden_columns above. The engine knows the
+# kinds property, crew and depot (the Office, Story 15.15). Limits are minutes after local midnight, the
 # generator's day: 06:00 earliest, 08:00 default start, aim 18:00, 23:00 latest.
 routing:
   coordinates:
     nodes:
       - { kind: property, table: properties, id_column: property_id, lat_column: geo_lat_e6, lon_column: geo_lon_e6 }
       - { kind: crew, table: crews, id_column: crew_id, lat_column: base_geo_lat_e6, lon_column: base_geo_lon_e6 }
+      - { kind: depot, table: depots, id_column: depot_id, lat_column: geo_lat_e6, lon_column: geo_lon_e6 }
   speed_kmh: 40
   detour_factor: 1.3
   min_travel_minutes: 5
   limits: { earliest_start: 360, default_start: 480, aim_finish: 1080, latest_finish: 1380, slot_minutes: 15 }
+  # The Office (Story 15.15, AD-R23): where every crew starts and ends in Plan a route.
+  # Its position is the depots row, read like any node; it is shown only as this label.
+  # Routing's four views keep each crew's base. A fork sets its own node and label.
+  depot: { node: "depot:office", label: Office }
   # Who sees the routing map (Story 15.5, AD-R17): all_crews sees every crew; own_crew plus
   # a crew_leads row sees that crew only. A DEV PLACEHOLDER until Dana Reyes confirms the
   # real audience (DEP-024): one dispatcher (dana, the user Ely drives in dev) and no crew

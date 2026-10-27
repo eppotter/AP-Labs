@@ -35,12 +35,12 @@ const { buildActivity } = require('./lib/activity');
 const { TRUTH_IDS, computeTruths } = require('./lib/truths');
 const { buildOperations, OPERATIONS_STREAM } = require('./lib/operations');
 const { checkOperations } = require('./lib/operations-rules');
-const { buildRouting, scheduleHorizonEnd, ROUTING_STREAM, WATER_STREAM } = require('./lib/routing');
+const { buildRouting, buildDepots, scheduleHorizonEnd, ROUTING_STREAM, WATER_STREAM } = require('./lib/routing');
 const { checkRouting } = require('./lib/routing-rules');
 const { createPlant, checkScenarios, checkRoutingTargets, missedRoutingTargets } = require('./lib/scenarios');
 
 // Bump when a change to this code changes the output for the same seed.
-const GENERATOR_VERSION = 6;
+const GENERATOR_VERSION = 7;
 
 const FIXTURE_DIR = __dirname;
 const SEED_FILE = path.join(FIXTURE_DIR, 'seed.json');
@@ -134,6 +134,8 @@ function generate(config) {
   const routingRng = createRng(deriveSeed(seed, ROUTING_STREAM));
   const waterRng = createRng(deriveSeed(seed, WATER_STREAM));
   Object.assign(tables, buildRouting(routingRng, tables, { zones: ZONES, asOf: AS_OF, plant, waterRng }));
+  // The Office (generator v7): a constant, no draw, so nothing above moves.
+  tables.depots = buildDepots();
   tables.fixture_meta = fixtureMeta(config, tables);
   const ruleOpts = { zones: ZONES, historyStart: HISTORY_START, asOf: AS_OF };
   const problems = checkRules(tables, ruleOpts).concat(

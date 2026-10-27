@@ -167,7 +167,8 @@ test('each truth runs as npm run verify runs it and matches its target; no outpu
   // micro-degree integer (with or without its sign), and no decimal inside
   // the fixture's latitude or longitude range (a value in degrees).
   const coords = await readRows(out, `SELECT geo_lat_e6 AS a, geo_lon_e6 AS o FROM properties
-    UNION ALL SELECT base_geo_lat_e6, base_geo_lon_e6 FROM crews`);
+    UNION ALL SELECT base_geo_lat_e6, base_geo_lon_e6 FROM crews
+    UNION ALL SELECT geo_lat_e6, geo_lon_e6 FROM depots`);
   assert.ok(coords.length > 2000);
   const integers = new Set();
   const [lat, lon] = [[], []];
@@ -229,7 +230,7 @@ function writeCsv(file, { cols, rows }) {
 // break's pick(t_, take) chooses its rows from the unedited seeds and returns
 // the edit, so it picks the same rows alone or with the others.
 const TABLES = ['crews', 'clients', 'invoices', 'payments', 'visits', 'plans', 'plan_price_changes', 'invoice_lines', 'crew_memberships', 'fixture_meta',
-  'staff', 'pay_rates', 'properties', 'timesheets', 'scheduled_visits', 'service_rules', 'staff_absences'];
+  'staff', 'pay_rates', 'properties', 'timesheets', 'scheduled_visits', 'service_rules', 'staff_absences', 'depots'];
 
 // Local timestamps ("YYYY-MM-DD HH:MM:SS") as whole minutes, and back.
 const toMinute = (ts) => Date.parse(`${ts.replace(' ', 'T')}Z`) / 60000;
@@ -645,6 +646,17 @@ test('each break alone fails only its own check', async (t) => {
   const got = await Promise.all(BREAKS.map(async (b) => [b.check, failures(await validateBroken(t, [b.check]))]));
   assert.deepEqual(got, BREAKS.map((b) => [b.check, [[b.check, 1]]]));
 });
+
+// Story 15.15: the Office moved outside the box, or onto Hoover Reservoir
+// (inside the box), fails only the check for it.
+for (const [what, check, edit] of [
+  ['the Office outside the box', 'synthetic-coordinates', (t_) => { t_.depots.rows[0].geo_lon_e6 = '0'; }],
+  ['the Office on Hoover Reservoir', 'synthetic-off-water', (t_) => { Object.assign(t_.depots.rows[0], { geo_lat_e6: '40120000', geo_lon_e6: '-82880000' }); }],
+]) {
+  test(`${what} fails ${check} only`, async (t) => {
+    assert.deepEqual(failures(await validateBroken(t, [], edit)), [[check, 1]]);
+  });
+}
 
 // Issue #77 item 5: with no as_of to compare against, the as_of checks would
 // return no rows and pass. Each returns one guard row instead.
