@@ -10,6 +10,14 @@ final tables only. Appended columns go last. Every existing column and seed keep
 byte. Bump GENERATOR_VERSION to 4 and update seed.json. fixture_meta gains `rows_<new table>` and
 `schedule_horizon_end`. No existing truth figure moves.
 
+**Amended 2026-10-26 (routing-streetmap, Story 15.7, architecture AD-R22):** the fixture box moves
+from open ocean to a real US metro, Columbus, Ohio, so a street map can sit under the plot. Only
+`CENTRE` and `BOX` change (a round-number point such as 40.000000, −83.000000); the per-km scales
+(already 40° values), the jitter, city and base offsets are unchanged, so every random draw is
+unchanged and the row counts should not move. GENERATOR_VERSION goes to 5; every non-routing
+column stays byte-identical to v4. Points stay random, never taken from an address; a marker may
+land on water (no land mask). Drive time stays haversine × detour ÷ speed, not road time.
+
 | Table / columns | Grain | Keys | How generated |
 |---|---|---|---|
 | properties + `geo_lat_e6`, `geo_lon_e6` INTEGER (micro-degrees) | 1 per property (unchanged) | PK property_id | Each of the 15 cities gets a fixed centroid in a fixed synthetic box; each property = city centroid + jitter (~1.5 km). Pick the spacing so that same-city drives are about 5-12 min and other-city drives about 10-35, as the history's travel bounds show. |
@@ -78,6 +86,18 @@ sdk; only the routing-map archetype may require it. Pixel positions are not coor
 still trace the layout: they stay in process memory, never in text or logs (architecture AD-R12,
 AD-R13).
 
+**Amended 2026-10-26 (routing-streetmap, Story 15.8, architecture AD-R20):** the projection
+above changes so the plot lines up with street tiles. Snap to the grid first (unchanged), then
+project Web Mercator, not longitude scaled by the middle latitude's cosine. Pick the largest whole
+zoom z ≤ `max_zoom` at which the requested nodes' box, widened to at least `map_min_span_km`,
+fits inside the frame's padding; no stretch to the frame, so a frame may show up to twice the
+area, and never less than 5 km. The select list becomes `node, x, y, z, tx0, ty0, cols, rows,
+ox, oy`, all INTEGER; the mosaic columns must match on every row, else `query_failed`. The call
+returns `{ points, mosaic }`; `mosaic` is null when the box crosses the antimeridian, reaches
+beyond ±85.0511°, or needs more than 64 tiles. Tile numbers are rough locations (about 2 km):
+process memory only, passed only to the tile fetcher, never logged. SQLsmith confirms the SQL at
+Story 15.8.
+
 - **T3 profile change:** add the 4 columns to `sql.forbidden_columns` and a new `routing:` block
   (coordinates, speed_kmh, detour_factor, min_travel_minutes = 5). The profile JSON Schema rejects
   unknown keys, so the schema changes too (profiles/**).
@@ -136,6 +156,13 @@ Planted scenarios, seeded at fixed ids and dates by the routing stream:
   ahead of it, leaving the morning-only orphan no in-zone slot. (Amended 2026-10-26, Story 14.2:
   the zone's real load on as_of+3 is too small for any crew-day to sit near 23:00. Answer
   unchanged: 5 / 1 / 0.)
+
+**Amended 2026-10-26 (routing-streetmap, Story 15.7):** the move to Columbus changes the drive
+times (cos(40° + n) ≠ cos(−40° + n)), so 15.7 re-computes S1, S2 and S3 from `travelMatrix` and
+re-pins `targets.json` `routing` and the `data.md` truths. The shapes must hold: S1 optimized ≤
+booked with 0 hard breaks; S2 the afternoon gap on crew 2 at as_of+2; S3 5 / 1 / 0. If one
+breaks, the plant is adjusted, never the engine, and the PR says so. The S1 booked minutes and
+S2's top property and count may change; the 14-day stop count should not.
 
 | id | statement | run | expect |
 |---|---|---|---|
