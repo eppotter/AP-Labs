@@ -221,13 +221,14 @@ test('Open: "Loading…" pushed first, then step 1: a crew select, the date pick
   assert.deepEqual(ctx.mapPoints.asked, []);
 });
 
-test('step 1: a crew or a day in range is kept with no redraw; a day out of range is refused plainly; a crew not offered is refused', async () => {
+test('step 1: a crew is kept with no redraw, a day in range redraws step 1 with that day\'s crews; a day out of range is refused plainly; a crew not offered is refused', async () => {
   const ctx = setup();
   await open(ctx);
   const updates = calls(ctx.app, 'update').length;
   await choose(ctx, 'crew', pick('v3'));
+  assert.equal(calls(ctx.app, 'update').length, updates, 'no redraw for a crew');
   await choose(ctx, 'day', date('2026-11-03'));
-  assert.equal(calls(ctx.app, 'update').length, updates, 'no redraw');
+  assert.equal(calls(ctx.app, 'update').length, updates + 1, 'one redraw for a day (its crews)');
   await choose(ctx, 'crew', pick('v9'));
   assert.ok(ctx.log.lines.some((l) => l.msg === 'routing map click refused' && l.fields.reason === 'unknown crew'));
   await choose(ctx, 'day', date('2026-12-25'));
@@ -510,6 +511,16 @@ test('Optimize: stops it cannot place are appended in booked order and flagged; 
   assert.ok(last.includes(`⚠ ${ROUTE_WORDS.unplaced()}`));
   assert.ok(last.some((l) => l.startsWith('⚠ locked start:')), 'and its break');
   assert.ok(rows(opt).slice(0, 3).every((r) => !r.text.includes(ROUTE_WORDS.unplaced())));
+  // Moved up, it is no longer "kept at the end": the flag goes from both
+  // stops the move swapped; the rule break evaluateOrder finds stays.
+  await tap(ctx, 'up', moveOf(opt, 4, 'up').value);
+  const moved = lastView(ctx.app);
+  assert.deepEqual(orderOf(moved), ['Ana Ruiz, Riverton', 'Cara Lind, Lakeside', 'Ben Ode, Riverton', 'Dev Patel, Lakeside']);
+  assert.ok(rows(moved).every((r) => !r.text.includes(ROUTE_WORDS.unplaced())), 'no stop claims "at the end" now');
+  assert.ok(rows(moved)[2].text.split('\n').some((l) => l.startsWith('⚠ locked start:')), 'its break still shows');
+  // Optimize again flags it again.
+  await tap(ctx, 'optimize', `${versionOf(moved)}:optimize`);
+  assert.ok(rows(lastView(ctx.app))[3].text.includes(ROUTE_WORDS.unplaced()));
 });
 
 test('Reset to booked: the booked order, with times estimated again from the Office', async () => {
@@ -550,12 +561,101 @@ test('a crew lead: only their crew is offered; a crafted crewId still gives thei
   for (const asked of d.seen.labels) assert.ok(!asked.includes(OFFICE));
 });
 
-test('a crew lead whose crew is not in the data: the configuration refusal, logged; no positions read', async () => {
-  const ctx = setup();
+test('a crew lead whose crew is not in the data: step 1 with no crew offered, then "not working" on Show stops with Change crew or day; not a refusal; no positions read (PR #248 review)', async () => {
+  const spy = spyAdapter();
+  const ctx = setup({ mod: editorModule({ createAdapter: spy.createAdapter }) });
   await open(ctx, U.ghost);
-  assert.deepEqual(texts(lastView(ctx.app)), ["That option isn't set up correctly, so I can't open it right now. I've logged the problem; please tell <@UADMIN>."]);
+  let view = lastView(ctx.app);
+  assert.deepEqual(texts(view), [ROUTE_WORDS.pick()]);
+  assert.deepEqual(blocksOf(view, 'actions')[0].elements.map((e) => e.action_id), ['routing-map:day', 'routing-map:show'], 'no crew offered');
+  await show(ctx, { user: U.ghost });
+  view = lastView(ctx.app);
+  assert.deepEqual(texts(view), [ROUTE_WORDS.notWorking('Crew v9', 'Monday 2026-11-02')]);
+  assert.deepEqual(blocksOf(view, 'actions')[0].elements.map((e) => e.action_id), ['routing-map:change']);
+  assert.deepEqual(spy.seen.route.map((q) => q.crewId), ['v9'], 'their own crew, never another');
   assert.deepEqual(ctx.mapPoints.asked, []);
-  assert.ok(ctx.log.lines.some((l) => l.msg === 'routing map refused' && /not in the data/.test(l.fields.reason)));
+  assert.ok(!ctx.log.lines.some((l) => l.msg === 'routing map refused'));
+});
+
+// A data source whose day `day` has only the crews keep() keeps (and their stops).
+function dataWithCrews(day, keep) {
+  const data = fx.fakeData();
+  const run = data.run.bind(data);
+  data.run = async (sql, params = {}) => {
+    const rows = await run(sql, params);
+    if (sql === fx.SQL.day && params.day === day) {
+      const p = rows[0].payload;
+      p.crews = p.crews.filter((c) => keep(c.crewId));
+      p.stops = p.stops.filter((st) => keep(st.currentCrewId));
+    }
+    return rows;
+  };
+  return data;
+}
+const inputReads = (ctx, day) => ctx.data.calls.filter((c) => c.sql === fx.SQL.day && c.params.day === day).length;
+
+test('no crew picked (none working that day): Show stops says "Pick a crew first" and reads nothing (PR #248 review)', async () => {
+  const spy = spyAdapter();
+  const data = dataWithCrews('2026-11-03', () => false);
+  const ctx = setup({ data, mod: editorModule({ createAdapter: spy.createAdapter }) });
+  await open(ctx);
+  await choose(ctx, 'day', date('2026-11-03'));
+  let view = lastView(ctx.app);
+  assert.deepEqual(blocksOf(view, 'actions')[0].elements.map((e) => e.action_id), ['routing-map:day', 'routing-map:show'], 'no crew to offer');
+  const reads = ctx.data.calls.length;
+  await show(ctx);
+  view = lastView(ctx.app);
+  assert.deepEqual(texts(view), [ROUTE_WORDS.pickCrew()]);
+  assert.equal(blocksOf(view, 'actions')[0].elements.at(-1).action_id, 'routing-map:show', 'still step 1');
+  assert.deepEqual(spy.seen.route, [], 'route() never called');
+  assert.equal(ctx.data.calls.length, reads, 'nothing read');
+  assert.deepEqual(ctx.mapPoints.asked, []);
+  assert.deepEqual(ctx.app.uploads, []);
+});
+
+test('picking another day reads that day\'s crews once and offers them; a lead keeps their own crew, and on a day it is not working is told so plainly (PR #248 review)', async () => {
+  const data = dataWithCrews('2026-11-03', (id) => id !== 'v1');
+  const ctx = setup({ data });
+  await open(ctx);
+  await choose(ctx, 'day', date('2026-11-03'));
+  assert.equal(inputReads(ctx, '2026-11-03'), 1, 'one read for the day');
+  let [actions] = blocksOf(lastView(ctx.app), 'actions');
+  assert.deepEqual(actions.elements[0].options.map((o) => o.value), ['v2', 'v3'], 'that day\'s crews');
+  assert.equal(actions.elements[0].initial_option.value, 'v2', 'v1 is not offered, so the first that is');
+  assert.equal(actions.elements[1].initial_date, '2026-11-03');
+  await choose(ctx, 'crew', pick('v1'));
+  assert.ok(ctx.log.lines.some((l) => l.msg === 'routing map click refused' && l.fields.reason === 'unknown crew'), 'v1 not offered that day');
+
+  const lead = setup({ data: dataWithCrews('2026-11-03', (id) => id !== 'v1') });
+  await open(lead, U.leadA);
+  await choose(lead, 'day', date('2026-11-03'), { user: U.leadA });
+  [actions] = blocksOf(lastView(lead.app), 'actions');
+  assert.deepEqual(actions.elements.map((e) => e.action_id), ['routing-map:day', 'routing-map:show'], 'no other crew is ever offered');
+  await show(lead, { user: U.leadA });
+  assert.deepEqual(texts(lastView(lead.app)), [ROUTE_WORDS.notWorking('Maple crew', 'Tuesday 2026-11-03')]);
+  assert.ok(!lead.log.lines.some((l) => l.msg === 'routing map refused'));
+  await tap(lead, 'change', 'change', { user: U.leadA });
+  await choose(lead, 'day', date(DAY.day), { user: U.leadA });
+  [actions] = blocksOf(lastView(lead.app), 'actions');
+  assert.deepEqual(actions.elements[0].options.map((o) => o.value), ['v1'], 'their crew again on a day it works');
+  await show(lead, { user: U.leadA });
+  assert.match(header(lastView(lead.app)), /^\*Maple crew, Monday 2026-11-02\*/);
+});
+
+test('the crew\'s map colour is the one Routing\'s views give it (its place among the day\'s crews), not always 0 (PR #248 review)', async () => {
+  const colorOf = (model, crewId) => model.crews.find((c) => c.crewId === crewId).color;
+  for (const [crew, want] of [['v1', 0], ['v2', 1], ['v3', 2]]) {
+    const ctx = setup();
+    await shown(ctx, { crew });
+    assert.equal(colorOf(ctx.models.at(-1).model, crew), want, crew);
+    // Routing's Booked vs optimized view, same person and day.
+    const views = setup();
+    await open(views, U.dispatch, 'routing');
+    await choose(views, 'crew', pick(crew));
+    const drawn = views.models.findLast((m) => m.model.crews.some((c) => c.crewId === crew));
+    assert.ok(drawn, `Routing's views drew ${crew}`);
+    assert.equal(colorOf(drawn.model, crew), want, `${crew} matches Routing's views`);
+  }
 });
 
 test('a person outside the audience is refused at Open; nothing is read', async () => {
@@ -1003,6 +1103,45 @@ test('exit, a reused file that expired (10 minutes) or was deleted: the list wit
   t.mock.timers.tick(750);
   await p;
   assert.equal(imageOf(lastView(ctx.app)).slack_file.id, 'F3');
+});
+
+test('a list queued while a newer map is going to Slack reuses that newer file, never the one it replaces and deletes (the view\'s update queue, PR #248 review)', async () => {
+  const ctx = setup();
+  await shown(ctx);
+  // Hold the update that shows F2 in flight, so the next tap's list queues
+  // behind it.
+  const views = ctx.app.client.views;
+  const real = views.update;
+  let release;
+  const held = new Promise((r) => { release = r; });
+  let holding = false;
+  views.update = async (args) => {
+    if (args.view.blocks.some((b) => b.type === 'image' && b.slack_file.id === 'F2')) {
+      holding = true;
+      await held;
+    }
+    return real(args);
+  };
+  const first = tap(ctx, 'down', moveOf(lastView(ctx.app), 1, 'down').value);
+  await settle();
+  assert.equal(holding, true, 'the map with F2 is on its way');
+  const listed = lastView(ctx.app);
+  assert.equal(imageOf(listed).slack_file.id, 'F1', 'the first tap\'s list under F1');
+  const sent = ctx.app.views.length;
+  const second = tap(ctx, 'down', moveOf(listed, 2, 'down').value);
+  await settle();
+  assert.equal(ctx.app.views.length, sent, 'the second list waits its turn');
+  release();
+  await Promise.all([first, second]);
+  const updates = calls(ctx.app, 'update').slice(-3).map((u) => u.view);
+  const [map, list, newer] = updates;
+  assert.equal(imageOf(map).slack_file.id, 'F2', 'the first tap\'s map');
+  assert.equal(imageOf(list).slack_file.id, 'F2', 'the second list reuses the file shown now, not F1');
+  assert.equal(contexts(list)[0], UPDATING);
+  assert.equal(imageOf(newer).slack_file.id, 'F3', 'then the second tap\'s map');
+  assert.ok(!ctx.log.lines.some((l) => l.msg === 'map image not reused'), 'nothing refused or missed');
+  assert.deepEqual(ctx.app.deleted, ['F1', 'F2']);
+  assert.deepEqual(ctx.store.mapFilesOf('UDISPATCH:V1'), ['F3']);
 });
 
 test('a street map (Story 15.10): the attribution straight under the image, kept when the image is reused', async () => {

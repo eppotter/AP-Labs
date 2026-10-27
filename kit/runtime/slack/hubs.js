@@ -140,8 +140,10 @@
 // same lifecycle. When the profile has no routing.depot or its adapter has
 // no route(), Open shows "not available" and no modal opens (fail closed).
 // Its reorders change the list at once under the picture already shown
-// (showList): the same slack_file id (mapFiles.reuse: only while its record
-// is live and it is under 10 minutes old), else the list with no image, and
+// (showList): the same slack_file id, the one the view shows when the
+// list's update goes to Slack, not when it was queued (mapFiles.reuse: only
+// while its record is live and it is under 10 minutes old), else the list
+// with no image, and
 // if Slack refuses the reused file (deleted, expired) the list is shown again
 // with no image. The map follows through showMap, which then deletes the
 // earlier file. An editor's map that fails (upload, ratelimited, not
@@ -480,11 +482,22 @@ function registerHubs(app, {
     const fileId = block.slack_file.id;
     const text = typeof words === 'string' && words ? textBlocks(words) : [];
     const shown = { blocks: [...head, ...text, block, ...caption, ...tail], ...(modal ? { modal } : {}) };
+    // The file this view shows is recorded the moment Slack takes the
+    // update (onSent, inside the view's update queue), so a list update
+    // queued behind it reuses this file, never the earlier one deleted
+    // below (PR #248 review). A show with no queue records it once it shows.
+    const entry = { id: fileId, alt: block.alt_text, caption };
+    let sent = false;
+    const record = () => shownFiles.set(owner, entry);
+    const onSent = () => {
+      sent = true;
+      record();
+    };
     let attempt;
     try {
       attempt = await mapFiles.showing(async () => {
         if (!current()) throw new Superseded();
-        await show(shown, { current });
+        await show(shown, { current, onSent });
       });
     } catch (err) {
       await mapFiles.release(owner, { only: fileId, why: 'not shown' });
@@ -504,7 +517,7 @@ function registerHubs(app, {
       return 'failed';
     }
     log.info('map image shown', { module: mod.id, attempt });
-    shownFiles.set(owner, { id: fileId, alt: block.alt_text, caption });
+    if (!sent) record();
     // A view switch: the maps recorded before this upload go now; a newer
     // click's file, recorded after it, is never touched.
     await mapFiles.release(owner, { among: earlier, why: 'replaced' });
@@ -516,40 +529,57 @@ function registerHubs(app, {
   // head, the reused image and its caption, blocks. The image is reused only
   // when mapFiles.reuse allows it; when Slack refuses the reused file, the
   // list is shown again with no image. A file no longer shown is deleted.
+  // Which file is reused is decided when the update's turn in the view's
+  // queue comes, just before it goes to Slack, never when it is queued: a
+  // newer map shown in between has replaced (and deletes) the file seen at
+  // queue time (PR #248 review). show takes a message or a function that
+  // builds it at that turn.
   const showList = async (owner, show, message, { current } = {}) => {
     const { head = [], blocks: tail = [], modal } = message;
     const opts = modal ? { modal } : {};
-    const prev = shownFiles.get(owner) || null;
-    let reused = null;
-    if (prev) {
-      const got = mapFiles.reuse(owner, prev.id, prev.alt);
-      if (got.block) reused = got.block;
-      else log.info('map image not reused', { reason: got.reason });
-    }
     const bare = { blocks: [...head, ...tail], ...opts };
-    if (reused) {
-      try {
-        await show({ blocks: [...head, reused, ...prev.caption, ...tail], ...opts }, { current });
-        return;
-      } catch (err) {
-        if (!fileNotReady(err)) throw err;
-        log.info('map image not reused', { reason: 'refused by slack' });
+    let prev = null;
+    let reused = false;
+    const build = () => {
+      prev = shownFiles.get(owner) || null;
+      reused = false;
+      if (!prev) return bare;
+      const got = mapFiles.reuse(owner, prev.id, prev.alt);
+      if (!got.block) {
+        log.info('map image not reused', { reason: got.reason });
+        return bare;
       }
+      reused = true;
+      return { blocks: [...head, got.block, ...prev.caption, ...tail], ...opts };
+    };
+    const dropShown = () => {
+      if (prev && shownFiles.get(owner) === prev) shownFiles.delete(owner);
+    };
+    try {
+      await show(build, { current, onSent: () => { if (!reused) dropShown(); } });
+      if (reused) return;
+    } catch (err) {
+      if (!reused || !fileNotReady(err)) throw err;
+      log.info('map image not reused', { reason: 'refused by slack' });
+      await show(bare, { current, onSent: dropShown });
     }
-    await show(bare, { current });
-    if (prev) {
-      if (shownFiles.get(owner) === prev) shownFiles.delete(owner);
-      await mapFiles.release(owner, { only: prev.id, why: 'replaced' });
-    }
+    if (prev) await mapFiles.release(owner, { only: prev.id, why: 'replaced' });
   };
 
   // A plain message into a map view; once it shows, the view's earlier map
   // files go (it no longer shows them).
+  // The view shows no map file from the moment Slack takes it (onSent).
   const showPlain = async (owner, show, message) => {
     const earlier = mapFiles ? mapFiles.filesOf(owner) : [];
     const prev = shownFiles.get(owner);
-    await show(message);
-    if (prev && shownFiles.get(owner) === prev) shownFiles.delete(owner);
+    let sent = false;
+    await show(message, {
+      onSent: () => {
+        sent = true;
+        shownFiles.delete(owner);
+      },
+    });
+    if (!sent && prev && shownFiles.get(owner) === prev) shownFiles.delete(owner);
     if (earlier.length) await mapFiles.release(owner, { among: earlier, why: 'replaced' });
   };
 
@@ -769,15 +799,19 @@ function registerHubs(app, {
     const title = from.title && from.title.text;
     // current: when given, asked again when this update's turn comes; false
     // means a newer click came in while it waited, so it is skipped
-    // ('superseded') and never shown.
-    return (message, { current } = {}) => {
+    // ('superseded') and never shown. message: the message, or a function
+    // that builds it when its turn comes. onSent: called once Slack has
+    // taken the update, still inside its turn (before the next update goes).
+    return (message, { current, onSent } = {}) => {
       const next = v.queue.then(async () => {
         if (typeof current === 'function' && !current()) return 'superseded';
+        const m = typeof message === 'function' ? message() : message;
         try {
           const res = await client.views.update({
-            view_id: from.id, ...(v.hash ? { hash: v.hash } : {}), view: moduleView({ title, hubId: null, blocks: messageBlocks(message), message }),
+            view_id: from.id, ...(v.hash ? { hash: v.hash } : {}), view: moduleView({ title, hubId: null, blocks: messageBlocks(m), message: m }),
           });
           if (res && res.view && typeof res.view.hash === 'string') v.hash = res.view.hash;
+          if (typeof onSent === 'function') onSent();
           return 'updated';
         } catch (err) {
           if (failureReason(err) === HASH_CONFLICT) return 'dropped';
@@ -803,16 +837,20 @@ function registerHubs(app, {
     // Every render keeps the map view's callback (view_closed) and metadata.
     const keep = { ...MAP_VIEW, privateMetadata: typeof from.private_metadata === 'string' ? from.private_metadata : '' };
     const update = mapUpdater(client, from);
-    const render = async (message, { current } = {}) => {
-      const m = screened('routing-map', message);
-      const full = typeof m === 'string' ? { text: m } : m;
-      const status = await update(full.modal ? full : { ...full, modal: keep }, { current });
+    // message: a message, or a function building it at its turn (showList).
+    const render = async (message, { current, onSent } = {}) => {
+      const build = () => {
+        const m = screened('routing-map', typeof message === 'function' ? message() : message);
+        const full = typeof m === 'string' ? { text: m } : m;
+        return full.modal ? full : { ...full, modal: keep };
+      };
+      const status = await update(build, { current, onSent });
       if (status === 'dropped') throw new Dropped();
       if (status === 'superseded') throw new Superseded();
     };
     const show = async (message, { current } = {}) => {
       try {
-        await showPlain(owner, (m) => render(m, { current }), message);
+        await showPlain(owner, (m, o) => render(m, { ...o, current }), message);
       } catch (err) {
         if (err instanceof Superseded) {
           log.info('map superseded', { module: 'routing-map', step: 'plain' });

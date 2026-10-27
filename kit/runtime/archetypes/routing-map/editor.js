@@ -14,7 +14,9 @@
 //           the first stop, no ↓ on the last) and "Office · back hh:mm".
 //
 // Reads (AD-R17 scope first, never from the click): the crew list on Open
-// (adapter.input and adapter.labels for crew nodes), and on Show stops one
+// and again on each day picked (adapter.input and adapter.labels for crew
+// nodes; the crews' map colours as Routing's views give them), and on Show
+// stops (none when no crew is picked: "Pick a crew first") one
 // adapter.route({ day, crewId, depot, scope }) (a crew lead's crewId comes
 // from the scope), the labels of the crew and its stops (never the Office:
 // it is named from routing.depot.label) and one mapPoints read for the Office
@@ -24,7 +26,9 @@
 //
 // Every order is timed by the engine's evaluateOrder from the Office
 // (returnToBase). Optimize is optimizeDay on the one-crew input from the
-// Office; stops it leaves unplaced are appended in booked order and flagged.
+// Office; stops it leaves unplaced are appended in booked order and flagged,
+// until a move takes them from where Optimize put them. A crew not in the
+// day's data, a crew lead's own too, is "not working" that day (plain words).
 // Only the route's total distance is shown, in whole km; a leg's distance is
 // never shown, logged or sent.
 //
@@ -203,40 +207,87 @@ function createEditor({
     ]);
   }
 
-  // The crews the select offers this scope, by name, read for the picked day.
-  async function crewChoices(mod, s) {
+  // The crews the select offers this scope, by name, read for the day
+  // (one adapter.input, then labels for the crews offered), and each crew's
+  // map colour: its place among the day's crews sorted by id, as Routing's
+  // views colour it (views.js dayOf). A crew lead is offered only their own
+  // crew, and nothing when it is not in that day's data (not working that
+  // day: Show stops says so); only a lead with no crew id is a
+  // configuration fault.
+  async function crewChoices(mod, s, day) {
     const { scope } = s;
+    if (scope.all !== true && typeof scope.crewId !== 'string') return { config: true };
     const adapter = adapterFor(mod);
-    const got = await adapter.input({ day: s.picks.day, view: 'compare', scope });
+    const got = await adapter.input({ day, view: 'compare', scope });
     if (!isPlainObject(got) || !isPlainObject(got.input) || !Array.isArray(got.input.crews)) throw fault('adapter.input', 'not_object');
-    const ids = got.input.crews.map((c) => c && c.crewId).filter((id) => typeof id === 'string');
-    if (audience.checkScope(scope, new Set(ids)) !== 'ok') return { config: true };
-    const visible = ids.filter((id) => audience.visible(scope, id)).sort(compareIds);
+    const ids = unique(got.input.crews.map((c) => c && c.crewId).filter((id) => typeof id === 'string')).sort(compareIds);
+    const colors = new Map(ids.map((id, i) => [id, i % (MAX_COLOR + 1)]));
+    const visible = ids.filter((id) => audience.visible(scope, id));
     const nodes = visible.map(crewNode);
-    const labels = nodes.length ? checkLabels(await adapter.labels({ day: s.picks.day, nodeIds: nodes, scope }), nodes) : new Map();
+    const labels = nodes.length ? checkLabels(await adapter.labels({ day, nodeIds: nodes, scope }), nodes) : new Map();
     const n = namer(labels);
-    return { crews: visible.map((id) => ({ value: id, text: n.crewLabel(id) })) };
+    return { crews: visible.map((id) => ({ value: id, text: n.crewLabel(id) })), colors };
   }
+
+  // The crews read for a day go on the session, and the pick follows them:
+  // a crew lead's is always their own; anyone else keeps theirs while it is
+  // offered, else the first offered, else none.
+  function takeCrews(s, got) {
+    s.crews = got.crews;
+    s.colors = got.colors;
+    if (s.scope.all !== true) s.picks.crew = s.scope.crewId;
+    else if (!s.crews.some((c) => c.value === s.picks.crew)) s.picks.crew = s.crews.length ? s.crews[0].value : null;
+  }
+
+  const configRefusal = (mod) => {
+    log.error('routing map refused', { module: mod.id, reason: 'the crew lead has no crew' });
+    return messageFor(new ConfigFault({ admin }));
+  };
 
   async function open({ mod, s, show }) {
     s.step = 1;
     s.plan = null;
     let got;
     try {
-      got = await crewChoices(mod, s);
+      got = await crewChoices(mod, s, s.picks.day);
     } catch (err) {
       await show(message(s, textBlocks(failureText(mod, 'route', err))));
       return;
     }
     if (got.config) {
-      log.error('routing map refused', { module: mod.id, reason: "the crew lead's crew is not in the data" });
-      await show(message(s, textBlocks(messageFor(new ConfigFault({ admin })))));
+      await show(message(s, textBlocks(configRefusal(mod))));
       return;
     }
-    s.crews = got.crews;
-    if (s.scope.all !== true) s.picks.crew = s.scope.crewId;
-    else if (!s.crews.some((c) => c.value === s.picks.crew)) s.picks.crew = s.crews.length ? s.crews[0].value : null;
+    takeCrews(s, got);
     await show(stepOne(s));
+  }
+
+  // A day picked on step 1: the crews are read again for that day, and step
+  // 1 shows them (a newer click wins; nothing changes for a superseded read).
+  async function dayPicked({
+    mod, s, day, number, show,
+  }) {
+    const current = () => sessions.isCurrent(s, number);
+    s.picks.day = day;
+    let got;
+    try {
+      got = await crewChoices(mod, s, day);
+    } catch (err) {
+      const words = failureText(mod, 'route', err);
+      if (!current()) return;
+      await show(message(s, textBlocks(words)), { current });
+      return;
+    }
+    if (!current()) {
+      log.info('map superseded', { module: mod.id, step: 'crews' });
+      return;
+    }
+    if (got.config) {
+      await show(message(s, textBlocks(configRefusal(mod))), { current });
+      return;
+    }
+    takeCrews(s, got);
+    await show(stepOne(s), { current });
   }
 
   // --- reading one crew's day (Show stops) ------------------------------------------------
@@ -254,11 +305,9 @@ function createEditor({
     }));
     const { input } = got;
     engine.validateInput(input);
+    // A crew not in the day's data (a crew lead's too) is not working that
+    // day: a plain message, never a refusal of access.
     const crew = input.crews.find((c) => c.crewId === crewId);
-    if (!crew && lead) {
-      log.error('routing map refused', { module: mod.id, reason: "the crew lead's crew is not in the data" });
-      return { plain: messageFor(new ConfigFault({ admin })), change: false };
-    }
     const stops = crew ? bookedStops(input, crewId) : [];
     if (stops.some((st) => st.stopId.length > MAX_STOP_ID)) throw fault('stopId', 'too_long');
     const fits = stops.length > 0 && stops.length <= MAX_STOPS;
@@ -283,7 +332,8 @@ function createEditor({
     const placed = new Set(points.map((p) => p && p.node));
     if (!nodes.every((node) => placed.has(node))) throw fault('mapPoints', 'no_position');
     const order = stops.map((st) => st.stopId);
-    const colors = input.crews.map((c) => c.crewId).sort(compareIds);
+    // The colour Routing's views give this crew on this day (crewChoices).
+    const color = s.colors instanceof Map && s.colors.has(crewId) ? s.colors.get(crewId) : 0;
     return {
       plan: {
         crewId,
@@ -299,7 +349,7 @@ function createEditor({
         flagged: new Set(),
         out: crew.available === false,
         names: n,
-        color: colors.indexOf(crewId) % (MAX_COLOR + 1),
+        color,
         points,
         mosaic: (read && read.mosaic) || null,
       },
@@ -491,6 +541,13 @@ function createEditor({
   }) {
     const number = sessions.next(s);
     const current = () => sessions.isCurrent(s, number);
+    const crewId = s.scope.all !== true ? s.scope.crewId : s.picks.crew;
+    if (typeof crewId !== 'string' || !crewId) {
+      // No crew picked (none offered that day, say): nothing is read.
+      log.info('routing map click refused', { action: 'show', reason: 'no crew' });
+      await show(stepOne(s, ROUTE_WORDS.pickCrew()), { current });
+      return;
+    }
     let loaded;
     try {
       loaded = await load(mod, s);
@@ -550,9 +607,10 @@ function createEditor({
           await show(stepOne(s, MAP_WORDS.badDate(s.range.from, s.range.to)), { current: () => sessions.isCurrent(s, number) });
           return undefined;
         }
-        s.picks.day = day;
         log.info('routing map click', { module: mod.id, action: which, view: 'route' });
-        return undefined;
+        return dayPicked({
+          mod, s, day, number, show,
+        });
       }
       log.info('routing map click', { module: mod.id, action: which, view: 'route' });
       return showStops(go);
@@ -578,6 +636,10 @@ function createEditor({
       const j = which === 'up' ? i - 1 : i + 1;
       if (j < 0 || j >= p.order.length) return refuse(which, 'edge');
       [p.order[i], p.order[j]] = [p.order[j], p.order[i]];
+      // Optimize's "kept at the end" flag holds only while the stop stays
+      // where Optimize put it: both stops a move swaps lose it.
+      p.flagged.delete(p.order[i]);
+      p.flagged.delete(p.order[j]);
       p.version += 1;
       log.info('routing map click', { module: mod.id, action: which, view: 'route' });
       return changed(go);
