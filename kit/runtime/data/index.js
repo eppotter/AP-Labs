@@ -58,7 +58,8 @@
 // still refuses every forbidden column.
 //
 // mapPoints(nodeIds, frame) (Story 15.2, AD-R13) is the second, built the
-// same way from ./map: it returns only { node, x, y } pixel positions. It is
+// same way from ./map: it returns only { node, x, y } pixel positions and the
+// tile mosaic under them (Story 15.8, AD-R20). It is
 // not a key of the data object: createData attaches it through ./map's
 // private side table, and only the routing-map archetype reaches it, as
 // map.mapPoints(data, nodeIds, frame).
@@ -503,22 +504,24 @@ function createData({
     instance = null;
   }
 
-  // The second governed coordinate read (Story 15.2, AD-R13; template and
-  // checks in ./map). Resolves [{ node, x, y }] (integer pixels) for the
-  // requested nodes that have a position, in the order asked; rejects only
-  // with a fixed-text RoutingFault. Coordinates never leave DuckDB. Not a key
-  // of the object below: attached to it through ./map only.
+  // The second governed coordinate read (Story 15.2, AD-R13; Web Mercator
+  // and the tile mosaic, Story 15.8, AD-R20; template and checks in ./map).
+  // Resolves { points, mosaic }: points [{ node, x, y }] (integer pixels) for
+  // the requested nodes that have a position, in the order asked, and the
+  // tiles under them or null; rejects only with a fixed-text RoutingFault.
+  // Coordinates never leave DuckDB. Not a key of the object below: attached
+  // to it through ./map only.
   async function mapPoints(nodeIds, frame) {
     try {
       const routing = map.routingOf(profile);
       const box = map.checkFrame(frame);
       map.checkIds(nodeIds, routing);
-      if (!nodeIds.length) return [];
+      if (!nodeIds.length) return map.empty();
       const forbidden = travel.travelForbidden(forbiddenColumns, routing);
       const sql = map.pointsSql(routing);
       travel.checkColumnTypes(await execute(travel.COLUMN_TYPES_SQL, {}, [], forbiddenColumns), routing);
       const rows = await execute(sql, map.pointsParams(nodeIds, box, routing), map.POINTS_PARAMS, forbidden);
-      return map.points(rows, nodeIds, box);
+      return map.result(rows, nodeIds, box, map.maxZoomOf(routing));
     } catch (err) {
       throw map.faultFor(err);
     }

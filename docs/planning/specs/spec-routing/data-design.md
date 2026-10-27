@@ -103,6 +103,24 @@ beyond ±85.0511°, or needs more than 64 tiles. Tile numbers are rough location
 process memory only, passed only to the tile fetcher, never logged. SQLsmith confirms the SQL at
 Story 15.8.
 
+**As built (Story 15.8, `kit/runtime/data/map.js`):** in one static template, after the snap:
+(1) the box's latitude side is widened to `map_min_span_km` ÷ (km per degree, radius 6371.0088),
+and its longitude side to the same ÷ cos of the widened box's poleward edge, so the floor holds
+across the whole box. (2) Web Mercator with the world as 1 × 1: x = (lon + 180) / 360,
+y = (1 − ln(tan φ + sec φ) / π) / 2, φ held within ±85.0511° so the pole never reaches tan.
+(3) z = least(`max_zoom`, floor(log2(least((width − 2·padding − 1) ÷ (256 × box width),
+(height − 2·padding − 1) ÷ (256 × twice the box's longer half about its middle latitude))))),
+one pixel kept so rounding never puts a marker in the padding; z may be below 0 for a box wider
+than the world (then no mosaic). (4) The frame's top-left corner in world pixels is
+round(centre × 256·2^z − side / 2), centred on the box's middle longitude and middle latitude, so a
+lone node is at the frame's centre; x and y are round(world pixel − corner). (5) tx0 = floor(left /
+256), ox = 256·tx0 − left (in (−256, 0]), cols = ceil((width − ox) / 256), the same for rows. The
+mosaic columns are NULL on every row when the widened box passes ±85.0511° or ±180°, z < 0, or the
+tiles fall off the world; JS then checks the rows agree, the mosaic covers the frame exactly from
+tiles on the world (else `query_failed`), and drops it over 64 tiles. `max_zoom` is
+`routing.basemap.max_zoom` when Story 15.9's block sets it (0 to 19), else 19. No `*` in any step:
+the guard refuses a wildcard when columns are forbidden. The archetype takes `points` only.
+
 - **T3 profile change:** add the 4 columns to `sql.forbidden_columns` and a new `routing:` block
   (coordinates, speed_kmh, detour_factor, min_travel_minutes = 5). The profile JSON Schema rejects
   unknown keys, so the schema changes too (profiles/**).

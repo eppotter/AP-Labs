@@ -23,7 +23,9 @@
 // each query names: never a position, address or postal code.
 // fakeMapPoints() stands in for kit/runtime/data/map's mapPoints: it fits
 // only the requested nodes into the frame (north up), from the fixture's
-// micro-degree positions, as whole pixels. It records the ids it was asked.
+// micro-degree positions, as whole pixels, and returns them with FAKE_MOSAIC
+// as { points, mosaic } (the real shape, Story 15.8). It records the ids it
+// was asked.
 
 const sdk = require('#sdk');
 const DAY = require('./day.json');
@@ -118,13 +120,18 @@ function fakeData({ day = DAY } = {}) {
   return fake;
 }
 
+// A made-up tile mosaic with numbers found nowhere else in the fixture, so a
+// test can prove it reaches no log, Slack call, error or renderer.
+const FAKE_MOSAIC = Object.freeze({ z: 13, tx0: 2417, ty0: 3066, cols: 3, rows: 3, ox: -91, oy: -77 });
+
 // mapPoints for tests: fits the requested nodes (only them) into the frame
-// at one scale, centred, north up, as whole pixels. asked: every id list.
-function fakeMapPoints({ day = DAY } = {}) {
+// at one scale, centred, north up, as whole pixels, with FAKE_MOSAIC (no
+// mosaic for no points). asked: every id list.
+function fakeMapPoints({ day = DAY, mosaic = FAKE_MOSAIC } = {}) {
   const fn = async (data, nodeIds, frame) => {
     fn.asked.push([...nodeIds]);
     const known = nodeIds.filter((n) => day.places[n] && Number.isInteger(day.places[n].lat_e6));
-    if (!known.length) return [];
+    if (!known.length) return { points: [], mosaic: null };
     const lat = known.map((n) => day.places[n].lat_e6);
     const lon = known.map((n) => day.places[n].lon_e6);
     const [minLat, maxLat, minLon, maxLon] = [Math.min(...lat), Math.max(...lat), Math.min(...lon), Math.max(...lon)];
@@ -133,16 +140,17 @@ function fakeMapPoints({ day = DAY } = {}) {
     const scale = room / span;
     const midLat = (minLat + maxLat) / 2;
     const midLon = (minLon + maxLon) / 2;
-    return known.map((node) => ({
+    const points = known.map((node) => ({
       node,
       x: Math.round(frame.width / 2 + (day.places[node].lon_e6 - midLon) * scale),
       y: Math.round(frame.height / 2 - (day.places[node].lat_e6 - midLat) * scale),
     }));
+    return { points, mosaic };
   };
   fn.asked = [];
   return fn;
 }
 
 module.exports = {
-  createAdapter, fakeData, fakeMapPoints, SQL, DAY,
+  createAdapter, fakeData, fakeMapPoints, FAKE_MOSAIC, SQL, DAY,
 };
