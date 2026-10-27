@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| #237 | 2026-10-26 | 15.11 | user-visible | T3 | Brightside turns the routing street map on (OpenStreetMap's free tiles, with its credit and a User-Agent holding Ely's contact and no client name; the module stays dev-only), GRD-002's map image rule is reworded for the street map and what the tile provider learns (pending Dana Reyes, DEP-025), the container page names outbound 443 to the tile host, the routing map page gets a short street-map live check, and the fork guide says a fork sets its own production tile provider (DEP-031). Closes DEP-027 (v5 published to MotherDuck) and DEP-030 (the contact). | DEP-027, DEP-030 |

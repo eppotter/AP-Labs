@@ -229,6 +229,7 @@ These are template-owned. A fix to any of them goes to the template as a PR ther
 - **The `-- protected-columns` exception is for synthetic data only.** A fixture check that names a forbidden column (`-- protected-columns: clients.phone`) runs only on a file `node kit/fixture/build.js` wrote; the validator refuses it on any other file. Never point `--db` at real data to lift one (issue #77).
 - **Real connectors need a durable idempotency store** and their own dedupe keys (step 8).
 - **Scheduled jobs can't write or post** (step 8).
+- **The routing street map needs your own tile provider.** Set it in the profile's `routing.basemap` (DEP-031). OpenStreetMap's free tiles, which the Brightside demo uses, are not for production and can be withdrawn.
 - **No secrets, ever,** in the repo, a log, a PR or a chat.
 
 ## Checking the engine is untouched

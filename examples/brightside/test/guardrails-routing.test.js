@@ -58,6 +58,40 @@ test('GRD-002 states the map image rule with its numbers, the named risk and wha
   assert.match(grd, /- status: draft\b/);
 });
 
+// Story 15.11 (AD-R12 amended, AD-R18): GRD-002's map image part carries the
+// street-map wording Dana Reyes signs (DEP-025), word for word, beside what was
+// already there (the grid numbers, the sweep, the crash risk, what a viewer can
+// do, and travelMatrix and mapPoints as the only coordinate reads).
+const STREET_MAP_WORDING = [
+  'The picture now has a street map under it.',
+  "Anyone who sees it can read each marker's area directly, to about 150 m (a block), with no need to line it up.",
+  "Next to the window's list (client name, city, stop number), a screenshot shows roughly where a named client lives.",
+  'To draw the streets, the bot asks the street-map provider (OpenStreetMap, through its delivery network) for the map squares of the area shown.',
+  "The provider learns which area of 5 km or more is being viewed, and when, from the bot's server address.",
+  'It never learns which stops or customers.',
+  'The bot keeps those squares in memory only.',
+  "The provider's name and credit show under the picture.",
+  "If the street map can't be fetched, the plain map shows.",
+].join(' ');
+
+test('GRD-002 carries the street-map wording word for word, pending DEP-025, beside the rest of the map rule', () => {
+  const grd = card('GRD-002').replace(/\s+/g, ' ');
+  assert.ok(grd.includes(STREET_MAP_WORDING), 'the quoted street-map wording');
+  assert.match(grd, /The street map \(Story 15\.11, the wording Dana signs, pending DEP-025\)/);
+  for (const words of [
+    /about 220 m north-south/,
+    /at least 5 km each way/,
+    /at the latest 20 minutes after upload/,
+    /crashes between uploading/,
+    /`mapPoints`/,
+    /`travelMatrix`/,
+    /routing\.basemap/,
+    /APLABS_BASEMAP_OFF/,
+  ]) assert.match(grd, words);
+  assert.doesNotMatch(grd, /The map has no street names, tiles/, 'the old "no tiles" line is gone');
+  assert.match(grd, /- status: draft\b/);
+});
+
 test('the crew-out rule is recorded as pending Dana Reyes (DEP-028)', () => {
   const text = read();
   assert.match(text, /lead is absent, or nobody on the crew is present/);
