@@ -212,7 +212,7 @@ test('the audience refuses a crew lead not in users, the same user twice, or a l
   );
   rejects(
     withAudience((a) => { a.crew_leads.push({ user: 'member', crew_id: 'v3' }); }),
-    /^\[profile\] refusing to start: \/routing\/audience\/crew_leads\/2\/user "member" does not hold the own_crew grant "ROUTING_OWN_CREW"$/,
+    /^\[profile\] refusing to start: \/routing\/audience\/crew_leads\/3\/user "member" does not hold the own_crew grant "ROUTING_OWN_CREW"$/,
   );
   // The dispatcher's all_crews grant is not own_crew; nor is the admin role.
   rejects(withAudience((a) => { a.crew_leads[0].user = 'dispatch'; }), /\/routing\/audience\/crew_leads\/0\/user "dispatch" does not hold the own_crew grant/);

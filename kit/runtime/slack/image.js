@@ -23,9 +23,14 @@
 //                           records the file id in the store (15 minutes)
 //                           and only then returns the image block. A record
 //                           that fails deletes the file at once and throws.
-//   release(owner, { keep, only })  deletes every file the owner recorded
-//                           (except keep; or only that one), for a view
+//   release(owner, { keep, only, among })  deletes every file the owner
+//                           recorded (except keep; or only that one; or only
+//                           those of among still recorded), for a view
 //                           switch, view_closed or a map that was not shown.
+//   filesOf(owner)          the file ids the owner has recorded now (Story
+//                           15.4: a map that shows deletes only the files
+//                           recorded before its upload, among, so an older
+//                           click never deletes a newer click's file).
 //   showing(fn)             runs fn (the views.update that shows the image
 //                           block) and resolves the attempt it took. When
 //                           Slack answers that the file is not usable yet
@@ -226,10 +231,14 @@ function createMapFiles({
     }
   }
 
-  // keep: one id to leave; only: the one id to delete.
-  async function release(owner, { keep = null, only = null, why = 'released' } = {}) {
+  // keep: one id to leave; only: the one id to delete; among: delete only
+  // these ids (those still recorded).
+  async function release(owner, {
+    keep = null, only = null, among = null, why = 'released',
+  } = {}) {
     if (!canStore(store) || !canFiles(client) || typeof owner !== 'string' || !owner) return { deleted: 0, kept: 0 };
-    const ids = store.mapFilesOf(owner).filter((id) => id !== keep && (only === null || id === only));
+    const within = Array.isArray(among) ? new Set(among) : null;
+    const ids = store.mapFilesOf(owner).filter((id) => id !== keep && (only === null || id === only) && (within === null || within.has(id)));
     if (!ids.length) return { deleted: 0, kept: 0 };
     return deleteMapFiles({ store, client, log, ids, why });
   }
@@ -251,8 +260,10 @@ function createMapFiles({
     }
   }
 
+  const filesOf = (owner) => (canStore(store) && typeof owner === 'string' && owner ? store.mapFilesOf(owner).slice() : []);
+
   return {
-    ready, upload, release, showing,
+    ready, upload, release, showing, filesOf,
   };
 }
 

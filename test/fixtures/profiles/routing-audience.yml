@@ -1,6 +1,9 @@
 # A synthetic profile with a routing map audience (AD-R17): a dispatcher who
 # sees every crew, two crew leads who each see only their own crew, and a
-# member with neither grant. Every name and id is made up.
+# member with neither grant. Story 15.4 adds two misconfigured leads (one
+# with the own_crew grant but no crew_leads row, one whose crew_id names no
+# crew in the data) and Slack ids for the routing-map tests. Every name and
+# id is made up.
 schema_version: 1
 client: { id: route-co, name: Route Co }
 resources:
@@ -8,11 +11,13 @@ resources:
   - { key: ROUTING_OWN_CREW, label: Routing map for one's own crew }
   - { key: OTHER_THING, label: Something else }
 users:
-  - { id: admin, name: Admin, role: admin }
-  - { id: dispatch, name: Dispatcher, role: member, grants: [ROUTING_ALL_CREWS] }
-  - { id: lead-a, name: Lead A, role: member, grants: [ROUTING_OWN_CREW] }
-  - { id: lead-b, name: Lead B, role: member, grants: [ROUTING_OWN_CREW, OTHER_THING] }
-  - { id: member, name: Member, role: member, grants: [OTHER_THING] }
+  - { id: admin, name: Admin, role: admin, identities: { slack: UADMIN } }
+  - { id: dispatch, name: Dispatcher, role: member, grants: [ROUTING_ALL_CREWS], identities: { slack: UDISPATCH } }
+  - { id: lead-a, name: Lead A, role: member, grants: [ROUTING_OWN_CREW], identities: { slack: ULEADA } }
+  - { id: lead-b, name: Lead B, role: member, grants: [ROUTING_OWN_CREW, OTHER_THING], identities: { slack: ULEADB } }
+  - { id: member, name: Member, role: member, grants: [OTHER_THING], identities: { slack: UMEMBER } }
+  - { id: lead-none, name: Lead None, role: member, grants: [ROUTING_OWN_CREW], identities: { slack: ULEADNONE } }
+  - { id: lead-ghost, name: Lead Ghost, role: member, grants: [ROUTING_OWN_CREW], identities: { slack: ULEADGHOST } }
 sql:
   forbidden_columns:
     - sites.pos_lat_e6
@@ -33,3 +38,4 @@ routing:
     crew_leads:
       - { user: lead-a, crew_id: v1 }
       - { user: lead-b, crew_id: v2 }
+      - { user: lead-ghost, crew_id: v9 }

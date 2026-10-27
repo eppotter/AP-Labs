@@ -16,7 +16,10 @@
 //   - the route map renderer (kit/runtime/routing-map/**) requires only
 //     kit/runtime/errors and its own files, png.js alone also the rasterizer,
 //     which nothing else requires; it names no client and is pure (AD-R14,
-//     Story 15.3).
+//     Story 15.3);
+//   - the routing-map archetype (kit/runtime/archetypes/routing-map/**)
+//     requires only its allowed parts, never the AI service, the runner or
+//     the rasterizer, and names no client (AD-R16, Story 15.4).
 // App dirs scanned: APLABS_APP_DIR when set, <repo>/app (a fork) and
 // examples/*/app (template dev), plus kit/templates/module and
 // kit/templates/connector always, so the check never passes by scanning nothing.
@@ -500,4 +503,66 @@ test('the mapPoints check catches any other requirer (the sdk, a module, the eng
     "scripts/z.js: requires '../kit/runtime/data/map'",
     "examples/acme/app/y.js: requires 'ap-labs/kit/runtime/data/map'",
   ].sort());
+});
+
+// The routing-map archetype (Story 15.4, AD-R12, AD-R16): it requires only
+// the engine, the renderer, the mapPoints read, access, errors, messages,
+// scoring, the Slack formatter and image helpers, node:crypto and its own
+// files. In particular never the AI service (nothing goes to the LLM),
+// never the query runner or DuckDB, and never the rasterizer directly. It
+// names no client and no examples/ path.
+const ARCHETYPE_DIR = 'kit/runtime/archetypes/routing-map';
+const ARCHETYPE_ALLOWED = [
+  'kit/runtime/routing', 'kit/runtime/routing-map', 'kit/runtime/routing-map/svg', 'kit/runtime/data/map', 'kit/runtime/access',
+  'kit/runtime/errors', 'kit/runtime/messages', 'kit/runtime/scoring', 'kit/runtime/slack/format', 'kit/runtime/slack/image',
+];
+
+function archetypeProblems(root = ROOT) {
+  const problems = [];
+  const dir = path.join(root, ARCHETYPE_DIR);
+  const names = clientNames(root);
+  for (const file of fs.existsSync(dir) ? jsFiles(dir) : []) {
+    const rel = slash(path.relative(root, file));
+    const text = fs.readFileSync(file, 'utf8');
+    if (EXAMPLES.test(text)) problems.push(`${rel}: names examples/`);
+    names.forEach((re, i) => { if (re.test(withoutComments(text)) || re.test(rel)) problems.push(`${rel}: holds client name ${i + 1}`); });
+    for (const m of text.matchAll(IMPORT)) {
+      const spec = m[2] || m[4] || m[6] || m[8];
+      if (spec === 'node:crypto') continue;
+      const target = spec.startsWith('.') ? slash(path.relative(root, path.resolve(path.dirname(file), spec))).replace(/\.js$/, '').replace(/\/index$/, '') : null;
+      const ok = target !== null && (ARCHETYPE_ALLOWED.includes(target) || target.startsWith(`${ARCHETYPE_DIR}/`));
+      if (!ok) problems.push(`${rel}: requires '${spec}'`);
+    }
+  }
+  return problems;
+}
+
+test('the routing-map archetype requires only its allowed parts, never the AI service, and names no client (Story 15.4)', () => {
+  assert.ok(jsFiles(path.join(ROOT, ARCHETYPE_DIR)).length >= 4, 'the archetype is scanned');
+  assert.deepEqual(archetypeProblems(), []);
+});
+
+test('the archetype check catches the AI service, the runner, the rasterizer, a client name and examples/', (t) => {
+  const root = tmpDir(t);
+  const dir = path.join(root, ARCHETYPE_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.join(root, 'examples/acme/app'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'index.js'), [
+    "require('../../llm');",
+    "require('../../data');",
+    "require('../../routing-map/png');",
+    "require('node:fs');",
+    "require('./views');",
+    "require('../../routing');",
+    "const CLIENT = 'Acme';",
+    "const P = 'examples/acme';",
+  ].join('\n'));
+  assert.deepEqual(archetypeProblems(root), [
+    `${ARCHETYPE_DIR}/index.js: names examples/`,
+    `${ARCHETYPE_DIR}/index.js: holds client name 1`,
+    `${ARCHETYPE_DIR}/index.js: requires '../../llm'`,
+    `${ARCHETYPE_DIR}/index.js: requires '../../data'`,
+    `${ARCHETYPE_DIR}/index.js: requires '../../routing-map/png'`,
+    `${ARCHETYPE_DIR}/index.js: requires 'node:fs'`,
+  ]);
 });
