@@ -38,6 +38,26 @@ test('GRD-002 names travelMatrix as the one coordinate exception, minutes only',
   assert.match(grd, /whole-minute drive times between two places only, never\s+a latitude or longitude/);
 });
 
+// Story 15.5 (AD-R12): GRD-002 states the map image rule in plain words with
+// its numbers, the named crash risk and what Story 15.1's live check found a
+// viewer can do with the picture, pending Dana Reyes's sign-off (DEP-025).
+test('GRD-002 states the map image rule with its numbers, the named risk and what a viewer can do, pending DEP-025', () => {
+  const grd = card('GRD-002').replace(/\s+/g, ' ');
+  for (const words of [
+    /about 220 m north-south/,
+    /about 140 to 190 m east-west \(at 30° to 50° latitude\)/,
+    /within about 150 m of the real place and never closer/,
+    /at least 5 km each way/,
+    /deleted when the window closes, or by a sweep at the latest 20 minutes after upload/,
+    /crashes between uploading a picture and recording it/,
+    /open it in a browser, copy its private link, or share it \(AirDrop, Messages, Mail, Notes, Copy\)/,
+    /only for a workspace member with access/,
+    /screenshot/,
+    /DEP-025/,
+  ]) assert.match(grd, words);
+  assert.match(grd, /- status: draft\b/);
+});
+
 test('the crew-out rule is recorded as pending Dana Reyes (DEP-028)', () => {
   const text = read();
   assert.match(text, /lead is absent, or nobody on the crew is present/);

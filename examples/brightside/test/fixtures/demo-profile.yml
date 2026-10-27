@@ -1,6 +1,7 @@
 # Test fixture for the demo-flow example test (Story 10.4, issue #161): a copy
-# of the Brightside demo profile's client, resources, users and forbidden
-# columns, with a fake Slack id for Dana. Tests read this, never
+# of the Brightside demo profile's client, resources, users, forbidden columns
+# and routing block (Story 15.5: the routing audience, with Dana the one
+# dispatcher), with a fake Slack id for Dana. Tests read this, never
 # profiles/brightside/profile.yml. Deleted with the example in a fork.
 schema_version: 1
 
@@ -17,10 +18,33 @@ resources:
   - { key: WIN_BACK, label: Win-back list, admin_grantable: false }
   - { key: UNPAID_INVOICES, label: Unpaid invoices }
   - { key: LABOUR_COST, label: Labour cost }
+  - { key: ROUTING_ALL_CREWS, label: "Routing map, every crew (dispatchers)", admin_grantable: false }
+  - { key: ROUTING_OWN_CREW, label: "Routing map, own crew only (crew leads)", admin_grantable: false }
 
 users:
-  - { id: dana, name: Dana Reyes, role: admin, identities: { github: dana-r, slack: U0FIXTUREDANA }, grants: [TIER3_APPROVE, WIN_BACK] }
+  - { id: dana, name: Dana Reyes, role: admin, identities: { github: dana-r, slack: U0FIXTUREDANA }, grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS] }
   - { id: marcus, name: Marcus Lee, role: member, identities: { github: mlee-bright }, grants: [VERIFY_SKIP] }
 
 sql:
-  forbidden_columns: [clients.phone, properties.street_address, properties.postal_code]
+  forbidden_columns:
+    - clients.phone
+    - properties.street_address
+    - properties.postal_code
+    - properties.geo_lat_e6
+    - properties.geo_lon_e6
+    - crews.base_geo_lat_e6
+    - crews.base_geo_lon_e6
+
+routing:
+  coordinates:
+    nodes:
+      - { kind: property, table: properties, id_column: property_id, lat_column: geo_lat_e6, lon_column: geo_lon_e6 }
+      - { kind: crew, table: crews, id_column: crew_id, lat_column: base_geo_lat_e6, lon_column: base_geo_lon_e6 }
+  speed_kmh: 40
+  detour_factor: 1.3
+  min_travel_minutes: 5
+  limits: { earliest_start: 360, default_start: 480, aim_finish: 1080, latest_finish: 1380, slot_minutes: 15 }
+  audience:
+    all_crews: ROUTING_ALL_CREWS
+    own_crew: ROUTING_OWN_CREW
+    crew_leads: []

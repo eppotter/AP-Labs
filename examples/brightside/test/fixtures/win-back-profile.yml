@@ -1,8 +1,9 @@
 # Test fixture for the Win-back, Unpaid invoices and Labour cost example tests (Stories 9.3, 9.5,
 # 9.7, 10.2): the resources the
 # Brightside app dir names, one admin (granted WIN_BACK by name: it is owner-only) and one member with fake Slack ids, and the same
-# forbidden columns as the demo profile. Tests read this, never
-# profiles/brightside/profile.yml. Deleted with the example in a fork.
+# forbidden columns as the demo profile. Story 15.5: the app dir's Routing module needs the
+# routing block and its audience; nobody here holds a routing key, so no menu shows it.
+# Tests read this, never profiles/brightside/profile.yml. Deleted with the example in a fork.
 schema_version: 1
 client: { id: winback-fixture, name: Win-back Fixture Co }
 resources:
@@ -12,8 +13,28 @@ resources:
   - { key: WIN_BACK, label: Win-back list, admin_grantable: false }
   - { key: UNPAID_INVOICES, label: Unpaid invoices }
   - { key: LABOUR_COST, label: Labour cost }
+  - { key: ROUTING_ALL_CREWS, label: Routing map for every crew, admin_grantable: false }
+  - { key: ROUTING_OWN_CREW, label: Routing map for one's own crew, admin_grantable: false }
 users:
   - { id: ada, name: Ada Admin, role: admin, identities: { slack: U0FIXTUREADA }, grants: [WIN_BACK] }
   - { id: max, name: Max Member, role: member, identities: { slack: U0FIXTUREMAX } }
 sql:
-  forbidden_columns: [clients.phone, properties.street_address, properties.postal_code]
+  forbidden_columns:
+    - clients.phone
+    - properties.street_address
+    - properties.postal_code
+    - properties.geo_lat_e6
+    - properties.geo_lon_e6
+    - crews.base_geo_lat_e6
+    - crews.base_geo_lon_e6
+routing:
+  coordinates:
+    nodes:
+      - { kind: property, table: properties, id_column: property_id, lat_column: geo_lat_e6, lon_column: geo_lon_e6 }
+      - { kind: crew, table: crews, id_column: crew_id, lat_column: base_geo_lat_e6, lon_column: base_geo_lon_e6 }
+  speed_kmh: 40
+  detour_factor: 1.3
+  limits: { earliest_start: 360, default_start: 480, aim_finish: 1080, latest_finish: 1380, slot_minutes: 15 }
+  audience:
+    all_crews: ROUTING_ALL_CREWS
+    own_crew: ROUTING_OWN_CREW

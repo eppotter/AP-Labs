@@ -41,8 +41,8 @@ test('/brightside shows a private menu with the Dataset and hello-world entries'
   const [menu] = app.responded;
   assert.equal(menu.response_type, 'ephemeral');
   const entries = menu.blocks.filter((b) => b.accessory && /^entry:/.test(b.block_id));
-  // Map check (dev) is the dev-only map check (Story 15.1); Story 15.5 removes it.
-  assert.deepEqual(entries.map((e) => e.accessory.action_id), ['dataset:open', 'hello-world:open', 'map-check:open']);
+  // Someone the profile doesn't know: open-access entries only (Routing needs a grant).
+  assert.deepEqual(entries.map((e) => e.accessory.action_id), ['dataset:open', 'hello-world:open']);
   assert.match(entries[0].text.text, /^\*Dataset\*\nSee which data the bot reads/);
   assert.match(entries[1].text.text, /\*Say hello\*\nCheck the bot knows who you are/);
   // First visit: Brightside's welcome from its hub file; the menu ends with Help.

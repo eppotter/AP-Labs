@@ -13,8 +13,9 @@ profile rather than copy it, and propose profile changes to the Orchestrator ins
 In this template repo Brightside's profile is `profiles/brightside/profile.yml` (a fork keeps it at
 `.aplabs/profile.yml`). Dana Reyes signed off this file on 2026-10-25 (Ely as Dana Reyes). Story 13.3
 (route optimization) changed it on 2026-10-26, so the file awaits her sign-off again (DEP-028): GRD-002
-now names the four coordinate columns and GRD-008 records the crew-out rule, both **draft**. Every
-other card stays **approved** as signed on 2026-10-25.
+now names the four coordinate columns and GRD-008 records the crew-out rule, both **draft**. Story 15.5
+added the routing map image rule to GRD-002 (DEP-025), also for her sign-off. Every other card stays
+**approved** as signed on 2026-10-25.
 
 ## Guardrails
 
@@ -22,7 +23,8 @@ other card stays **approved** as signed on 2026-10-25.
 
 - GRD-001: the bot only reads data. No query writes, changes structure or attaches anything.
 - GRD-002: forbidden columns (coordinates included) are never named, and `SELECT *` is refused;
-  `travelMatrix` alone reads the coordinates and returns drive minutes only.
+  `travelMatrix` alone reads the coordinates and returns drive minutes only. Draft update: a coarse
+  map picture (about 150 m) only in the Routing window, deleted within 20 minutes.
 - GRD-003: MotherDuck is read through the locked reader sequence; one accepted exception (`my_db`).
 - GRD-004: anything that writes to an outside system goes through the approval step, never a module.
 - GRD-005: the AI fills in a form and nothing else: no data rows, a spend breaker and an off switch.
@@ -69,6 +71,10 @@ From the profile's `users` and `resources`:
   only the profile can give it). Owns and signs every client context file. The admin role confers
   the gated resources, such as `OUTBOX`.
 - **Marcus Lee** (member): holds `VERIFY_SKIP` (waive a skipped verify check). No T3 approval.
+- **The routing map audience** (`routing.audience`, Story 15.5): `ROUTING_ALL_CREWS` (dispatchers)
+  and `ROUTING_OWN_CREW` (crew leads), neither conferred by the admin role. A dev placeholder for
+  now: Dana holds `ROUTING_ALL_CREWS` so Ely can run the live check, and no crew leads are listed.
+  Who the dispatchers and crew leads really are: **empty field, owner Dana Reyes** (DEP-024).
 - On the AP Labs side, Ely drives Dana in the demo workspace and signs as her; merges in this
   template repo are Ely's (AGENTS.md "Merge authority").
 
@@ -127,14 +133,44 @@ exception_workflow and data_quality_guard.
   `routing.coordinates` declares. It returns whole-minute drive times between two places only, never
   a latitude or longitude, and every other forbidden column still applies to it. No coordinate
   value, street address or postal code appears as text anywhere: Slack, logs, reasons, errors or AI
-  input. NOT the map image: showing a coarse map in the routing modal is a separate update to this
-  card that Dana signs at Story 15.5 (DEP-025); until then no Brightside module shows a map.
+  input. NOT the map image: that is the update below, which Dana signs separately.
+- map image (Story 15.5, update for Dana Reyes's sign-off, DEP-025): the Routing entry in Slack
+  shows a plain map of a crew's day as a picture, and nowhere else. This update adds one more read
+  beside `travelMatrix`, for the picture only: the kit's map read
+  (`mapPoints`, `kit/runtime/data/map.js`) turns the declared coordinate columns into pixel
+  positions inside the bot; like `travelMatrix`, it never returns a latitude or longitude, and the
+  positions are never logged, stored or sent. Only the picture leaves. What it reveals, in plain
+  words:
+  - **Approximate locations.** The map has no street names, tiles, scale or numbers, but anyone who
+    knows where two of the places are can line it up with a real map.
+  - **How approximate.** Every place is first rounded to a grid cell about 220 m north-south and
+    about 140 to 190 m east-west (at 30° to 50° latitude), so a marker is within about 150 m of the
+    real place and never closer; places in one cell share a marker.
+  - **Never zoomed in.** Every map covers at least 5 km each way, so it cannot show one street.
+  - **Where it shows.** Only inside the Routing window, only to the routing audience (dispatchers
+    see every crew, a crew lead only their own: the profile's `routing.audience`). It is never
+    posted to a channel or a DM and never sent to the AI. No address, postal code or coordinate
+    appears as text, in the window's list, its alt text or the logs.
+  - **How long it lives.** Each picture is a private Slack file shared nowhere. It is deleted when
+    the window closes, or by a sweep at the latest 20 minutes after upload.
+  - **The named risk.** If the bot crashes between uploading a picture and recording it, that one
+    unshared file can be left behind where the kit cannot find it to delete it.
+  - **What a viewer can do with it (Story 15.1's live check, 2026-10-26).** In Slack, a person who
+    sees the map can click it and open it in a browser, copy its private link, or share it
+    (AirDrop, Messages, Mail, Notes, Copy). The link opens only for a workspace member with access
+    to the file, but Copy can put the picture itself on the clipboard, and anyone can take a
+    screenshot. Once copied or screenshotted, the picture is outside the 20-minute deletion.
+  - NOT a change to the forbidden columns: they stay forbidden to every query. Until Dana signs this
+    update, the Routing module runs in dev only (Story 15.6 adds production after her sign-off).
 - owner: Dana Reyes
-- evidence: profile `sql.forbidden_columns` and `routing`; `kit/runtime/sql`; `fixture-tables.md`
-  "Rules"; architecture-routing AD-R9 and AD-R10. The mock CRM's field list and the email
-  connector's contact shape leave these columns out too.
+- evidence: profile `sql.forbidden_columns` and `routing` (`map_grid_e6` 2000, `map_min_span_km`
+  5, `audience`); `kit/runtime/sql`; `kit/runtime/data/map.js`; `fixture-tables.md` "Rules";
+  architecture-routing AD-R9, AD-R10, AD-R12, AD-R13, AD-R15 and AD-R17; Story 15.1's live check
+  in `epics-routing.md`. The mock CRM's field list and the email connector's contact shape leave
+  these columns out too.
 - status: draft (the coordinate columns were added on 2026-10-26 and await Dana Reyes's sign-off,
-  DEP-028; the rest was approved on 2026-10-25)
+  DEP-028; the map image update was added on 2026-10-26 and awaits her sign-off, DEP-025; the
+  rest was approved on 2026-10-25)
 
 ### GRD-003: MotherDuck reader lockdown
 - type: access_rule

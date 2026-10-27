@@ -23,7 +23,7 @@ You play Dana Reyes, Brightside's owner. Everything the bot shows you is private
 
 | # | You do | You should see |
 |---|---|---|
-| 1 | Type `/brightside` in any channel or DM. | The Brightside window, listing only what Dana may use: Dataset, Say hello, Labour cost, Outbox, Unpaid invoices and Win-back list, then Help. In dev it also lists Map check (dev), the map live check (`map-check.md`), until Story 15.5 removes it. |
+| 1 | Type `/brightside` in any channel or DM. | The Brightside window, listing only what Dana may use: Dataset, Say hello, Labour cost, Outbox, Unpaid invoices and Win-back list, then Help. In dev it also lists Routing, the routing map (`routing-map.md`); production waits for Dana's GRD-002 sign-off (Story 15.6). |
 | 2 | Press **Open** on Win-back list. In the request box type `clients in the North zone whose plan lapsed in the last 90 days, top 25` and press **Read my request**. | "Reading your request…", then step 3. |
 | 3 | Check the values. Press **Change** if you want to see the typed form, then **Check values** to come back. | The values the bot understood: Zone north, Lapsed within (days) 90, How many clients 25, with **Confirm** and **Change**. Change opens the form with those values filled in. |
 | 4 | Press **Confirm**. | *Running Win-back list…*, then *Win-back list: the top 25 of 38 rows, by score.* The top 10 rows with a score and a one-line reason each (client 730 first, score 86), a **How was this made?** button, a **Push to email tool** button, and a link to the CSV, which is in your DM with the bot. |

@@ -1,0 +1,13 @@
+# Test fixture for the routing CLI example test (Story 14.5): a profile with no
+# routing: block, so routing is off. Story 15.5 gave the demo profile fixture a
+# routing block (the app dir's Routing module needs one), so this one stands in
+# for "routing off". Tests read this, never profiles/brightside/profile.yml.
+# Deleted with the example in a fork.
+schema_version: 1
+client: { id: no-routing-fixture, name: No Routing Fixture Co }
+resources:
+  - { key: HELLO_WORLD, label: Say hello, open_access: true }
+users:
+  - { id: ada, name: Ada Admin, role: admin, identities: { slack: U0FIXTUREADA } }
+sql:
+  forbidden_columns: [clients.phone, properties.street_address, properties.postal_code]
