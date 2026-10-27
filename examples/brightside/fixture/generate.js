@@ -40,7 +40,7 @@ const { checkRouting } = require('./lib/routing-rules');
 const { createPlant, checkScenarios, checkRoutingTargets, missedRoutingTargets } = require('./lib/scenarios');
 
 // Bump when a change to this code changes the output for the same seed.
-const GENERATOR_VERSION = 4;
+const GENERATOR_VERSION = 5;
 
 const FIXTURE_DIR = __dirname;
 const SEED_FILE = path.join(FIXTURE_DIR, 'seed.json');
