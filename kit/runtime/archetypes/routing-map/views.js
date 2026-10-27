@@ -289,6 +289,17 @@ function zone(d, { travel, scope, pick }) {
   };
 }
 
+// A crew lead's count of the gap-fill candidates not shown to them, worded
+// for what they are: booked on other crews, booked on no crew, or both.
+function hiddenLine(other, none) {
+  const total = other + none;
+  if (!total) return [];
+  const parts = [];
+  if (other) parts.push(`${plural(other, 'more visit')} booked on other crews`);
+  if (none) parts.push(`${plural(none, other ? 'visit' : 'more visit')} not booked on any crew`);
+  return [`${parts.join(' and ')} could fill it; ${total === 1 ? 'it is' : 'they are'} not shown here.`];
+}
+
 function gap(d, { travel, scope, pick, gapFill }) {
   const crewId = pick.id;
   const lead = scope.all !== true;
@@ -303,7 +314,11 @@ function gap(d, { travel, scope, pick, gapFill }) {
   const g = gaps[0];
   const route = booked(d, crewId).map((s) => s.node);
   const ranked = g.candidates.filter((c) => !lead || c.fromCrew === crewId);
-  const hidden = g.candidates.length - ranked.length;
+  // The candidates a lead may not see, counted only: booked on another
+  // crew, or booked on no crew yet (fromCrew null).
+  const notShown = g.candidates.filter((c) => lead && c.fromCrew !== crewId);
+  const hiddenOther = notShown.filter((c) => typeof c.fromCrew === 'string').length;
+  const hiddenNone = notShown.length - hiddenOther;
   // Renumbered 1..n, so no gap in the numbers shows a hidden one.
   const cands = ranked.slice(0, MAX_CANDIDATES).map((c, i) => ({
     rank: i + 1, node: nodeOf(d, c.stopId), start: c.start, fromCrew: c.fromCrew, plannedDate: c.plannedDate,
@@ -332,7 +347,7 @@ function gap(d, { travel, scope, pick, gapFill }) {
         `Cancelled: ${cancelled.map((c) => n.place(c)).join('; ')}.`,
         ...cands.map((c) => `${c.rank}. ${row(clock(c.start), n.place(c.node), `booked ${c.fromCrew === null ? 'on no crew' : `on ${n.crew(c.fromCrew)}`} for ${c.plannedDate} (${plural(c.daysMovedUp, 'day')} earlier)`, `${c.extra} min extra drive`, escapeText(c.reason))}`),
         ...(cands.length ? [] : ['No visit can be moved up into this gap.']),
-        ...(hidden > 0 ? [`${plural(hidden, 'more visit')} booked on other crews could fill it; ${hidden === 1 ? 'it is' : 'they are'} not shown here.`] : []),
+        ...hiddenLine(hiddenOther, hiddenNone),
         ...(gaps.length > 1 ? [`${plural(gaps.length - 1, 'more gap')} on this crew today; only the first is shown.`] : []),
       ],
       alt: { crew: n.crewLabel(crewId), stops: route.length },
@@ -361,6 +376,6 @@ function textOf(built) {
 }
 
 module.exports = {
-  planView, choices, resolvePick, pickKind, namer, zoneLabel, textOf, dayWords, clock,
+  planView, choices, resolvePick, pickKind, namer, zoneLabel, textOf, dayWords, clock, hiddenLine,
   VIEWS, VIEW_LABELS, FRAME, MAX_CANDIDATES, SUGGEST_ONLY, ALT_LABEL,
 };

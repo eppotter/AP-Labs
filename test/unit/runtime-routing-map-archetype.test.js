@@ -21,7 +21,7 @@ const { RoutingFault, DataUnavailable } = require('../../kit/runtime/errors');
 const { PLAIN_ERROR } = require('../../kit/runtime/slack/handle');
 const { MAP_WORDS } = require('../../kit/runtime/messages');
 const { ID_PATTERN } = require('../../kit/runtime/archetypes/routing-map/session');
-const { FRAME, SUGGEST_ONLY } = require('../../kit/runtime/archetypes/routing-map/views');
+const { FRAME, SUGGEST_ONLY, hiddenLine } = require('../../kit/runtime/archetypes/routing-map/views');
 const { FakeSlackApp } = require('../fixtures/fake-slack');
 const fx = require('../fixtures/routing-map/adapter');
 
@@ -317,6 +317,154 @@ test('an upload that succeeds and a views.update that fails: that file is delete
   assert.equal(lastView(ctx.app).callback_id, 'hub:map', 'still a map view: view_closed still comes');
 });
 
+test('a superseded draw commits nothing: the next click draws the crew last shown, and its selects are the ones last shown (PR #226 review)', async () => {
+  const hold = gate();
+  let holdNext = false;
+  // The held draw's day lacks Birch (v2): had it committed, its pick (Maple)
+  // and its options (no Birch) would leak into the next view.
+  const createAdapter = (deps) => {
+    const a = fx.createAdapter(deps);
+    return Object.freeze({
+      asOf: a.asOf,
+      labels: a.labels,
+      input: async (args) => {
+        const got = await a.input(args);
+        if (!holdNext) return got;
+        holdNext = false;
+        await hold.wait();
+        got.input.crews = got.input.crews.filter((c) => c.crewId !== 'v2');
+        got.input.stops = got.input.stops.filter((st) => st.currentCrewId !== 'v2');
+        return got;
+      },
+    });
+  };
+  const ctx = setup({ mod: routingModule({ createAdapter }) });
+  await open(ctx);
+  holdNext = true;
+  const older = click(ctx, 'routing-map:view', pick('compare'));
+  await settle();
+  await click(ctx, 'routing-map:crew', pick('v2'));
+  assert.match(blocksOf(lastView(ctx.app), 'image')[0].alt_text, /Birch crew/);
+  hold.open();
+  await older;
+  assert.ok(ctx.log.lines.some((l) => l.msg === 'map superseded' && l.fields.step === 'draw'));
+  await click(ctx, 'routing-map:view', pick('compare'));
+  const updates = calls(ctx.app, 'update');
+  const drawing = updates.at(-2).view;
+  assert.deepEqual(texts(drawing), ['Drawing the map…']);
+  const crewSelect = blocksOf(drawing, 'actions')[0].elements[2];
+  assert.deepEqual(crewSelect.options.map((o) => o.value), ['v1', 'v2', 'v3'], 'the selects last shown, not the superseded draw\'s');
+  assert.equal(crewSelect.initial_option.value, 'v2', 'the crew last picked and shown');
+  assert.match(blocksOf(updates.at(-1).view, 'image')[0].alt_text, /Birch crew/, 'the next click draws the crew last shown');
+});
+
+test('a superseded click\'s map waiting in the view\'s queue is skipped when its turn comes: deleted, never shown (PR #226 review)', async () => {
+  const mapPoints = fx.fakeMapPoints();
+  const work = gate();
+  let holdWork = false;
+  const slow = async (...args) => {
+    if (holdWork) {
+      holdWork = false;
+      await work.wait();
+    }
+    return mapPoints(...args);
+  };
+  const ctx = setup({ mapPoints: slow });
+  await open(ctx);
+  // An update ahead in the view's queue, held at Slack: a click with no
+  // session (told "expired") that takes no number in the session.
+  const ahead = gate();
+  const update = ctx.app.client.views.update;
+  let heldAhead = false;
+  ctx.app.client.views.update = async (args) => {
+    if (!heldAhead && texts(args.view).some((t) => /has expired/.test(t))) {
+      heldAhead = true;
+      await ahead.wait();
+    }
+    return update(args);
+  };
+  holdWork = true;
+  const older = click(ctx, 'routing-map:view', pick('zone'));
+  await settle();
+  const v = lastView(ctx.app);
+  const stray = click(ctx, 'routing-map:view', pick('gap'), {
+    view: {
+      id: 'V1', type: 'modal', hash: ctx.app.hashes.get('V1'), private_metadata: 'not-a-session', title: v.title,
+    },
+  });
+  await settle();
+  work.open(); // the older click uploads F2 and queues its map behind the held update
+  await settle(50);
+  assert.equal(ctx.app.uploads.length, 2);
+  const newer = click(ctx, 'routing-map:view', pick('gap')); // its "Drawing the map…" queues behind
+  await settle();
+  ahead.open();
+  await Promise.all([older, stray, newer]);
+  const shownFiles = calls(ctx.app, 'update').flatMap((u) => blocksOf(u.view, 'image').map((b) => b.slack_file.id));
+  assert.ok(!shownFiles.includes('F2'), 'the superseded map is never shown');
+  assert.ok(ctx.app.deleted.includes('F2'), 'and its file is deleted');
+  assert.equal(blocksOf(lastView(ctx.app), 'image')[0].slack_file.id, 'F3', 'the newer map shows');
+  assert.deepEqual(ctx.store.mapFilesOf('UDISPATCH:V1'), ['F3']);
+  assert.ok(ctx.log.lines.some((l) => l.msg === 'map superseded' && l.fields.step === 'show'));
+});
+
+test('"map not shown" dropped on hash_conflict (a newer update won): logged quietly, never the handler\'s failure path (PR #226 review)', async () => {
+  const ctx = setup();
+  await open(ctx);
+  ctx.app.rateLimited.add('files.uploadV2');
+  const update = ctx.app.client.views.update;
+  ctx.app.client.views.update = async (args) => {
+    if (texts(args.view).includes(MAP_NOT_SHOWN)) ctx.app.hashes.set('V1', 'h-elsewhere');
+    return update(args);
+  };
+  await click(ctx, 'routing-map:view', pick('zone'));
+  assert.ok(!ctx.log.lines.some((l) => l.msg === 'handler failed'), 'no handler failure');
+  assert.ok(!calls(ctx.app, 'update').some((u) => texts(u.view).includes(PLAIN_ERROR)), 'no plain error shown');
+  assert.ok(ctx.log.lines.some((l) => l.level === 'info' && l.msg === 'stale view result dropped'
+    && l.fields.action === 'map not shown' && l.fields.reason === 'hash_conflict'));
+});
+
+test('an unexpected failure in a click: the plain error shows and the view\'s map files are deleted then, not at the sweep (PR #226 review)', async () => {
+  const ctx = setup();
+  await open(ctx);
+  assert.deepEqual(ctx.store.mapFilesOf('UDISPATCH:V1'), ['F1']);
+  const update = ctx.app.client.views.update;
+  let failed = false;
+  ctx.app.client.views.update = async (args) => {
+    if (!failed && texts(args.view).includes('Drawing the map…')) {
+      failed = true;
+      throw Object.assign(new Error('An API error occurred: internal_error'), { data: { ok: false, error: 'internal_error' } });
+    }
+    return update(args);
+  };
+  await click(ctx, 'routing-map:view', pick('zone'));
+  assert.ok(ctx.log.lines.some((l) => l.msg === 'handler failed' && l.fields.handler === 'hub:routing-map'));
+  assert.deepEqual(texts(lastView(ctx.app)), [PLAIN_ERROR]);
+  assert.equal(lastView(ctx.app).callback_id, 'hub:map', 'still a map view: view_closed still comes');
+  assert.deepEqual(ctx.app.deleted, ['F1']);
+  assert.equal(ctx.store.mapFileCount(), 0);
+});
+
+test('an unexpected failure in a click with files.delete rate limited: the plain error shows; the records stay for the sweep (PR #226 review)', async () => {
+  const ctx = setup();
+  await open(ctx);
+  ctx.app.rateLimited.add('files.delete');
+  const update = ctx.app.client.views.update;
+  let failed = false;
+  ctx.app.client.views.update = async (args) => {
+    if (!failed && texts(args.view).includes('Drawing the map…')) {
+      failed = true;
+      throw Object.assign(new Error('An API error occurred: internal_error'), { data: { ok: false, error: 'internal_error' } });
+    }
+    return update(args);
+  };
+  await click(ctx, 'routing-map:view', pick('zone'));
+  assert.deepEqual(texts(lastView(ctx.app)), [PLAIN_ERROR]);
+  assert.deepEqual(ctx.app.deleted, []);
+  assert.deepEqual(ctx.store.mapFilesOf('UDISPATCH:V1'), ['F1'], 'kept for the sweep');
+  assert.ok(ctx.log.lines.some((l) => l.msg === 'map file delete failed; kept for the next sweep'));
+});
+
 // --- the four views (F15) -------------------------------------------------------------------
 
 const nodesOf = (routes) => routes.map((r) => [r.crewId, r.stops]);
@@ -491,7 +639,7 @@ test('a crew lead\'s route change: stops moved onto their crew show in full; sto
   for (const word of ['Maple', 'Cedar', 'crew v1', 'crew v3', 'Ana Ruiz']) assert.ok(!text.includes(word), word);
 });
 
-test('a crew lead\'s gap fill: candidates on other crews are counted only; the visible ones renumbered 1..n', async () => {
+test('a crew lead\'s gap fill: candidates on other crews or on none are counted only, each by what it is; the visible ones renumbered 1..n', async () => {
   const ctx = setup();
   await open(ctx, U.leadA);
   await click(ctx, 'routing-map:view', pick('gap'), { user: U.leadA });
@@ -499,8 +647,18 @@ test('a crew lead\'s gap fill: candidates on other crews are counted only; the v
   const rows = lines(lastView(ctx.app));
   assert.match(rows[3], /^1\. 11:50 · Kim Sato, Riverton · booked on Maple crew/);
   assert.match(rows[4], /^2\. 11:50 · Omar Diaz, Riverton · booked on Maple crew/);
-  assert.equal(rows[5], '3 more visits booked on other crews could fill it; they are not shown here.');
+  // k2 (Birch), k3 (Cedar) and k4 (booked on no crew), counted apart (PR #226 review).
+  assert.equal(rows[5], '2 more visits booked on other crews and 1 visit not booked on any crew could fill it; they are not shown here.');
   for (const name of ['Lea Quinn', 'Max Ford', 'Nia Cole']) assert.ok(!rows.join('\n').includes(name), name);
+});
+
+test('the hidden gap-fill count names what it counts: other crews, no crew, or both', () => {
+  assert.deepEqual(hiddenLine(0, 0), []);
+  assert.deepEqual(hiddenLine(1, 0), ['1 more visit booked on other crews could fill it; it is not shown here.']);
+  assert.deepEqual(hiddenLine(2, 0), ['2 more visits booked on other crews could fill it; they are not shown here.']);
+  assert.deepEqual(hiddenLine(0, 1), ['1 more visit not booked on any crew could fill it; it is not shown here.']);
+  assert.deepEqual(hiddenLine(0, 2), ['2 more visits not booked on any crew could fill it; they are not shown here.']);
+  assert.deepEqual(hiddenLine(1, 2), ['1 more visit booked on other crews and 2 visits not booked on any crew could fill it; they are not shown here.']);
 });
 
 test('a lead\'s action naming another crew or a zone still yields only their crew: the scope comes from the audience', async () => {

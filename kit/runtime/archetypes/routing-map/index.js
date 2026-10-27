@@ -29,9 +29,11 @@
 // The hub (kit/runtime/slack/hubs) owns Slack: it pushes the view with
 // "Loading…" inside the trigger's life, then calls open(); each select click
 // is acked, then click() runs. Both get
-//   show(message)                    a plain message rendered into the view
+//   show(message, { current }?)      a plain message rendered into the view
 //                                    (the hub deletes the view's earlier map
-//                                    files once it shows)
+//                                    files once it shows); with current, the
+//                                    hub skips it if current() is false when
+//                                    its turn to show comes
 //   showMap(message, { current })    the map: the hub's one lifecycle
 //                                    (upload, record, show, replace or
 //                                    delete, AD-R15), which asks current()
@@ -232,6 +234,10 @@ function createRoutingMap({
   // Draws the session's current picks and shows the result, unless a newer
   // click has come in by then. A failure while working the map out is a
   // plain message here; a Slack failure while showing it is the hub's.
+  // The draw works on its own copy of the picks and options (st); only a
+  // draw still current when its work is done commits them to the session,
+  // so a superseded draw never changes what the next click draws or the
+  // selects the next view shows (PR #226 review).
   async function draw({ mod, s, number, show, showMap }) {
     const current = () => sessions.isCurrent(s, number);
     const superseded = () => {
@@ -239,42 +245,47 @@ function createRoutingMap({
       log.info('map superseded', { module: mod.id, step: 'draw' });
       return true;
     };
-    const { scope } = s;
-    const { view, day } = s.picks;
+    const st = {
+      picks: { ...s.picks }, options: s.options, range: s.range, scope: s.scope, seq: number,
+    };
     let shown;
     try {
-      shown = await work({ mod, s, scope, view, day });
+      shown = await work({ mod, s, st });
     } catch (err) {
-      shown = { plain: textMessage(s, failureText(mod, view, err), headOf(s)) };
+      shown = { plain: textMessage(s, failureText(mod, st.picks.view, err), headOf(st)) };
     }
     if (superseded()) return;
+    s.picks.crew = st.picks.crew;
+    s.picks.zone = st.picks.zone;
+    s.options = st.options;
     if (shown.plain) {
-      await show(shown.plain);
+      await show(shown.plain, { current });
       return;
     }
-    log.info('routing map drawn', { module: mod.id, view });
+    log.info('routing map drawn', { module: mod.id, view: st.picks.view });
     await showMap(shown.map, { current, mod });
   }
 
   // Works one draw out: { plain } (a message) or { map } (a message with
-  // its image). Throws on any failure; nothing here talks to Slack.
-  async function work({
-    mod, s, scope, view, day,
-  }) {
+  // its image), writing only st (the draw's own copy). Throws on any
+  // failure; nothing here talks to Slack.
+  async function work({ mod, s, st }) {
+    const { scope } = st;
+    const { view, day } = st.picks;
     const adapter = adapterFor(mod);
     const { input, travel } = checkInput(await adapter.input({ day, view, scope }));
     const opts = choices(input, scope);
     const crewIds = new Set(input.crews.map((c) => c.crewId));
     if (audience.checkScope(scope, crewIds) !== 'ok') {
       log.error('routing map refused', { module: mod.id, reason: "the crew lead's crew is not in the data" });
-      s.options = null;
+      st.options = null;
       return { plain: textMessage(s, messageFor(new ConfigFault({ admin }))) };
     }
-    const pick = resolvePick(view, scope, s.picks, opts);
-    if (pick.kind === 'zone') s.picks.zone = pick.id; else s.picks.crew = pick.id;
+    const pick = resolvePick(view, scope, st.picks, opts);
+    if (pick.kind === 'zone') st.picks.zone = pick.id; else st.picks.crew = pick.id;
     if (pick.id === null) {
-      s.options = { crews: [], zones: [] };
-      return { plain: textMessage(s, MAP_WORDS.noCrews(day), headOf(s)) };
+      st.options = { crews: [], zones: [] };
+      return { plain: textMessage(s, MAP_WORDS.noCrews(day), headOf(st)) };
     }
     const plan = planView({
       view, input, travel, scope, pick, gapFill,
@@ -284,11 +295,11 @@ function createRoutingMap({
     const labelNodes = unique([...crewNodes, ...(plan.placeNodes || plan.labelNodes || [])]);
     const labels = checkLabels(await adapter.labels({ day, nodeIds: labelNodes, scope }), labelNodes);
     const n = namer(labels);
-    s.options = {
+    st.options = {
       crews: opts.crews.map((c) => ({ value: c, text: n.crewLabel(c) })),
       zones: opts.zones.map((z) => ({ value: z, text: zoneLabel(z) })),
     };
-    if (plan.empty) return { plain: textMessage(s, plan.empty(n), headOf(s)) };
+    if (plan.empty) return { plain: textMessage(s, plan.empty(n), headOf(st)) };
     const nodes = unique(plan.nodes);
     const points = await mapPoints(data, nodes, FRAME);
     const placed = new Set(Array.isArray(points) ? points.map((p) => p && p.node) : []);
@@ -297,7 +308,7 @@ function createRoutingMap({
     const built = plan.build(n);
     const png = render(view, { frame: { ...FRAME }, points, ...built.model });
     const alt = altText({ view: VIEW_LABELS[view], crew: built.alt.crew, stops: built.alt.stops });
-    return { map: withModal(s, { head: headOf(s), image: { png, alt }, blocks: textBlocks(textOf(built)) }) };
+    return { map: withModal(s, { head: headOf(st), image: { png, alt }, blocks: textBlocks(textOf(built)) }) };
   }
 
   // The days the picker may show, from the adapter's asOf, read once per
@@ -391,13 +402,14 @@ function createRoutingMap({
       if (typeof v === 'string' && v.length <= 64) s.picks[which] = v;
     }
     const number = sessions.next(s);
+    const current = () => sessions.isCurrent(s, number);
     log.info('routing map click', { module: mod.id, action: which, view: s.picks.view });
     if (refusedDay) {
       log.info('routing map click refused', { action: which, reason: 'day out of range' });
-      if (sessions.isCurrent(s, number)) await show(textMessage(s, MAP_WORDS.badDate(s.range.from, s.range.to), headOf(s)));
+      if (sessions.isCurrent(s, number)) await show(textMessage(s, MAP_WORDS.badDate(s.range.from, s.range.to), headOf(s)), { current });
       return;
     }
-    if (sessions.isCurrent(s, number)) await show(textMessage(s, MAP_WORDS.drawing(), headOf(s)));
+    if (sessions.isCurrent(s, number)) await show(textMessage(s, MAP_WORDS.drawing(), headOf(s)), { current });
     await draw({
       mod, s, number, show, showMap,
     });

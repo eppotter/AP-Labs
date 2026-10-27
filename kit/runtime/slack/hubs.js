@@ -126,9 +126,13 @@
 // switch); a map not shown is deleted at once. It also takes current(), the
 // archetype's request-order check, asked before the upload and before each
 // show, so a superseded click uploads nothing, or deletes what it uploaded;
-// a show Slack drops on hash_conflict deletes its file too. A plain result
-// (an error, a refusal, "Drawing the map…") deletes the view's earlier files
-// once it shows. Who may open it is the profile's routing audience
+// a show Slack drops on hash_conflict deletes its file too. Each update also
+// asks current() again when its turn in the view's queue comes, so a click
+// overtaken while waiting is skipped: its map is deleted, never shown. A
+// plain result (an error, a refusal, "Drawing the map…") deletes the view's
+// earlier files once it shows; so does the handler's plain error on an
+// unexpected failure. A "map not shown" message dropped on hash_conflict
+// (a newer update won) is logged and dropped quietly. Who may open it is the profile's routing audience
 // (archetypes/routing-map/audience canOpen), not the manifest's resource.
 
 const access = require('../access');
@@ -400,7 +404,10 @@ function registerHubs(app, {
   // text, the image block, blocks. show(message) renders into the map view
   // (it throws Dropped when Slack dropped the update). owner ties the files
   // to this person and this view, for view_closed. current(): false once a
-  // newer request has come in; asked before the upload and before each show.
+  // newer request has come in; asked before the upload and before each show,
+  // and passed to show(message, { current }) so a show that waits its turn
+  // (a click's update queue) asks again just before it goes to Slack and
+  // throws Superseded instead (PR #226 review).
   // Resolves 'shown', 'superseded', 'dropped', 'failed' or 'refused'.
   const showMap = async ({
     mod, owner, message, show, current = () => true,
@@ -408,9 +415,24 @@ function registerHubs(app, {
     const {
       image, head = [], text: words, blocks: tail = [], modal,
     } = message;
+    // The plain "map not shown" message. A newer request (Superseded) or a
+    // newer update to the view (Dropped, hash_conflict) won: nothing to
+    // tell, and the view's files are that newer show's to replace.
     const notShown = async (earlier) => {
       if (!current()) return;
-      await show({ blocks: [...head, ...textBlocks(MAP_NOT_SHOWN)], ...(modal ? { modal } : {}) });
+      try {
+        await show({ blocks: [...head, ...textBlocks(MAP_NOT_SHOWN)], ...(modal ? { modal } : {}) }, { current });
+      } catch (err) {
+        if (err instanceof Superseded) {
+          log.info('map superseded', { module: mod.id, step: 'not shown' });
+          return;
+        }
+        if (err instanceof Dropped) {
+          log.info('stale view result dropped', { action: 'map not shown', reason: 'hash_conflict' });
+          return;
+        }
+        throw err;
+      }
       await mapFiles.release(owner, { among: earlier, why: 'replaced' });
     };
     if (!uploadsMapImages(mod)) {
@@ -438,7 +460,7 @@ function registerHubs(app, {
     try {
       attempt = await mapFiles.showing(async () => {
         if (!current()) throw new Superseded();
-        await show(shown);
+        await show(shown, { current });
       });
     } catch (err) {
       await mapFiles.release(owner, { only: fileId, why: 'not shown' });
@@ -677,8 +699,12 @@ function registerHubs(app, {
   const mapUpdater = (client, from) => {
     const v = mapViewOf(from);
     const title = from.title && from.title.text;
-    return (message) => {
+    // current: when given, asked again when this update's turn comes; false
+    // means a newer click came in while it waited, so it is skipped
+    // ('superseded') and never shown.
+    return (message, { current } = {}) => {
       const next = v.queue.then(async () => {
+        if (typeof current === 'function' && !current()) return 'superseded';
         try {
           const res = await client.views.update({
             view_id: from.id, ...(v.hash ? { hash: v.hash } : {}), view: moduleView({ title, hubId: null, blocks: messageBlocks(message), message }),
@@ -709,16 +735,21 @@ function registerHubs(app, {
     // Every render keeps the map view's callback (view_closed) and metadata.
     const keep = { ...MAP_VIEW, privateMetadata: typeof from.private_metadata === 'string' ? from.private_metadata : '' };
     const update = mapUpdater(client, from);
-    const render = async (message) => {
+    const render = async (message, { current } = {}) => {
       const m = screened('routing-map', message);
       const full = typeof m === 'string' ? { text: m } : m;
-      const status = await update(full.modal ? full : { ...full, modal: keep });
+      const status = await update(full.modal ? full : { ...full, modal: keep }, { current });
       if (status === 'dropped') throw new Dropped();
+      if (status === 'superseded') throw new Superseded();
     };
-    const show = async (message) => {
+    const show = async (message, { current } = {}) => {
       try {
-        await showPlain(owner, render, message);
+        await showPlain(owner, (m) => render(m, { current }), message);
       } catch (err) {
+        if (err instanceof Superseded) {
+          log.info('map superseded', { module: 'routing-map', step: 'plain' });
+          return;
+        }
         if (!(err instanceof Dropped)) throw err;
         log.info('stale view result dropped', { action: 'routing-map', reason: 'hash_conflict' });
       }
@@ -736,11 +767,23 @@ function registerHubs(app, {
         }),
       });
     } catch (err) {
+      // The plain error replaces whatever the view showed, so the view's
+      // map files go too (not at the sweep, PR #226 review): the ones
+      // recorded by now, whether or not the plain error shows. A failed
+      // delete keeps its record for the sweep (mapFiles.release).
       log.error('handler failed', { handler: 'hub:routing-map', err });
+      const earlier = mapFiles.filesOf(owner);
       try {
         await update({ text: PLAIN_ERROR, modal: keep });
       } catch (showErr) {
         log.error('could not tell the person about a failure', { handler: 'hub:routing-map', err: showErr });
+      }
+      if (earlier.length) {
+        try {
+          await mapFiles.release(owner, { among: earlier, why: 'error' });
+        } catch (releaseErr) {
+          log.warn('map files not released after a failure; kept for the next sweep', { reason: failureReason(releaseErr) });
+        }
       }
     }
   }, { log, store }));
