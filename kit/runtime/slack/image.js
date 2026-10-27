@@ -27,6 +27,15 @@
 //                           recorded (except keep; or only that one; or only
 //                           those of among still recorded), for a view
 //                           switch, view_closed or a map that was not shown.
+//   reuse(owner, id, alt)   Plan a route's list update (Story 15.14,
+//                           AD-R27): the image block for a file already
+//                           shown, so the list can change under the same
+//                           picture without a new upload. Only while the
+//                           file's record is live for this owner and the
+//                           file is under 10 minutes old (REUSE_MS, by this
+//                           process's upload time and now()): { block }, else
+//                           { reason } ('not recorded' or 'too old'). Nothing
+//                           is uploaded, recorded or deleted here.
 //   filesOf(owner)          the file ids the owner has recorded now (Story
 //                           15.4: a map that shows deletes only the files
 //                           recorded before its upload, among, so an older
@@ -68,6 +77,9 @@ const MAP_CHECK = 'map-check';
 // 2026-10-26: views.update 0.5 s after the upload failed). Total 10 s.
 const SHOW_DELAYS = Object.freeze([1000, 2000, 3000, 4000]);
 const NOT_READY = /invalid slack file/i;
+// How long a shown file may be shown again in a list update (AD-R27): well
+// inside its 15-minute record, so the sweep never deletes it while shown.
+const REUSE_MS = 10 * 60 * 1000;
 const MAX_MESSAGES = 3;
 const MAX_MESSAGE = 200;
 
@@ -202,9 +214,16 @@ const canFiles = (client) => Boolean(client && client.files
   && typeof client.files.uploadV2 === 'function' && typeof client.files.delete === 'function');
 
 function createMapFiles({
-  store, client, log, sweeping = () => false, showDelays = SHOW_DELAYS, sleep = wait,
+  store, client, log, sweeping = () => false, showDelays = SHOW_DELAYS, sleep = wait, now = () => Date.now(),
 }) {
   const ready = () => canStore(store) && canFiles(client) && sweeping() === true;
+  // file id -> when this process uploaded it (for reuse); entries past the
+  // reuse window are forgotten on the next upload.
+  const uploadedAt = new Map();
+  const forgetOld = () => {
+    const t = now();
+    for (const [id, at] of uploadedAt) if (t - at >= REUSE_MS) uploadedAt.delete(id);
+  };
 
   async function upload({ owner, png, alt }) {
     if (!ready()) throw new ImageError('map files cannot be cleaned up here');
@@ -217,7 +236,18 @@ function createMapFiles({
       await deleteNow(id);
       throw new ImageError('the file could not be recorded');
     }
+    forgetOld();
+    uploadedAt.set(id, now());
     return imageBlock({ id, alt });
+  }
+
+  // The image block for a file already shown, or why it cannot be reused.
+  function reuse(owner, id, alt) {
+    if (!canStore(store) || typeof owner !== 'string' || !owner || typeof id !== 'string') return { reason: 'not recorded' };
+    if (!store.mapFilesOf(owner).includes(id)) return { reason: 'not recorded' };
+    const at = uploadedAt.get(id);
+    if (at === undefined || now() - at >= REUSE_MS) return { reason: 'too old' };
+    return { block: imageBlock({ id, alt }) };
   }
 
   // A file no one will see: delete it now. A failure is logged; the file was
@@ -263,11 +293,11 @@ function createMapFiles({
   const filesOf = (owner) => (canStore(store) && typeof owner === 'string' && owner ? store.mapFilesOf(owner).slice() : []);
 
   return {
-    ready, upload, release, showing, filesOf,
+    ready, upload, release, showing, filesOf, reuse,
   };
 }
 
 module.exports = {
   altText, isAltText, isPng, uploadsMapImages, uploadPng, imageBlock, fileIdOf, deleteMapFiles, createMapFiles, slackCode,
-  fileNotReady, slackMessages, ImageError, NotAccepted, SHOW_DELAYS, FILENAME, TITLE, MAX_ALT, MAX_PNG_BYTES, MAP_CHECK,
+  fileNotReady, slackMessages, ImageError, NotAccepted, SHOW_DELAYS, FILENAME, TITLE, MAX_ALT, MAX_PNG_BYTES, MAP_CHECK, REUSE_MS,
 };

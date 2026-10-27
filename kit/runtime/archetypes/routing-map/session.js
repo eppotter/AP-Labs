@@ -1,8 +1,9 @@
 'use strict';
 
 // Routing-map sessions (Story 15.4, AD-R16). In memory only: a session holds
-// what the person picked (view, day, crew, zone) and the options last shown,
-// never person data, a position or a name. Its id, from crypto.randomUUID, is
+// what the person picked (view, day, crew, zone) and the options last shown;
+// for Routing's views never person data, a position or a name (Plan a route's
+// exception is below). Its id, from crypto.randomUUID, is
 // the view's private_metadata and nothing else.
 //
 // A session is bound to the Slack user who opened it and the view it lives in
@@ -19,6 +20,14 @@
 // (signal(s)), aborted when a newer click comes in, when the view closes
 // (Back or Close) or when the session is dropped, so the tile fetch for a
 // draw nobody will see stops at once.
+//
+// Plan a route (Story 15.14, AD-R27) keeps its own state on the session too
+// (screen 'route-editor'): the input, travel, distance, the order and its
+// version, the names its list shows, and the crew and day's map positions
+// and mosaic (AD-R12 amended), so a reorder reads nothing. They live in
+// memory only, for the session's life, and go when it is dropped, closed or
+// pruned; nothing here writes them anywhere. An expired session's lookup
+// says which screen it was, so the person is told in that screen's words.
 //
 // Every function is synchronous, so nothing runs between a check and a
 // change. The clock is now(), Date.now by default (node:test mock.timers
@@ -50,6 +59,7 @@ function createSessions({ now = () => Date.now(), ttlMs = TTL_MS, max = MAX_SESS
     const s = sessions.get(id);
     if (!s) return;
     stopWork(s);
+    s.plan = null;
     sessions.delete(id);
   }
 
@@ -60,13 +70,16 @@ function createSessions({ now = () => Date.now(), ttlMs = TTL_MS, max = MAX_SESS
   }
 
   // A new session for this user's view. Returns it.
-  function open({ userId, viewId, moduleId, picks }) {
+  function open({
+    userId, viewId, moduleId, picks, screen = 'views',
+  }) {
     prune();
     const s = {
       id: crypto.randomUUID(),
       userId,
       viewId,
       moduleId,
+      screen,
       picks: { ...picks },
       options: null,
       seq: 0,
@@ -85,7 +98,7 @@ function createSessions({ now = () => Date.now(), ttlMs = TTL_MS, max = MAX_SESS
     if (!s) return { status: STATUS.EXPIRED };
     if (!alive(s)) {
       remove(id);
-      return { status: STATUS.EXPIRED };
+      return { status: STATUS.EXPIRED, screen: s.screen };
     }
     if (s.userId !== userId || s.viewId !== viewId) return { status: STATUS.NOT_YOURS, sameUser: s.userId === userId };
     return { status: STATUS.OK, session: s };

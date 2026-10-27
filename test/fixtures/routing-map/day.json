@@ -1,5 +1,5 @@
 {
-  "_comment": "Synthetic day for the routing-map archetype tests (Story 15.4). Not client data: made-up crews, names, places and positions. places holds micro-degree positions and addresses only so tests can prove none of them ever reaches Slack, a log or an error; the fixture adapter never returns them.",
+  "_comment": "Synthetic day for the routing-map archetype tests (Story 15.4). Not client data: made-up crews, names, places and positions. places holds micro-degree positions and addresses only so tests can prove none of them ever reaches Slack, a log or an error; the fixture adapter never returns them. Story 15.14 adds depot:hq (the Office for Plan a route, a made-up point among the stops), its legs, and km_tenths on every leg (straight line x 1.3, in tenths of a km), so the fixture adapter can give route() a distance.",
   "asOf": "2026-11-02",
   "day": "2026-11-02",
   "limits": {
@@ -351,1538 +351,2028 @@
       "postal_code": "R1A 0B6",
       "lat_e6": 45314497,
       "lon_e6": -73566292
+    },
+    "depot:hq": {
+      "lat_e6": 45330000,
+      "lon_e6": -73590000
     }
   },
   "matrix": [
     {
       "from_node": "crew:v1",
       "to_node": "crew:v2",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 54
     },
     {
       "from_node": "crew:v1",
       "to_node": "crew:v3",
-      "minutes": 20
+      "minutes": 20,
+      "km_tenths": 130
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:s1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:s2",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 54
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:s3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 32
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:s4",
-      "minutes": 10
+      "minutes": 10,
+      "km_tenths": 68
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:s5",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 50
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:s6",
-      "minutes": 11
+      "minutes": 11,
+      "km_tenths": 70
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:s7",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 59
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:s8",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 112
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:s9",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 148
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:x1",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 51
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:k1",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 48
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:k2",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 57
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:k3",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 121
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:k4",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 42
     },
     {
       "from_node": "crew:v1",
       "to_node": "property:k5",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 55
     },
     {
       "from_node": "crew:v2",
       "to_node": "crew:v1",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 54
     },
     {
       "from_node": "crew:v2",
       "to_node": "crew:v3",
-      "minutes": 24
+      "minutes": 24,
+      "km_tenths": 159
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:s1",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 39
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:s2",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 55
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:s3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 35
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:s4",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 61
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:s5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:s6",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:s7",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:s8",
-      "minutes": 21
+      "minutes": 21,
+      "km_tenths": 141
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:s9",
-      "minutes": 27
+      "minutes": 27,
+      "km_tenths": 177
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:x1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 32
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:k1",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 49
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:k2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 4
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:k3",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 150
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:k4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 32
     },
     {
       "from_node": "crew:v2",
       "to_node": "property:k5",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 62
     },
     {
       "from_node": "crew:v3",
       "to_node": "crew:v1",
-      "minutes": 20
+      "minutes": 20,
+      "km_tenths": 130
     },
     {
       "from_node": "crew:v3",
       "to_node": "crew:v2",
-      "minutes": 24
+      "minutes": 24,
+      "km_tenths": 159
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:s1",
-      "minutes": 19
+      "minutes": 19,
+      "km_tenths": 129
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:s2",
-      "minutes": 16
+      "minutes": 16,
+      "km_tenths": 105
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:s3",
-      "minutes": 19
+      "minutes": 19,
+      "km_tenths": 125
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:s4",
-      "minutes": 16
+      "minutes": 16,
+      "km_tenths": 105
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:s5",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 150
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:s6",
-      "minutes": 24
+      "minutes": 24,
+      "km_tenths": 163
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:s7",
-      "minutes": 25
+      "minutes": 25,
+      "km_tenths": 168
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:s8",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:s9",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:x1",
-      "minutes": 19
+      "minutes": 19,
+      "km_tenths": 128
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:k1",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 110
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:k2",
-      "minutes": 24
+      "minutes": 24,
+      "km_tenths": 159
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:k3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:k4",
-      "minutes": 19
+      "minutes": 19,
+      "km_tenths": 126
     },
     {
       "from_node": "crew:v3",
       "to_node": "property:k5",
-      "minutes": 15
+      "minutes": 15,
+      "km_tenths": 98
     },
     {
       "from_node": "property:s1",
       "to_node": "crew:v1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "property:s1",
       "to_node": "crew:v2",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 39
     },
     {
       "from_node": "property:s1",
       "to_node": "crew:v3",
-      "minutes": 19
+      "minutes": 19,
+      "km_tenths": 129
     },
     {
       "from_node": "property:s1",
       "to_node": "property:s2",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 39
     },
     {
       "from_node": "property:s1",
       "to_node": "property:s3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 15
     },
     {
       "from_node": "property:s1",
       "to_node": "property:s4",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 52
     },
     {
       "from_node": "property:s1",
       "to_node": "property:s5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 33
     },
     {
       "from_node": "property:s1",
       "to_node": "property:s6",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 54
     },
     {
       "from_node": "property:s1",
       "to_node": "property:s7",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 46
     },
     {
       "from_node": "property:s1",
       "to_node": "property:s8",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 110
     },
     {
       "from_node": "property:s1",
       "to_node": "property:s9",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 147
     },
     {
       "from_node": "property:s1",
       "to_node": "property:x1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 32
     },
     {
       "from_node": "property:s1",
       "to_node": "property:k1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 33
     },
     {
       "from_node": "property:s1",
       "to_node": "property:k2",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 42
     },
     {
       "from_node": "property:s1",
       "to_node": "property:k3",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 120
     },
     {
       "from_node": "property:s1",
       "to_node": "property:k4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 23
     },
     {
       "from_node": "property:s1",
       "to_node": "property:k5",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 42
     },
     {
       "from_node": "property:s2",
       "to_node": "crew:v1",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 54
     },
     {
       "from_node": "property:s2",
       "to_node": "crew:v2",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 55
     },
     {
       "from_node": "property:s2",
       "to_node": "crew:v3",
-      "minutes": 16
+      "minutes": 16,
+      "km_tenths": 105
     },
     {
       "from_node": "property:s2",
       "to_node": "property:s1",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 39
     },
     {
       "from_node": "property:s2",
       "to_node": "property:s3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 27
     },
     {
       "from_node": "property:s2",
       "to_node": "property:s4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 15
     },
     {
       "from_node": "property:s2",
       "to_node": "property:s5",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 46
     },
     {
       "from_node": "property:s2",
       "to_node": "property:s6",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 58
     },
     {
       "from_node": "property:s2",
       "to_node": "property:s7",
-      "minutes": 10
+      "minutes": 10,
+      "km_tenths": 64
     },
     {
       "from_node": "property:s2",
       "to_node": "property:s8",
-      "minutes": 13
+      "minutes": 13,
+      "km_tenths": 87
     },
     {
       "from_node": "property:s2",
       "to_node": "property:s9",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 123
     },
     {
       "from_node": "property:s2",
       "to_node": "property:x1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 23
     },
     {
       "from_node": "property:s2",
       "to_node": "property:k1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 7
     },
     {
       "from_node": "property:s2",
       "to_node": "property:k2",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 55
     },
     {
       "from_node": "property:s2",
       "to_node": "property:k3",
-      "minutes": 14
+      "minutes": 14,
+      "km_tenths": 96
     },
     {
       "from_node": "property:s2",
       "to_node": "property:k4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 23
     },
     {
       "from_node": "property:s2",
       "to_node": "property:k5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 7
     },
     {
       "from_node": "property:s3",
       "to_node": "crew:v1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 32
     },
     {
       "from_node": "property:s3",
       "to_node": "crew:v2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 35
     },
     {
       "from_node": "property:s3",
       "to_node": "crew:v3",
-      "minutes": 19
+      "minutes": 19,
+      "km_tenths": 125
     },
     {
       "from_node": "property:s3",
       "to_node": "property:s1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 15
     },
     {
       "from_node": "property:s3",
       "to_node": "property:s2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 27
     },
     {
       "from_node": "property:s3",
       "to_node": "property:s4",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 39
     },
     {
       "from_node": "property:s3",
       "to_node": "property:s5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 27
     },
     {
       "from_node": "property:s3",
       "to_node": "property:s6",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 45
     },
     {
       "from_node": "property:s3",
       "to_node": "property:s7",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 44
     },
     {
       "from_node": "property:s3",
       "to_node": "property:s8",
-      "minutes": 16
+      "minutes": 16,
+      "km_tenths": 107
     },
     {
       "from_node": "property:s3",
       "to_node": "property:s9",
-      "minutes": 21
+      "minutes": 21,
+      "km_tenths": 143
     },
     {
       "from_node": "property:s3",
       "to_node": "property:x1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "property:s3",
       "to_node": "property:k1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 20
     },
     {
       "from_node": "property:s3",
       "to_node": "property:k2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 37
     },
     {
       "from_node": "property:s3",
       "to_node": "property:k3",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 116
     },
     {
       "from_node": "property:s3",
       "to_node": "property:k4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "property:s3",
       "to_node": "property:k5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 31
     },
     {
       "from_node": "property:s4",
       "to_node": "crew:v1",
-      "minutes": 10
+      "minutes": 10,
+      "km_tenths": 68
     },
     {
       "from_node": "property:s4",
       "to_node": "crew:v2",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 61
     },
     {
       "from_node": "property:s4",
       "to_node": "crew:v3",
-      "minutes": 16
+      "minutes": 16,
+      "km_tenths": 105
     },
     {
       "from_node": "property:s4",
       "to_node": "property:s1",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 52
     },
     {
       "from_node": "property:s4",
       "to_node": "property:s2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 15
     },
     {
       "from_node": "property:s4",
       "to_node": "property:s3",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 39
     },
     {
       "from_node": "property:s4",
       "to_node": "property:s5",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 52
     },
     {
       "from_node": "property:s4",
       "to_node": "property:s6",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 60
     },
     {
       "from_node": "property:s4",
       "to_node": "property:s7",
-      "minutes": 11
+      "minutes": 11,
+      "km_tenths": 70
     },
     {
       "from_node": "property:s4",
       "to_node": "property:s8",
-      "minutes": 13
+      "minutes": 13,
+      "km_tenths": 88
     },
     {
       "from_node": "property:s4",
       "to_node": "property:s9",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 122
     },
     {
       "from_node": "property:s4",
       "to_node": "property:x1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 29
     },
     {
       "from_node": "property:s4",
       "to_node": "property:k1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 20
     },
     {
       "from_node": "property:s4",
       "to_node": "property:k2",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 61
     },
     {
       "from_node": "property:s4",
       "to_node": "property:k3",
-      "minutes": 14
+      "minutes": 14,
+      "km_tenths": 97
     },
     {
       "from_node": "property:s4",
       "to_node": "property:k4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 33
     },
     {
       "from_node": "property:s4",
       "to_node": "property:k5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 17
     },
     {
       "from_node": "property:s5",
       "to_node": "crew:v1",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 50
     },
     {
       "from_node": "property:s5",
       "to_node": "crew:v2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "property:s5",
       "to_node": "crew:v3",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 150
     },
     {
       "from_node": "property:s5",
       "to_node": "property:s1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 33
     },
     {
       "from_node": "property:s5",
       "to_node": "property:s2",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 46
     },
     {
       "from_node": "property:s5",
       "to_node": "property:s3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 27
     },
     {
       "from_node": "property:s5",
       "to_node": "property:s4",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 52
     },
     {
       "from_node": "property:s5",
       "to_node": "property:s6",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 21
     },
     {
       "from_node": "property:s5",
       "to_node": "property:s7",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "property:s5",
       "to_node": "property:s8",
-      "minutes": 20
+      "minutes": 20,
+      "km_tenths": 132
     },
     {
       "from_node": "property:s5",
       "to_node": "property:s9",
-      "minutes": 25
+      "minutes": 25,
+      "km_tenths": 168
     },
     {
       "from_node": "property:s5",
       "to_node": "property:x1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 23
     },
     {
       "from_node": "property:s5",
       "to_node": "property:k1",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 40
     },
     {
       "from_node": "property:s5",
       "to_node": "property:k2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 10
     },
     {
       "from_node": "property:s5",
       "to_node": "property:k3",
-      "minutes": 21
+      "minutes": 21,
+      "km_tenths": 141
     },
     {
       "from_node": "property:s5",
       "to_node": "property:k4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 23
     },
     {
       "from_node": "property:s5",
       "to_node": "property:k5",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 52
     },
     {
       "from_node": "property:s6",
       "to_node": "crew:v1",
-      "minutes": 11
+      "minutes": 11,
+      "km_tenths": 70
     },
     {
       "from_node": "property:s6",
       "to_node": "crew:v2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "property:s6",
       "to_node": "crew:v3",
-      "minutes": 24
+      "minutes": 24,
+      "km_tenths": 163
     },
     {
       "from_node": "property:s6",
       "to_node": "property:s1",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 54
     },
     {
       "from_node": "property:s6",
       "to_node": "property:s2",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 58
     },
     {
       "from_node": "property:s6",
       "to_node": "property:s3",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 45
     },
     {
       "from_node": "property:s6",
       "to_node": "property:s4",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 60
     },
     {
       "from_node": "property:s6",
       "to_node": "property:s5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 21
     },
     {
       "from_node": "property:s6",
       "to_node": "property:s7",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 21
     },
     {
       "from_node": "property:s6",
       "to_node": "property:s8",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 145
     },
     {
       "from_node": "property:s6",
       "to_node": "property:s9",
-      "minutes": 27
+      "minutes": 27,
+      "km_tenths": 181
     },
     {
       "from_node": "property:s6",
       "to_node": "property:x1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 35
     },
     {
       "from_node": "property:s6",
       "to_node": "property:k1",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 53
     },
     {
       "from_node": "property:s6",
       "to_node": "property:k2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 15
     },
     {
       "from_node": "property:s6",
       "to_node": "property:k3",
-      "minutes": 23
+      "minutes": 23,
+      "km_tenths": 154
     },
     {
       "from_node": "property:s6",
       "to_node": "property:k4",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 40
     },
     {
       "from_node": "property:s6",
       "to_node": "property:k5",
-      "minutes": 10
+      "minutes": 10,
+      "km_tenths": 65
     },
     {
       "from_node": "property:s7",
       "to_node": "crew:v1",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 59
     },
     {
       "from_node": "property:s7",
       "to_node": "crew:v2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "property:s7",
       "to_node": "crew:v3",
-      "minutes": 25
+      "minutes": 25,
+      "km_tenths": 168
     },
     {
       "from_node": "property:s7",
       "to_node": "property:s1",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 46
     },
     {
       "from_node": "property:s7",
       "to_node": "property:s2",
-      "minutes": 10
+      "minutes": 10,
+      "km_tenths": 64
     },
     {
       "from_node": "property:s7",
       "to_node": "property:s3",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 44
     },
     {
       "from_node": "property:s7",
       "to_node": "property:s4",
-      "minutes": 11
+      "minutes": 11,
+      "km_tenths": 70
     },
     {
       "from_node": "property:s7",
       "to_node": "property:s5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "property:s7",
       "to_node": "property:s6",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 21
     },
     {
       "from_node": "property:s7",
       "to_node": "property:s8",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 150
     },
     {
       "from_node": "property:s7",
       "to_node": "property:s9",
-      "minutes": 28
+      "minutes": 28,
+      "km_tenths": 186
     },
     {
       "from_node": "property:s7",
       "to_node": "property:x1",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 42
     },
     {
       "from_node": "property:s7",
       "to_node": "property:k1",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 58
     },
     {
       "from_node": "property:s7",
       "to_node": "property:k2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 10
     },
     {
       "from_node": "property:s7",
       "to_node": "property:k3",
-      "minutes": 24
+      "minutes": 24,
+      "km_tenths": 159
     },
     {
       "from_node": "property:s7",
       "to_node": "property:k4",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 42
     },
     {
       "from_node": "property:s7",
       "to_node": "property:k5",
-      "minutes": 11
+      "minutes": 11,
+      "km_tenths": 71
     },
     {
       "from_node": "property:s8",
       "to_node": "crew:v1",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 112
     },
     {
       "from_node": "property:s8",
       "to_node": "crew:v2",
-      "minutes": 21
+      "minutes": 21,
+      "km_tenths": 141
     },
     {
       "from_node": "property:s8",
       "to_node": "crew:v3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "property:s8",
       "to_node": "property:s1",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 110
     },
     {
       "from_node": "property:s8",
       "to_node": "property:s2",
-      "minutes": 13
+      "minutes": 13,
+      "km_tenths": 87
     },
     {
       "from_node": "property:s8",
       "to_node": "property:s3",
-      "minutes": 16
+      "minutes": 16,
+      "km_tenths": 107
     },
     {
       "from_node": "property:s8",
       "to_node": "property:s4",
-      "minutes": 13
+      "minutes": 13,
+      "km_tenths": 88
     },
     {
       "from_node": "property:s8",
       "to_node": "property:s5",
-      "minutes": 20
+      "minutes": 20,
+      "km_tenths": 132
     },
     {
       "from_node": "property:s8",
       "to_node": "property:s6",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 145
     },
     {
       "from_node": "property:s8",
       "to_node": "property:s7",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 150
     },
     {
       "from_node": "property:s8",
       "to_node": "property:s9",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 37
     },
     {
       "from_node": "property:s8",
       "to_node": "property:x1",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 111
     },
     {
       "from_node": "property:s8",
       "to_node": "property:k1",
-      "minutes": 14
+      "minutes": 14,
+      "km_tenths": 93
     },
     {
       "from_node": "property:s8",
       "to_node": "property:k2",
-      "minutes": 21
+      "minutes": 21,
+      "km_tenths": 141
     },
     {
       "from_node": "property:s8",
       "to_node": "property:k3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "property:s8",
       "to_node": "property:k4",
-      "minutes": 16
+      "minutes": 16,
+      "km_tenths": 108
     },
     {
       "from_node": "property:s8",
       "to_node": "property:k5",
-      "minutes": 12
+      "minutes": 12,
+      "km_tenths": 80
     },
     {
       "from_node": "property:s9",
       "to_node": "crew:v1",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 148
     },
     {
       "from_node": "property:s9",
       "to_node": "crew:v2",
-      "minutes": 27
+      "minutes": 27,
+      "km_tenths": 177
     },
     {
       "from_node": "property:s9",
       "to_node": "crew:v3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "property:s9",
       "to_node": "property:s1",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 147
     },
     {
       "from_node": "property:s9",
       "to_node": "property:s2",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 123
     },
     {
       "from_node": "property:s9",
       "to_node": "property:s3",
-      "minutes": 21
+      "minutes": 21,
+      "km_tenths": 143
     },
     {
       "from_node": "property:s9",
       "to_node": "property:s4",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 122
     },
     {
       "from_node": "property:s9",
       "to_node": "property:s5",
-      "minutes": 25
+      "minutes": 25,
+      "km_tenths": 168
     },
     {
       "from_node": "property:s9",
       "to_node": "property:s6",
-      "minutes": 27
+      "minutes": 27,
+      "km_tenths": 181
     },
     {
       "from_node": "property:s9",
       "to_node": "property:s7",
-      "minutes": 28
+      "minutes": 28,
+      "km_tenths": 186
     },
     {
       "from_node": "property:s9",
       "to_node": "property:s8",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 37
     },
     {
       "from_node": "property:s9",
       "to_node": "property:x1",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 146
     },
     {
       "from_node": "property:s9",
       "to_node": "property:k1",
-      "minutes": 19
+      "minutes": 19,
+      "km_tenths": 128
     },
     {
       "from_node": "property:s9",
       "to_node": "property:k2",
-      "minutes": 27
+      "minutes": 27,
+      "km_tenths": 177
     },
     {
       "from_node": "property:s9",
       "to_node": "property:k3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 28
     },
     {
       "from_node": "property:s9",
       "to_node": "property:k4",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 144
     },
     {
       "from_node": "property:s9",
       "to_node": "property:k5",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 116
     },
     {
       "from_node": "property:x1",
       "to_node": "crew:v1",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 51
     },
     {
       "from_node": "property:x1",
       "to_node": "crew:v2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 32
     },
     {
       "from_node": "property:x1",
       "to_node": "crew:v3",
-      "minutes": 19
+      "minutes": 19,
+      "km_tenths": 128
     },
     {
       "from_node": "property:x1",
       "to_node": "property:s1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 32
     },
     {
       "from_node": "property:x1",
       "to_node": "property:s2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 23
     },
     {
       "from_node": "property:x1",
       "to_node": "property:s3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "property:x1",
       "to_node": "property:s4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 29
     },
     {
       "from_node": "property:x1",
       "to_node": "property:s5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 23
     },
     {
       "from_node": "property:x1",
       "to_node": "property:s6",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 35
     },
     {
       "from_node": "property:x1",
       "to_node": "property:s7",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 42
     },
     {
       "from_node": "property:x1",
       "to_node": "property:s8",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 111
     },
     {
       "from_node": "property:x1",
       "to_node": "property:s9",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 146
     },
     {
       "from_node": "property:x1",
       "to_node": "property:k1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "property:x1",
       "to_node": "property:k2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 32
     },
     {
       "from_node": "property:x1",
       "to_node": "property:k3",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 119
     },
     {
       "from_node": "property:x1",
       "to_node": "property:k4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "property:x1",
       "to_node": "property:k5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 30
     },
     {
       "from_node": "property:k1",
       "to_node": "crew:v1",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 48
     },
     {
       "from_node": "property:k1",
       "to_node": "crew:v2",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 49
     },
     {
       "from_node": "property:k1",
       "to_node": "crew:v3",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 110
     },
     {
       "from_node": "property:k1",
       "to_node": "property:s1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 33
     },
     {
       "from_node": "property:k1",
       "to_node": "property:s2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 7
     },
     {
       "from_node": "property:k1",
       "to_node": "property:s3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 20
     },
     {
       "from_node": "property:k1",
       "to_node": "property:s4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 20
     },
     {
       "from_node": "property:k1",
       "to_node": "property:s5",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 40
     },
     {
       "from_node": "property:k1",
       "to_node": "property:s6",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 53
     },
     {
       "from_node": "property:k1",
       "to_node": "property:s7",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 58
     },
     {
       "from_node": "property:k1",
       "to_node": "property:s8",
-      "minutes": 14
+      "minutes": 14,
+      "km_tenths": 93
     },
     {
       "from_node": "property:k1",
       "to_node": "property:s9",
-      "minutes": 19
+      "minutes": 19,
+      "km_tenths": 128
     },
     {
       "from_node": "property:k1",
       "to_node": "property:x1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 18
     },
     {
       "from_node": "property:k1",
       "to_node": "property:k2",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 49
     },
     {
       "from_node": "property:k1",
       "to_node": "property:k3",
-      "minutes": 15
+      "minutes": 15,
+      "km_tenths": 101
     },
     {
       "from_node": "property:k1",
       "to_node": "property:k4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 17
     },
     {
       "from_node": "property:k1",
       "to_node": "property:k5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 13
     },
     {
       "from_node": "property:k2",
       "to_node": "crew:v1",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 57
     },
     {
       "from_node": "property:k2",
       "to_node": "crew:v2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 4
     },
     {
       "from_node": "property:k2",
       "to_node": "crew:v3",
-      "minutes": 24
+      "minutes": 24,
+      "km_tenths": 159
     },
     {
       "from_node": "property:k2",
       "to_node": "property:s1",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 42
     },
     {
       "from_node": "property:k2",
       "to_node": "property:s2",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 55
     },
     {
       "from_node": "property:k2",
       "to_node": "property:s3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 37
     },
     {
       "from_node": "property:k2",
       "to_node": "property:s4",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 61
     },
     {
       "from_node": "property:k2",
       "to_node": "property:s5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 10
     },
     {
       "from_node": "property:k2",
       "to_node": "property:s6",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 15
     },
     {
       "from_node": "property:k2",
       "to_node": "property:s7",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 10
     },
     {
       "from_node": "property:k2",
       "to_node": "property:s8",
-      "minutes": 21
+      "minutes": 21,
+      "km_tenths": 141
     },
     {
       "from_node": "property:k2",
       "to_node": "property:s9",
-      "minutes": 27
+      "minutes": 27,
+      "km_tenths": 177
     },
     {
       "from_node": "property:k2",
       "to_node": "property:x1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 32
     },
     {
       "from_node": "property:k2",
       "to_node": "property:k1",
-      "minutes": 7
+      "minutes": 7,
+      "km_tenths": 49
     },
     {
       "from_node": "property:k2",
       "to_node": "property:k3",
-      "minutes": 23
+      "minutes": 23,
+      "km_tenths": 150
     },
     {
       "from_node": "property:k2",
       "to_node": "property:k4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 33
     },
     {
       "from_node": "property:k2",
       "to_node": "property:k5",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 62
     },
     {
       "from_node": "property:k3",
       "to_node": "crew:v1",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 121
     },
     {
       "from_node": "property:k3",
       "to_node": "crew:v2",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 150
     },
     {
       "from_node": "property:k3",
       "to_node": "crew:v3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "property:k3",
       "to_node": "property:s1",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 120
     },
     {
       "from_node": "property:k3",
       "to_node": "property:s2",
-      "minutes": 14
+      "minutes": 14,
+      "km_tenths": 96
     },
     {
       "from_node": "property:k3",
       "to_node": "property:s3",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 116
     },
     {
       "from_node": "property:k3",
       "to_node": "property:s4",
-      "minutes": 14
+      "minutes": 14,
+      "km_tenths": 97
     },
     {
       "from_node": "property:k3",
       "to_node": "property:s5",
-      "minutes": 21
+      "minutes": 21,
+      "km_tenths": 141
     },
     {
       "from_node": "property:k3",
       "to_node": "property:s6",
-      "minutes": 23
+      "minutes": 23,
+      "km_tenths": 154
     },
     {
       "from_node": "property:k3",
       "to_node": "property:s7",
-      "minutes": 24
+      "minutes": 24,
+      "km_tenths": 159
     },
     {
       "from_node": "property:k3",
       "to_node": "property:s8",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "property:k3",
       "to_node": "property:s9",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 28
     },
     {
       "from_node": "property:k3",
       "to_node": "property:x1",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 119
     },
     {
       "from_node": "property:k3",
       "to_node": "property:k1",
-      "minutes": 15
+      "minutes": 15,
+      "km_tenths": 101
     },
     {
       "from_node": "property:k3",
       "to_node": "property:k2",
-      "minutes": 23
+      "minutes": 23,
+      "km_tenths": 150
     },
     {
       "from_node": "property:k3",
       "to_node": "property:k4",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 117
     },
     {
       "from_node": "property:k3",
       "to_node": "property:k5",
-      "minutes": 13
+      "minutes": 13,
+      "km_tenths": 89
     },
     {
       "from_node": "property:k4",
       "to_node": "crew:v1",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 42
     },
     {
       "from_node": "property:k4",
       "to_node": "crew:v2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 32
     },
     {
       "from_node": "property:k4",
       "to_node": "crew:v3",
-      "minutes": 19
+      "minutes": 19,
+      "km_tenths": 126
     },
     {
       "from_node": "property:k4",
       "to_node": "property:s1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 23
     },
     {
       "from_node": "property:k4",
       "to_node": "property:s2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 23
     },
     {
       "from_node": "property:k4",
       "to_node": "property:s3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "property:k4",
       "to_node": "property:s4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 33
     },
     {
       "from_node": "property:k4",
       "to_node": "property:s5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 23
     },
     {
       "from_node": "property:k4",
       "to_node": "property:s6",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 40
     },
     {
       "from_node": "property:k4",
       "to_node": "property:s7",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 42
     },
     {
       "from_node": "property:k4",
       "to_node": "property:s8",
-      "minutes": 16
+      "minutes": 16,
+      "km_tenths": 108
     },
     {
       "from_node": "property:k4",
       "to_node": "property:s9",
-      "minutes": 22
+      "minutes": 22,
+      "km_tenths": 144
     },
     {
       "from_node": "property:k4",
       "to_node": "property:x1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 9
     },
     {
       "from_node": "property:k4",
       "to_node": "property:k1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 17
     },
     {
       "from_node": "property:k4",
       "to_node": "property:k2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 33
     },
     {
       "from_node": "property:k4",
       "to_node": "property:k3",
-      "minutes": 18
+      "minutes": 18,
+      "km_tenths": 117
     },
     {
       "from_node": "property:k4",
       "to_node": "property:k5",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 29
     },
     {
       "from_node": "property:k5",
       "to_node": "crew:v1",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 55
     },
     {
       "from_node": "property:k5",
       "to_node": "crew:v2",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 62
     },
     {
       "from_node": "property:k5",
       "to_node": "crew:v3",
-      "minutes": 15
+      "minutes": 15,
+      "km_tenths": 98
     },
     {
       "from_node": "property:k5",
       "to_node": "property:s1",
-      "minutes": 6
+      "minutes": 6,
+      "km_tenths": 42
     },
     {
       "from_node": "property:k5",
       "to_node": "property:s2",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 7
     },
     {
       "from_node": "property:k5",
       "to_node": "property:s3",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 31
     },
     {
       "from_node": "property:k5",
       "to_node": "property:s4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 17
     },
     {
       "from_node": "property:k5",
       "to_node": "property:s5",
-      "minutes": 8
+      "minutes": 8,
+      "km_tenths": 52
     },
     {
       "from_node": "property:k5",
       "to_node": "property:s6",
-      "minutes": 10
+      "minutes": 10,
+      "km_tenths": 65
     },
     {
       "from_node": "property:k5",
       "to_node": "property:s7",
-      "minutes": 11
+      "minutes": 11,
+      "km_tenths": 71
     },
     {
       "from_node": "property:k5",
       "to_node": "property:s8",
-      "minutes": 12
+      "minutes": 12,
+      "km_tenths": 80
     },
     {
       "from_node": "property:k5",
       "to_node": "property:s9",
-      "minutes": 17
+      "minutes": 17,
+      "km_tenths": 116
     },
     {
       "from_node": "property:k5",
       "to_node": "property:x1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 30
     },
     {
       "from_node": "property:k5",
       "to_node": "property:k1",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 13
     },
     {
       "from_node": "property:k5",
       "to_node": "property:k2",
-      "minutes": 9
+      "minutes": 9,
+      "km_tenths": 62
     },
     {
       "from_node": "property:k5",
       "to_node": "property:k3",
-      "minutes": 13
+      "minutes": 13,
+      "km_tenths": 89
     },
     {
       "from_node": "property:k5",
       "to_node": "property:k4",
-      "minutes": 5
+      "minutes": 5,
+      "km_tenths": 29
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:s1",
+      "minutes": 5,
+      "km_tenths": 24
+    },
+    {
+      "from_node": "property:s1",
+      "to_node": "depot:hq",
+      "minutes": 5,
+      "km_tenths": 24
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:s2",
+      "minutes": 5,
+      "km_tenths": 27
+    },
+    {
+      "from_node": "property:s2",
+      "to_node": "depot:hq",
+      "minutes": 5,
+      "km_tenths": 27
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:s3",
+      "minutes": 5,
+      "km_tenths": 10
+    },
+    {
+      "from_node": "property:s3",
+      "to_node": "depot:hq",
+      "minutes": 5,
+      "km_tenths": 10
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:s4",
+      "minutes": 6,
+      "km_tenths": 36
+    },
+    {
+      "from_node": "property:s4",
+      "to_node": "depot:hq",
+      "minutes": 6,
+      "km_tenths": 36
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:s5",
+      "minutes": 5,
+      "km_tenths": 20
+    },
+    {
+      "from_node": "property:s5",
+      "to_node": "depot:hq",
+      "minutes": 5,
+      "km_tenths": 20
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:s6",
+      "minutes": 6,
+      "km_tenths": 36
+    },
+    {
+      "from_node": "property:s6",
+      "to_node": "depot:hq",
+      "minutes": 6,
+      "km_tenths": 36
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:s7",
+      "minutes": 6,
+      "km_tenths": 38
+    },
+    {
+      "from_node": "property:s7",
+      "to_node": "depot:hq",
+      "minutes": 6,
+      "km_tenths": 38
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:s8",
+      "minutes": 17,
+      "km_tenths": 112
+    },
+    {
+      "from_node": "property:s8",
+      "to_node": "depot:hq",
+      "minutes": 17,
+      "km_tenths": 112
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:s9",
+      "minutes": 23,
+      "km_tenths": 148
+    },
+    {
+      "from_node": "property:s9",
+      "to_node": "depot:hq",
+      "minutes": 23,
+      "km_tenths": 148
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:x1",
+      "minutes": 5,
+      "km_tenths": 9
+    },
+    {
+      "from_node": "property:x1",
+      "to_node": "depot:hq",
+      "minutes": 5,
+      "km_tenths": 9
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:k1",
+      "minutes": 5,
+      "km_tenths": 20
+    },
+    {
+      "from_node": "property:k1",
+      "to_node": "depot:hq",
+      "minutes": 5,
+      "km_tenths": 20
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:k2",
+      "minutes": 5,
+      "km_tenths": 30
+    },
+    {
+      "from_node": "property:k2",
+      "to_node": "depot:hq",
+      "minutes": 5,
+      "km_tenths": 30
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:k3",
+      "minutes": 19,
+      "km_tenths": 121
+    },
+    {
+      "from_node": "property:k3",
+      "to_node": "depot:hq",
+      "minutes": 19,
+      "km_tenths": 121
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:k4",
+      "minutes": 5,
+      "km_tenths": 4
+    },
+    {
+      "from_node": "property:k4",
+      "to_node": "depot:hq",
+      "minutes": 5,
+      "km_tenths": 4
+    },
+    {
+      "from_node": "depot:hq",
+      "to_node": "property:k5",
+      "minutes": 5,
+      "km_tenths": 33
+    },
+    {
+      "from_node": "property:k5",
+      "to_node": "depot:hq",
+      "minutes": 5,
+      "km_tenths": 33
     }
   ]
 }
