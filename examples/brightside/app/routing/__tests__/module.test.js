@@ -136,6 +136,14 @@ test('a day with no cancelled visit: a dispatcher\'s gap view reads no candidate
   assert.ok(!data.queries.some((q) => q.sql === SQL.candidates));
 });
 
+test('a crew lead whose crew has no gap that day reads no candidates: no data about other crews\' visits', async () => {
+  const data = fakeData();
+  const { input } = await createAdapter({ data, routing: ROUTING }).input({ day: DAY, view: 'gap', scope: { crewId: '3' } });
+  assert.deepEqual([input.cancelled, input.candidates], [[], []]);
+  assert.ok(!data.queries.some((q) => q.sql === SQL.candidates), 'the candidates query is not run');
+  assert.deepEqual(data.calls, [], 'no travel read');
+});
+
 test('a crew lead whose crew is not in the day gets the whole day, so the archetype refuses it as a configuration fault', async () => {
   for (const view of ['compare', 'zone', 'change', 'gap']) {
     const { input } = await createAdapter({ data: fakeData(), routing: ROUTING }).input({ day: DAY, view, scope: { crewId: '9' } });

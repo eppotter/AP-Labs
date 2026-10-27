@@ -304,7 +304,10 @@ function createAdapter({ data, routing } = {}) {
     }
     const gapIds = new Set(gapCrews.map((c) => c.crewId));
     const cancelled = booked.cancelled.filter((c) => gapIds.has(c.currentCrewId));
-    const rows = gapCrews.length
+    // No cancelled visit on the gap crews (a crew lead whose crew has no gap
+    // that day, or a day with none): no candidates are read, so a lead's
+    // view reads nothing about other crews' visits.
+    const rows = cancelled.length
       ? await data.run(SQL.candidates, { day, horizon_days: horizonDays }, { declared: ['day', 'horizon_days'] })
       : [];
     const candidates = rows.map((row) => {
