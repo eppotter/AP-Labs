@@ -501,16 +501,23 @@ const slackError = (code) => Object.assign(new Error(`An API error occurred: ${c
 const imageBlocks = (view) => view.blocks.filter((b) => b.type === 'image');
 
 // The hubs with a map-file lifecycle. ready: whether the sweep runs.
+// Waits between show tries are recorded in slept, never slept (no real timer).
 function mapSetup({
   modules = [mapCheck()], sweeping = () => true, store = createStore(), client, noMapFiles = false,
 } = {}) {
   const app = new FakeSlackApp({ views: true });
   const log = quietLog();
-  const mapFiles = noMapFiles ? undefined : createMapFiles({ store, client: client === undefined ? app.client : client, log, sweeping });
+  const slept = [];
+  const sleep = async (ms) => { slept.push(ms); };
+  const mapFiles = noMapFiles ? undefined : createMapFiles({
+    store, client: client === undefined ? app.client : client, log, sweeping, sleep,
+  });
   registerHubs(app, {
     registry: createRegistry({ hubs: registry.hubs, modules }), profile, env: 'dev', log, store, canUse: () => true, ...(mapFiles ? { mapFiles } : {}),
   });
-  return { app, log, store, mapFiles };
+  return {
+    app, log, store, mapFiles, slept,
+  };
 }
 
 test('map-check: Open pushes a Back view asking for view_closed, uploads the PNG shared nowhere, records it, then shows the image block', async () => {
@@ -709,4 +716,103 @@ test('the PNG bytes never reach a log line or any Slack call but the upload', as
     assert.ok(!text.includes('Buffer'));
     assert.ok(!text.includes(b64));
   }
+});
+
+// --- Story 15.1 live check: a fresh file Slack does not accept yet ----------------
+
+const updatesWithImage = (app) => calls(app, 'update').filter((u) => imageBlocks(u.view).length);
+
+test('file not ready: views.update is tried again with backoff and the map shows; "map image shown" logs the attempt', async () => {
+  const { app, store, log, slept } = mapSetup();
+  app.filesNotReadyFor = 2;
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  assert.equal(updatesWithImage(app).length, 3);
+  assert.deepEqual(slept, [1000, 2000]);
+  const last = calls(app, 'update').at(-1);
+  assert.deepEqual(imageBlocks(last.view), [{ type: 'image', slack_file: { id: 'F1' }, alt_text: ALT }]);
+  assert.deepEqual(store.mapFilesOf('U1:V1'), ['F1']);
+  assert.deepEqual(app.deleted, []);
+  const shown = log.lines.filter((l) => l.msg === 'map image shown');
+  assert.deepEqual(shown.map((l) => l.fields), [{ module: 'map-check', attempt: 3 }]);
+  assert.ok(!log.lines.some((l) => l.msg === 'handler failed'));
+});
+
+test('a map shown on the first try logs attempt 1 and never waits', async () => {
+  const { app, log, slept } = mapSetup();
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  assert.deepEqual(slept, []);
+  assert.deepEqual(log.lines.filter((l) => l.msg === 'map image shown').map((l) => l.fields.attempt), [1]);
+});
+
+test('file never accepted: after 5 tries the plain upload-failure view with Back, the file deleted and its record dropped, one clear log line', async () => {
+  const { app, store, log, slept } = mapSetup();
+  app.filesNotReadyFor = Infinity;
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  assert.equal(updatesWithImage(app).length, 5);
+  assert.deepEqual(slept, [1000, 2000, 3000, 4000]);
+  const last = calls(app, 'update').at(-1);
+  assert.deepEqual(viewTexts(last.view), [MAP_NOT_SHOWN]);
+  assert.equal(last.view.close.text, 'Back');
+  assert.deepEqual(app.deleted, ['F1']);
+  assert.equal(store.mapFileCount(), 0);
+  const lines = log.lines.filter((l) => l.msg === 'map image not accepted by slack');
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].level, 'error');
+  assert.deepEqual(lines[0].fields, {
+    module: 'map-check', attempts: 5, reason: 'invalid_arguments',
+    messages: ['[ERROR] invalid slack file [json-pointer:view/blocks/1/slack_file.id/slack_file]'],
+  });
+  // Not the generic hub error.
+  assert.ok(!log.lines.some((l) => l.msg === 'handler failed'));
+  assert.ok(!calls(app, 'update').some((u) => viewTexts(u.view).includes(PLAIN_ERROR)));
+  assert.ok(!log.lines.some((l) => l.msg === 'map image shown'));
+  // Back afterwards: view_closed finds nothing left, and nothing is unrecorded in Slack.
+  await app.dispatchViewClosed('hub:map', { user: { id: 'U1' }, view: { id: 'V1' } });
+  assert.deepEqual(log.lines.filter((l) => l.msg === 'map view closed').map((l) => [l.fields.deleted, l.fields.kept]), [[0, 0]]);
+  assert.deepEqual([...app.files].filter((id) => !app.deleted.includes(id)), []);
+  const b64 = PNG.toString('base64').slice(0, 60);
+  assert.ok(!JSON.stringify(log.lines).includes(b64));
+});
+
+test('another views.update error is not retried: the file goes at once and the person gets the plain error', async () => {
+  const { app, store, slept, log } = mapSetup();
+  const update = app.client.views.update;
+  app.client.views.update = async (args) => {
+    if (imageBlocks(args.view).length) {
+      throw Object.assign(new Error('An API error occurred: invalid_arguments'), {
+        data: { ok: false, error: 'invalid_arguments', response_metadata: { messages: ['[ERROR] must be a valid block [json-pointer:/view/blocks/0]'] } },
+      });
+    }
+    return update(args);
+  };
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  assert.deepEqual(slept, []);
+  assert.equal(app.views.filter((v) => v.method === 'update').length, 1);
+  assert.deepEqual(app.deleted, ['F1']);
+  assert.equal(store.mapFileCount(), 0);
+  assert.ok(!log.lines.some((l) => l.msg === 'map image not accepted by slack'));
+});
+
+test('the file is recorded under the view_closed key before any views.update: a show that fails and a delete that fails leave it for view_closed', async () => {
+  const { app, store, log } = mapSetup();
+  const recorded = [];
+  const update = app.client.views.update;
+  app.client.views.update = async (args) => {
+    if (imageBlocks(args.view).length) {
+      recorded.push(store.mapFilesOf('U1:V1').slice());
+      throw slackError('hash_conflict');
+    }
+    return update(args);
+  };
+  app.deleteFail = slackError('ratelimited');
+  await app.dispatchAction('map-check:open', { view: MENU_VIEW });
+  assert.deepEqual(recorded, [['F1']]);
+  assert.deepEqual(app.deleted, []);
+  assert.deepEqual(store.mapFilesOf('U1:V1'), ['F1']);
+  // Back: view_closed (same person, same view) deletes it.
+  app.deleteFail = null;
+  await app.dispatchViewClosed('hub:map', { user: { id: 'U1' }, view: { id: 'V1' } });
+  assert.deepEqual(app.deleted, ['F1']);
+  assert.equal(store.mapFileCount(), 0);
+  assert.deepEqual(log.lines.filter((l) => l.msg === 'map view closed').map((l) => l.fields.deleted), [1]);
 });
