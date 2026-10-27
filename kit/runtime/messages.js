@@ -51,7 +51,7 @@ const ROUTING_WORDS = Object.freeze({
   not_true_false: ({ field }) => `"${field}" is not true or false`,
   out_of_range: ({ field }) => `"${field}" is outside its allowed range`,
   bad_id: ({ field }) => `"${field}" is not a valid id`,
-  bad_node: ({ field }) => `"${field}" is not a place id (property:<id> or crew:<id>)`,
+  bad_node: ({ field }) => `"${field}" is not a place id (property:<id>, crew:<id> or depot:<id>)`,
   bad_date: ({ field }) => `"${field}" is not a date written as YYYY-MM-DD`,
   bad_strength: ({ field }) => `"${field}" is neither hard nor soft`,
   unknown_crew: ({ field }) => `"${field}" names a crew that isn't in the day`,
@@ -78,6 +78,10 @@ const ROUTING_WORDS = Object.freeze({
   image_too_large: ({ field }) => `"${field}" came out larger than the size Slack is sent`,
   unsafe_svg: ({ field }) => `"${field}" was refused: it names something outside the map`,
   basemap_invalid: ({ field }) => `"${field}" was refused: its street map squares are not ones the map can draw`,
+  // A route order for evaluateOrder (Story 15.12).
+  missing_stop: ({ field }) => `"${field}" leaves out one of the crew's stops`,
+  unknown_stop: ({ field }) => `"${field}" names a stop that isn't in the day`,
+  other_crew_stop: ({ field }) => `"${field}" names a stop on another crew`,
 });
 
 // The AI service's refusals (Story 9.1). Each points to the typed form, which
