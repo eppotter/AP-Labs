@@ -1,0 +1,31 @@
+{
+  "_comment": "Synthetic map model for the Plan a route view (Story 15.13, AD-R28). Not client data: pixel points in a frame, as mapPoints returns them; no coordinates, no names. depot:hq is the Office; crew c2's stops are in a planned order, not their booked one.",
+  "view": "route",
+  "model": {
+    "frame": {
+      "width": 600,
+      "height": 400,
+      "padding": 40
+    },
+    "points": [
+      { "node": "depot:hq", "x": 300, "y": 210 },
+      { "node": "crew:c1", "x": 110, "y": 90 },
+      { "node": "crew:c2", "x": 470, "y": 330 },
+      { "node": "property:p1", "x": 180, "y": 70 },
+      { "node": "property:p2", "x": 420, "y": 60 },
+      { "node": "property:p3", "x": 540, "y": 170 },
+      { "node": "property:p4", "x": 500, "y": 320 },
+      { "node": "property:p5", "x": 260, "y": 350 },
+      { "node": "property:p6", "x": 90, "y": 260 }
+    ],
+    "crews": [
+      { "crewId": "c1", "color": 0, "baseNode": "depot:hq" },
+      { "crewId": "c2", "color": 2, "baseNode": "depot:hq" }
+    ],
+    "route": {
+      "crewId": "c2",
+      "stops": ["property:p1", "property:p2", "property:p3", "property:p4", "property:p5", "property:p6"]
+    },
+    "depot": "depot:hq"
+  }
+}

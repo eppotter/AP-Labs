@@ -107,6 +107,19 @@ adapter sums it for a route's total, shown only in whole km. A leg's `km_tenths`
 logged or sent (about 77 m per step, finer than the map grid). Node ids may now also be
 `depot:<id>` (the Office). SQLsmith confirms the SQL at Story 15.13.
 
+**As built (Story 15.13, `kit/runtime/data/travel.js`):** the template's last step is now
+`CAST(greatest(...) AS INTEGER) AS minutes, CAST(round(km * $detour_factor * 10) AS INTEGER) AS
+km_tenths`, both from the one `d` CTE's haversine `km`; no new bound parameter, no new table read.
+A place to itself is `km_tenths` 0 (its minutes are still the floor). JS checks each row's
+`km_tenths` is a whole number at or over 0, else the fixed-text `query_failed` fault, holding no
+value. Each returned row is a fresh frozen `{ from_node, to_node, minutes, km_tenths }`;
+`routing.travel.fromMatrix` reads only the three keys it needs. The data object's keys and the sdk
+are unchanged; `run()` still refuses every coordinate column. Node kinds stay whatever
+`routing.coordinates.nodes` declares, so a `depot` source reads like any other. The profile's
+optional `routing.depot: { node, label }` names the Office: its node's kind must be declared there,
+its label is plain text of 1 to 24 characters (one line; none of `< > & * _ ~ | :` and no backtick), and any other
+key, a lat or lon included, is refused.
+
 Map read path (added 2026-10-26 for the Slack map, Epic 15; SQLsmith to confirm the SQL at Story
 15.2): a second read, `mapPoints(nodeIds, frame)`, in the same closure and under the same guard,
 cap and refusal tests. `frame` is `{ width, height, padding }` integers within kit bounds. One static

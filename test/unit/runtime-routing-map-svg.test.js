@@ -44,7 +44,7 @@ function faultOf(fn) {
 const refuses = (view, m, field, problem) => {
   const f = faultOf(() => renderSvg(view, m));
   assert.deepEqual({ field: f.field, problem: f.problem }, { field, problem });
-  assert.doesNotMatch(f.message, /property:|crew:/, 'never a node id in the words');
+  assert.doesNotMatch(f.message, /property:|crew:|depot:/, 'never a node id in the words');
 };
 
 // Asserts a numbered marker for each stop of each route, in order, at its point.
@@ -69,7 +69,7 @@ function assertBase(svg, m, crewId, dx) {
 // --- every view -----------------------------------------------------------------
 
 test('the four views, each fixture: byte-identical twice, no text, font, reference or href', () => {
-  assert.deepEqual(VIEWS, ['compare', 'change', 'zone', 'gap']);
+  assert.deepEqual(VIEWS, ['compare', 'change', 'zone', 'gap', 'route']);
   for (const view of VIEWS) {
     const fx = load(view);
     assert.equal(fx.view, view);
@@ -82,7 +82,7 @@ test('the four views, each fixture: byte-identical twice, no text, font, referen
       assert.doesNotMatch(body, bad, `${view}: ${bad}`);
     }
     // No id, name or label from the model is written into the image.
-    assert.doesNotMatch(a, /property|crew|north|south|\bc\d\b|\bp\d+\b/, `${view}: no id text`);
+    assert.doesNotMatch(a, /property|crew|depot|\bhq\b|north|south|\bc\d\b|\bp\d+\b/, `${view}: no id text`);
     const size = imageSize(view, fx.model.frame);
     assert.match(a, new RegExp(`width="${size.width}" height="${size.height}"`));
   }
@@ -366,6 +366,8 @@ const PLAIN_SVG_SHA256 = Object.freeze({
   change: '4cea0276d478a01a29b4715c32b55ddce3db8b841fd4107fc03ebb47236fcda1',
   zone: '0cbf86c1f14bdae8012babba645d5ca62b71c9e00c8392158aea11cddeb0bc45',
   gap: '6fe1f9d8b5fbcdd40a8fb36ca61d9b4a09d2f986e0df6ad7ca8386b037118aa3',
+  // Story 15.13: the route view, pinned when it was added.
+  route: 'f375110119f489728796a68d256e9d923c94a2936f631adcfc5cc954da06b7bb',
 });
 
 test('Story 15.10: with no base or base plain, every fixture\'s SVG is byte for byte what it was before street tiles', () => {
@@ -396,4 +398,134 @@ test('Story 15.10: an unknown option or base is refused with fixed words', () =>
   assert.deepEqual(faultOf(() => renderSvg('gap', model('gap'), { base: 'satellite' })).problem, 'out_of_range');
   assert.deepEqual(faultOf(() => renderSvg('gap', model('gap'), { tiles: [] })).problem, 'unknown_key');
   assert.deepEqual(faultOf(() => renderSvg('gap', model('gap'), 'streets')).problem, 'not_object');
+});
+
+// --- Story 15.13: the route view, Plan a route's map (AD-R28) -------------------------------
+
+// The Office's marker: a house polygon and its door, at the Office's point.
+function officeAt(svg, p) {
+  const house = find(svg, 'polygon', { fill: '#000000', stroke: '#FFFFFF' })
+    .filter((e) => e.attrs.points === `${p.x - 12},${p.y + 11} ${p.x + 12},${p.y + 11} ${p.x + 12},${p.y - 2} ${p.x},${p.y - 14} ${p.x - 12},${p.y - 2}`);
+  const door = find(svg, 'rect', { x: p.x - 4, y: p.y + 1, width: 8, height: 10, fill: '#FFFFFF' });
+  return { house: house.length, door: door.length };
+}
+
+test('route: one panel; the Office marker in its own shape, stops numbered in the order given, one closed line in the crew\'s color', () => {
+  const m = model('route');
+  const svg = renderSvg('route', m);
+  assert.deepEqual(imageSize('route', m.frame), { width: m.frame.width, height: m.frame.height }, 'one panel');
+  assert.equal(find(svg, 'line').length, 0, 'no panel divider');
+  const office = pointOf(m, m.depot);
+  assert.deepEqual(officeAt(svg, office), { house: 1, door: 1 }, 'the Office marker, once');
+  // Its own shape: no crew base square anywhere, and the house is the only polygon.
+  assert.equal(find(svg, 'rect', { width: 16, height: 16 }).length, 0, 'no crew base square');
+  assert.equal(find(svg, 'polygon').length, 1);
+  // Stops numbered 1..n in the given order, in the crew's color.
+  const fill = fillOf(m, m.route.crewId);
+  assert.equal(fill, PALETTE[2].fill);
+  m.route.stops.forEach((node, i) => {
+    const p = pointOf(m, node);
+    assert.equal(find(svg, 'circle', { cx: p.x, cy: p.y, r: 11, fill }).length, 1, `stop ${i + 1}`);
+    assert.equal(find(svg, 'path', { d: numberPath(i + 1, p.x, p.y) }).length, 1, `number ${i + 1}`);
+  });
+  assert.equal(find(svg, 'circle').length, m.route.stops.length);
+  // One closed line: Office -> stops -> Office, in the crew's color.
+  const want = [m.depot, ...m.route.stops, m.depot].map((n) => `${pointOf(m, n).x},${pointOf(m, n).y}`).join(' ');
+  assert.deepEqual(find(svg, 'polyline').map((e) => e.attrs), [{
+    points: want, fill: 'none', stroke: fill, 'stroke-width': '4', 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+  }]);
+  // The Office is drawn last, on top of the line's two ends.
+  const body = svg.split('\n');
+  assert.ok(body.findIndex((l) => l.startsWith('<polygon')) > body.findIndex((l) => l.startsWith('<polyline')));
+  assert.ok(body.findIndex((l) => l.startsWith('<polygon')) > body.map((l, i) => (l.startsWith('<circle') ? i : -1)).at(-1));
+  assert.doesNotMatch(svg, /<text|font|href|url\(|<image/i);
+});
+
+test('route: the order given is the order drawn; a reorder renumbers the stops and redraws the loop', () => {
+  const m = model('route');
+  const reordered = model('route');
+  reordered.route.stops = [...m.route.stops].reverse();
+  const a = renderSvg('route', m);
+  const b = renderSvg('route', reordered);
+  assert.notEqual(a, b);
+  const last = pointOf(m, m.route.stops.at(-1));
+  assert.equal(find(b, 'path', { d: numberPath(1, last.x, last.y) }).length, 1, 'the last stop is now 1');
+  const want = [m.depot, ...reordered.route.stops, m.depot].map((n) => `${pointOf(m, n).x},${pointOf(m, n).y}`).join(' ');
+  assert.equal(find(b, 'polyline')[0].attrs.points, want);
+  assert.equal(renderSvg('route', clone(reordered)), b, 'byte-identical twice');
+});
+
+test('route: no stops draws only the Office; one stop draws an out-and-back loop; a crew past the palette gets its dashes', () => {
+  const none = model('route');
+  none.route.stops = [];
+  const svg = renderSvg('route', none);
+  assert.deepEqual(officeAt(svg, pointOf(none, none.depot)), { house: 1, door: 1 });
+  assert.equal(find(svg, 'polyline').length + find(svg, 'circle').length + find(svg, 'path').length, 0);
+  const one = model('route');
+  one.route.stops = ['property:p3'];
+  const o = pointOf(one, one.depot);
+  const p = pointOf(one, 'property:p3');
+  assert.equal(find(renderSvg('route', one), 'polyline')[0].attrs.points, `${o.x},${o.y} ${p.x},${p.y} ${o.x},${o.y}`);
+  const dashed = model('route');
+  dashed.crews[1].color = PALETTE.length + 2;
+  const line = find(renderSvg('route', dashed), 'polyline')[0].attrs;
+  assert.equal(line.stroke, PALETTE[2].fill);
+  assert.equal(line['stroke-dasharray'], '12 6');
+});
+
+test('route: the model is checked, and every refusal names the field, never a value', () => {
+  const edits = [
+    [(m) => { delete m.depot; }, 'depot', 'missing'],
+    [(m) => { delete m.route; }, 'route', 'missing'],
+    [(m) => { m.depot = 'depot:zz'; }, 'depot', 'no_position'],
+    [(m) => { m.depot = 'office:hq'; }, 'depot', 'bad_node'],
+    [(m) => { m.depot = 7; }, 'depot', 'not_text'],
+    [(m) => { m.route = []; }, 'route', 'not_object'],
+    [(m) => { m.route.label = 'Office'; }, 'route', 'unknown_key'],
+    [(m) => { m.route.crewId = 'c9'; }, 'route.crewId', 'unknown_crew'],
+    [(m) => { delete m.route.stops; }, 'route.stops', 'missing'],
+    [(m) => { m.route.stops = 'property:p1'; }, 'route.stops', 'not_list'],
+    [(m) => { m.route.stops[2] = 'property:zz'; }, 'route.stops[2]', 'no_position'],
+    [(m) => { m.route.stops[2] = m.depot; }, 'route.stops[2]', 'duplicate'],
+    [(m) => { m.route.stops[3] = m.route.stops[0]; }, 'route.stops[3]', 'duplicate'],
+    [(m) => { m.officeLabel = 'Office'; }, 'model', 'unknown_key'],
+    [(m) => { m.routes = []; }, 'model', 'unknown_key'],
+  ];
+  for (const [edit, field, problem] of edits) {
+    const m = model('route');
+    edit(m);
+    refuses('route', m, field, problem);
+  }
+  // The depot: kind is a node the renderer accepts (Brightside's Office is depot:office).
+  const office = model('route');
+  for (const p of office.points) if (p.node === 'depot:hq') p.node = 'depot:office';
+  for (const c of office.crews) c.baseNode = 'depot:office';
+  office.depot = 'depot:office';
+  assert.equal(renderSvg('route', office), renderSvg('route', model('route')), 'same drawing; the id is never written');
+  // The route view's model is not another view's, nor the reverse.
+  refuses('route', model('zone'), 'model', 'unknown_key');
+  refuses('gap', model('route'), 'model', 'unknown_key');
+  // More than 99 stops is refused; 99 are drawn.
+  const many = model('route');
+  const points = Array.from({ length: 100 }, (_, i) => ({ node: `property:q${i}`, x: 10 + (i % 50) * 10, y: 50 + Math.floor(i / 50) * 100 }));
+  many.points.push(...points);
+  many.route.stops = points.map((p) => p.node);
+  refuses('route', many, 'route.stops', 'out_of_range');
+  many.route.stops.pop();
+  assert.equal(find(renderSvg('route', many), 'circle').length, 99);
+});
+
+test('route: over the street map the background is the wash and nothing else changes', () => {
+  const plain = renderSvg('route', model('route'));
+  const streets = renderSvg('route', model('route'), { base: 'streets' });
+  assert.deepEqual(elements(streets)[0].attrs, { x: '0', y: '0', width: '600', height: '400', fill: '#FFFFFF', 'fill-opacity': '0.45' });
+  assert.equal(streets.split('\n').slice(2).join('\n'), plain.split('\n').slice(2).join('\n'));
+});
+
+test('route: the alt text the Slack image takes is "Route map: Planned route, <crew>, <n> stops"', () => {
+  const image = require('../../kit/runtime/slack/image');
+  const m = model('route');
+  const alt = image.altText({ view: 'Planned route', crew: 'Crew 2', stops: m.route.stops.length });
+  assert.equal(alt, 'Route map: Planned route, Crew 2, 6 stops');
+  assert.equal(image.isAltText(alt), true);
 });

@@ -452,3 +452,43 @@ test('Story 15.10: the smoke script\'s no-network step: a fetch that never answe
   assert.equal(got.basemap, null);
   assert.equal(got.reason, 'timeout');
 });
+
+// --- Story 15.13: the route view (AD-R28) ---------------------------------------------------
+
+test('Story 15.13: the route view rasterizes plain and over the synthetic street tiles, byte-identical twice, under MAX_PNG_BYTES', (t) => {
+  const { model } = load('route');
+  const plain = map.renderPng('route', model);
+  assert.ok(plain.equals(map.renderPng('route', JSON.parse(JSON.stringify(model)))));
+  assert.deepEqual(pngSize(plain), { width: model.frame.width, height: model.frame.height });
+  assert.ok(plain.equals(rasterizeSvg(map.renderSvg('route', model), map.imageSize('route', model.frame))), 'the plain path is the plain rasterize');
+  t.diagnostic(`route: ${plain.length} bytes plain (cap ${MAX_PNG_BYTES})`);
+  assert.ok(plain.length < MAX_PNG_BYTES);
+  // At the archetype's frame on the worst grid (4 x 4 dense street tiles).
+  const big = { ...model, frame: { ...FRAME } };
+  const basemap = basemapFor(FRAME, { ox: -100, oy: -230, pngs: STREETS });
+  assert.equal(basemap.tiles.length, 16);
+  const a = map.renderPng('route', big, { basemap });
+  const b = map.renderPng('route', JSON.parse(JSON.stringify(big)), { basemap: { ...basemap, tiles: basemap.tiles.map((x) => ({ ...x, png: Buffer.from(x.png) })) } });
+  assert.ok(a.equals(b), 'identical bytes over the same tiles');
+  assert.deepEqual(pngSize(a), { width: FRAME.width, height: FRAME.height });
+  assert.ok(!a.equals(map.renderPng('route', big)), 'not the plain map');
+  t.diagnostic(`route: ${a.length} bytes with streets (cap ${MAX_PNG_BYTES})`);
+  assert.ok(a.length < MAX_PNG_BYTES, `${a.length} bytes`);
+});
+
+test('Story 15.13: unsafe_svg holds for the route view: a reference added to its SVG is refused, plain or over tiles', () => {
+  const { model } = load('route');
+  const size = map.imageSize('route', model.frame);
+  const basemap = basemapFor(model.frame);
+  for (const base of ['plain', 'streets']) {
+    const svg = map.renderSvg('route', model, { base });
+    for (const piece of ['<image href="/etc/passwd" width="1" height="1"/>', '<a href="https://x.example"/>', '<rect fill="url(#g)"/>', '<style>*{}</style>']) {
+      const bad = svg.replace('</svg>', `${piece}</svg>`);
+      const calls = [];
+      const r = createRasterizer({ load: () => stubModule(fakePng(size.width, size.height), calls) });
+      const e = faultOf(() => (base === 'plain' ? r(bad, size) : r.streets(bad, basemap, layoutOf('route', model.frame), size)));
+      assert.equal(e.details.problem, 'unsafe_svg', `${base}: ${piece}`);
+      assert.equal(calls.length, 0, 'the rasterizer never saw it');
+    }
+  }
+});
