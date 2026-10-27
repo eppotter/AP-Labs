@@ -10,13 +10,13 @@ inputDocuments:
 
 # AP-Labs - Epic Breakdown: route optimization
 
-**Status: approved by Ely 2026-10-26 (`approve plan routing`).** Amendment routing-streetmap (Stories 15.7 to 15.11): awaiting `approve plan routing-streetmap`.
+**Status: approved by Ely 2026-10-26 (`approve plan routing`).** Amendment routing-streetmap (Stories 15.7 to 15.11): built (#231, #233, #235, #237, #239; fix #241). Amendment routing-editor (Stories 15.12 to 15.15): awaiting `approve plan routing-editor`.
 
 ## Overview
 
-The routing spec (`SPEC.md`, standing in for a PRD) and SQLsmith's `data-design.md`, broken into epics (phases) and stories (one PR each). Sequencing (Ely): the generic engine goes into the template first, on synthetic test fixtures; Brightside gets it only once the engine is built. Epics continue at 12. Stories cite `architecture-routing.md` (AD-R1 to AD-R22) and the runtime ADs they inherit. Epic 15 (the Slack map modal) was added 2026-10-26 on Ely's decisions; Story 14.5's CLI stays as the no-Slack test path. Stories 15.7 to 15.11 (a street map under the plot) were added later the same day (amendment routing-streetmap, below).
+The routing spec (`SPEC.md`, standing in for a PRD) and SQLsmith's `data-design.md`, broken into epics (phases) and stories (one PR each). Sequencing (Ely): the generic engine goes into the template first, on synthetic test fixtures; Brightside gets it only once the engine is built. Epics continue at 12. Stories cite `architecture-routing.md` (AD-R1 to AD-R28) and the runtime ADs they inherit. Epic 15 (the Slack map modal) was added 2026-10-26 on Ely's decisions; Story 14.5's CLI stays as the no-Slack test path. Stories 15.7 to 15.11 (a street map under the plot) were added later the same day (amendment routing-streetmap, below). Stories 15.12 to 15.15 (Plan a route) were added 2026-10-27 (amendment routing-editor, below).
 
-Estimates: **S** about half a day, under ~300 lines; **M** about a day; **L** up to two days. 24 stories: 5 S, 16 M, 3 L.
+Estimates: **S** about half a day, under ~300 lines; **M** about a day; **L** up to two days. 28 stories: 5 S, 19 M, 4 L.
 
 Computed tiers (`APLABS_PROFILE=$PWD/profiles/brightside/profile.yml node kit/lib/tier <paths>`, 2026-10-26):
 
@@ -25,7 +25,7 @@ Computed tiers (`APLABS_PROFILE=$PWD/profiles/brightside/profile.yml node kit/li
 | 12 | T2 declared (computes T1) | all: 13.3 adds `kit/runtime/routing/**` as T2, so Epic 12 runs at a declared T2 |
 | 13 | T3 | 13.1, 13.2, 13.3 |
 | 14 | T3 | 14.4 (`profiles/brightside/context/data.md`); 14.1 computes T1, treated as T2 |
-| 15 | T3 | all six: 15.1 `kit/runtime/store/**`, `kit/runtime/jobs/**`; 15.2 `kit/runtime/data/**` engine floor, `profiles/_schema/**`, `kit/lib/profile/**`; 15.3 `Dockerfile` (T3 whatever it computes) and `.github/workflows/**`; 15.4 `kit/lib/tier/**` and the access filter; 15.5 and 15.6 `profiles/**` and the guardrail sign-off gate; 15.7 `profiles/**` (`data.md`, `guardrails.md`); 15.8 `kit/runtime/data/**` engine floor; 15.9 `profiles/_schema/**`, `kit/lib/profile/**`, `kit/lib/tier/**`; 15.10 computes T2, declared T3 (the `unsafe_svg` defence and what leaves the process); 15.11 `profiles/**` and guardrails |
+| 15 | T3 | all but 15.12 (T2, `kit/runtime/routing/**`): 15.1 `kit/runtime/store/**`, `kit/runtime/jobs/**`; 15.2 `kit/runtime/data/**` engine floor, `profiles/_schema/**`, `kit/lib/profile/**`; 15.3 `Dockerfile` (T3 whatever it computes) and `.github/workflows/**`; 15.4 `kit/lib/tier/**` and the access filter; 15.5 and 15.6 `profiles/**` and the guardrail sign-off gate; 15.7 `profiles/**` (`data.md`, `guardrails.md`); 15.8 `kit/runtime/data/**` engine floor; 15.9 `profiles/_schema/**`, `kit/lib/profile/**`, `kit/lib/tier/**`; 15.10 computes T2, declared T3 (the `unsafe_svg` defence and what leaves the process); 15.11 `profiles/**` and guardrails; 15.13 `kit/runtime/data/**` engine floor, `profiles/_schema/**`, `kit/lib/profile/**`; 15.14 `kit/runtime/archetypes/routing-map/**`, `kit/runtime/slack/image.js`; 15.15 `profiles/**` (`profile.yml`, `guardrails.md`, `data.md`) |
 
 ### Architect T3 review, round 1 (2026-10-26)
 
@@ -57,6 +57,10 @@ Decisions by the Orchestrator; folded as follows.
 
 Ely, after seeing the plain plot in dev Slack ("we need a map here"): a street map under the plot from free OpenStreetMap tiles ($0, no account), the demo company moved onto a real US metro (Columbus, Ohio), and new stories built now, after `approve plan routing-streetmap`. Architect review: approve with conditions, all folded into AD-R18 to AD-R22 and the stories below. Gate items, risks and the cut list are under the amendment note at the top of `architecture-routing.md`. Build order: 15.7 alongside (15.8 alongside 15.9), then 15.10, then 15.11; 15.6 waits for the reworded GRD-002 to be signed (DEP-025).
 
+### Amendment: routing-editor (2026-10-27)
+
+Ely asked for "Plan a route": a new menu option where a dispatcher or crew lead picks a crew and a date, then reorders that day's stops with ↑/↓ or Optimize, with the map redrawn for the current order and the total drive time and distance at the top. Every crew starts and ends at the Office (a point in Westerville, Ohio, rounded to 0.002°, shown only as "Office"). A manual order that breaks rules is allowed and flagged, with a count at the top. The four-view Routing screen stays. Suggest only; same audience as Routing. Architect review: approve with conditions, folded into AD-R23 to AD-R28 and the stories below; gate items, risks and the cut list are under the routing-editor note at the top of `architecture-routing.md`. Build order: 15.12 alongside 15.13, then 15.14, then 15.15. 15.6 now turns on prod for both routing modules, after DEP-025 and DEP-032.
+
 ### Deferred (DEP notes; not ledger rows)
 
 - **DEP: MotherDuck republish** of the v5 fixture after 15.7 (new tables and columns, coordinates in Columbus), one publish; v4 is not published on its own (DEP-027, changed by routing-streetmap). Owner: Ely (a credentialed human step, runtime AD-18).
@@ -66,13 +70,17 @@ Ely, after seeing the plain plot in dev Slack ("we need a map here"): a street m
 - **DEP-030: the contact address in the tile User-Agent:** a monitored role address, not a personal one (it ships in the distribution repo). Owner: Ely. Blocks 15.11.
 - **DEP-031 (deferred): a production tile provider per client fork.** OpenStreetMap's free service can be withdrawn and is not for production; keyed providers need the secrets path. Owner: each engagement lead. A fork-guide note says so.
 - **Deferred notes (routing-streetmap, no rows):** a disk tile cache; the attribution drawn into the image (needs glyphs); a land mask for the synthetic points.
+- **DEP-032: Dana Reyes signs the routing-editor additions** to GRD-002 (the Office marker, distance from `travelMatrix`, a route's total km shown) and the GRD-007 Office exception, written by 15.15 and marked pending. Owner: Dana Reyes, via Ely. Blocks prod for Plan a route (15.6).
+- **DEP-033: MotherDuck republish of fixture v7** (the `depots` table) after 15.15. A MotherDuck-mode run that declares the depot node before the republish fails every routing read. Owner: Ely (the Orchestrator may run it at Ely's request). Blocks MotherDuck mode only.
+- **DEP-034 (deferred): does the Office replace crew bases for all routing?** That re-pins S1 to S3. Owner: Ely, then Dana Reyes. Until then a fixed note in Plan a route says Routing's other views start from each crew's base.
+- **DEP-035: the Office point's provenance.** Ely confirms the point derived from a real address may ship in the fixture to every fork, or picks a synthetic point. Owner: Ely. Blocks 15.15.
 - **DEP (blocker for 15.4): the 15.1 live check.** Ely opens the dev-only map check in dev Slack and reports what he sees. Owner: Ely.
 - **DEP: dependency review of `@resvg/resvg-js`** (licence, platform packages, Docker image) in 15.3. Owner: architect review, Ely approves.
 - **DEP: a new record kind in `kit/runtime/store`** for uploaded map file ids and their expiry (15.1). Approver: Ely.
 - **Named risk (accepted, F5):** if the process dies between a map upload and recording its file id, that file is never swept. It is shared nowhere, but it stays in Slack's file storage until someone removes it by hand. Without `files:read` the kit cannot find it. The window is one Slack call long.
 - **Fork-guide note:** a fork on an older kit rejects a `routing:` block (`additionalProperties: false`); update the kit first.
 
-**Shared files (never build these in parallel):** `kit/runtime/routing/index.js` and `contract.js` (12.1–12.5, strictly in order); `kit/runtime/sdk/index.js` (12.1, 13.2); `test/unit/engine-boundary.test.js` (12.1, 13.2, 15.2, 15.3, 15.4); `kit/lib/profile` + schema (13.1 before 13.2 and 13.3; 13.1 before 15.2); `kit/runtime/data/index.js` (13.2 before 15.2); `kit/runtime/slack/{hubs,image}.js` and `test/fixtures/fake-slack.js` (15.1 before 15.4); `profiles/brightside/profile.yml` and `context/guardrails.md` (13.3 before 15.5); `examples/brightside/app/modules/routing/manifest.json` (15.5 before 15.6); `examples/brightside/fixture/{generate.js,lib/tables.js,lib/routing.js,schema.sql,seed.json,targets.json}` (14.1 before 14.2). 13.3 must merge before 14.1 so the coordinate columns are forbidden before they exist. Epic 13 may run alongside Epic 12 after 12.1 (no shared files except `engine-boundary.test.js`: the later builder merges main first). Epic 15 order: 15.1 and 15.2 may run in parallel (the later merges main first for `engine-boundary.test.js`); 15.3 after Epic 12; 15.4 after 15.1's live check, 15.2 and 15.3; 15.5 after 15.4 and Epic 14; 15.6 after Dana signs GRD-002. **Routing-streetmap:** 15.7, 15.8 and 15.9 may run in parallel; 15.7 and 15.8 both edit `docs/planning/specs/spec-routing/data-design.md` (different sections; the later merges main first); 15.10 after 15.8 and 15.9 (it shares `kit/runtime/archetypes/routing-map/index.js` and `test/unit/runtime-routing-map-archetype.test.js` with 15.8); 15.11 after 15.7 and 15.10 (it shares `profiles/brightside/context/guardrails.md` with 15.7); 15.6 after 15.11 and Dana's signature.
+**Shared files (never build these in parallel):** `kit/runtime/routing/index.js` and `contract.js` (12.1–12.5, strictly in order); `kit/runtime/sdk/index.js` (12.1, 13.2); `test/unit/engine-boundary.test.js` (12.1, 13.2, 15.2, 15.3, 15.4); `kit/lib/profile` + schema (13.1 before 13.2 and 13.3; 13.1 before 15.2); `kit/runtime/data/index.js` (13.2 before 15.2); `kit/runtime/slack/{hubs,image}.js` and `test/fixtures/fake-slack.js` (15.1 before 15.4); `profiles/brightside/profile.yml` and `context/guardrails.md` (13.3 before 15.5); `examples/brightside/app/modules/routing/manifest.json` (15.5 before 15.6); `examples/brightside/fixture/{generate.js,lib/tables.js,lib/routing.js,schema.sql,seed.json,targets.json}` (14.1 before 14.2). 13.3 must merge before 14.1 so the coordinate columns are forbidden before they exist. Epic 13 may run alongside Epic 12 after 12.1 (no shared files except `engine-boundary.test.js`: the later builder merges main first). Epic 15 order: 15.1 and 15.2 may run in parallel (the later merges main first for `engine-boundary.test.js`); 15.3 after Epic 12; 15.4 after 15.1's live check, 15.2 and 15.3; 15.5 after 15.4 and Epic 14; 15.6 after Dana signs GRD-002. **Routing-streetmap:** 15.7, 15.8 and 15.9 may run in parallel; 15.7 and 15.8 both edit `docs/planning/specs/spec-routing/data-design.md` (different sections; the later merges main first); 15.10 after 15.8 and 15.9 (it shares `kit/runtime/archetypes/routing-map/index.js` and `test/unit/runtime-routing-map-archetype.test.js` with 15.8); 15.11 after 15.7 and 15.10 (it shares `profiles/brightside/context/guardrails.md` with 15.7); 15.6 after 15.11 and Dana's signature. **Routing-editor:** 15.12 and 15.13 may run in parallel (no shared files); 15.14 after both (it needs `evaluateOrder`, `km_tenths` and the `route` view, and shares `kit/runtime/slack/{hubs,image}.js` and `test/fixtures/fake-slack.js` with earlier Epic 15 stories); 15.15 after 15.14 and DEP-035 (it shares `profiles/brightside/profile.yml`, `context/{guardrails,data}.md` and the fixture generator files with 15.7 and its fix); 15.6 after 15.15, DEP-025 and DEP-032.
 
 ## Requirements Inventory
 
@@ -85,7 +93,7 @@ Ely, after seeing the plain plot in dev Slack ("we need a map here"): a street m
 - FR5: Drive time through one estimator interface, haversine now. (CAP-5)
 - FR6: Every row explains itself; cross-zone moves only as flagged recommendations. (CAP-6)
 - FR7: Brightside's fixture gains coordinates, a future schedule, rules and absences, deterministically, with routing truths. (CAP-7)
-- FR8: A Slack modal shows a plain map of the route and switches between four views (booked vs optimized, before vs after a change, a zone's crews, gap fill). Amended (routing-streetmap): with the profile's `routing.basemap` on, a street map sits under the plot, with the provider's credit under the image; without it, or when tiles fail, the plain map. (CAP-8)
+- FR8: A Slack modal shows a plain map of the route and switches between four views (booked vs optimized, before vs after a change, a zone's crews, gap fill). Amended (routing-streetmap): with the profile's `routing.basemap` on, a street map sits under the plot, with the provider's credit under the image; without it, or when tiles fail, the plain map. Amended (routing-editor): a second screen, "Plan a route", lets a person reorder one crew's day from the Office with ↑/↓ or Optimize and see the map, total drive time and distance, and any rule breaks for that order. (CAP-8)
 - FR9: Dispatchers see every crew; a crew lead sees only their own, from a profile mapping. (CAP-9)
 
 ### NonFunctional Requirements
@@ -108,20 +116,21 @@ Ely, after seeing the plain plot in dev Slack ("we need a map here"): a street m
 
 - The CLI in 14.5 prints plain text for a dispatcher (the no-Slack test path).
 - The routing modal (Epic 15): opens from the hub menu; a view select, a date picker and a crew or zone select; one map image with a short text list under it (crew, client name, city, start time, drive minutes, reason); every way out (Back, Close, an error, an expired trigger, an expired session, access withdrawn) is listed in the AC with a test (AGENTS.md).
+- Plan a route (15.14, added 2026-10-27): opens from the hub menu; step 1 a crew select, a date picker and Show stops; step 2 a totals line, the map, Optimize, Reset to booked, Change crew or day, and the stop rows with ↑/↓ and warning lines, between "Office · leave" and "Office · back". Every way out (Change crew or day, Back, Close, an error, an expired trigger, an expired session, access withdrawn, a map that fails to update) has a test.
 
 ### FR Coverage Map
 
 | FR | Stories |
 |---|---|
-| FR1 | 12.3, 14.4 |
+| FR1 | 12.3, 14.4, 15.12 |
 | FR2 | 12.4, 14.4 |
 | FR3 | 12.5, 14.4 |
 | FR4 | 12.2 |
-| FR5 | 12.1, 13.2 |
+| FR5 | 12.1, 13.2, 15.13 |
 | FR6 | 12.3, 12.4, 12.5, 14.5 |
-| FR7 | 13.3, 14.1, 14.2, 14.3, 14.4, 15.7 |
-| FR8 | 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8, 15.9, 15.10, 15.11 |
-| FR9 | 15.2, 15.4, 15.5 |
+| FR7 | 13.3, 14.1, 14.2, 14.3, 14.4, 15.7, 15.15 |
+| FR8 | 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8, 15.9, 15.10, 15.11, 15.13, 15.14, 15.15 |
+| FR9 | 15.2, 15.4, 15.5, 15.14 |
 
 ## Epic List
 
@@ -135,7 +144,7 @@ The governed data path: profile block, forbidden columns, `travelMatrix`. T3. St
 Fixture, adapter, truths, a read-only CLI. T3 (14.4). Stories 14.1–14.5.
 
 ### Epic 15: Dispatchers and crew leads see the route on a map in Slack
-A private map image in a routing modal, four views, filtered by audience. T3 (computed 2026-10-26). Stories 15.1–15.11. 15.7–15.11 (routing-streetmap) put a street map under the plot and move the demo to Columbus, Ohio. Ely's suggested shape had four stories; `mapPoints` is split from the spike into its own story (15.2) because it is a T3 engine read like 13.2, while the spike is a live check, and the two share no files; 15.6 is the one-line prod switch that waits for Dana's GRD-002 signature (F12).
+A private map image in a routing modal, four views, filtered by audience. T3 (computed 2026-10-26). Stories 15.1–15.15. 15.7–15.11 (routing-streetmap) put a street map under the plot and move the demo to Columbus, Ohio. 15.12–15.15 (routing-editor) add "Plan a route", a screen to reorder one crew's day from the Office. Ely's suggested shape had four stories; `mapPoints` is split from the spike into its own story (15.2) because it is a T3 engine read like 13.2, while the spike is a live check, and the two share no files; 15.6 is the one-line prod switch that waits for Dana's GRD-002 signature (F12).
 
 ## Epic 12: A routing engine any field-service fork can call
 
@@ -251,7 +260,7 @@ A private map image in a routing modal, four views, filtered by audience. T3 (co
 
 ## Epic 15: Dispatchers and crew leads see the route on a map in Slack
 
-Added 2026-10-26 (Ely). Only 15.5 waits for Dana Reyes's audience list (F18); 15.6 waits for her GRD-002 signature, now of the wording 15.11 writes. Tiers per story computed 2026-10-26 with `node kit/lib/tier` on the files listed; all are T3 (F3).
+Added 2026-10-26 (Ely). Only 15.5 waits for Dana Reyes's audience list (F18); 15.6 waits for her GRD-002 signature, now of the wording 15.11 writes. Tiers per story computed 2026-10-26 with `node kit/lib/tier` on the files listed; all are T3 (F3). Routing-editor (2026-10-27): 15.12 computes T2; 15.13 to 15.15 compute T3.
 
 ### Story 15.1: Spike: a private image in a modal (live check)
 **Implements:** FR8 · **Estimate:** M · **Tier:** T3 (`kit/runtime/store/**` new record kind, `kit/runtime/jobs/**` the sweep job) · **Architecture:** AD-R12, R15, R16
@@ -353,6 +362,7 @@ Result: AD-R15's primary path holds (no DM fallback). Story 15.4 may proceed; it
 **Given** `npm run onboard -- --status` shows GRD-002 signed by Dana Reyes with the map image rule **When** this PR opens **Then** its one change adds `"prod"` to the routing module's `environments`, and the PR body quotes the sign-off date
 **Given** GRD-002 still pending **Then** this story does not start
 **Changed (routing-streetmap):** the signature 15.6 waits for is of GRD-002 as 15.11 rewords it (the street layer and what the tile server learns), so 15.6 starts only after 15.11 merges and Dana signs that wording (DEP-025). Its one-line change is the same.
+**Changed (routing-editor):** 15.6 adds `"prod"` to both routing modules' `environments` (Routing and Plan a route), so its files add `examples/brightside/app/modules/route-planner/manifest.json`. It starts only after 15.15 merges and Dana has signed both DEP-025 and DEP-032; the PR body quotes both sign-off dates.
 
 ### Story 15.7: The demo moves to Columbus (fixture v5)
 **Implements:** FR7, FR8 · **Estimate:** M (may grow to L if S2's or S3's planted shape breaks) · **Tier:** T3 (computed: `profiles/**` via `context/data.md` and `context/guardrails.md`) · **Architecture:** AD-R22
@@ -420,3 +430,57 @@ Result: AD-R15's primary path holds (no DM fallback). Story 15.4 may proceed; it
 **And** `docs/runtime/container.md` names outbound 443 to the tile host
 **Live check (Ely, dev Slack; untested until run; kept short):** all four views show streets, with markers on streets (note any on water); the attribution caption shows on desktop and iOS; kill switch on gives the plain map and the note; a bad host gives the plain map and the note within about 8 s; the modal shows the larger PNG (note its size and time to draw); OpenStreetMap answers 200; re-opening the same view sends no new tile requests (a debug log printing only a count); and 15.1's open items (Close sends `view_closed`; a second person's Files search finds nothing)
 **And** 15.6 keeps its rule, now with the reworded GRD-002 signed (DEP-025)
+
+### Story 15.12: `evaluateOrder` and the depot node kind
+**Implements:** FR1, NFR1 · **Estimate:** M · **Tier:** T2 (computed) · **Architecture:** AD-R24, AD-R23, AD-R2 amended
+**Files:** `kit/runtime/routing/{contract,evaluate,optimize,index}.js`, `test/unit/runtime-routing-{evaluate,contract}.test.js`, `test/fixtures/routing/route-depot.json`
+
+**Given** a depot-based one-crew input and an order **When** evaluated twice (under two `TZ` values) **Then** the JSON is byte-identical, and the times, drive minutes, `leaveAt`, `backAt` and breaks match hand-computed values
+**Given** an order that breaks a time window, runs past aim-finish, or runs past 23:00 **Then** each stop lists its breaks with label and reason, `lateBack` is set, and no stop is dropped; times past 24:00 stay integers
+**Given** an order that misses, repeats or adds a stop, or names another crew's stop **Then** `RoutingFault` names the field
+**Given** `depot:x` as a `baseNode` and in `fromMatrix` rows **Then** it is accepted; `place:x` is still refused
+**And** `optimizeDay` with `returnToBase` from a depot equals brute force on a ≤ 7-stop fixture; the boundary test is unchanged
+
+### Story 15.13: Distance in `travelMatrix`, `routing.depot`, the `route` view
+**Implements:** FR5, FR8 · **Estimate:** M · **Tier:** T3 (computed) · **Architecture:** AD-R25, AD-R23, AD-R28, AD-R9 amended
+**Files:** `kit/runtime/data/{travel,index}.js`, `profiles/_schema/profile.schema.json`, `kit/lib/profile/index.js`, `kit/runtime/routing-map/{svg,index}.js`, `test/unit/{runtime-data-travel,profile,runtime-routing-map-svg,runtime-routing-map-png}.test.js`, `test/fixtures/profiles/routing-depot.yml`, `test/fixtures/routing-map/route.json`, `docs/planning/specs/spec-routing/data-design.md` §3
+
+**Given** a temp DuckDB **When** `travelMatrix` runs **Then** its rows are exactly `from_node, to_node, minutes, km_tenths`, matching hand-computed values; `run()` still refuses every coordinate column; the data object's exact keys and the sdk are unchanged
+**Given** `routing.depot` with an undeclared node kind, a label over 24 characters or holding markup, or any extra key (`lat`) **Then** validation fails naming the key
+**Given** `route.json` **Then** the SVG holds the Office marker, numbered stops and a closed loop, no `<text>`, byte-identical twice; `unsafe_svg` holds; the PNG is under `MAX_PNG_BYTES`
+**And** `npm run verify` still reconciles all routing truths; no log or error holds `km_tenths`
+
+### Story 15.14: The route-editor screen
+**Implements:** FR8, FR9 · **Estimate:** L · **Tier:** T3 (computed) · **Architecture:** AD-R26, AD-R27, AD-R16 amended, AD-R12 amended, AD-R17
+**Files:** `kit/runtime/archetypes/routing-map/{index,editor,session}.js`, `kit/runtime/slack/{hubs,image}.js` (the reuse-image show path), `kit/runtime/schema/module.schema.json`, `kit/runtime/registry/index.js`, `kit/runtime/messages.js`, `test/fixtures/fake-slack.js`, `test/fixtures/routing-map/adapter.js` (`route()`), `test/unit/runtime-routing-map-editor.test.js`, `test/unit/runtime-registry.test.js`
+
+**Given** a `route-editor` module with no `route()`, or a profile with no `routing.depot` **Then** it shows "not available" and opens no modal
+**Given** a dispatcher picks a crew and a day and taps Show stops **Then** step 2 shows the header totals (drive time, about N km, last stop done, back at Office, rule-break count), the image, the Office first and last rows and one row per stop; no ↑ on the first stop, no ↓ on the last; rows with breaks carry warning lines
+**When** ↓ is tapped **Then** the list updates first (same file id, "Map updating…"), then one map; three taps within 1 s give one upload, for the final order (spy counts); clocks frozen with `mock.timers`
+**Given** a stale version, an unknown stop, ↑ on the first stop, or an editor action sent to a views session (and the reverse) **Then** the order is unchanged and the refusal is logged by reason only
+**When** Optimize is tapped **Then** the order equals `optimizeDay` from the Office; unplaced stops are appended and flagged; "Already the best order found" shows when nothing changed
+**When** Reset to booked is tapped **Then** the booked order shows, with times re-estimated from the Office
+**Given** a crew lead **Then** a crafted `crewId` still gives their own crew; `mapPoints` gets only the Office and their stops (spy); `adapter.labels` never gets the depot
+**Given** the crew is out that day **Then** a banner shows and the list is read-only (no ↑, ↓ or Optimize)
+**Given** 0 stops, or more than 40 **Then** a plain message shows with Change crew or day
+**And** the Slack fake also rejects: a duplicate `block_id`, a duplicate `action_id` within a block, a button value over 2000 characters, an `accessibility_label` over 75 characters, a reused `slack_file` that was deleted
+**And** spies on logs, Slack calls and errors find no positions, `x`/`y` keys, mosaic, per-leg `km_tenths` or fixture coordinate values
+**Exits, one test each:** Change crew or day goes to step 1 and deletes the files; Back or Close: `view_closed` deletes the files (or the sweep, within 20 minutes); an expired trigger takes the hub's path; an expired session says "This plan has expired, go back and open Plan a route again."; access withdrawn shows the refusal in the view; a click from another user or view is refused; data unavailable or an engine fault on Show stops gives the error exit with Back; a node missing from `mapPoints` gives the error exit; a render, upload, `ratelimited` or not-accepted failure leaves the list with "Map not updated; the list is current."; a reused file that expired or was deleted gives the list without the image
+**Untested until the live check:** Slack accepting a reused `slack_file` in `views.update`; button rows on iOS.
+
+### Story 15.15: Brightside's Office and the "Plan a route" module (dev only)
+**Implements:** FR7, FR8 · **Estimate:** M · **Tier:** T3 (computed) · **Architecture:** AD-R23, AD-R26
+**Files:** `examples/brightside/fixture/{generate.js,schema.sql,lib/tables.js,lib/routing.js,seeds/*,checks/synthetic-coordinates.sql,checks/synthetic-off-water.sql,__tests__/routing.test.js}`, `examples/brightside/app/routing/adapter.js`, `examples/brightside/app/modules/route-planner/{manifest.json,adapter.js}`, `examples/brightside/test/route-planner.test.js`, `profiles/brightside/profile.yml`, `profiles/brightside/context/{guardrails.md,data.md}`, `docs/runtime/routing-map.md`, `docs/fork-guide.md`
+
+**Given** the seed **When** generated **Then** GENERATOR_VERSION is 7, it adds `depots` (one row) and nothing else changes: every other table is byte-identical to v6; S1 to S3 unchanged
+**And** the Office is inside `BOX` and passes the off-water check; if not, Ely is told and the point is not moved silently (it is near the Hoover outline)
+**And** the profile adds the two forbidden columns, the depot node source and `routing.depot` in the same PR as the table
+**And** `adapter.route()` passes the guard, names no coordinate column, and fetches only [Office, stops] × [stops, Office] within `max_pairs`
+**And** the manifest has `environments: ["dev"]` and label "Plan a route"; the existing Routing module is unchanged
+**And** the new GRD-002 and GRD-007 wording below is marked pending, and `npm run onboard -- --status` shows it (DEP-032; GRD-007's final words depend on DEP-035):
+> GRD-002, coordinates: "...returns whole-minute drive times and an estimated distance (straight line × 1.3, in tenths of a km) between two places only. Only a route's total distance is shown, in whole km; the distance of one leg is never shown or logged."
+> GRD-002, new line: "The Office, where every crew starts and ends in Plan a route, is a point in the data's `depots` table. Its coordinate columns are forbidden like the others. The map shows it with its own marker. It is called 'Office' in the list, never by address."
+> GRD-007, exception: "One point is not random: the Office, a point Ely chose in Westerville, rounded to 0.002° (about 150 m)."
+
+**Untested until Ely runs it:** the MotherDuck republish of v7 (DEP-033).
+**Live check (Ely, dev Slack; untested until run; kept short):** (1) open Plan a route, pick a crew and as_of+3, Show stops: the Office marker and the loop, the totals; (2) tap ↓ three times fast on one stop: the list follows each tap without jumping, and the map lands on the final order (note the seconds); (3) Optimize, then Reset to booked; (4) move a morning stop late: a warning shows and the count rises; (5) Change crew or day, then Back; open again and Close with the X: the log shows deleted for both (also 15.1's open Close item); (6) once on iOS: buttons tappable, layout stable.
