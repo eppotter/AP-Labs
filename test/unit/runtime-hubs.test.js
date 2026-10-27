@@ -42,10 +42,14 @@ function setup({ env = 'dev', canUse, views = false, reg = registry } = {}) {
 // The Open buttons, in menu order (the Help button is checked on its own).
 const buttons = (msg) => msg.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
 
-test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" (and Back) and push clicks', () => {
+test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" (and Back), push and routing-map clicks', () => {
   const { app } = setup();
   assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
-  assert.equal(app.actionListeners.length, 5);
+  assert.equal(app.actionListeners.length, 6);
+  // A routing map's view, day, crew and zone selects (Story 15.4).
+  for (const id of ['routing-map:view', 'routing-map:day', 'routing-map:crew', 'routing-map:zone']) assert.ok(app.actionListeners[2].pattern.test(id), id);
+  assert.ok(!app.actionListeners[2].pattern.test('routing-map:open'));
+  app.actionListeners.splice(2, 1);
   // The form listener takes Confirm, Change and Read my request (Story 9.4).
   for (const id of ['scoped-pull:confirm', 'scoped-pull:change', 'scoped-pull:read']) assert.ok(app.actionListeners[2].pattern.test(id), id);
   // "How was this made?" and its details' "Back to the list".

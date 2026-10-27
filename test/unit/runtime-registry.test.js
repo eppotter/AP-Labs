@@ -124,7 +124,7 @@ test('a module on a declared resource that is not open_access registers (access 
 
 test('every archetype the schema names is built: approval-write is accepted (Story 10.2)', () => {
   const schema = JSON.parse(fs.readFileSync(path.join(__dirname, '../../kit/runtime/schema/module.schema.json'), 'utf8'));
-  assert.deepEqual(schema.properties.archetype.enum, ['handler', 'scoped-pull', 'approval-write']);
+  assert.deepEqual(schema.properties.archetype.enum, ['handler', 'scoped-pull', 'approval-write', 'routing-map']);
   const { registry, problems } = loadApproval();
   assert.deepEqual(problems, []);
   assert.equal(registry.module('leads').archetype, 'approval-write');
@@ -325,5 +325,81 @@ test('startup refuses a write block with no send mapping or list name, or a list
 test('startup refuses an approval-write module with a handler', () => {
   assert.deepEqual(editLeads((m) => { m.handler = 'handler.js'; }).problems, [
     `${LEADS_FILE}: field "handler" is not used by an approval-write module (the engine runs its form)`,
+  ]);
+});
+
+// --- Story 15.4: the routing-map archetype (AD-R16) -------------------------------------
+
+const ROUTING_PROFILE = loadProfile(path.join(__dirname, '../fixtures/profiles/routing-audience.yml'));
+const ROUTING_ADAPTER = path.join(__dirname, '../fixtures/routing-map/adapter.js');
+const ROUTING_FILE = 'modules/routing/manifest.json';
+
+// A temp app: one hub and a routing-map module whose adapter re-exports the
+// fixture adapter ('#sdk' resolves from this repo only). edit(dir) changes it.
+function loadRouting(edit = () => {}, { withProfile = ROUTING_PROFILE } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-reg-rm-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'hubs'));
+    fs.mkdirSync(path.join(dir, 'modules/routing'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'hubs/ops.json'), JSON.stringify({ id: 'ops', command: '/ops', name: 'Ops', description: 'Ops tools' }));
+    fs.writeFileSync(path.join(dir, ROUTING_FILE), JSON.stringify({
+      id: 'routing', hub: 'ops', label: 'Routing', description: 'Routes on a map', resource: 'ROUTING_ALL_CREWS',
+      archetype: 'routing-map', environments: ['dev'], adapter: 'adapter.js',
+    }));
+    fs.writeFileSync(path.join(dir, 'modules/routing/adapter.js'), `module.exports = require(${JSON.stringify(ROUTING_ADAPTER)});\n`);
+    edit(dir);
+    return loadRegistry({ appDir: dir, profile: withProfile });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+const editRouting = (fn) => loadRouting((d) => editJson(d, ROUTING_FILE, fn));
+
+test('a routing-map module with an adapter validates and loads its createAdapter', () => {
+  const { registry, problems } = loadRouting();
+  assert.deepEqual(problems, []);
+  const mod = registry.module('routing');
+  assert.equal(mod.archetype, 'routing-map');
+  assert.equal(mod.adapter, 'adapter.js');
+  assert.equal(mod.createAdapter, require(ROUTING_ADAPTER).createAdapter);
+  assert.equal(mod.run, undefined, 'no handler');
+});
+
+test('a routing-map module without an adapter, or with an unknown field, fails naming the field', () => {
+  assert.deepEqual(editRouting((m) => { delete m.adapter; }).problems, [`${ROUTING_FILE}: field "adapter" is required`]);
+  assert.deepEqual(editRouting((m) => { m.map_style = 'dark'; }).problems, [`${ROUTING_FILE}: unknown field "map_style"`]);
+  assert.match(editRouting((m) => { m.adapter = '../escape.js'; }).problems[0], /field "adapter" must match pattern/);
+});
+
+test('a routing-map adapter that is missing, throws on load or exports no createAdapter is refused', () => {
+  const missing = loadRouting((d) => fs.rmSync(path.join(d, 'modules/routing/adapter.js')));
+  assert.deepEqual(missing.problems, [`${ROUTING_FILE}: field "adapter" names a file that does not exist`]);
+  const throws = loadRouting((d) => fs.writeFileSync(path.join(d, 'modules/routing/adapter.js'), "throw new Error('load failed');\n"));
+  assert.deepEqual(throws.problems, [`${ROUTING_FILE}: field "adapter" could not be loaded (load failed)`]);
+  const none = loadRouting((d) => fs.writeFileSync(path.join(d, 'modules/routing/adapter.js'), 'module.exports = { input() {} };\n'));
+  assert.deepEqual(none.problems, [`${ROUTING_FILE}: field "adapter" must export createAdapter (module.exports = { createAdapter })`]);
+});
+
+test('a routing-map module has no handler, query, parameters, scoring or row_id; an adapter belongs to routing-map only', () => {
+  assert.deepEqual(editRouting((m) => { m.handler = 'handler.js'; }).problems, [
+    `${ROUTING_FILE}: field "handler" is not used by a routing-map module (the engine draws its map)`,
+  ]);
+  assert.deepEqual(editRouting((m) => { m.query = 'q.sql'; m.parameters = []; }).problems.sort(), [
+    `${ROUTING_FILE}: field "parameters" is not used by a routing-map module (the engine draws its map)`,
+    `${ROUTING_FILE}: field "query" is not used by a routing-map module (the engine draws its map)`,
+  ]);
+  const { problems } = loadEdited((d) => editJson(d, 'modules/echo/manifest.json', (m) => { m.adapter = 'adapter.js'; }));
+  assert.deepEqual(problems, ['modules/echo/manifest.json: field "adapter" is used only by a routing-map module']);
+});
+
+test('a routing-map module needs the profile\'s routing audience, and its resource is the audience\'s all_crews key', () => {
+  const noAudience = loadRouting(() => {}, { withProfile: { ...ROUTING_PROFILE, routing: { ...ROUTING_PROFILE.routing, audience: undefined } } });
+  assert.deepEqual(noAudience.problems, [`${ROUTING_FILE}: field "archetype" routing-map needs routing.audience in the profile (who sees which crews)`]);
+  assert.deepEqual(editRouting((m) => { m.resource = 'ROUTING_OWN_CREW'; }).problems, [
+    `${ROUTING_FILE}: field "resource" must be the profile's routing.audience.all_crews key (ROUTING_ALL_CREWS)`,
+  ]);
+  assert.deepEqual(editRouting((m) => { m.resource = 'NOT_DECLARED'; }).problems, [
+    `${ROUTING_FILE}: field "resource" NOT_DECLARED is not declared in the profile (configuration fault)`,
+    `${ROUTING_FILE}: field "resource" must be the profile's routing.audience.all_crews key (ROUTING_ALL_CREWS)`,
   ]);
 });

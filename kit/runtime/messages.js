@@ -103,6 +103,20 @@ const READ_WORDS = Object.freeze({
   secondMiss: () => "I still couldn't fill in every value, so here is the form. Fill in the rest and press *Check values*.",
 });
 
+// The routing map's own words (Story 15.4): what the view says while it
+// draws and when a click cannot draw. Plain, each with a next step; nothing
+// in them comes from the data except the dates and the module's label, which
+// the caller escapes.
+const MAP_WORDS = Object.freeze({
+  drawing: () => 'Drawing the map…',
+  expired: (label) => `This map has expired (a map closes after 15 minutes without use). Go back and open ${label} again.`,
+  notYours: () => "This map belongs to another window, so I can't change it. Go back and open it again from the menu.",
+  badDate: (from, to) => `That day is outside what this map can show, so nothing was read. Pick a day from ${from} to ${to}.`,
+  planFailed: (admin) => `The map for this day couldn't be worked out, so nothing is drawn. I've logged the problem; please tell ${admin}. Press Back to return to the menu.`,
+  drawFailed: (admin) => `The map couldn't be drawn this time, so nothing is shown. Press Back to return to the menu and try again; if it keeps happening, tell ${admin}.`,
+  noCrews: (day) => `No crews are working on ${day}, so there's nothing to draw.`,
+});
+
 const MESSAGES = [
   [NotSetUp, ({ client, admin }) => `You're not set up in ${escapeText(client)}'s bot yet, so you only see what's open to everyone. Ask ${admin} to add you.`],
   [AccessDenied, ({ label, admin }) => `You don't have access to ${escapeText(label)}; ask ${admin}.`],
@@ -252,5 +266,5 @@ function messageFor(err, { admin = 'your admin' } = {}) {
 }
 
 module.exports = {
-  messageFor, escapeText, welcomeText, feedbackText, joinWelcomeText, pushResultText, READ_WORDS,
+  messageFor, escapeText, welcomeText, feedbackText, joinWelcomeText, pushResultText, READ_WORDS, MAP_WORDS,
 };

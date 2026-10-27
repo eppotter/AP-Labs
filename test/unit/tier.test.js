@@ -81,6 +81,9 @@ const GUARDED = {
   'kit/runtime/slack/channel.js': 'kit/runtime/slack/channel.js',
   'kit/runtime/store/**': 'kit/runtime/store/index.js',
   'kit/runtime/archetypes/scoped-pull/run.js': 'kit/runtime/archetypes/scoped-pull/run.js',
+  // Story 15.4 (F13): the routing map's audience and its image path.
+  'kit/runtime/archetypes/routing-map/audience.js': 'kit/runtime/archetypes/routing-map/audience.js',
+  'kit/runtime/slack/image.js': 'kit/runtime/slack/image.js',
 };
 
 test('ENGINE_T3 lists exactly the guarded paths, and is frozen', () => {
@@ -99,6 +102,16 @@ test('every engine floor scores T3, under a minimal profile and this one', () =>
 });
 
 const lowered = loadProfile(path.join(__dirname, '../fixtures/profiles/lowered-floors.yml'));
+
+test('Story 15.4 (F13): the routing map\'s audience and its image path are T3 under any profile', () => {
+  const minimal = validateProfile({ schema_version: 1, client: { id: 'm', name: 'M' }, users: [{ id: 'a', name: 'A', role: 'admin' }] });
+  const routingProfile = loadProfile(path.join(__dirname, '../fixtures/profiles/routing-audience.yml'));
+  for (const p of ['kit/runtime/archetypes/routing-map/audience.js', 'kit/runtime/slack/image.js']) {
+    assert.ok(ENGINE_T3.includes(p), p);
+    for (const prof of [minimal, profile, lowered, routingProfile]) assert.equal(tierOf(prof, p), 'T3', p);
+    assert.equal(isEngineFloor(p), true, p);
+  }
+});
 
 test('a profile cannot lower an engine floor through tiers.T1, tiers.T2 or inert', () => {
   for (const p of Object.values(GUARDED)) assert.equal(tierOf(lowered, p), 'T3', p);
@@ -122,6 +135,8 @@ test('nearby paths outside the floors keep their current tier', () => {
     'kit/releases/x.js', 'kit/templates/job.md', 'kit/lib/fork.js', 'kit/lib/dist.js', 'kit/lib/distx/x.js',
     'kit/runtime/archetypes/scoped-pull/results.js', 'kit/runtime/archetypes/approval-writer/x.js',
     'kit/verify/run-all.js', 'scripts/check-job-imports.js', 'kit/runtime/slack/hubs.js', 'kit/runtime/stores/x.js',
+    'kit/runtime/archetypes/routing-map/index.js', 'kit/runtime/archetypes/routing-map/views.js', 'kit/runtime/archetypes/routing-map/audience.json',
+    'kit/runtime/slack/images.js', 'kit/runtime/slack/image.jsx',
   ];
   for (const p of nearby) assert.equal(tierOf(minimal, p), 'T1', p);
   assert.equal(tier('kit/hooksREADME.md'), 'T0', 'a profile can still mark a nearby doc inert');

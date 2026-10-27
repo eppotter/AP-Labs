@@ -12,7 +12,7 @@
     "label": { "description": "The menu button's text.", "type": "string", "$ref": "#/$defs/text", "maxLength": 60 },
     "description": { "description": "One line under the button.", "type": "string", "$ref": "#/$defs/text", "maxLength": 200 },
     "resource": { "description": "The profile resource key that grants it.", "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
-    "archetype": { "enum": ["handler", "scoped-pull", "approval-write"] },
+    "archetype": { "enum": ["handler", "scoped-pull", "approval-write", "routing-map"] },
     "environments": {
       "description": "Where it shows (APLABS_ENV). Left off the menu, and refused at dispatch, everywhere else.",
       "type": "array",
@@ -21,6 +21,7 @@
       "items": { "$ref": "#/$defs/slug" }
     },
     "handler": { "description": "The handler file in the module's folder.", "type": "string", "$ref": "#/$defs/file", "pattern": "^[a-z0-9][a-z0-9._-]*\\.js$" },
+    "adapter": { "description": "A routing-map module's adapter file in the module's folder (Story 15.4, AD-R16): it exports createAdapter({ data, routing }) giving asOf, input and labels.", "type": "string", "$ref": "#/$defs/file", "pattern": "^[a-z0-9][a-z0-9._-]*\\.js$" },
     "parameters": {
       "type": "array",
       "items": {
@@ -96,7 +97,8 @@
     { "if": { "properties": { "archetype": { "const": "handler" } } }, "then": { "required": ["handler"] } },
     { "if": { "properties": { "archetype": { "const": "scoped-pull" } } }, "then": { "required": ["parameters", "query"] } },
     { "if": { "properties": { "archetype": { "const": "approval-write" } } }, "then": { "required": ["parameters", "query", "row_id", "write"] } },
-    { "if": { "properties": { "archetype": { "not": { "const": "approval-write" } } } }, "then": { "properties": { "write": false } } }
+    { "if": { "properties": { "archetype": { "not": { "const": "approval-write" } } } }, "then": { "properties": { "write": false } } },
+    { "if": { "properties": { "archetype": { "const": "routing-map" } } }, "then": { "required": ["adapter"] }, "else": { "properties": { "adapter": false } } }
   ],
   "$defs": {
     "slug": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 },

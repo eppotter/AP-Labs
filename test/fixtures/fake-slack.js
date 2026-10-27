@@ -46,6 +46,24 @@
 // Slack, an id never uploaded is file_not_found and one already deleted is
 // file_deleted. Set this.deleteFail (an error) to make every delete throw.
 //
+// Rate limits (Story 15.4, F10): add 'files.uploadV2' or 'files.delete' to
+// this.rateLimited and that call answers Slack's ratelimited error (data {
+// ok: false, error: 'ratelimited' }, retryAfter 30), recording nothing.
+//
+// Views (Story 15.4, F10), each refused as Slack refuses it: a title over 24
+// characters, more than 100 blocks, private_metadata over 3000 characters,
+// a section's text over 3000 characters, a static_select with more than 100
+// options or an option's text over 75 characters (or an initial_option that
+// is not one of its options), a datepicker initial_date not written
+// YYYY-MM-DD, a select or date picker outside an actions, section or input
+// block, an actions block with more than 25 elements, and an image block
+// whose slack_file id this workspace never uploaded or has deleted (answered
+// like a file not ready: invalid_arguments, "invalid slack file"). With
+// this.checkHashes set, a views.update whose hash is not the view's current
+// one (for a view this fake opened or pushed) answers hash_conflict, as
+// Slack does; it is off by default because older tests replay a click's
+// first hash.
+//
 // new FakeSlackApp({ views: true }) adds client.views: open, push and update
 // record { method, args } in this.views and answer with a view id and a fresh
 // hash; set this.viewsFail[method] to an error to make that call throw.
@@ -106,6 +124,9 @@ class FakeSlackApp {
     this.files = new Set();
     this.deleteFail = null;
     this.filesNotReadyFor = 0;
+    this.rateLimited = new Set();
+    this.hashes = new Map(); // view id -> its current hash
+    this.checkHashes = false;
     this.notReady = new Map(); // file id -> views calls still refused
     this.triggers = new Map();
     this.dmChannel = (user) => `D${String(user).replace(/^U/, '')}`;
@@ -122,6 +143,7 @@ class FakeSlackApp {
         uploadV2: async (args = {}) => {
           const bad = invalidUpload(args);
           if (bad) throw slackError('invalid_arguments', bad);
+          if (this.rateLimited.has('files.uploadV2')) throw rateLimitedError();
           this.uploads.push(args);
           if (this.filesFail) throw this.filesFail;
           const id = `F${this.uploads.length}`;
@@ -136,6 +158,7 @@ class FakeSlackApp {
           const { file } = args;
           if (typeof file !== 'string' || !file) throw slackError('invalid_arguments', 'file is required');
           if (this.deleteFail) throw this.deleteFail;
+          if (this.rateLimited.has('files.delete')) throw rateLimitedError();
           if (this.deleted.includes(file)) throw slackError('file_deleted', 'already deleted');
           if (!this.files.has(file)) throw slackError('file_not_found', 'no such file');
           this.deleted.push(file);
@@ -162,12 +185,20 @@ class FakeSlackApp {
         }
         const bad = invalidModal(args.view);
         if (bad) throw Object.assign(new Error(`An API error occurred: invalid_arguments (${bad})`), { data: { ok: false, error: 'invalid_arguments' } });
-        const badBlock = invalidImageBlocks(args.view);
+        const badView = invalidView(args.view);
+        if (badView) throw slackError('invalid_arguments', badView);
+        const badBlock = invalidImageBlocks(args.view) || invalidElements(args.view);
         if (badBlock) throw slackError('invalid_blocks', badBlock);
+        if (this.checkHashes && method === 'update' && typeof args.hash === 'string' && this.hashes.has(args.view_id) && this.hashes.get(args.view_id) !== args.hash) {
+          throw slackError('hash_conflict', 'the view changed since that hash');
+        }
+        const unknown = this.unknownFileBlock(args.view);
+        if (unknown !== null) throw notReadyError(unknown);
         const unready = this.unreadyFileBlock(args.view);
         if (unready !== null) throw notReadyError(unready);
         this.viewSeq += 1;
         const id = method === 'update' ? args.view_id : `V${this.viewSeq}`;
+        if (method !== 'update' || this.hashes.has(id)) this.hashes.set(id, `h${this.viewSeq}`);
         return { ok: true, view: { id, hash: `h${this.viewSeq}`, ...args.view } };
       };
       this.client.views = { open: call('open'), push: call('push'), update: call('update') };
@@ -184,6 +215,18 @@ class FakeSlackApp {
       if (!id || !(this.notReady.get(id) > 0)) continue;
       this.notReady.set(id, this.notReady.get(id) - 1);
       return i;
+    }
+    return null;
+  }
+
+  // The index of the first image block naming a slack_file id this
+  // workspace never uploaded or has deleted, or null.
+  unknownFileBlock(view) {
+    const blocks = view && Array.isArray(view.blocks) ? view.blocks : [];
+    for (let i = 0; i < blocks.length; i += 1) {
+      const b = blocks[i];
+      const id = b && b.type === 'image' && b.slack_file && b.slack_file.id;
+      if (id && (!this.files.has(id) || this.deleted.includes(id))) return i;
     }
     return null;
   }
@@ -278,8 +321,15 @@ class FakeSlackApp {
   }
 
   // Returns how many listeners ran (0 = Bolt would find no listener).
-  async dispatchAction(action_id, { user = { id: 'U1', name: 'u1' }, view, value } = {}) {
-    const action = { type: 'button', action_id, value: value === undefined ? action_id.split(':')[0] : value };
+  // action: extra fields for a select or date click, for example { type:
+  // 'static_select', selected_option: { value } } or { type: 'datepicker',
+  // selected_date } (Story 15.4).
+  async dispatchAction(action_id, {
+    user = { id: 'U1', name: 'u1' }, view, value, action: extra,
+  } = {}) {
+    const action = extra
+      ? { action_id, ...extra }
+      : { type: 'button', action_id, value: value === undefined ? action_id.split(':')[0] : value };
     const body = { type: 'block_actions', user, actions: [action] };
     if (view) Object.assign(body, { view, container: { type: 'view', view_id: view.id }, trigger_id: this.issueTrigger('T-action') });
     const matching = this.actionListeners.filter(({ pattern }) => (
@@ -303,6 +353,69 @@ class FakeSlackApp {
 
 const TRIGGER_MS = 3000;
 const MAX_ALT = 2000;
+const MAX_TITLE = 24;
+const MAX_VIEW_BLOCKS = 100;
+const MAX_METADATA = 3000;
+const MAX_SECTION_TEXT = 3000;
+const MAX_OPTIONS = 100;
+const MAX_OPTION_TEXT = 75;
+const MAX_ACTIONS_ELEMENTS = 25;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const SELECTS = new Set(['static_select', 'datepicker']);
+
+// Why Slack would reject this view's frame (title, blocks, metadata), or null.
+function invalidView(view) {
+  if (!view || view.type !== 'modal') return null;
+  const title = view.title && view.title.text;
+  if (typeof title === 'string' && Array.from(title).length > MAX_TITLE) return `title is over ${MAX_TITLE} characters`;
+  if (Array.isArray(view.blocks) && view.blocks.length > MAX_VIEW_BLOCKS) return `a view holds at most ${MAX_VIEW_BLOCKS} blocks`;
+  if (typeof view.private_metadata === 'string' && view.private_metadata.length > MAX_METADATA) return `private_metadata is over ${MAX_METADATA} characters`;
+  return null;
+}
+
+// Why Slack would reject a select, date picker, actions block or section
+// in this view, or null.
+function invalidElements(view) {
+  const blocks = view && Array.isArray(view.blocks) ? view.blocks : [];
+  for (const b of blocks) {
+    if (!b) continue;
+    if (b.type === 'section' && b.text && typeof b.text.text === 'string' && b.text.text.length > MAX_SECTION_TEXT) return `a section's text is over ${MAX_SECTION_TEXT} characters`;
+    if (b.type === 'actions' && (!Array.isArray(b.elements) || b.elements.length > MAX_ACTIONS_ELEMENTS)) return `an actions block holds 1 to ${MAX_ACTIONS_ELEMENTS} elements`;
+    const elements = b.type === 'actions' ? b.elements : [b.accessory, b.element].filter(Boolean);
+    for (const e of elements) {
+      const bad = invalidElement(e);
+      if (bad) return bad;
+    }
+    if (!['actions', 'section', 'input'].includes(b.type) && Array.isArray(b.elements) && b.elements.some((e) => e && SELECTS.has(e.type))) {
+      return `a ${b.type} block cannot hold a select or date picker`;
+    }
+  }
+  return null;
+}
+
+function invalidElement(e) {
+  if (!e || typeof e !== 'object') return null;
+  if (e.type === 'static_select') {
+    if (!Array.isArray(e.options) || e.options.length === 0 || e.options.length > MAX_OPTIONS) return `a static_select holds 1 to ${MAX_OPTIONS} options`;
+    for (const o of e.options) {
+      const text = o && o.text && o.text.text;
+      if (typeof text !== 'string' || !text || Array.from(text).length > MAX_OPTION_TEXT) return `an option's text is 1 to ${MAX_OPTION_TEXT} characters`;
+      if (typeof o.value !== 'string' || !o.value || o.value.length > 150) return 'an option needs a value of at most 150 characters';
+    }
+    if (e.initial_option !== undefined && !e.options.some((o) => o.value === e.initial_option.value && o.text.text === (e.initial_option.text && e.initial_option.text.text))) {
+      return 'initial_option must be one of the options';
+    }
+  }
+  if (e.type === 'datepicker' && e.initial_date !== undefined && (typeof e.initial_date !== 'string' || !ISO_DATE.test(e.initial_date))) {
+    return 'initial_date must be written YYYY-MM-DD';
+  }
+  return null;
+}
+
+// Slack's answer when a method is called too often.
+function rateLimitedError() {
+  return Object.assign(new Error('An API error occurred: ratelimited'), { code: 'slack_webapi_rate_limited_error', retryAfter: 30, data: { ok: false, error: 'ratelimited' } });
+}
 
 // Bolt's view constraints: a callback id (string or RegExp) is a
 // view_submission; an object names its type (view_submission by default).
@@ -375,5 +488,5 @@ function invalidModal(view) {
 }
 
 module.exports = {
-  FakeSlackApp, invalidModal, invalidUpload, invalidImageBlocks, notReadyError, TRIGGER_MS,
+  FakeSlackApp, invalidModal, invalidUpload, invalidImageBlocks, invalidView, invalidElements, notReadyError, rateLimitedError, TRIGGER_MS,
 };

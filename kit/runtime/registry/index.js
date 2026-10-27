@@ -41,6 +41,14 @@
 // write.fields the query returns, write.send and write.list_name, and,
 // through approval-write/connectors.js, that the connector loads and
 // declares write.operation). Each refusal names the module file and field.
+//
+// Story 15.4: routing-map is accepted (kit/runtime/archetypes/routing-map).
+// Its manifest names an adapter file in the module's folder, which must load
+// and export createAdapter (a function); it has no handler, query,
+// parameters, scoring or row_id. The profile must have a routing block with
+// an audience (AD-R17), and the module's resource must be that audience's
+// all_crews key: who may open it is decided by the audience (all_crews, or
+// own_crew with a crew_leads row), never by the resource alone.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -53,7 +61,7 @@ const { forbiddenColumnsOf } = require('../sql');
 
 const SCHEMA_DIR = path.join(__dirname, '../schema');
 // Archetypes whose engine code exists (every archetype the schema names).
-const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write']);
+const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write', 'routing-map']);
 // The archetypes the engine runs from a fixed SQL file and a typed form.
 const QUERY_ARCHETYPES = new Set(['scoped-pull', 'approval-write']);
 const ENV_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -95,6 +103,7 @@ function schemaProblems(validate, data, file) {
       if (e.keyword === 'required') return `${file}: field "${fieldName(e.instancePath, e.params.missingProperty)}" is required${note}`;
       // The only false schema: a write block outside approval-write (AD-15).
       if (e.keyword === 'false schema' && e.instancePath === '/write') return `${file}: field "write" is used only by an approval-write module (writes go through that archetype)`;
+      if (e.keyword === 'false schema' && e.instancePath === '/adapter') return `${file}: field "adapter" is used only by a routing-map module`;
       const field = fieldName(e.instancePath);
       return field ? `${file}: field "${field}"${note} ${e.message}` : `${file}: ${e.message}`;
     });
@@ -181,6 +190,42 @@ function loadHandler(abs, file, problems) {
   return run;
 }
 
+// A routing-map module's adapter file: it must load and export createAdapter.
+function loadAdapter(abs, file, problems) {
+  if (!fs.existsSync(abs)) {
+    problems.push(`${file}: field "adapter" names a file that does not exist`);
+    return undefined;
+  }
+  let mod;
+  try {
+    mod = require(abs);
+  } catch (e) {
+    problems.push(`${file}: field "adapter" could not be loaded (${e.message})`);
+    return undefined;
+  }
+  if (!mod || typeof mod.createAdapter !== 'function') {
+    problems.push(`${file}: field "adapter" must export createAdapter (module.exports = { createAdapter })`);
+    return undefined;
+  }
+  return mod.createAdapter;
+}
+
+// What a routing-map manifest may not hold, and what the profile must.
+const NOT_ROUTING_MAP = Object.freeze(['handler', 'query', 'parameters', 'scoring', 'row_id']);
+function routingMapProblems(m, file, profile) {
+  const problems = [];
+  for (const key of NOT_ROUTING_MAP) {
+    if (m[key] !== undefined) problems.push(`${file}: field "${key}" is not used by a routing-map module (the engine draws its map)`);
+  }
+  const audience = profile && profile.routing && profile.routing.audience;
+  if (!audience) {
+    problems.push(`${file}: field "archetype" routing-map needs routing.audience in the profile (who sees which crews)`);
+  } else if (m.resource !== audience.all_crews) {
+    problems.push(`${file}: field "resource" must be the profile's routing.audience.all_crews key (${audience.all_crews})`);
+  }
+  return problems;
+}
+
 // A scoped-pull's SQL template, read once, then checked (checkQuery).
 function loadQuery(abs, file, problems) {
   try {
@@ -231,7 +276,13 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
     if (QUERY_ARCHETYPES.has(m.archetype) && m.handler !== undefined) {
       problems.push(`${file}: field "handler" is not used by ${m.archetype === 'approval-write' ? 'an' : 'a'} ${m.archetype} module (the engine runs its form)`);
     }
+    if (m.archetype === 'routing-map') problems.push(...routingMapProblems(m, file, profile));
     if (problems.length > before) continue;
+    if (m.archetype === 'routing-map') {
+      const createAdapter = loadAdapter(path.join(appDir, 'modules', folder, m.adapter), file, problems);
+      if (createAdapter) modules.push(Object.freeze({ ...m, file, createAdapter }));
+      continue;
+    }
     if (QUERY_ARCHETYPES.has(m.archetype)) {
       const sql = loadQuery(path.join(appDir, 'modules', folder, m.query), file, problems);
       if (sql === undefined) continue;

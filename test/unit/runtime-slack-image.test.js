@@ -215,6 +215,9 @@ test('the fake: an image block with both image_url and slack_file, neither, no a
   const app = new FakeSlackApp({ views: true });
   const view = (block) => ({ type: 'modal', title: { type: 'plain_text', text: 'M' }, blocks: [block] });
   const good = { type: 'image', slack_file: { id: 'F1' }, alt_text: ALT };
+  // Like Slack (Story 15.4, F10), the fake refuses a slack_file it never had.
+  await assert.rejects(app.client.views.update({ view_id: 'V1', view: view(good) }), (e) => e.data.error === 'invalid_arguments');
+  await app.client.files.uploadV2({ file: PNG, filename: 'route-map.png' });
   await app.client.views.update({ view_id: 'V1', view: view(good) });
   await app.client.views.update({ view_id: 'V1', view: view({ type: 'image', image_url: 'https://example.test/a.png', alt_text: 'a' }) });
   await app.client.views.update({ view_id: 'V1', view: view({ ...good, alt_text: 'x'.repeat(2000) }) });

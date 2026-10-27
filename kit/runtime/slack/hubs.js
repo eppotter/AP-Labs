@@ -113,8 +113,23 @@
 // screened(), which refuses a message carrying an image: the refusal is
 // logged (where, and a reason; never the PNG), the person gets the plain
 // error, and nothing is uploaded or sent. The renderers (modal.messageBlocks,
-// format.messageParts) throw on an image as a backstop. A map view switch
-// (Story 15.4) must run the same lifecycle as showImage, not a new path.
+// format.messageParts) throw on an image as a backstop.
+//
+// The routing map (Story 15.4, AD-R16, AD-R17): a routing-map module
+// (kit/runtime/archetypes/routing-map) opens like map-check (a pushed view
+// asking for view_closed, "Loading…" inside the trigger's life), then the
+// archetype draws. Its view switches are select and date clicks
+// (routing-map:view|day|crew|zone), each acked first and then drawn into the
+// view the click came from (views.update with that view's hash). Every map,
+// on Open or on a click, goes through the one lifecycle, showMap: upload,
+// record, show, then delete the files recorded before this upload (a view
+// switch); a map not shown is deleted at once. It also takes current(), the
+// archetype's request-order check, asked before the upload and before each
+// show, so a superseded click uploads nothing, or deletes what it uploaded;
+// a show Slack drops on hash_conflict deletes its file too. A plain result
+// (an error, a refusal, "Drawing the map…") deletes the view's earlier files
+// once it shows. Who may open it is the profile's routing audience
+// (archetypes/routing-map/audience canOpen), not the manifest's resource.
 
 const access = require('../access');
 const {
@@ -127,7 +142,7 @@ const {
 } = require('../registry/menu');
 const { isVisible } = require('../registry');
 const {
-  modalView, moduleView, messageBlocks, pushedView, fromModal, hasViews, failureReason, updatedView,
+  modalView, moduleView, messageBlocks, pushedView, fromModal, hasViews, failureReason, updatedView, HASH_CONFLICT,
 } = require('./modal');
 const { messageParts } = require('./format');
 const {
@@ -143,6 +158,8 @@ const {
 const { QUERY_ARCHETYPES } = require('../registry');
 const { uploadsMapImages, ImageError, NotAccepted } = require('./image');
 const { textBlocks } = require('./format');
+const routingAudience = require('../archetypes/routing-map/audience');
+const { createRoutingMap, ACTION_PATTERN: ROUTING_MAP_ACTION } = require('../archetypes/routing-map');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
@@ -151,15 +168,25 @@ const MAP_NEEDS_WINDOW = "The map opens in its own window, which Slack didn't op
 // A map view: Slack sends view_closed for it (Back or the X).
 const MAP_VIEW_CALLBACK = 'hub:map';
 const MAP_VIEW = Object.freeze({ callbackId: MAP_VIEW_CALLBACK, notifyOnClose: true });
+const MAX_MAP_VIEWS = 1000;
 const hasImage = (message) => Boolean(message && typeof message === 'object' && Object.hasOwn(message, 'image'));
 // An image anywhere a reply could be sent from: the message, or the text it
 // falls back to when there is no view.
 const carriesImage = (message) => hasImage(message)
   || Boolean(message && typeof message === 'object' && hasImage(message.ephemeralFallback));
 
+// A routing-map module is decided by the profile's routing audience (AD-R17);
+// every other module by its resource key.
 function defaultCanUse(profile) {
-  return (person, mod) => access.decide(profile, person.user, mod.resource);
+  return (person, mod) => (mod.archetype === 'routing-map'
+    ? routingAudience.canOpen(profile, person.user)
+    : access.decide(profile, person.user, mod.resource));
 }
+
+// A map whose show was overtaken: a newer click (Superseded), or Slack
+// dropped the update on hash_conflict (Dropped). Never shown to anyone.
+class Superseded extends Error {}
+class Dropped extends Error {}
 
 function asDecision(v) {
   if (v === true || v === 'allowed') return 'allowed';
@@ -218,7 +245,7 @@ function moduleData(data, mod) {
 
 function registerHubs(app, {
   registry, profile, env, log, store, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),
-  mapFiles = null,
+  mapFiles = null, routingMap: routingMapOptions = {},
 }) {
   const admin = access.adminContact(profile);
   const personOf = (slackId) => ({ id: slackId, user: access.personFor(profile, slackId) });
@@ -250,6 +277,13 @@ function registerHubs(app, {
   const opsChannel = (profile.slack && profile.slack.ops_channel) || null;
   const approvalWrite = createApprovalWrite({
     store, log, connectors, admin, opsChannel,
+  });
+  // The routing map (Story 15.4). Its views ask Slack for view_closed and
+  // carry only the session id. routingMapOptions: test seams (mapPoints,
+  // render, now); never the AI service.
+  const mapViews = new Map(); // routing map view id -> { hash, queue }
+  const routingMap = createRoutingMap({
+    ...routingMapOptions, profile, data, log, admin, viewModal: (sessionId) => ({ ...MAP_VIEW, privateMetadata: sessionId }),
   });
 
   // Why this person may not open mod (a message), or null when they may.
@@ -361,10 +395,85 @@ function registerHubs(app, {
     };
   };
 
-  // A map module's reply with an image (Story 15.1). owner ties the files to
-  // this person and this view, for view_closed.
+  // The one map lifecycle (Stories 15.1 and 15.4, AD-R15, AD-R16). message:
+  // { image: { png, alt }, head?, text?, blocks?, modal? }, shown as head,
+  // text, the image block, blocks. show(message) renders into the map view
+  // (it throws Dropped when Slack dropped the update). owner ties the files
+  // to this person and this view, for view_closed. current(): false once a
+  // newer request has come in; asked before the upload and before each show.
+  // Resolves 'shown', 'superseded', 'dropped', 'failed' or 'refused'.
+  const showMap = async ({
+    mod, owner, message, show, current = () => true,
+  }) => {
+    const {
+      image, head = [], text: words, blocks: tail = [], modal,
+    } = message;
+    const notShown = async (earlier) => {
+      if (!current()) return;
+      await show({ blocks: [...head, ...textBlocks(MAP_NOT_SHOWN)], ...(modal ? { modal } : {}) });
+      await mapFiles.release(owner, { among: earlier, why: 'replaced' });
+    };
+    if (!uploadsMapImages(mod)) {
+      log.warn('image refused', { module: mod.id, reason: 'this module may not show images' });
+      await show(PLAIN_ERROR);
+      return 'refused';
+    }
+    if (!current()) {
+      log.info('map superseded', { module: mod.id, step: 'upload' });
+      return 'superseded';
+    }
+    const earlier = mapFiles.filesOf(owner);
+    let block;
+    try {
+      block = await mapFiles.upload({ owner, png: image && image.png, alt: image && image.alt });
+    } catch (err) {
+      log.warn('map not shown', { module: mod.id, reason: err instanceof ImageError ? err.reason : failureReason(err) });
+      await notShown(earlier);
+      return 'failed';
+    }
+    const fileId = block.slack_file.id;
+    const text = typeof words === 'string' && words ? textBlocks(words) : [];
+    const shown = { blocks: [...head, ...text, block, ...tail], ...(modal ? { modal } : {}) };
+    let attempt;
+    try {
+      attempt = await mapFiles.showing(async () => {
+        if (!current()) throw new Superseded();
+        await show(shown);
+      });
+    } catch (err) {
+      await mapFiles.release(owner, { only: fileId, why: 'not shown' });
+      if (err instanceof Superseded) {
+        log.info('map superseded', { module: mod.id, step: 'show' });
+        return 'superseded';
+      }
+      if (err instanceof Dropped) {
+        log.info('stale view result dropped', { action: 'map', reason: 'hash_conflict' });
+        return 'dropped';
+      }
+      if (!(err instanceof NotAccepted)) throw err;
+      log.error('map image not accepted by slack', {
+        module: mod.id, attempts: err.attempts, reason: err.reason, messages: err.messages,
+      });
+      await notShown(earlier);
+      return 'failed';
+    }
+    log.info('map image shown', { module: mod.id, attempt });
+    // A view switch: the maps recorded before this upload go now; a newer
+    // click's file, recorded after it, is never touched.
+    await mapFiles.release(owner, { among: earlier, why: 'replaced' });
+    return 'shown';
+  };
+
+  // A plain message into a map view; once it shows, the view's earlier map
+  // files go (it no longer shows them).
+  const showPlain = async (owner, show, message) => {
+    const earlier = mapFiles ? mapFiles.filesOf(owner) : [];
+    await show(message);
+    if (earlier.length) await mapFiles.release(owner, { among: earlier, why: 'replaced' });
+  };
+
+  // A map module's reply with an image (Story 15.1), on Open.
   const showImage = async (mod, target, userId, message) => {
-    const { image, ...rest } = message;
     if (!uploadsMapImages(mod)) {
       log.warn('image refused', { module: mod.id, reason: 'this module may not show images' });
       await target.reply(PLAIN_ERROR);
@@ -376,32 +485,33 @@ function registerHubs(app, {
       await target.reply(MAP_NEEDS_WINDOW);
       return;
     }
-    const owner = `${userId}:${viewId}`;
-    let block;
-    try {
-      block = await mapFiles.upload({ owner, png: image && image.png, alt: image && image.alt });
-    } catch (err) {
-      log.warn('map not shown', { module: mod.id, reason: err instanceof ImageError ? err.reason : failureReason(err) });
-      await target.reply(MAP_NOT_SHOWN, { replace: true });
+    await showMap({
+      mod, owner: `${userId}:${viewId}`, message, show: (m) => target.reply(m, { replace: true }),
+    });
+  };
+
+  // Open on a routing-map module (Story 15.4): "Loading…" is pushed first,
+  // inside the trigger's life; the archetype draws after.
+  const openRoutingMap = async (mod, target, person) => {
+    await target.loading();
+    const viewId = target.viewId();
+    if (!viewId || !mapFiles) {
+      log.warn('image refused', { module: mod.id, reason: 'no map view' });
+      await target.reply(MAP_NEEDS_WINDOW);
       return;
     }
-    const fileId = block.slack_file.id;
-    const text = typeof rest.text === 'string' && rest.text ? textBlocks(rest.text) : [];
-    let attempt;
-    try {
-      attempt = await mapFiles.showing(() => target.reply({ blocks: [...text, block] }, { replace: true }));
-    } catch (err) {
-      await mapFiles.release(owner, { only: fileId, why: 'not shown' });
-      if (!(err instanceof NotAccepted)) throw err;
-      log.error('map image not accepted by slack', {
-        module: mod.id, attempts: err.attempts, reason: err.reason, messages: err.messages,
-      });
-      await target.reply(MAP_NOT_SHOWN, { replace: true });
-      return;
-    }
-    log.info('map image shown', { module: mod.id, attempt });
-    // A view switch: the map shown before this one goes now.
-    await mapFiles.release(owner, { keep: fileId, why: 'replaced' });
+    log.info('module dispatched', { module: mod.id, hub: mod.hub });
+    const owner = `${person.id}:${viewId}`;
+    const render = (m) => target.reply(m, { replace: true });
+    await routingMap.open({
+      mod,
+      person,
+      viewId,
+      show: (m) => showPlain(owner, render, m),
+      showMap: (message, { current, mod: drawn = mod } = {}) => showMap({
+        mod: drawn, owner, message, show: render, current,
+      }),
+    });
   };
 
   // In a modal there is no response_url for handle() to answer through, so a
@@ -504,6 +614,10 @@ function registerHubs(app, {
         await target.reply(target.modal ? { ...scopedPull.open(mod, user.id), ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
         return;
       }
+      if (mod.archetype === 'routing-map') {
+        await openRoutingMap(mod, target, person);
+        return;
+      }
       // Push "Loading…" before anything slow: the trigger_id lasts 3 seconds.
       await target.loading();
       const name = await personName(client, user, log);
@@ -533,9 +647,102 @@ function registerHubs(app, {
   app.view({ callback_id: MAP_VIEW_CALLBACK, type: 'view_closed' }, handle('hub:map-closed', async ({ body }) => {
     const viewId = body && body.view && body.view.id;
     const userId = body && body.user && body.user.id;
-    if (!mapFiles || typeof viewId !== 'string' || !viewId || typeof userId !== 'string' || !userId) return;
+    if (typeof viewId !== 'string' || !viewId || typeof userId !== 'string' || !userId) return;
+    routingMap.closed({ userId, viewId });
+    mapViews.delete(viewId);
+    if (!mapFiles) return;
     const res = await mapFiles.release(`${userId}:${viewId}`, { why: 'view_closed' });
     log.info('map view closed', { deleted: res.deleted, kept: res.kept, cleared: Boolean(body.is_cleared) });
+  }, { log, store }));
+
+  // A routing map's select or date click (Story 15.4). Acked first (handle),
+  // then drawn into the view the click came from, in place. Every click
+  // re-checks the person's access and environment (resolveModule), and the
+  // archetype re-decides their scope from the audience. A map only ever
+  // lives in a view, so a click from anywhere else is told to open it there.
+  const ROUTING_MAPS = new Set(['routing-map']);
+  // Every update to one map view goes through one queue, with the latest
+  // hash this app saw for it, so two quick clicks never trip over each
+  // other's updates: hash_conflict then means the view changed elsewhere,
+  // and that result is dropped. Forgotten on view_closed; at most 1000 kept.
+  const mapViewOf = (from) => {
+    let v = mapViews.get(from.id);
+    if (!v) {
+      if (mapViews.size >= MAX_MAP_VIEWS) mapViews.delete(mapViews.keys().next().value);
+      v = { hash: typeof from.hash === 'string' && from.hash ? from.hash : null, queue: Promise.resolve() };
+      mapViews.set(from.id, v);
+    }
+    return v;
+  };
+  const mapUpdater = (client, from) => {
+    const v = mapViewOf(from);
+    const title = from.title && from.title.text;
+    return (message) => {
+      const next = v.queue.then(async () => {
+        try {
+          const res = await client.views.update({
+            view_id: from.id, ...(v.hash ? { hash: v.hash } : {}), view: moduleView({ title, hubId: null, blocks: messageBlocks(message), message }),
+          });
+          if (res && res.view && typeof res.view.hash === 'string') v.hash = res.view.hash;
+          return 'updated';
+        } catch (err) {
+          if (failureReason(err) === HASH_CONFLICT) return 'dropped';
+          throw err;
+        }
+      });
+      v.queue = next.catch(() => {});
+      return next;
+    };
+  };
+  app.action(ROUTING_MAP_ACTION, handle('hub:routing-map', async ({
+    action, body, client, respond,
+  }) => {
+    const from = body.view;
+    if (!from || typeof from.id !== 'string' || !from.id || !hasViews(client) || !mapFiles) {
+      fellBack('routing-map', from ? 'no views client' : 'not from a modal', null);
+      if (typeof respond === 'function') await respond(ephemeral(MAP_NEEDS_WINDOW));
+      return;
+    }
+    const userId = (body.user || {}).id;
+    const person = personOf(userId);
+    const owner = `${userId}:${from.id}`;
+    // Every render keeps the map view's callback (view_closed) and metadata.
+    const keep = { ...MAP_VIEW, privateMetadata: typeof from.private_metadata === 'string' ? from.private_metadata : '' };
+    const update = mapUpdater(client, from);
+    const render = async (message) => {
+      const m = screened('routing-map', message);
+      const full = typeof m === 'string' ? { text: m } : m;
+      const status = await update(full.modal ? full : { ...full, modal: keep });
+      if (status === 'dropped') throw new Dropped();
+    };
+    const show = async (message) => {
+      try {
+        await showPlain(owner, render, message);
+      } catch (err) {
+        if (!(err instanceof Dropped)) throw err;
+        log.info('stale view result dropped', { action: 'routing-map', reason: 'hash_conflict' });
+      }
+    };
+    try {
+      await routingMap.click({
+        actionId: action && action.action_id,
+        action,
+        from,
+        person,
+        resolve: resolveModule(person, action && action.action_id, ROUTING_MAPS),
+        show,
+        showMap: (message, { current, mod }) => showMap({
+          mod, owner, message, show: render, current,
+        }),
+      });
+    } catch (err) {
+      log.error('handler failed', { handler: 'hub:routing-map', err });
+      try {
+        await update({ text: PLAIN_ERROR, modal: keep });
+      } catch (showErr) {
+        log.error('could not tell the person about a failure', { handler: 'hub:routing-map', err: showErr });
+      }
+    }
   }, { log, store }));
 
   // A scoped-pull form's submit ("Check values"). The answer goes in the ack:

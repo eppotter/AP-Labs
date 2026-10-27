@@ -33,6 +33,9 @@
 //                                    the write path: the only code that writes to a
 //                                    client system, its guard, the one channel post,
 //                                    approvals, and the run a push reads from
+//         kit/runtime/archetypes/routing-map/audience.js, kit/runtime/slack/image.js
+//                                    who sees which crews on the routing map, and how
+//                                    its image leaves (a private Slack file)
 //       A path near these but outside them (kit/fixture/build.js,
 //       kit/runtime/slack/hubs.js, kit/lib/review/**) keeps its profile tier.
 //       Compute a change's tier with renames as both paths
@@ -117,6 +120,11 @@ const ENGINE_T3 = Object.freeze([
   'kit/runtime/slack/channel.js',
   'kit/runtime/store/**',
   'kit/runtime/archetypes/scoped-pull/run.js',
+  // Epic 15 (plan routing, Story 15.4, F13): who sees which crews on the
+  // routing map, and how its image leaves Slack's upload as a private file.
+  // Any later change to either is T3 under every profile.
+  'kit/runtime/archetypes/routing-map/audience.js',
+  'kit/runtime/slack/image.js',
 ]);
 
 // Minimal glob: `**` = any depth (incl. none), `*` = within one segment, every
