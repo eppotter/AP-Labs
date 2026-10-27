@@ -14,7 +14,8 @@ In this template repo Brightside's profile is `profiles/brightside/profile.yml` 
 `.aplabs/profile.yml`). Dana Reyes signed off this file on 2026-10-25 (Ely as Dana Reyes). Story 13.3
 (route optimization) changed it on 2026-10-26, so the file awaits her sign-off again (DEP-028): GRD-002
 now names the four coordinate columns and GRD-008 records the crew-out rule, both **draft**. Story 15.5
-added the routing map image rule to GRD-002 (DEP-025), also for her sign-off. Every other card stays
+added the routing map image rule to GRD-002 (DEP-025), also for her sign-off. Story 15.7 added the
+Columbus coordinates line to GRD-007 (with DEP-025), **draft** too. Every other card stays
 **approved** as signed on 2026-10-25.
 
 ## Guardrails
@@ -29,7 +30,8 @@ added the routing map image rule to GRD-002 (DEP-025), also for her sign-off. Ev
 - GRD-004: anything that writes to an outside system goes through the approval step, never a module.
 - GRD-005: the AI fills in a form and nothing else: no data rows, a spend breaker and an off switch.
 - GRD-006: pay rates are open for the demo, but Labour cost is for owner and admin only, totals only.
-- GRD-007: the data is synthetic, and publishing it is a human step.
+- GRD-007: the data is synthetic, and publishing it is a human step. Draft update: the coordinates
+  are random points in the Columbus area, none from a real address.
 - GRD-008: a crew is out for the day when its lead is absent, or nobody on it is present (draft).
 
 ## Protected systems
@@ -238,11 +240,17 @@ exception_workflow and data_quality_guard.
 - rule: every Brightside record is generated: emails end in `.invalid`, phones are 555-0100 to
   555-0199. The fixture checks (`fixture-validate` in the profile's `verify.checks`) must pass
   before a publish, and only Ely publishes; agents never run `fixture:publish` or touch its token.
+- coordinates (Story 15.7, update for Dana Reyes's sign-off, with DEP-025): every property and crew
+  base is a random synthetic point in the Columbus, Ohio area. On a street map a marker sits near
+  real streets and homes (or on water), but none is or comes from a real address.
 - failure_modes: a real-looking email or phone (caught by `synthetic-email.sql` and
-  `synthetic-phone.sql`); a stale or hand-edited build (publish refuses it).
+  `synthetic-phone.sql`); a stale or hand-edited build (publish refuses it); a coordinate outside
+  the Columbus box (caught by `synthetic-coordinates.sql`).
 - owner: Dana Reyes
-- evidence: `fixture-tables.md` "Rules" and "Validation"; `docs/runtime/motherduck-publish.md`.
-- status: approved
+- evidence: `fixture-tables.md` "Rules" and "Validation"; `docs/runtime/motherduck-publish.md`;
+  `examples/brightside/fixture/lib/routing.js` (`CENTRE`, `BOX`; generator v5).
+- status: draft (approved 2026-10-25; the coordinates line was added on 2026-10-26 and awaits Dana
+  Reyes's sign-off with DEP-025)
 
 ### GRD-008: A crew out for the day
 - type: classification

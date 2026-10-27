@@ -1,7 +1,9 @@
 'use strict';
 
 // Story 14.1: the fixture gains synthetic coordinates and a booked schedule
-// after as_of (generator v4). Example tests (AD-1 carve-out): they read
+// after as_of (generator v4). Story 15.7: the coordinates move to a box in
+// Columbus, Ohio (generator v5); only the box's centre and bounds change, so
+// every draw and every non-routing value stays as v4 had it. Example tests (AD-1 carve-out): they read
 // Brightside's own fixture and go with it in a fork.
 
 const test = require('node:test');
@@ -57,6 +59,25 @@ const V3_META = {
   rows_plans: '1584', rows_properties: '2186', rows_staff: '89', rows_timesheets: '115302', rows_visits: '40895', rows_zones: '5',
 };
 
+// Story 15.7 (generator v5): v4's routing tables, each cut back to every
+// column but the ones a drive time decides, and the sha256 of that cut,
+// recorded from the committed v4 files before the v5 generator ran. Only the
+// four coordinate columns and scheduled_visits' scheduled_start and
+// travel_minutes_from_previous may move from v4; every other value of every
+// table stays byte for byte (V3_SEEDS holds the rest of v4's columns).
+const V4_MOVED = {
+  properties: ['geo_lat_e6', 'geo_lon_e6'],
+  crews: ['base_geo_lat_e6', 'base_geo_lon_e6'],
+  scheduled_visits: ['scheduled_start', 'travel_minutes_from_previous'],
+};
+const V4_SEEDS = {
+  scheduled_visits: ['scheduled_visit_id,property_id,plan_id,crew_id,package_id,visit_date,status,status_changed_on,arrival_window,scheduled_minutes,labour_minutes,route_order', '5d9645abc1e5fc34d72ce6ead94b2d73df09f75cdc6c4132b357e8a2b3190495'],
+  service_rules: ['rule_id,property_id,rule_type,value,strength', 'e5a77a1bcfb46ef342003e97e4c1ce1d0cd33db1c887d4cb47090036ea6d57cc'],
+  staff_absences: ['absence_id,staff_id,absence_date,reported_on', '55fadd7fe56e73d2752eac529b0ae7526b16d4e40161d74fd572e3590060317c'],
+};
+// v4's fixture_meta keys v3 did not have: the routing tables' counts are v4's.
+const V4_META = { rows_scheduled_visits: '1720', rows_service_rules: '781', rows_staff_absences: '5', schedule_horizon_end: '2026-10-28' };
+
 const seedText = (table) => {
   const file = path.join(FIXTURE_DIR, storedName(`seeds/${table}.csv`));
   return file.endsWith('.gz') ? zlib.gunzipSync(fs.readFileSync(file)).toString('utf8') : fs.readFileSync(file, 'utf8');
@@ -77,11 +98,11 @@ let recorded;
 const recordedRun = () => (recorded ??= generate(readSeedConfig()));
 const recordedTables = () => recordedRun().tables;
 
-test('generator v4: seed.json and fixture_meta record it, and fixture_meta gains the horizon and the new table\'s count', () => {
-  assert.equal(GENERATOR_VERSION, 4);
-  assert.equal(readSeedConfig().generator_version, 4);
+test('generator v5: seed.json and fixture_meta record it, and fixture_meta has the horizon and the new table\'s count', () => {
+  assert.equal(GENERATOR_VERSION, 5);
+  assert.equal(readSeedConfig().generator_version, 5);
   const meta = Object.fromEntries(recordedTables().fixture_meta.map((m) => [m.key, m.value]));
-  assert.equal(meta.generator_version, '4');
+  assert.equal(meta.generator_version, '5');
   assert.equal(meta.schedule_horizon_end, '2026-10-28', 'as_of + 28 days');
   assert.equal(meta.rows_scheduled_visits, String(recordedTables().scheduled_visits.length));
 });
@@ -92,6 +113,23 @@ test('every v3 column of every v3 seed is unchanged byte for byte', () => {
   }
   const meta = Object.fromEntries(seedText('fixture_meta').trim().split('\n').slice(1).map((l) => l.split(',')));
   for (const [key, value] of Object.entries(V3_META)) assert.equal(meta[key], value, `fixture_meta ${key}`);
+});
+
+test('v5 keeps every v4 value but the coordinates and the booked drive times and starts, and every v4 row count', () => {
+  for (const [table, [header, digest]] of Object.entries(V4_SEEDS)) {
+    assert.equal(sha256(project(seedText(table), header.split(','))), digest, `${table}: a v4 column changed`);
+  }
+  // The columns left out of the pins are exactly the moved ones.
+  for (const [table, moved] of Object.entries(V4_MOVED)) {
+    const pinned = (V4_SEEDS[table] || V3_SEEDS[table])[0].split(',');
+    const columns = seedText(table).split('\n')[0].split(',');
+    assert.deepEqual(columns.filter((c) => !pinned.includes(c)), moved, `${table}: only the drive columns are unpinned`);
+  }
+  for (const table of [...Object.keys(V3_SEEDS), ...Object.keys(V4_SEEDS)].filter((t) => !V4_MOVED[t])) {
+    assert.equal(seedText(table).split('\n')[0], (V4_SEEDS[table] || V3_SEEDS[table])[0], `${table}: every column is pinned`);
+  }
+  const meta = Object.fromEntries(seedText('fixture_meta').trim().split('\n').slice(1).map((l) => l.split(',')));
+  for (const [key, value] of Object.entries(V4_META)) assert.equal(meta[key], value, `fixture_meta ${key}`);
 });
 
 test('only the routing columns and table are new', () => {
@@ -138,6 +176,12 @@ test('synthetic-coordinates declares exactly the four coordinate columns in its 
   const checks = loadChecks(FIXTURE_DIR);
   const coords = checks.find((c) => c.id === 'synthetic-coordinates');
   assert.deepEqual(coords.protectedColumns.slice().sort(), COORDINATE_COLUMNS.slice().sort());
+  // Story 15.7: its header says where the points come from, and it checks lib/routing.js BOX.
+  assert.equal(coords.description, 'Synthetic only: random points in a real metro, never taken from an address.');
+  const { BOX } = routing;
+  assert.equal(coords.sql.split(`NOT BETWEEN ${BOX.latMin} AND ${BOX.latMax}`).length - 1, 2, 'both latitudes against BOX');
+  assert.equal(coords.sql.split(`NOT BETWEEN ${BOX.lonMin} AND ${BOX.lonMax}`).length - 1, 2, 'both longitudes against BOX');
+  assert.equal((coords.sql.match(/NOT BETWEEN/g) || []).length, 4);
   for (const c of checks.filter((x) => x.id !== 'synthetic-coordinates')) {
     assert.doesNotMatch(c.sql, /geo_l(at|on)_e6/, `${c.id} reads no coordinate`);
   }
@@ -146,10 +190,23 @@ test('synthetic-coordinates declares exactly the four coordinate columns in its 
   }
 });
 
-test('every coordinate is a whole micro-degree inside the synthetic ocean box', () => {
+test('every coordinate is a whole micro-degree inside the Columbus box, and only the centre and box moved from v4', () => {
   const { BOX } = routing;
-  // The box sits in the open South Pacific, over 1,000 km from any land.
-  assert.deepEqual(BOX, { latMin: -40300000, latMax: -39700000, lonMin: -130400000, lonMax: -129600000 });
+  // Random points in Columbus, Ohio, round numbers, never taken from an address.
+  assert.deepEqual(routing.CENTRE, { lat: 40000000, lon: -83000000 });
+  assert.deepEqual(BOX, { latMin: 39700000, latMax: 40300000, lonMin: -83400000, lonMax: -82600000 });
+  // Every other coordinate constant is v4's, so every random draw is too.
+  assert.equal(routing.LAT_E6_PER_KM, 8993);
+  assert.equal(routing.LON_E6_PER_KM, 11740);
+  assert.equal(routing.JITTER_KM, 2.5);
+  assert.deepEqual(routing.BASE_OFFSET_KM, [[-1, -1.5], [0, -1.5], [1, -1.5]]);
+  assert.deepEqual(routing.CITY_KM, {
+    Centerpoint: [0, 0], Midtown: [4, 3], Oldmarket: [-3, 4],
+    Fernhill: [-5, 16], Northvale: [2, 21], Pinecrest: [6, 15],
+    Clayfield: [-6, -15], Riverbend: [1, -21], Southmere: [5, -14],
+    Eastbrook: [15, -4], Harborview: [21, 2], Sunridge: [15, 5],
+    Stonegate: [-15, 4], Westfall: [-21, -1], Willowmere: [-14, -5],
+  });
   const t = recordedTables();
   const points = t.properties.map((p) => [p.geo_lat_e6, p.geo_lon_e6]).concat(t.crews.map((c) => [c.base_geo_lat_e6, c.base_geo_lon_e6]));
   for (const [lat, lon] of points) {
@@ -162,7 +219,7 @@ test('every coordinate is a whole micro-degree inside the synthetic ocean box', 
 });
 
 test('drives between a zone\'s city centres are 10 to 35 minutes; booked drives inside one city 5 to 15, but to S2\'s estate', () => {
-  const at = (city) => ({ lat: -40000000 + Math.round(routing.CITY_KM[city][1] * 8993), lon: -130000000 + Math.round(routing.CITY_KM[city][0] * 11740) });
+  const at = (city) => ({ lat: 40000000 + Math.round(routing.CITY_KM[city][1] * 8993), lon: -83000000 + Math.round(routing.CITY_KM[city][0] * 11740) });
   for (const zone of ZONES) {
     for (const a of zone.cities) {
       for (const b of zone.cities) {
@@ -293,7 +350,7 @@ test('the routing rules catch each broken rule', () => {
 test('the generator refuses to write routing data that breaks a rule', (t) => {
   const { BOX } = routing;
   const original = { ...BOX };
-  BOX.latMax = -40100000;
+  BOX.latMax = 39900000;
   t.after(() => Object.assign(BOX, original));
   assert.throws(() => generate(SMALL), /breaks \d+ rule\(s\)[\s\S]*coordinates outside the synthetic box/);
 });

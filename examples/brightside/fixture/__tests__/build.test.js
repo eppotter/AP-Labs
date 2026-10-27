@@ -60,8 +60,10 @@ test('Brightside builds in under 60 seconds with every table at its fixture_meta
 // and the bot see no change. A seed or generator change moves it on purpose:
 // update it then. Story 14.1 (generator v4: coordinates and scheduled_visits)
 // moved it from 3+80453e2a90d0; Story 14.2 (service_rules, staff_absences
-// and the planted scenarios, still v4: unpublished) from 4+c090cded7e68.
-const VERSION_AS_PLAIN_CSV = '4+dd14e6d231b7';
+// and the planted scenarios, still v4: unpublished) from 4+c090cded7e68;
+// Story 15.7 (generator v5: the coordinates move to Columbus) from
+// 4+dd14e6d231b7.
+const VERSION_AS_PLAIN_CSV = '5+5dc9a0ad58fb';
 
 // A copy of the fixture with every seed unzipped to plain seeds/<table>.csv.
 function plainCopy(t) {

@@ -71,3 +71,18 @@ test('guardrails.md awaits sign-off in onboard --status', () => {
   assert.equal(g.signed, false);
   assert.equal(g.signedOff, 'pending');
 });
+
+// Story 15.7 (AD-R22): GRD-007 says the coordinates are random points in the
+// Columbus area, none from a real address, pending Dana Reyes's sign-off with
+// DEP-025.
+test('GRD-007 says the coordinates are random Columbus points, none from a real address, pending DEP-025', () => {
+  const grd = card('GRD-007').replace(/\s+/g, ' ');
+  for (const words of [
+    /random synthetic point in the Columbus, Ohio area/,
+    /a marker sits near real streets and homes/,
+    /none is or comes from a real address/,
+    /synthetic-coordinates\.sql/,
+    /DEP-025/,
+  ]) assert.match(grd, words);
+  assert.match(grd, /- status: draft\b/);
+});
