@@ -33,6 +33,15 @@
 // the upload throw, or this.dmChannel(user) to answer conversations.open with
 // another channel id.
 //
+// File not ready yet (Story 15.1 live check, 2026-10-26): set
+// this.filesNotReadyFor = N and every file uploaded after that is refused in
+// an image block's slack_file for its first N views calls, the way the real
+// API answered views.update 0.5 s after the upload: a WebAPIPlatformError
+// (code slack_webapi_platform_error) whose data is { ok: false, error:
+// 'invalid_arguments', response_metadata: { messages: ['[ERROR] invalid
+// slack file [json-pointer:view/blocks/<i>/slack_file.id/slack_file]'] } }.
+// Infinity refuses it for good.
+//
 // files.delete({ file }) (Story 15.1) records the id in this.deleted. Like
 // Slack, an id never uploaded is file_not_found and one already deleted is
 // file_deleted. Set this.deleteFail (an error) to make every delete throw.
@@ -96,6 +105,8 @@ class FakeSlackApp {
     this.deleted = [];
     this.files = new Set();
     this.deleteFail = null;
+    this.filesNotReadyFor = 0;
+    this.notReady = new Map(); // file id -> views calls still refused
     this.triggers = new Map();
     this.dmChannel = (user) => `D${String(user).replace(/^U/, '')}`;
     this.client = {
@@ -115,6 +126,7 @@ class FakeSlackApp {
           if (this.filesFail) throw this.filesFail;
           const id = `F${this.uploads.length}`;
           this.files.add(id);
+          if (this.filesNotReadyFor > 0) this.notReady.set(id, this.filesNotReadyFor);
           return {
             ok: true,
             files: [{ ok: true, files: [{ id, name: args.filename, title: args.title || args.filename, permalink: `https://fake.slack.test/files/${id}` }] }],
@@ -152,12 +164,28 @@ class FakeSlackApp {
         if (bad) throw Object.assign(new Error(`An API error occurred: invalid_arguments (${bad})`), { data: { ok: false, error: 'invalid_arguments' } });
         const badBlock = invalidImageBlocks(args.view);
         if (badBlock) throw slackError('invalid_blocks', badBlock);
+        const unready = this.unreadyFileBlock(args.view);
+        if (unready !== null) throw notReadyError(unready);
         this.viewSeq += 1;
         const id = method === 'update' ? args.view_id : `V${this.viewSeq}`;
         return { ok: true, view: { id, hash: `h${this.viewSeq}`, ...args.view } };
       };
       this.client.views = { open: call('open'), push: call('push'), update: call('update') };
     }
+  }
+
+  // The index of the first image block whose file is not ready yet (and
+  // counts that call against it), or null.
+  unreadyFileBlock(view) {
+    const blocks = view && Array.isArray(view.blocks) ? view.blocks : [];
+    for (let i = 0; i < blocks.length; i += 1) {
+      const b = blocks[i];
+      const id = b && b.type === 'image' && b.slack_file && b.slack_file.id;
+      if (!id || !(this.notReady.get(id) > 0)) continue;
+      this.notReady.set(id, this.notReady.get(id) - 1);
+      return i;
+    }
+    return null;
   }
 
   // A trigger handed out now (Slack's lasts 3 seconds).
@@ -311,6 +339,20 @@ function slackError(code, why) {
   return Object.assign(new Error(`An API error occurred: ${code} (${why})`), { data: { ok: false, error: code } });
 }
 
+// The real API's answer for a slack_file it does not accept (yet), as the
+// Slack client throws it.
+function notReadyError(index) {
+  return Object.assign(new Error('An API error occurred: invalid_arguments'), {
+    name: 'WebAPIPlatformError',
+    code: 'slack_webapi_platform_error',
+    data: {
+      ok: false,
+      error: 'invalid_arguments',
+      response_metadata: { messages: [`[ERROR] invalid slack file [json-pointer:view/blocks/${index}/slack_file.id/slack_file]`] },
+    },
+  });
+}
+
 // Why files.uploadV2 would be rejected, or null (see the top).
 function invalidUpload(args) {
   if (args.channels !== undefined || args.channel !== undefined) return 'channels and channel are retired; use channel_id';
@@ -333,5 +375,5 @@ function invalidModal(view) {
 }
 
 module.exports = {
-  FakeSlackApp, invalidModal, invalidUpload, invalidImageBlocks, TRIGGER_MS,
+  FakeSlackApp, invalidModal, invalidUpload, invalidImageBlocks, notReadyError, TRIGGER_MS,
 };

@@ -261,6 +261,16 @@ Added 2026-10-26 (Ely). Only 15.5 waits for Dana Reyes's audience list (F18); 15
 **And** the dev-only `map-check` module (`environments: ["dev"]`) shows a fixed synthetic test pattern (no client data). Exits, one test each: Back returns to the hub menu and deletes the file on `view_closed`, and if no `view_closed` arrives the sweep deletes it within 20 minutes of upload (both paths tested); Close closes and deletes the file; an upload failure shows a plain message in the view with Back; an expired trigger takes the hub's existing path
 **Live check (Ely, dev Slack; untested until run, named so in the PR):** (1) the image shows in the modal; (2) the file appears in no channel; (3) `view_closed` arrives on Back and on Close; (4) after `files.delete` the file is gone; (5) clicking the image and trying to open, share or download it, and what each allows; (6) a user outside the audience searches Files for `route-map.png` and finds nothing; (7) `views.update` immediately after the upload shows the image, and if not, whether one retry does (F9). The outcome is written under this story. If (1) fails, AD-R15's fallback applies (same delete lifecycle, its own ALLOWED row), 15.4's AC change to match, Ely is told, and Dana Reyes is asked whether the image may sit in the person's DM, where it shows in push notification previews and their Files list (DEP above). If (3) fails on Back, the sweep is Back's delete path (20 minutes at most) and no AC changes.
 **Live-check steps:** `docs/runtime/map-check.md`. **Outcome:** pending (Ely has not run it yet).
+**Live check outcome (2026-10-26, Ely, dev Slack, iOS and desktop):**
+1. Image shows in the modal: **pass** (after the retry below).
+2. File appears in no channel or DM: **pass**.
+3. `view_closed` on Back: **pass** (`map view closed`, `deleted: 1`, twice). On Close (X / swipe down): **not checked**; if it doesn't arrive, the sweep deletes within 20 minutes and no AC changes.
+4. After `files.delete` the file is gone: **pass** (the copied link says "file not found").
+5. Clicking the image (iOS): Slack offers Open in Browser, Copy Link and Share… (AirDrop, Messages, Mail, Notes, Copy). The shared item is the private `files.slack.com` link (opens only for a workspace member with access), but Copy may put the image on the clipboard, and anyone can screenshot. **Dana must know this before signing GRD-002 (DEP-025).**
+6. A user outside the audience searches Files: **not checked** (needs a second person).
+7. `views.update` straight after the upload: **fails** with `invalid slack file`; one retry about 1 s later succeeds (`map image shown`, attempt 2, every time). Retry with backoff added (PR fixing this).
+
+Result: AD-R15's primary path holds (no DM fallback). Story 15.4 may proceed; items 3 (Close) and 6 stay open and are re-checked in 15.4's live check.
 
 ### Story 15.2: `mapPoints`, snapped pixel positions for the map, and the profile keys
 **Implements:** FR8, FR9, NFR3 · **Estimate:** M · **Tier:** T3 (`kit/runtime/data/**` engine floor, `profiles/_schema/**`, `kit/lib/profile/**`) · **Architecture:** AD-R10, R13, R17, runtime AD-9

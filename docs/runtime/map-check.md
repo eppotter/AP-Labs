@@ -26,7 +26,7 @@ Do them in order. Write down what you see for each numbered item; the answers go
 |---|---|---|
 | 1 | Type `/brightside`, then press **Open** on **Map check (dev)**. | "Loading…", then a window titled *Map check (dev)* with one line of text and the test picture (colour bars on top, a checkerboard below). **Item 1:** does the picture show? If you see a broken-image box or nothing, item 1 fails: stop and report it. |
 | 2 | With the window still open, look through Slack: your DM with the bot, any channel, the bot's Activity. | **Item 2:** the file `route-map.png` appears in no channel and no conversation. |
-| 3 | **Item 7:** note whether the picture appeared at once when "Loading…" went away, or only after a moment, or not until you reopened it. | If the picture was missing at first and appeared on its own, or never appeared until you pressed Open again, write that down: it tells us whether `views.update` straight after the upload needs a retry. |
+| 3 | **Item 7:** note whether the picture appeared at once when "Loading…" went away, or only after a moment, or not until you reopened it. In the bot's terminal, find the `map image shown` line and write down its `attempt` number. | `attempt: 1` means Slack took the picture straight after the upload; a higher number means Slack refused the fresh file ("invalid slack file") and the bot tried again after 1, 2, 3 and 4 seconds (at most 5 tries, about 10 seconds). If every try fails, the window says the map couldn't be shown (with Back), the file is deleted at once, and the terminal shows `map image not accepted by slack` with the attempts and Slack's messages: write that line down (it may mean item 1 fails, see "If something fails"). |
 | 4 | **Item 5:** click the picture. Try to open it full size, share it, download it, and copy a link to it. | For each of open, share, download and copy link: is it offered, and does it work? Write down each one. |
 | 5 | **Item 6:** ask the second person to search Slack's **Files** for `route-map.png` (and for `Route map`). | They should find nothing. Write down what they see. |
 | 6 | Press **Back** (bottom left of the window). | You are back on the Brightside menu. In the bot's terminal, within a few seconds: a `map view closed` line with `deleted: 1`. **Item 3 (Back):** did that line appear? If not, write that down: the sweep is then Back's delete path, at most 20 minutes after the upload, and nothing else changes. |
@@ -42,7 +42,7 @@ Do them in order. Write down what you see for each numbered item; the answers go
 4. After `files.delete` the file is gone.
 5. Clicking the image and trying to open, share or download it, and what each allows.
 6. A user outside the audience searches Files for `route-map.png` and finds nothing.
-7. `views.update` immediately after the upload shows the image, and if not, whether one retry does.
+7. `views.update` immediately after the upload shows the image, and if not, whether one retry does. The `map image shown` line's `attempt` says how many tries Slack needed.
 
 ## If something fails
 

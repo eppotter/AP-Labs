@@ -94,7 +94,12 @@
 // module's view is pushed with notify_on_close and callback hub:map. The hub
 // uploads the PNG (shared nowhere), records the file, then shows the image
 // block in that view, replacing what was there, and deletes the view's
-// earlier map files; a failed show deletes the new file at once. An upload
+// earlier map files; a failed show deletes the new file at once. When Slack
+// says the fresh file is not usable yet (invalid slack file), the show is
+// tried again with backoff (mapFiles.showing); "map image shown" logs the
+// attempt that worked. If every try fails the file is deleted at once, "map
+// image not accepted by slack" is logged (attempts, Slack's code and
+// messages) and the view shows the plain upload-failure message. An upload
 // failure shows a plain message in the view, with Back. With no pushed view
 // (the trigger expired and the reply went in place, or a click from a
 // message) nothing is uploaded and the person is told to open it again.
@@ -136,7 +141,7 @@ const {
   createApprovalWrite, pushHooks, verbOf: writeVerbOf, ACTION_PATTERN: WRITE_ACTION,
 } = require('../archetypes/approval-write');
 const { QUERY_ARCHETYPES } = require('../registry');
-const { uploadsMapImages, ImageError } = require('./image');
+const { uploadsMapImages, ImageError, NotAccepted } = require('./image');
 const { textBlocks } = require('./format');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
@@ -382,12 +387,19 @@ function registerHubs(app, {
     }
     const fileId = block.slack_file.id;
     const text = typeof rest.text === 'string' && rest.text ? textBlocks(rest.text) : [];
+    let attempt;
     try {
-      await target.reply({ blocks: [...text, block] }, { replace: true });
+      attempt = await mapFiles.showing(() => target.reply({ blocks: [...text, block] }, { replace: true }));
     } catch (err) {
       await mapFiles.release(owner, { only: fileId, why: 'not shown' });
-      throw err;
+      if (!(err instanceof NotAccepted)) throw err;
+      log.error('map image not accepted by slack', {
+        module: mod.id, attempts: err.attempts, reason: err.reason, messages: err.messages,
+      });
+      await target.reply(MAP_NOT_SHOWN, { replace: true });
+      return;
     }
+    log.info('map image shown', { module: mod.id, attempt });
     // A view switch: the map shown before this one goes now.
     await mapFiles.release(owner, { keep: fileId, why: 'replaced' });
   };

@@ -26,6 +26,17 @@
 //   release(owner, { keep, only })  deletes every file the owner recorded
 //                           (except keep; or only that one), for a view
 //                           switch, view_closed or a map that was not shown.
+//   showing(fn)             runs fn (the views.update that shows the image
+//                           block) and resolves the attempt it took. When
+//                           Slack answers that the file is not usable yet
+//                           (fileNotReady: invalid_arguments with an
+//                           "invalid slack file" message on slack_file, seen
+//                           live straight after an upload), it waits and
+//                           tries again: SHOW_DELAYS (1, 2, 3, 4 s; showDelays
+//                           and sleep are injectable). Any other error is
+//                           thrown at once, unretried. When every try fails
+//                           it throws NotAccepted (attempts, Slack's code and
+//                           its messages, cut short; never a payload).
 // deleteMapFiles deletes recorded files: a deleted file (or one Slack no
 // longer has) loses its record; any other failure keeps the record for the
 // next sweep and logs Slack's error code only. Nothing here logs the PNG, the
@@ -48,6 +59,12 @@ const MAX_STOPS = 9999;
 // Slack's codes for a file that is already gone: the record goes too.
 const GONE = new Set(['file_not_found', 'file_deleted']);
 const MAP_CHECK = 'map-check';
+// Waits between tries when Slack does not accept a fresh file yet (live check
+// 2026-10-26: views.update 0.5 s after the upload failed). Total 10 s.
+const SHOW_DELAYS = Object.freeze([1000, 2000, 3000, 4000]);
+const NOT_READY = /invalid slack file/i;
+const MAX_MESSAGES = 3;
+const MAX_MESSAGE = 200;
 
 class ImageError extends Error {
   constructor(reason) {
@@ -56,6 +73,37 @@ class ImageError extends Error {
     this.reason = reason;
   }
 }
+
+// Slack never accepted the file for the image block, after every try.
+class NotAccepted extends Error {
+  constructor({ attempts, reason, messages }) {
+    super('map image not accepted by slack');
+    this.name = 'NotAccepted';
+    this.attempts = attempts;
+    this.reason = reason;
+    this.messages = messages;
+  }
+}
+
+// Slack's response_metadata messages for a failed call (the Slack client's
+// WebAPIPlatformError keeps the answer in err.data), at most 3, each cut to
+// 200 characters of plain text.
+function slackMessages(err) {
+  const meta = err && err.data && err.data.response_metadata;
+  const list = meta && Array.isArray(meta.messages) ? meta.messages : [];
+  return list.filter((m) => typeof m === 'string').slice(0, MAX_MESSAGES)
+    .map((m) => m.replace(/[^\x20-\x7e]/g, '').slice(0, MAX_MESSAGE));
+}
+
+// True when Slack refused the image block's file as not usable (yet): the
+// error invalid_arguments with a message "invalid slack file" pointing at a
+// slack_file. Nothing else is retried.
+function fileNotReady(err) {
+  if (!err || !err.data || err.data.error !== 'invalid_arguments') return false;
+  return slackMessages(err).some((m) => NOT_READY.test(m) && m.includes('slack_file'));
+}
+
+const wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 // The one alt text template (F15).
 function altText({ view, crew, stops }) {
@@ -149,7 +197,7 @@ const canFiles = (client) => Boolean(client && client.files
   && typeof client.files.uploadV2 === 'function' && typeof client.files.delete === 'function');
 
 function createMapFiles({
-  store, client, log, sweeping = () => false,
+  store, client, log, sweeping = () => false, showDelays = SHOW_DELAYS, sleep = wait,
 }) {
   const ready = () => canStore(store) && canFiles(client) && sweeping() === true;
 
@@ -186,10 +234,29 @@ function createMapFiles({
     return deleteMapFiles({ store, client, log, ids, why });
   }
 
-  return { ready, upload, release };
+  // Shows the image block (fn), trying again while Slack says the file is
+  // not usable yet. Resolves the attempt that worked.
+  async function showing(fn) {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await fn();
+        return attempt;
+      } catch (err) {
+        if (!fileNotReady(err)) throw err;
+        if (attempt > showDelays.length) {
+          throw new NotAccepted({ attempts: attempt, reason: slackCode(err), messages: slackMessages(err) });
+        }
+        await sleep(showDelays[attempt - 1]);
+      }
+    }
+  }
+
+  return {
+    ready, upload, release, showing,
+  };
 }
 
 module.exports = {
   altText, isAltText, isPng, uploadsMapImages, uploadPng, imageBlock, fileIdOf, deleteMapFiles, createMapFiles, slackCode,
-  ImageError, FILENAME, TITLE, MAX_ALT, MAX_PNG_BYTES, MAP_CHECK,
+  fileNotReady, slackMessages, ImageError, NotAccepted, SHOW_DELAYS, FILENAME, TITLE, MAX_ALT, MAX_PNG_BYTES, MAP_CHECK,
 };

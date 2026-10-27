@@ -247,3 +247,60 @@ test('the fake: views.open and views.push with a trigger over 3 seconds old answ
   app.expireTriggers();
   await assert.rejects(app.client.views.open({ trigger_id: 'T-2', view }), (e) => e.data.error === 'expired_trigger_id');
 });
+
+// --- Live check 2026-10-26: Slack does not accept a fresh file yet -----------------
+
+const { notReadyError } = require('../fixtures/fake-slack');
+
+test('fileNotReady matches exactly the real answer: invalid_arguments with an "invalid slack file" message on slack_file', () => {
+  assert.equal(image.fileNotReady(notReadyError(1)), true);
+  const other = (error, messages) => Object.assign(new Error('x'), { data: { ok: false, error, response_metadata: { messages } } });
+  assert.equal(image.fileNotReady(other('invalid_blocks', ['[ERROR] invalid slack file [json-pointer:view/blocks/1/slack_file]'])), false);
+  assert.equal(image.fileNotReady(other('invalid_arguments', ['[ERROR] must be a valid block [json-pointer:/view/blocks/0]'])), false);
+  assert.equal(image.fileNotReady(other('invalid_arguments', [])), false);
+  assert.equal(image.fileNotReady(Object.assign(new Error('x'), { data: { ok: false, error: 'invalid_arguments' } })), false);
+  assert.equal(image.fileNotReady(new Error('invalid slack file slack_file')), false);
+  assert.equal(image.fileNotReady(null), false);
+});
+
+test('slackMessages keeps at most 3 messages, 200 printable characters each', () => {
+  const err = { data: { response_metadata: { messages: ['a\u0000b', 'x'.repeat(500), 'c', 'd', 7] } } };
+  assert.deepEqual(image.slackMessages(err), ['ab', 'x'.repeat(200), 'c']);
+  assert.deepEqual(image.slackMessages({}), []);
+});
+
+test('the fake answers a file not ready yet the way the real API did, for the first N views calls only', async () => {
+  const app = new FakeSlackApp({ views: true });
+  app.filesNotReadyFor = 1;
+  const png = fs.readFileSync(path.join(__dirname, '../fixtures/routing-map/test-pattern.png'));
+  await app.client.files.uploadV2({ file: png, filename: 'route-map.png', title: 'Route map' });
+  const view = {
+    type: 'modal', title: { type: 'plain_text', text: 'x' }, blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'a' } }, { type: 'image', slack_file: { id: 'F1' }, alt_text: 'a' }],
+  };
+  await assert.rejects(app.client.views.update({ view_id: 'V1', view }), (e) => e.code === 'slack_webapi_platform_error'
+    && e.data.error === 'invalid_arguments'
+    && e.data.response_metadata.messages[0] === '[ERROR] invalid slack file [json-pointer:view/blocks/1/slack_file.id/slack_file]');
+  await app.client.views.update({ view_id: 'V1', view });
+});
+
+test('showing: retries only a file not ready, waits 1, 2, 3, 4 s, then throws NotAccepted with the attempts', async () => {
+  assert.deepEqual([...image.SHOW_DELAYS], [1000, 2000, 3000, 4000]);
+  const store = createStore();
+  const slept = [];
+  const sleep = async (ms) => { slept.push(ms); };
+  const files = image.createMapFiles({ store, client: {}, log: {}, sleep });
+  let n = 0;
+  assert.equal(await files.showing(async () => { n += 1; if (n < 3) throw notReadyError(0); }), 3);
+  assert.deepEqual(slept, [1000, 2000]);
+  slept.length = 0;
+  await assert.rejects(files.showing(async () => { throw notReadyError(0); }), (err) => err instanceof image.NotAccepted
+    && err.attempts === 5 && err.reason === 'invalid_arguments' && err.messages.length === 1);
+  assert.deepEqual(slept, [1000, 2000, 3000, 4000]);
+  slept.length = 0;
+  const boom = new Error('boom');
+  await assert.rejects(files.showing(async () => { throw boom; }), (err) => err === boom);
+  assert.deepEqual(slept, []);
+  const custom = image.createMapFiles({ store, client: {}, log: {}, showDelays: [5], sleep });
+  await assert.rejects(custom.showing(async () => { throw notReadyError(0); }), (err) => err.attempts === 2);
+  assert.deepEqual(slept, [5]);
+});
