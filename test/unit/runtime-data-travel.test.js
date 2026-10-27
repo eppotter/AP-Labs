@@ -1,7 +1,7 @@
 'use strict';
 
 // Story 13.2 (AD-R9, data-design §3): travelMatrix, the one governed read of
-// coordinate columns. Real DuckDB tests build test/fixtures/routing-data into
+// coordinate columns. Story 15.13 (AD-R25) adds km_tenths to each row. Real DuckDB tests build test/fixtures/routing-data into
 // a temporary file and read it with test/fixtures/profiles/routing.yml; the
 // MotherDuck-mode tests use the fake instance factory. No client path.
 
@@ -51,6 +51,12 @@ function km(a, b) {
 }
 const rawMinutes = (a, b, r) => ((km(a, b) * r.detour_factor) / r.speed_kmh) * 60;
 const byHand = (a, b, r) => Math.max(r.min_travel_minutes, Math.ceil(Math.round(rawMinutes(a, b, r) * 1e6) / 1e6));
+// Story 15.13 (AD-R25): straight-line km x detour, in whole tenths of a km.
+const kmTenthsByHand = (a, b, r) => Math.round(km(a, b) * r.detour_factor * 10);
+const ROW_KEYS = ['from_node', 'to_node', 'minutes', 'km_tenths'];
+// Worked once by hand from the seeds (8.5200 km and 23.6306 km, x 1.3 x 10).
+const KM_TENTHS_S1_S2 = 111;
+const KM_TENTHS_V1_V2 = 307;
 
 function tmpDir(t) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-travel-')));
@@ -92,27 +98,36 @@ const ADDRESSES = seed('sites').flatMap((r) => [r.street_address, r.phone]);
 
 // --- The rectangle and the formula -----------------------------------------
 
-test('returns the from x to rectangle in the order asked; minutes match haversine x detour / speed by hand', async (t) => {
+test('returns the from x to rectangle in the order asked; minutes and km_tenths match haversine x detour by hand', async (t) => {
   const profile = profileWith();
   const data = await source(t, profile);
   const from = ['van:v1', 'site:s1', 'site:s3'];
   const to = ['site:s2', 'site:s1', 'van:v2', 'site:s3'];
   const rows = await data.travelMatrix(from, to);
   assert.equal(rows.length, from.length * to.length);
-  const expected = from.flatMap((a) => to.map((b) => ({ from_node: a, to_node: b, minutes: byHand(a, b, profile.routing) })));
+  const expected = from.flatMap((a) => to.map((b) => ({
+    from_node: a, to_node: b, minutes: byHand(a, b, profile.routing), km_tenths: kmTenthsByHand(a, b, profile.routing),
+  })));
   assert.deepEqual(rows, expected);
   for (const row of rows) {
-    assert.deepEqual(Object.keys(row), ['from_node', 'to_node', 'minutes']);
+    assert.deepEqual(Object.keys(row), ROW_KEYS);
     assert.ok(Number.isSafeInteger(row.minutes));
+    assert.ok(Number.isSafeInteger(row.km_tenths) && row.km_tenths >= 0);
   }
   // Pinned by hand once, so the test and the SQL cannot drift together.
-  assert.equal(rows.find((r) => r.from_node === 'site:s1' && r.to_node === 'site:s2').minutes, 17);
-  assert.equal(rows.find((r) => r.from_node === 'van:v1' && r.to_node === 'van:v2').minutes, 47);
+  const s1s2 = rows.find((r) => r.from_node === 'site:s1' && r.to_node === 'site:s2');
+  const v1v2 = rows.find((r) => r.from_node === 'van:v1' && r.to_node === 'van:v2');
+  assert.equal(s1s2.minutes, 17);
+  assert.equal(v1v2.minutes, 47);
+  assert.equal(s1s2.km_tenths, KM_TENTHS_S1_S2);
+  assert.equal(v1v2.km_tenths, KM_TENTHS_V1_V2);
+  // Not minutes x speed: the 5-minute floor and the round-up do not reach it.
+  assert.equal(rows.find((r) => r.from_node === 'site:s1' && r.to_node === 'site:s1').km_tenths, 0, 'a place to itself is 0, though its minutes are the floor');
 });
 
 test('a pair closer than the floor gets min_travel_minutes (default 5; a set floor wins)', async (t) => {
   const data = await source(t);
-  assert.deepEqual(await data.travelMatrix(['site:s1'], ['site:s1']), [{ from_node: 'site:s1', to_node: 'site:s1', minutes: 5 }]);
+  assert.deepEqual(await data.travelMatrix(['site:s1'], ['site:s1']), [{ from_node: 'site:s1', to_node: 'site:s1', minutes: 5, km_tenths: 0 }]);
   const profile = profileWith((p) => { p.routing.min_travel_minutes = 30; });
   const floored = await source(t, profile);
   const rows = await floored.travelMatrix(['site:s1'], ['site:s2', 'site:s3']);
@@ -133,7 +148,9 @@ test('minutes are rounded to 1e-6 before rounding up: a float a hair over a whol
   const profile = profileWith((p) => { p.routing.detour_factor = 1; p.routing.speed_kmh = speed; });
   const data = await source(t, profile);
   assert.equal(Math.ceil(rawMinutes('site:s1', 'site:s2', profile.routing)), 13, 'a bare ceil would say 13');
-  assert.deepEqual(await data.travelMatrix(['site:s1'], ['site:s2']), [{ from_node: 'site:s1', to_node: 'site:s2', minutes: 12 }]);
+  assert.deepEqual(await data.travelMatrix(['site:s1'], ['site:s2']), [{
+    from_node: 'site:s1', to_node: 'site:s2', minutes: 12, km_tenths: kmTenthsByHand('site:s1', 'site:s2', profile.routing),
+  }]);
 });
 
 test('the rows feed the engine\'s travel port (routing.travel.fromMatrix) when the node kinds are the engine\'s', async (t) => {
@@ -146,6 +163,47 @@ test('the rows feed the engine\'s travel port (routing.travel.fromMatrix) when t
   const drive = routingEngine.travel.fromMatrix(rows);
   assert.equal(drive('crew:v1', 'property:s2'), rows[1].minutes);
   assert.throws(() => drive('property:s2', 'crew:v1'), (err) => err instanceof RoutingFault && err.details.problem === 'no_travel');
+});
+
+test('Story 15.13: a depot kind declared in routing.coordinates reads like any other: depot:<id> ids, the same four columns', async (t) => {
+  const profile = profileWith((p) => { p.routing.coordinates.nodes[1].kind = 'depot'; });
+  const data = await source(t, profile);
+  const rows = await data.travelMatrix(['depot:v1', 'site:s1'], ['site:s2', 'depot:v1']);
+  assert.deepEqual(rows.map((r) => Object.keys(r)), rows.map(() => ROW_KEYS));
+  assert.deepEqual(rows[1], { from_node: 'depot:v1', to_node: 'depot:v1', minutes: 5, km_tenths: 0 });
+  const back = rows.find((r) => r.from_node === 'site:s1' && r.to_node === 'depot:v1');
+  assert.equal(back.km_tenths, Math.round(km('site:s1', 'van:v1') * profile.routing.detour_factor * 10));
+  // An undeclared kind is still refused before any query.
+  await assert.rejects(data.travelMatrix(['site:s1'], ['van:v1']), refused('toIds[0]', 'bad_node'));
+});
+
+test('Story 15.13: the engine\'s travel port takes the rows with km_tenths as they come and gives minutes only', async (t) => {
+  const profile = profileWith((p) => {
+    p.routing.coordinates.nodes[0].kind = 'property';
+    p.routing.coordinates.nodes[1].kind = 'crew';
+  });
+  const data = await source(t, profile);
+  const rows = await data.travelMatrix(['crew:v1', 'property:s1'], ['property:s2']);
+  assert.ok(rows.every((r) => Number.isSafeInteger(r.km_tenths)));
+  const drive = routingEngine.travel.fromMatrix(rows);
+  assert.equal(drive('crew:v1', 'property:s2'), rows[0].minutes);
+  assert.equal(drive('property:s1', 'property:s2'), rows[1].minutes);
+});
+
+test('Story 15.13: a row whose km_tenths is not a whole number of tenths at or over 0 is a fixed-text fault holding no value', () => {
+  const row = (km_tenths) => [{ from_node: 'site:s1', to_node: 'site:s2', minutes: 17, km_tenths }];
+  for (const bad of [123.45, -987, null, undefined, '111', Number.MAX_SAFE_INTEGER + 2, 4321.5]) {
+    let err;
+    try { travel.rectangle(row(bad), ['site:s1'], ['site:s2']); } catch (e) { err = e; }
+    refused('travelMatrix', 'query_failed')(err);
+    const text = `${err.message} ${JSON.stringify(err.details)} ${messageFor(err, { admin: 'Sam' })}`;
+    for (const v of ['123.45', '987', '4321', 'km_tenths']) assert.ok(!text.includes(v), `${String(bad)}: the error holds ${v}`);
+  }
+  assert.deepEqual(travel.rectangle(row(0), ['site:s1'], ['site:s2']), [{ from_node: 'site:s1', to_node: 'site:s2', minutes: 17, km_tenths: 0 }]);
+  // Each row handed back is fresh and frozen: the caller cannot reach DuckDB's.
+  const [out] = travel.rectangle([{ ...row(5)[0], extra: 'x' }], ['site:s1'], ['site:s2']);
+  assert.deepEqual(Object.keys(out), ROW_KEYS);
+  assert.ok(Object.isFrozen(out));
 });
 
 test('an empty list is an empty rectangle, read from nothing', async (t) => {
@@ -196,7 +254,9 @@ test('node ids reach DuckDB only as bound parameters: the SQL text is the same s
   assert.equal(sqls[1], sqls[3], 'one static template');
   for (const sql of sqls) assert.ok(!/s1|s2|s3|v1|v2/.test(sql.replace(/\$\w+/g, '')), 'no id in the text');
   assert.match(sqls[1], /^SELECT from_node, to_node,$/m);
-  assert.match(sqls[1], /AS INTEGER\) AS minutes$/m);
+  assert.match(sqls[1], /AS INTEGER\) AS minutes,$/m);
+  assert.match(sqls[1], /^  CAST\(round\(km \* \$detour_factor \* 10\) AS INTEGER\) AS km_tenths$/m);
+  assert.match(sqls[1], /AS km_tenths\nFROM d\n/, 'km_tenths is the last column, from the same CTE as minutes');
 });
 
 test('more than routing.max_pairs pairs is refused before running', async (t) => {
@@ -428,7 +488,7 @@ test('the sdk exports travelMatrix and the routing engine; travelMatrix reads on
   assert.equal(typeof sdk.routing.validateInput, 'function');
   assert.equal(sdk.RoutingFault, RoutingFault);
   const data = await source(t);
-  assert.deepEqual(await sdk.travelMatrix(data, ['site:s1'], ['site:s1']), [{ from_node: 'site:s1', to_node: 'site:s1', minutes: 5 }]);
+  assert.deepEqual(await sdk.travelMatrix(data, ['site:s1'], ['site:s1']), [{ from_node: 'site:s1', to_node: 'site:s1', minutes: 5, km_tenths: 0 }]);
   for (const bad of [null, {}, { run: async () => [] }]) {
     await assert.rejects(sdk.travelMatrix(bad, ['site:s1'], ['site:s2']), refused('travelMatrix', 'data_unavailable'));
   }

@@ -25,8 +25,14 @@
 //     can hold no comma). The rectangle is capped at routing.max_pairs.
 //   - minutes = haversine km x detour_factor / speed_kmh x 60, rounded to
 //     1e-6, then up to a whole minute, never below min_travel_minutes; all of
-//     it inside DuckDB. The select list is fixed: from_node, to_node, minutes
-//     (INTEGER). No coordinate ever comes back to JS.
+//     it inside DuckDB. km_tenths (Story 15.13, AD-R25) = haversine km x
+//     detour_factor x 10, rounded to a whole tenth of a km, from the same
+//     CTE: the straight-line estimate, not road distance and not derived from
+//     the minutes. The select list is fixed: from_node, to_node, minutes,
+//     km_tenths (all INTEGER). No coordinate ever comes back to JS.
+//   - a leg's km_tenths is never shown, logged or sent (about 77 m a step,
+//     finer than the map grid): only a route's total, in whole km, is shown.
+//     No fault here carries a value, so no error holds one.
 //   - every failure is a RoutingFault with fixed words (faultFor): never
 //     DuckDB's text, the SQL, a path or a value.
 
@@ -138,7 +144,8 @@ function matrixSql(routing) {
     '  FROM f CROSS JOIN t',
     ')',
     'SELECT from_node, to_node,',
-    '  CAST(greatest($min_minutes, ceil(round(km * $detour_factor / $speed_kmh * 60, 6))) AS INTEGER) AS minutes',
+    '  CAST(greatest($min_minutes, ceil(round(km * $detour_factor / $speed_kmh * 60, 6))) AS INTEGER) AS minutes,',
+    '  CAST(round(km * $detour_factor * 10) AS INTEGER) AS km_tenths',
     'FROM d',
     'ORDER BY from_node, to_node',
   ].join('\n');
@@ -180,15 +187,17 @@ function matrixParams(fromIds, toIds, routing) {
 }
 
 // DuckDB's rows as the full from x to rectangle, in the order asked, each a
-// fresh { from_node, to_node, minutes }. A node with no row (unknown id or a
-// null coordinate) is refused by its list position, never its value.
+// fresh { from_node, to_node, minutes, km_tenths }. A node with no row
+// (unknown id or a null coordinate) is refused by its list position, never
+// its value; a bad minutes or km_tenths is refused without it.
+const wholeOrZero = (v) => Number.isSafeInteger(v) && v >= 0;
 function rectangle(rows, fromIds, toIds) {
-  const minutes = new Map();
+  const legs = new Map();
   for (const r of rows) {
-    if (!Number.isSafeInteger(r.minutes) || r.minutes < 0) throw fault(FIELD, 'query_failed');
+    if (!wholeOrZero(r.minutes) || !wholeOrZero(r.km_tenths)) throw fault(FIELD, 'query_failed');
     const key = `${r.from_node}\u0000${r.to_node}`;
-    if (minutes.has(key)) throw fault(FIELD, 'duplicate');
-    minutes.set(key, r.minutes);
+    if (legs.has(key)) throw fault(FIELD, 'duplicate');
+    legs.set(key, { minutes: r.minutes, km_tenths: r.km_tenths });
   }
   const froms = new Set(rows.map((r) => r.from_node));
   const tos = new Set(rows.map((r) => r.to_node));
@@ -197,9 +206,9 @@ function rectangle(rows, fromIds, toIds) {
   const out = [];
   for (const from of fromIds) {
     for (const to of toIds) {
-      const m = minutes.get(`${from}\u0000${to}`);
-      if (m === undefined) throw fault(FIELD, 'no_position');
-      out.push(Object.freeze({ from_node: from, to_node: to, minutes: m }));
+      const leg = legs.get(`${from}\u0000${to}`);
+      if (leg === undefined) throw fault(FIELD, 'no_position');
+      out.push(Object.freeze({ from_node: from, to_node: to, minutes: leg.minutes, km_tenths: leg.km_tenths }));
     }
   }
   return out;

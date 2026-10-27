@@ -174,7 +174,7 @@
     },
 
     "routing": {
-      "description": "Route optimization (kit/runtime/routing, travelMatrix in kit/runtime/data). Optional; absent = routing off. coordinates.nodes names where each kind of stop keeps its position, as micro-degree INTEGER columns; every lat_column and lon_column must also be in sql.forbidden_columns (as table.column), so no other query can read them. Travel minutes = straight-line distance x detour_factor / speed_kmh, rounded up, never below min_travel_minutes (default 5). max_pairs caps one travel rectangle (default 10000). limits are minutes after local midnight, in order (earliest_start <= default_start <= aim_finish <= latest_finish), plus slot_minutes, the start-time step. gap_fill: horizon_days (default 14), limit (default 5) and optional weights that override the engine's ranking weights by input name. The routing map (mapPoints in kit/runtime/data, AD-R13): max_points (default 500), map_grid_e6 (default 2000, the floor) and map_min_span_km (default 5, the floor); audience (AD-R17) says who sees it. basemap (AD-R18, optional) puts a street map under it.",
+      "description": "Route optimization (kit/runtime/routing, travelMatrix in kit/runtime/data). Optional; absent = routing off. coordinates.nodes names where each kind of stop keeps its position, as micro-degree INTEGER columns; every lat_column and lon_column must also be in sql.forbidden_columns (as table.column), so no other query can read them. Travel minutes = straight-line distance x detour_factor / speed_kmh, rounded up, never below min_travel_minutes (default 5). max_pairs caps one travel rectangle (default 10000). limits are minutes after local midnight, in order (earliest_start <= default_start <= aim_finish <= latest_finish), plus slot_minutes, the start-time step. gap_fill: horizon_days (default 14), limit (default 5) and optional weights that override the engine's ranking weights by input name. The routing map (mapPoints in kit/runtime/data, AD-R13): max_points (default 500), map_grid_e6 (default 2000, the floor) and map_min_span_km (default 5, the floor); audience (AD-R17) says who sees it. basemap (AD-R18, optional) puts a street map under it. depot (AD-R23, optional) names the Office node Plan a route starts and ends at.",
       "type": "object",
       "additionalProperties": false,
       "required": ["coordinates", "speed_kmh", "detour_factor", "limits"],
@@ -257,6 +257,16 @@
                 }
               }
             }
+          }
+        },
+        "depot": {
+          "description": "The Office (AD-R23): the one node every crew starts and ends at in Plan a route. node is a kind-prefixed id (<kind>:<id>) whose kind is declared in coordinates.nodes, so its position is read from the data like any other node, never written here. label is what the list calls it: plain text, 1 to 24 characters, one line, no space at either end, none of < > & * _ ~ ` | :. No other key: a latitude or longitude here is refused.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["node", "label"],
+          "properties": {
+            "node": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}:[A-Za-z0-9_-]{1,64}$" },
+            "label": { "type": "string", "minLength": 1, "maxLength": 24 }
           }
         },
         "basemap": {

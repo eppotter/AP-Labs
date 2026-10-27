@@ -341,6 +341,63 @@ test('every basemap refusal is listed in one error, each naming its key', () => 
   });
 });
 
+// Story 15.13 (AD-R23): the optional Office, a node whose kind is declared.
+const withDepot = (edit) => {
+  const p = parsed('routing-depot');
+  edit(p.routing.depot, p);
+  return p;
+};
+const depotRefuses = (key, edit, pattern) => rejects(withDepot(edit), new RegExp(`^\\[profile\\] refusing to start: /routing/depot/?${key} ${pattern}`));
+
+test('routing.depot loads as written and frozen; it is optional and gets no default', () => {
+  const p = loadProfile(fixture('routing-depot'));
+  assert.deepEqual(p.routing.depot, { node: 'depot:hq', label: 'Office' });
+  assert.ok(Object.isFrozen(p.routing.depot));
+  for (const name of ['routing', 'routing-full', 'routing-basemap']) {
+    assert.equal(Object.hasOwn(loadProfile(fixture(name)).routing, 'depot'), false, name);
+  }
+  // Any declared kind may be the Office's, and a label of exactly 24 characters is allowed.
+  const onVan = validateProfile(withDepot((d) => { d.node = 'van:v1'; d.label = 'x'.repeat(24); }));
+  assert.deepEqual(onVan.routing.depot, { node: 'van:v1', label: 'x'.repeat(24) });
+  for (const label of ['Office', 'Main yard', 'HQ (north)', "Sam's depot", 'Büro 2']) {
+    assert.equal(validateProfile(withDepot((d) => { d.label = label; })).routing.depot.label, label);
+  }
+});
+
+test('routing.depot refuses a node whose kind is not declared in routing.coordinates.nodes, naming the key', () => {
+  depotRefuses('node', (d) => { d.node = 'office:hq'; }, 'kind "office" is not declared in routing.coordinates.nodes$');
+  depotRefuses('node', (d, p) => { p.routing.coordinates.nodes.pop(); }, 'kind "depot" is not declared');
+  for (const bad of ['hq', 'depot:', ':hq', 'Depot:hq', 'depot:h q', 'depot:hq:2', `depot:${'x'.repeat(65)}`, 'depot:40.1,-82.9']) {
+    depotRefuses('node', (d) => { d.node = bad; }, 'must match pattern', bad);
+  }
+  depotRefuses('node', (d) => { d.node = 7; }, 'must be string');
+});
+
+test('routing.depot refuses a label over 24 characters, empty, on two lines, padded or holding markup, naming the key', () => {
+  depotRefuses('label', (d) => { d.label = 'x'.repeat(25); }, 'must NOT have more than 24 characters');
+  depotRefuses('label', (d) => { d.label = ''; }, 'must NOT have fewer than 1 characters');
+  depotRefuses('label', (d) => { d.label = '   '; }, 'must not be empty');
+  depotRefuses('label', (d) => { d.label = 'Office\nMain'; }, 'must be one line of plain text');
+  depotRefuses('label', (d) => { d.label = 'Office Main'; }, 'must be one line of plain text');
+  depotRefuses('label', (d) => { d.label = ' Office'; }, 'must not start or end with a space');
+  for (const bad of ['<b>Office</b>', '*Office*', '_Office_', '~Office~', '`Office`', 'A | B', 'A & B', '<!here>', ':house: Office', '<http://x|Office>']) {
+    depotRefuses('label', (d) => { d.label = bad; }, 'must not hold any of < > & \\* _ ~ ` \\| :$');
+  }
+  depotRefuses('label', (d) => { d.label = 42; }, 'must be string');
+  // The refusal never echoes the label.
+  assert.throws(() => validateProfile(withDepot((d) => { d.label = '*Secret Lane 12*'; })), (err) => !err.message.includes('Secret Lane'));
+});
+
+test('routing.depot refuses any other key (a lat or lon is never written here) and a missing one, naming it', () => {
+  for (const key of ['lat', 'lon', 'lat_e6', 'address', 'kind']) {
+    rejects(withDepot((d) => { d[key] = 40.1; }), new RegExp(`/routing/depot has unknown key "${key}"`));
+  }
+  for (const key of ['node', 'label']) {
+    rejects(withDepot((d) => { delete d[key]; }), new RegExp(`/routing/depot must have required property '${key}'`));
+  }
+  rejects(withDepot((d, p) => { p.routing.depot = 'depot:hq'; }), /\/routing\/depot must be object/);
+});
+
 test('routing refuses a bad identifier, naming the key', () => {
   for (const bad of ['Sites', 'sites;drop', 'sites.x', '"sites"', '1sites', '', 'a'.repeat(64)]) {
     rejects(withRouting((r) => { r.coordinates.nodes[0].table = bad; }), /\/routing\/coordinates\/nodes\/0\/table must match pattern/);

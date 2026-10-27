@@ -15,6 +15,11 @@
 //                                        the wash over the street tiles
 //   imageSize(view, frame)               { width, height } of the image
 //
+// Views: compare, change, zone, gap (Routing's four) and route (Story
+// 15.13, AD-R28: Plan a route's one panel, the Office marker and a closed
+// loop through the stops in the order given). Every view works with and
+// without a basemap.
+//
 // A basemap is { tiles: [{ col, row, png }], ox, oy }: pixel offsets and
 // checked PNG bytes only, never tile numbers (png.js composeBasemap). With no
 // basemap the PNG is the plain map, byte for byte what it was before street

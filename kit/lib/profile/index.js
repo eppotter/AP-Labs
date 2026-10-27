@@ -91,6 +91,28 @@ function routingProblems(routing, forbidden, p) {
   }
   if (routing.audience) problems.push(...audienceProblems(routing.audience, p));
   if (routing.basemap) problems.push(...basemapProblems(routing.basemap));
+  if (routing.depot) problems.push(...depotProblems(routing.depot, nodes));
+  return problems;
+}
+
+// The Office (AD-R23, Story 15.13): what the schema cannot say. Its node's
+// kind must be a declared node source, so its position is read from the data
+// like any other node's and never written in the profile. The label is shown
+// as text in Slack, so it is plain text on one line with no Slack formatting
+// character (a colon too: :name: is an emoji). Each refusal names the key and
+// never echoes the label. That the node's row exists is checked at first use
+// (mapPoints and travelMatrix refuse a node with no position).
+const DEPOT_LABEL_BANNED = /[<>&*_~`|:]/;
+const NOT_ONE_LINE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+function depotProblems(depot, nodes) {
+  const at = (key) => `/routing/depot/${key}`;
+  const problems = [];
+  const kind = depot.node.slice(0, depot.node.indexOf(':'));
+  if (!nodes.some((n) => n.kind === kind)) problems.push(`${at('node')} kind "${kind}" is not declared in routing.coordinates.nodes`);
+  if (!depot.label.trim()) problems.push(`${at('label')} must not be empty`);
+  else if (NOT_ONE_LINE.test(depot.label)) problems.push(`${at('label')} must be one line of plain text`);
+  else if (depot.label !== depot.label.trim()) problems.push(`${at('label')} must not start or end with a space`);
+  else if (DEPOT_LABEL_BANNED.test(depot.label)) problems.push(`${at('label')} must not hold any of < > & * _ ~ \` | :`);
   return problems;
 }
 

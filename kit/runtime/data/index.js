@@ -54,7 +54,9 @@
 // of coordinate columns, built in createData's closure from ./travel so it
 // shares run()'s guard, time limit and redaction. It drops exactly the
 // profile's declared coordinate columns from the forbidden list for its own
-// static template and returns only { from_node, to_node, minutes }. run()
+// static template and returns only { from_node, to_node, minutes,
+// km_tenths } (km_tenths: Story 15.13, AD-R25; a leg's is never shown or
+// logged, only a route's total in whole km). run()
 // still refuses every forbidden column.
 //
 // mapPoints(nodeIds, frame) (Story 15.2, AD-R13) is the second, built the
@@ -460,7 +462,7 @@ function createData({
 
   // The one governed coordinate read (Story 13.2, AD-R9; template and checks
   // in ./travel). Resolves the from x to rectangle of { from_node, to_node,
-  // minutes } in the order asked; rejects only with a fixed-text RoutingFault.
+  // minutes, km_tenths } in the order asked; rejects only with a fixed-text RoutingFault.
   // Coordinates never leave DuckDB.
   async function travelMatrix(fromIds, toIds) {
     try {

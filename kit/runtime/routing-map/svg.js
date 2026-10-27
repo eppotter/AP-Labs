@@ -13,7 +13,7 @@
 //   frame       { width, height, padding }  the frame mapPoints drew into:
 //               width and height 200..2000, padding 0..200
 //   points[]    { node, x, y }  whole pixels inside the frame; node is a
-//               kind-prefixed id (property:<id>, crew:<id>)
+//               kind-prefixed id (property:<id>, crew:<id>, depot:<id>)
 //   crews[]     { crewId, color, baseNode }  color is the crew's index in
 //               compareIds order (the caller's order, so a crew keeps its
 //               color when others are filtered out); baseNode is drawn as a
@@ -34,6 +34,13 @@
 //               end of the day),
 //               candidates[] { node, rank } (at most five diamonds, numbered by
 //               rank 1..5)
+//   route       route { crewId, stops[] }, depot (a node): one panel, Plan a
+//               route's (Story 15.13, AD-R28). The Office (depot) has its own
+//               marker, a house shape with no text; the stops are numbered
+//               1..n in the order given; one closed line runs Office ->
+//               stops -> Office in the crew's color. The crew's base square
+//               is not drawn: the Office is where the day starts and ends. A
+//               stop that is the Office, or a stop given twice, is duplicate.
 //
 // Every refusal is a RoutingFault naming the field's path, never its value: a
 // node missing from points is no_position, more than 99 stops on a crew or an
@@ -42,13 +49,14 @@
 const { RoutingFault } = require('../errors');
 const { numberPath, MAX_NUMBER } = require('./glyphs');
 
-const VIEWS = Object.freeze(['compare', 'change', 'zone', 'gap']);
+const VIEWS = Object.freeze(['compare', 'change', 'zone', 'gap', 'route']);
 const TWO_PANELS = Object.freeze({ compare: ['booked', 'optimized'], change: ['before', 'after'] });
 const VIEW_KEYS = Object.freeze({
   compare: ['booked', 'optimized'],
   change: ['before', 'after', 'moved', 'crossZone', 'unplaced'],
   zone: ['routes', 'zones'],
   gap: ['routes', 'gap', 'candidates'],
+  route: ['route', 'depot'],
 });
 const COMMON_KEYS = Object.freeze(['frame', 'points', 'crews']);
 
@@ -76,11 +84,14 @@ const RING_R = 16;
 const NEIGHBOUR_R = [17, 22];
 const BASE_HALF = 8;
 const DIAMOND = 14;
+// The Office: a house (walls and a roof) with a door, offsets from its point.
+const HOUSE = Object.freeze([[-12, 11], [12, 11], [12, -2], [0, -14], [-12, -2]]);
+const DOOR = Object.freeze({ dx: -4, dy: 1, width: 8, height: 10 });
 // The hull pads each point by this octagon (whole pixels, about 28 out).
 const OCTAGON = Object.freeze([[28, 0], [20, 20], [0, 28], [-20, 20], [-28, 0], [-20, -20], [0, -28], [20, -20]]);
 
 const ID = /^[A-Za-z0-9_-]+$/;
-const NODE = /^(property|crew):[A-Za-z0-9_-]+$/;
+const NODE = /^(property|crew|depot):[A-Za-z0-9_-]+$/;
 
 const fault = (field, problem) => new RoutingFault({ field, problem });
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -246,6 +257,25 @@ function checkCandidates(value, ctx) {
   });
 }
 
+// Plan a route's one route (AD-R28): its stops, each once and never the
+// Office, which the line starts and ends at.
+function checkPlannedRoute(value, depotNode, ctx) {
+  const office = placed(depotNode, 'depot', ctx.pts);
+  const r = object(value, 'route', ['crewId', 'stops']);
+  const { crew } = crewOf(r, 'crewId', 'route.crewId', ctx.crews);
+  const stops = list(need(r, 'stops', 'route.stops'), 'route.stops');
+  if (stops.length > MAX_NUMBER) throw fault('route.stops', 'out_of_range');
+  const seen = new Set([depotNode]);
+  const at = stops.map((s, j) => {
+    const field = `route.stops[${j}]`;
+    const p = placed(s, field, ctx.pts);
+    if (seen.has(s)) throw fault(field, 'duplicate');
+    seen.add(s);
+    return p;
+  });
+  return { crew, office, stops: at };
+}
+
 // The model, checked, as what the drawing needs: pixel points and color
 // indexes, with every id left behind.
 function checkModel(view, model) {
@@ -272,6 +302,7 @@ function checkModel(view, model) {
     const zones = checkZones(model.zones, ctx);
     return { frame, panels: [{ routes, zones }] };
   }
+  if (view === 'route') return { frame, panels: [{ planned: checkPlannedRoute(model.route, model.depot, ctx) }] };
   const routes = checkRoutes(model.routes, 'routes', ctx);
   const gap = checkGap(model.gap, ctx);
   const candidates = checkCandidates(model.candidates, ctx);
@@ -314,6 +345,32 @@ function stopMarker(p, n, colors, dx) {
 const hollow = (p, stroke, dx) => el('circle', [['cx', p.x + dx], ['cy', p.y], ['r', STOP_R], ['fill', '#FFFFFF'], ['stroke', stroke], ['stroke-width', 3]]);
 const ring = (p, r, width, dx) => el('circle', [['cx', p.x + dx], ['cy', p.y], ['r', r], ['fill', 'none'], ['stroke', '#000000'], ['stroke-width', width]]);
 const dashed = (a, b, stroke, width, dash, dx) => el('line', [['x1', a.x + dx], ['y1', a.y], ['x2', b.x + dx], ['y2', b.y], ['stroke', stroke], ['stroke-width', width], ['stroke-dasharray', dash], ['stroke-linecap', 'round']]);
+
+// The Office's marker: a black house with a white door, its own shape (no
+// text, AD-R14), unlike a crew's base square or a stop's circle.
+function office(p, dx) {
+  const cx = p.x + dx;
+  const corners = HOUSE.map(([ox, oy]) => `${cx + ox},${p.y + oy}`).join(' ');
+  return [
+    el('polygon', [['points', corners], ['fill', '#000000'], ['stroke', '#FFFFFF'], ['stroke-width', 2], ['stroke-linejoin', 'round']]),
+    el('rect', [['x', cx + DOOR.dx], ['y', p.y + DOOR.dy], ['width', DOOR.width], ['height', DOOR.height], ['fill', '#FFFFFF']]),
+  ];
+}
+
+// Plan a route's drawing: the closed line, the numbered stops, then the
+// Office on top (the line starts and ends under it).
+function planned(r, dx) {
+  const out = [];
+  if (r.stops.length) {
+    out.push(el('polyline', [
+      ['points', pointList([r.office, ...r.stops, r.office], dx)], ['fill', 'none'], ['stroke', paletteOf(r.crew).fill],
+      ['stroke-width', 4], ['stroke-linejoin', 'round'], ['stroke-linecap', 'round'], ['stroke-dasharray', dashOf(r.crew)],
+    ]));
+  }
+  r.stops.forEach((s, i) => out.push(...stopMarker(s, i + 1, paletteOf(r.crew), dx)));
+  out.push(...office(r.office, dx));
+  return out;
+}
 
 function diamond(p, rank, dx) {
   const cx = p.x + dx;
@@ -361,6 +418,7 @@ function hull(zone, routes, dx) {
 
 // One panel's elements, in drawing order (later on top).
 function panel(p, dx) {
+  if (p.planned) return planned(p.planned, dx);
   const out = [];
   for (const zone of p.zones || []) out.push(...hull(zone, p.routes, dx));
   for (const r of p.routes) out.push(...routeLine(r, dx));
