@@ -260,6 +260,33 @@ test('route(): a bad day, depot or crew id is refused by field name, before any 
   }
 });
 
+test('route() and input() refuse a missing or malformed scope by field name only, before any read (fail closed)', async () => {
+  const bad = [undefined, null, {}, { all: false }, { all: 'true' }, { crewId: '' }, { crewId: 2 }, [], 'all', true];
+  for (const scope of bad) {
+    const label = JSON.stringify(scope) ?? 'undefined';
+    for (const call of [
+      (a) => a.route({ day: DAY, crewId: '1', depot: OFFICE, scope }),
+      (a) => a.input({ day: DAY, view: 'compare', scope }),
+      (a) => a.input({ day: DAY, view: 'gap', scope }),
+    ]) {
+      const data = fakeData();
+      await assert.rejects(call(createAdapter({ data, routing: UNIT_ROUTING })), (err) => {
+        assert.ok(err instanceof RoutingFault, label);
+        assert.equal(err.details.field, 'scope', label);
+        assert.ok(['missing', 'not_object'].includes(err.details.problem), label);
+        assert.deepEqual(Object.keys(err.details).sort(), ['field', 'problem'], label);
+        assert.ok(!err.message.includes('crewId') && !/"1"|'1'/.test(err.message), label);
+        return true;
+      });
+      assert.deepEqual([data.runs, data.matrices], [[], []], label);
+    }
+  }
+  // The clicked crewId is used only under an explicit all-crews scope.
+  const data = fakeData();
+  const all = await createAdapter({ data, routing: UNIT_ROUTING }).route({ day: DAY, crewId: '1', depot: OFFICE, scope: { all: true } });
+  assert.deepEqual(all.input.crews.map((c) => c.crewId), ['1']);
+});
+
 // ---- on the fixture ------------------------------------------------------------
 
 let tmp;
@@ -338,6 +365,21 @@ test('the Office is in the data: travelMatrix knows depot:office, and no other d
   const legs = await data.travelMatrix([OFFICE], ['crew:1']);
   assert.equal(legs.length, 1);
   assert.ok(Number.isSafeInteger(legs[0].minutes) && Number.isSafeInteger(legs[0].km_tenths));
+});
+
+test('a depot:<id> with no depots row (MotherDuck without v7, DEP-033) fails cleanly: fixed text, no value named', async () => {
+  const day = dayOf(S3.dayOffset);
+  calls.length = 0;
+  await assert.rejects(adapter.route({ day, crewId: String(S3.crewId), depot: 'depot:nowhere', scope: { all: true } }), (err) => {
+    assert.ok(err instanceof RoutingFault);
+    assert.equal(err.details.problem, 'no_position');
+    assert.deepEqual(Object.keys(err.details).sort(), ['field', 'problem']);
+    assert.match(err.message, /^routing input refused: "[A-Za-z]+\[\d+\]" no_position$/);
+    assert.ok(!err.message.includes('nowhere') && !err.message.includes('depot'), err.message);
+    assert.ok(!/property:|crew:|\d{5,}/.test(err.message), err.message);
+    return true;
+  });
+  assert.ok(calls.length > 0, 'it reached the travel read');
 });
 
 test('S3\'s day (as_of+3): crew 7 is out, its booked stops come from the Office, and the totals are plausible', async () => {

@@ -387,6 +387,16 @@ function createAdapter({ data, routing } = {}) {
   // gapDay and labels.sql.
 
   const leadOf = (scope) => (scope && scope.all !== true && typeof scope.crewId === 'string' ? scope.crewId : null);
+  // The scope route() and input() require (fail closed): { all: true } gives
+  // null (any crew), { crewId } a lead's crew id. A missing or malformed
+  // scope is refused naming only the field, never read as "all crews".
+  const requiredLeadOf = (scope) => {
+    if (scope === undefined || scope === null) throw fault('scope', 'missing');
+    if (typeof scope !== 'object' || Array.isArray(scope)) throw fault('scope', 'not_object');
+    if (scope.all === true) return null;
+    if (typeof scope.crewId === 'string' && scope.crewId !== '') return scope.crewId;
+    throw fault('scope', 'not_object');
+  };
   const isUnknownCrew = (err) => err instanceof RoutingFault && ['crewIds', 'crewId'].includes(err.details.field)
     && err.details.problem === 'unknown_crew';
 
@@ -398,7 +408,7 @@ function createAdapter({ data, routing } = {}) {
   // whole day, so the archetype's configuration check refuses them (never
   // an empty map).
   async function input({ day, view, scope } = {}) {
-    const lead = leadOf(scope);
+    const lead = requiredLeadOf(scope);
     if (view === 'gap') {
       if (lead === null) return gapDay(day, null);
       try {
@@ -450,8 +460,9 @@ function createAdapter({ data, routing } = {}) {
   } = {}) {
     checkDay(day);
     if (typeof depot !== 'string' || !DEPOT_NODE.test(depot)) throw fault('depot', 'bad_node');
-    // A crew lead's crew comes from the scope, never from the click.
-    const lead = leadOf(scope);
+    // A crew lead's crew comes from the scope, never from the click; only an
+    // explicit all-crews scope may pick any crew.
+    const lead = requiredLeadOf(scope);
     const wanted = lead !== null ? lead : crewId;
     if (typeof wanted !== 'string' || !DIGITS.test(wanted)) throw fault('crewId', 'bad_id');
     const booked = await bookedDay(day);
