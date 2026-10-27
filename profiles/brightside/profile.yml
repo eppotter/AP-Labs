@@ -140,6 +140,19 @@ routing:
     # pending Dana Reyes (DEP-024): which people lead which crew. Add { user, crew_id } rows
     # (crew_id without the crew: prefix); each user needs the ROUTING_OWN_CREW grant.
     crew_leads: []
+  # The street map under the routing map (Story 15.11, AD-R18): OpenStreetMap's free tiles,
+  # for dev and the demo only. Its policy asks for an app name and a contact in the
+  # User-Agent; the contact is Ely's (DEP-030) and names no client. A real fork sets its own
+  # production provider here (DEP-031). APLABS_BASEMAP_OFF turns it off; without the network
+  # the plain map shows. The wording Dana signs is GRD-002's (DEP-025); the module stays
+  # dev-only until then.
+  basemap:
+    url_template: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    attribution: "© OpenStreetMap contributors"
+    attribution_url: "https://www.openstreetmap.org/copyright"
+    user_agent: "aplabs-routing-map/1.0 (+mailto:elyjiahpotter@gmail.com)"
+    max_zoom: 19
+    cache_days: 7
 
 verify:
   checks:

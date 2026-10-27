@@ -54,6 +54,10 @@ See `docs/runtime/slack-app-setup.md` for the Slack tokens and `docs/runtime/ai-
 - **The data**, never baked in: either MotherDuck (`data.source: motherduck` and `MOTHERDUCK_READ_TOKEN`; nothing to mount), or a DuckDB file mounted read-only with `APLABS_DATA_PATH` pointing at it.
 - **Writable space** at `APLABS_VAR_DIR` (`/var/lib/aplabs`) and `/tmp`: a tmpfs or a small volume.
 
+### Network
+
+- **Outbound 443 to the tile host**, when the profile turns the routing street map on (`routing.basemap`, Story 15.11): the host in its `url_template` (Brightside's is `tile.openstreetmap.org`). The bot asks it only for the map squares of the area shown, at run time; nothing is fetched at build. With no network (as in the CI smoke test), or with `APLABS_BASEMAP_OFF` set, the routing map falls back to the plain map with a short note, never an error. Without a `routing.basemap` block the bot makes no tile request.
+
 ## The health check
 
 With `APLABS_HEALTH_PORT` set, the app serves `GET /healthz` on that port on all interfaces (AD-13). Point the host's liveness check at it.
