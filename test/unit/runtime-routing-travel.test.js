@@ -77,7 +77,7 @@ test('validateInput never coerces: each wrong type or value is refused, naming t
     [(i) => { i.crews[0].crewId = 'crew 1'; }, 'crews[0].crewId', 'bad_id'],
     [(i) => { i.crews[0].available = 1; }, 'crews[0].available', 'not_true_false'],
     [(i) => { i.crews[0].baseNode = 'crew:51.5,-0.1'; }, 'crews[0].baseNode', 'bad_node'],
-    [(i) => { i.stops[1].node = 'depot:p2'; }, 'stops[1].node', 'bad_node'],
+    [(i) => { i.stops[1].node = 'place:p2'; }, 'stops[1].node', 'bad_node'],
     [(i) => { i.stops[3].stopId = 'v101'; }, 'stops[3].stopId', 'duplicate'],
     [(i) => { i.candidates[0].stopId = 'v102'; }, 'candidates[0].stopId', 'duplicate'],
     [(i) => { i.stops[1].locked = true; }, 'stops[1].start', 'missing'],

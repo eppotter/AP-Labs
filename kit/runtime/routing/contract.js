@@ -20,14 +20,15 @@
 //   rules[]            rule instances { ruleId, value, strength? }; a rule's
 //                      own value is checked by the rule (AD-R4), not here
 //
-// Ids are strings. A node is a kind-prefixed id (property:<id>, crew:<id>),
+// Ids are strings. A node is a kind-prefixed id (property:<id>, crew:<id>, or
+// depot:<id> for a shared start point such as an office, AD-R23),
 // never a coordinate. Keys the contract does not name are left alone for the
 // entry point that reads them.
 
 const { RoutingFault } = require('../errors');
 
 const ID = /^[A-Za-z0-9_-]+$/;
-const NODE = /^(property|crew):[A-Za-z0-9_-]+$/;
+const NODE = /^(property|crew|depot):[A-Za-z0-9_-]+$/;
 const RULE_ID = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DAY_MINUTES = 1440;
