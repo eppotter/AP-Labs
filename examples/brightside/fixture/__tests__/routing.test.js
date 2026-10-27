@@ -5,7 +5,8 @@
 // Columbus, Ohio (generator v5); only the box's centre and bounds change, so
 // every draw and every non-routing value stays as v4 had it. Fix to 15.7: no
 // point on water (generator v6, lib/water.js). Story 15.15: the Office, one
-// depots row, and nothing else (generator v7). Example tests (AD-1
+// depots row, and nothing else (generator v7). Fix to 14.1: every booked
+// crew-day fits 08:00 to 18:00 (generator v8). Example tests (AD-1
 // carve-out): they read Brightside's own fixture and go with it in a fork.
 
 const test = require('node:test');
@@ -127,12 +128,27 @@ const V6_SEEDS = {
   visits: '72d93a37df05ac155aaef94f2f0b557e781d78e64303e6d8e809ab4bb1e1e7b3',
   zones: '7603749c0cc3aa3c898a4004174c1ae25037100c1c1902320a8f3934bd4ac570',
 };
-// v6's fixture_meta, whole: v7 sets generator_version 7 and adds rows_depots 1.
+// v6's fixture_meta, whole: v7 sets generator_version 7 and adds rows_depots 1;
+// v8 sets generator_version 8 and rows_service_rules 749.
 const V6_META = 'key,value\nas_of,2026-09-30\ngenerator_version,6\nhistory_start,2024-10-01\nrows_add_ons,5\nrows_clients,2000\n'
   + 'rows_crew_memberships,108\nrows_crews,15\nrows_invoice_lines,47133\nrows_invoices,38434\nrows_packages,3\nrows_pay_rates,287\n'
   + 'rows_payments,39680\nrows_plan_price_changes,1013\nrows_plans,1584\nrows_properties,2186\nrows_scheduled_visits,1720\n'
   + 'rows_service_rules,780\nrows_staff,89\nrows_staff_absences,5\nrows_timesheets,115302\nrows_visits,40895\nrows_zones,5\n'
   + 'schedule_horizon_end,2026-10-28\nseed,20241001\n';
+
+// Fix to Story 14.1 (generator v8: every booked crew-day fits 08:00 to
+// 18:00): the booked visits move between a zone's crews and days, so only
+// scheduled_visits and service_rules change. Every booked visit keeps its
+// id, property, plan, package, status and labour: the sha256 of v8's
+// scheduled_visits cut to these columns, which is v7's, recorded from the
+// committed v7 files before the v8 generator ran.
+const V7_BOOKED_KEPT = ['scheduled_visit_id,property_id,plan_id,package_id,status,status_changed_on,labour_minutes', '048743e26981c69cc692ad93cfc65a9eabf6c8d6c2a82bbf66b26f67126bcb72'];
+// The visits v8 moved (generator output, recorded seed): on another crew of
+// their plan crew's zone, and off their cadence date.
+const V8_REASSIGNED_COUNT = 89;
+const V8_REBOOKED = [55, 98, 168, 173, 626, 630, 634, 635, 672, 857, 861, 900, 956, 1481, 1489, 1512, 1514, 1523, 1526, 1699];
+// v8 changes only these two tables' content (and fixture_meta).
+const V8_CHANGED = ['scheduled_visits', 'service_rules'];
 
 const seedText = (table) => {
   const file = path.join(FIXTURE_DIR, storedName(`seeds/${table}.csv`));
@@ -154,11 +170,11 @@ let recorded;
 const recordedRun = () => (recorded ??= generate(readSeedConfig()));
 const recordedTables = () => recordedRun().tables;
 
-test('generator v7: seed.json and fixture_meta record it, and fixture_meta has the horizon and the new tables\' counts', () => {
-  assert.equal(GENERATOR_VERSION, 7);
-  assert.equal(readSeedConfig().generator_version, 7);
+test('generator v8: seed.json and fixture_meta record it, and fixture_meta has the horizon and the new tables\' counts', () => {
+  assert.equal(GENERATOR_VERSION, 8);
+  assert.equal(readSeedConfig().generator_version, 8);
   const meta = Object.fromEntries(recordedTables().fixture_meta.map((m) => [m.key, m.value]));
-  assert.equal(meta.generator_version, '7');
+  assert.equal(meta.generator_version, '8');
   assert.equal(meta.rows_depots, '1');
   assert.equal(meta.schedule_horizon_end, '2026-10-28', 'as_of + 28 days');
   assert.equal(meta.rows_scheduled_visits, String(recordedTables().scheduled_visits.length));
@@ -174,13 +190,13 @@ test('every v3 column of every v3 seed is unchanged byte for byte', () => {
 
 // v6 replaced the v5 test that pinned v4's routing values: v6 moves arrival
 // windows and time_of_day rules on purpose (see V5_SEEDS). V4_SEEDS and
-// V4_META stay as the record of v4.
+// V4_META stay as the record of v4. v8 moves booked visits between crews and
+// days on purpose, so V5_SEEDS' scheduled_visits and service_rules pins stay
+// as the record of v5 and the v8 test below pins those tables.
 test('v6 keeps every v5 value but the coordinates, the booked drives, starts and windows and the time_of_day rules', () => {
   assert.ok(V4_SEEDS && V4_META && V4_MOVED, 'v4\'s record is kept');
-  const untimed = (text) => text.split('\n').filter((l) => !l.includes(',time_of_day,')).join('\n');
-  for (const [table, [header, digest]] of Object.entries(V5_SEEDS)) {
-    const cut = project(seedText(table), header.split(','));
-    assert.equal(sha256(table === 'service_rules' ? untimed(cut) : cut), digest, `${table}: a v5 value changed`);
+  for (const [table, [header, digest]] of Object.entries(V5_SEEDS).filter(([name]) => !V8_CHANGED.includes(name))) {
+    assert.equal(sha256(project(seedText(table), header.split(','))), digest, `${table}: a v5 value changed`);
   }
   // The columns left out of the pins are exactly the moved ones.
   for (const [table, moved] of Object.entries(V5_MOVED)) {
@@ -192,17 +208,88 @@ test('v6 keeps every v5 value but the coordinates, the booked drives, starts and
     assert.equal(seedText(table).split('\n')[0], (V5_SEEDS[table] || V3_SEEDS[table])[0], `${table}: every column is pinned`);
   }
   const meta = Object.fromEntries(seedText('fixture_meta').trim().split('\n').slice(1).map((l) => l.split(',')));
-  for (const [key, value] of Object.entries(V6_ROUTING_META)) assert.equal(meta[key], value, `fixture_meta ${key}`);
+  for (const [key, value] of Object.entries(V6_ROUTING_META).filter(([key]) => key !== 'rows_service_rules')) assert.equal(meta[key], value, `fixture_meta ${key}`);
 });
 
-test('v7 adds the depots table and nothing else: every other seed is v6\'s byte for byte', () => {
+// v7 added the depots table and nothing else, so V6_SEEDS is v7's every seed
+// but depots. v8 changes only scheduled_visits and service_rules.
+test('v8 changes only the booked schedule and the rules drawn from it: every other seed is v7\'s byte for byte', () => {
   const seeds = fs.readdirSync(path.join(FIXTURE_DIR, 'seeds')).map((f) => f.replace(/\.csv(\.gz)?$/, '')).sort();
   assert.deepEqual(seeds, [...Object.keys(V6_SEEDS), 'depots', 'fixture_meta'].sort());
-  for (const [table, digest] of Object.entries(V6_SEEDS)) assert.equal(sha256(seedText(table)), digest, `${table}: changed from v6`);
-  const v7Meta = V6_META.replace('generator_version,6\n', 'generator_version,7\n').replace('rows_crews,15\n', 'rows_crews,15\nrows_depots,1\n');
-  assert.equal(seedText('fixture_meta'), v7Meta, 'fixture_meta: only generator_version and rows_depots');
-  // The planted scenarios' moved visits are v6's too (S1 to S3 unchanged).
-  assert.deepEqual(recordedRun().reassigned, [27, 79, 80, 100, 172, 184, 191]);
+  for (const [table, digest] of Object.entries(V6_SEEDS)) {
+    if (V8_CHANGED.includes(table)) assert.notEqual(sha256(seedText(table)), digest, `${table}: v8 moves booked visits`);
+    else assert.equal(sha256(seedText(table)), digest, `${table}: changed from v7`);
+  }
+  const v8Meta = V6_META.replace('generator_version,6\n', 'generator_version,8\n').replace('rows_crews,15\n', 'rows_crews,15\nrows_depots,1\n')
+    .replace('rows_service_rules,780\n', 'rows_service_rules,749\n');
+  assert.equal(seedText('fixture_meta'), v8Meta, 'fixture_meta: only generator_version, rows_depots and rows_service_rules');
+  // Every booked visit is v7's but for its crew, day and times.
+  const [header, digest] = V7_BOOKED_KEPT;
+  assert.equal(sha256(project(seedText('scheduled_visits'), header.split(','))), digest, 'scheduled_visits: a kept column changed from v7');
+  // The planted scenarios' moved visits are still on another crew.
+  const { reassigned, rebooked } = recordedRun();
+  for (const id of [19, 27, 29, 43, 79, 80, 100, 172, 184, 191]) assert.ok(reassigned.includes(id), `${id} is planted on another crew`);
+  assert.equal(reassigned.length, V8_REASSIGNED_COUNT);
+  assert.deepEqual(rebooked, V8_REBOOKED);
+});
+
+// Generator v8: no booked crew-day runs past a normal day. Starting at 08:00
+// from the crew's base, its drives plus service minutes (the drive home not
+// counted, cancelled stops included) end by 18:00. v7 had 44 of 410
+// crew-days over (crew 1 on 2026-10-03: 11 stops to 23:47).
+test('every booked crew-day fits 08:00 to 18:00 from the crew\'s base, booked from 08:00', () => {
+  const t = recordedTables();
+  const days = new Map();
+  for (const v of t.scheduled_visits) days.set(`${v.crew_id}|${v.visit_date}`, [...(days.get(`${v.crew_id}|${v.visit_date}`) || []), v]);
+  assert.ok(days.size > 400, `${days.size} crew-days`);
+  const minutes = (time) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+  for (const [key, day] of days) {
+    const route = day.slice().sort((a, b) => a.route_order - b.route_order);
+    const planned = route.reduce((sum, v) => sum + v.travel_minutes_from_previous + v.scheduled_minutes, 0);
+    assert.ok(planned <= routing.DAY_CAPACITY, `${key}: ${planned} minutes`);
+    assert.ok(minutes(route.at(-1).scheduled_start) + route.at(-1).scheduled_minutes <= AIM_TO_FINISH, `${key} ends after 18:00`);
+    // A day that fits is booked from 08:00 (timeDay): its first stop starts
+    // once the crew has driven there from 08:00, to the next 5 minutes.
+    assert.equal(minutes(route[0].scheduled_start), Math.ceil((DAY_START + route[0].travel_minutes_from_previous) / 5) * 5, key);
+  }
+  assert.equal(routing.DAY_CAPACITY, AIM_TO_FINISH - DAY_START);
+  assert.equal(routing.DAY_CAPACITY, 600);
+});
+
+test('balanceDays moves a full day\'s stops to its zone\'s crews that day, then the nearest later day its cadence allows, and never drops one', () => {
+  // Two crews of one zone, both based at one point; one home per stop, a
+  // few minutes' drive apart; 150-minute stops, so four do not fit a day.
+  const at = (i) => ({ lat: 40000000 + i * 1000, lon: -83000000 });
+  const base = new Map([[1, at(0)], [2, at(0)]]);
+  const crews = [{ crew_id: 1, zone_id: 'z' }, { crew_id: 2, zone_id: 'z' }];
+  const stop = (id, iso, crewId) => ({ scheduled_visit_id: id, property_id: id, plan_id: id, crew_id: crewId, visit_date: iso, labour_minutes: 600 });
+  const opts = (fixedDays = new Set()) => ({
+    crews, base, placeOf: (r) => at(r.property_id), minutesFor: () => 150, frequencyOf: () => 'weekly',
+    lastVisitOf: () => null, firstDay: 20000, horizonEnd: 20010, fixedDays,
+  });
+  const key = (iso, crewId) => routing.crewDayKey({ visit_date: iso, crew_id: crewId });
+  const d0 = '2024-10-04';
+  const d1 = '2024-10-05';
+  // Crew 1 has four stops (over 600 minutes), crew 2 one: one stop moves to crew 2 that day.
+  let routes = new Map([[key(d0, 1), [1, 2, 3, 4].map((i) => stop(i, d0, 1))], [key(d0, 2), [stop(5, d0, 2)]]]);
+  // The cheapest move: stop 1 (nearest the base) goes first on crew 2's day.
+  let moves = routing.balanceDays(routes, opts());
+  assert.deepEqual(moves, { reassigned: [1], rebooked: [] });
+  assert.deepEqual(routes.get(key(d0, 2)).map((r) => [r.scheduled_visit_id, r.crew_id]), [[1, 2], [5, 2]]);
+  assert.deepEqual(routes.get(key(d0, 1)).map((r) => r.scheduled_visit_id), [2, 3, 4]);
+  // With crew 2's day fixed, the stop moves to the next day instead, on crew 1.
+  routes = new Map([[key(d0, 1), [1, 2, 3, 4].map((i) => stop(i, d0, 1))], [key(d0, 2), [stop(5, d0, 2)]]]);
+  moves = routing.balanceDays(routes, opts(new Set([key(d0, 2)])));
+  assert.deepEqual(moves, { reassigned: [], rebooked: [1] });
+  assert.deepEqual(routes.get(key(d1, 1)).map((r) => [r.scheduled_visit_id, r.visit_date]), [[1, d1]]);
+  for (const route of routes.values()) assert.ok(routing.dayLoad(route, at(0), (r) => at(r.property_id), () => 150) <= 600);
+  // A day nothing can fit throws rather than drop a stop.
+  routes = new Map([[key(d0, 1), [1, 2, 3, 4].map((i) => stop(i, d0, 1))]]);
+  assert.throws(() => routing.balanceDays(routes, { ...opts(), crews: [crews[0]], horizonEnd: 20000 }), /crew 1 on 2024-10-04: 4 booked visits need \d+ minutes/);
+  assert.equal(routes.get(key(d0, 1)).length, 4);
+  assert.equal(routing.maxShiftDays('weekly'), 3);
+  assert.equal(routing.maxShiftDays('biweekly'), 7);
+  assert.equal(routing.maxShiftDays('monthly'), 15);
 });
 
 test('the depots table is one row, the Office, at lib/routing.js OFFICE, a grid point inside the box and off water', () => {
@@ -218,7 +305,8 @@ test('the depots table is one row, the Office, at lib/routing.js OFFICE, a grid 
   // The same row for any seed: it takes no draw.
   assert.deepEqual(generate(SMALL).tables.depots, recordedTables().depots);
   assert.deepEqual(recordedTables().depots, [{ depot_id: 'office', name: 'Office', geo_lat_e6: lat, geo_lon_e6: lon }]);
-  assert.deepEqual(checkRouting(recordedTables(), { asOf: AS_OF, reassigned: new Set(recordedRun().reassigned) }), []);
+  const { reassigned, rebooked } = recordedRun();
+  assert.deepEqual(checkRouting(recordedTables(), { asOf: AS_OF, reassigned: new Set(reassigned), rebooked: new Set(rebooked) }), []);
 });
 
 test('only the routing columns and table are new', () => {
@@ -393,12 +481,18 @@ test('the booked schedule: active plans only, after as_of through the horizon, t
   for (const m of t.crew_memberships) if (m.end_date === null) heads.set(m.crew_id, (heads.get(m.crew_id) || 0) + 1);
   const unsqueezed = sv.filter((v) => v.scheduled_minutes === Math.max(30, Math.round(v.labour_minutes / heads.get(v.crew_id) / 15) * 15));
   assert.ok(unsqueezed.length > sv.length * 0.95, `${unsqueezed.length} of ${sv.length}`);
-  // The planted scenarios moved seven visits to another crew of their zone.
-  const { reassigned } = recordedRun();
-  assert.deepEqual(reassigned, [27, 79, 80, 100, 172, 184, 191]);
-  assert.deepEqual(checkRouting(t, { asOf: AS_OF, reassigned: new Set(reassigned) }), []);
-  assert.ok(checkRouting(t, { asOf: AS_OF }).every((p) => /not plan \d+'s crew/.test(p)), 'without the planted list, only those seven fail');
-  assert.equal(checkRouting(t, { asOf: AS_OF }).length, 7);
+  // The planted scenarios and the day balancing (generator v8) moved visits
+  // to another crew of their zone, and the balancing a few to a nearby day.
+  const { reassigned, rebooked } = recordedRun();
+  assert.deepEqual(checkRouting(t, { asOf: AS_OF, reassigned: new Set(reassigned), rebooked: new Set(rebooked) }), []);
+  const rebookedPlans = new Set(sv.filter((v) => rebooked.includes(v.scheduled_visit_id)).map((v) => v.plan_id));
+  const without = checkRouting(t, { asOf: AS_OF });
+  assert.deepEqual(without.filter((p) => /not plan \d+'s crew/.test(p)).map((p) => Number(/^scheduled_visits (\d+)/.exec(p)[1])).sort((a, b) => a - b), reassigned);
+  assert.deepEqual(without.filter((p) => /booked dates do not follow/.test(p)).map((p) => Number(/^plan (\d+)/.exec(p)[1])).sort((a, b) => a - b), [...rebookedPlans].sort((a, b) => a - b));
+  assert.equal(without.length, reassigned.length + rebookedPlans.size, 'without the lists, only those fail');
+  // A moved visit is at most half its cadence off, inside the horizon.
+  const shifted = sv.filter((v) => rebooked.includes(v.scheduled_visit_id));
+  assert.ok(shifted.every((v) => v.visit_date > AS_OF && v.visit_date <= '2026-10-28'));
 });
 
 test('the routing rules catch each broken rule', () => {
@@ -426,6 +520,9 @@ test('the routing rules catch each broken rule', () => {
     [(t) => { const v = first(t); const plan = t.plans.find((p) => p.plan_id === v.plan_id); plan.end_date = AS_OF; }, /ended 2026-09-30 but has booked visits/],
     [(t) => { const v = first(t); v.package_id = v.package_id === 'deep' ? 'standard' : 'deep'; }, /not plan \d+'s property and package/],
     [(t) => { const v = first(t); v.crew_id = v.crew_id === 1 ? 2 : 1; }, /not plan \d+'s crew/],
+    // Generator v8: a day past 18:00, and a visit off its cadence date.
+    [(t) => { const v = t.scheduled_visits.at(-1); v.scheduled_minutes += 600; }, /the booked day needs \d+ minutes and ends \d+ minutes after midnight, more than a day from 08:00 to 18:00/],
+    [(t) => { t.scheduled_visits.find((x) => x.visit_date < '2026-10-20').visit_date = '2026-10-27'; }, /booked dates do not follow its/],
     [(t) => { t.scheduled_visits.find((v) => v.visit_date > '2026-10-01').visit_date = '2026-09-30'; }, /visit_date 2026-09-30 is outside/],
     // Story 14.2: service_rules and staff_absences.
     [(t) => { t.service_rules[0].rule_type = 'favourite_colour'; }, /rule_type favourite_colour is not/],

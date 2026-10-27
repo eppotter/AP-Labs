@@ -12,21 +12,27 @@
 //   integrity-scheduled-schedule     times fit the day and the drives
 //   integrity-scheduled-after-as-of  dates after as_of, statuses set by then
 //   integrity-scheduled-cadence      each active plan's dates follow its cadence
+//   integrity-scheduled-day-capacity every crew-day fits 08:00 to 18:00
+//                                    (generator v8)
 //   integrity-rules                  rule values valid; booked visits keep
 //                                    every hard rule
 //   integrity-staff-absences         absences after as_of, reported by then,
 //                                    on a membership that covers the day
-// Two rules here go further than SQL can: each booked drive is travelMatrix's
-// figure for its two places (SQL would have to read coordinates), and a
-// booked visit is on its plan's own crew unless the planted scenarios moved
-// it (SQL allows any crew of the plan crew's zone; it cannot know which
-// visits were planted). Keys, foreign keys, NOT NULL and unique columns are
-// checked in rules.js.
+// Three rules here go further than SQL can: each booked drive is
+// travelMatrix's figure for its two places (SQL would have to read
+// coordinates); a booked visit is on its plan's own crew unless the planted
+// scenarios or the day balancing moved it (SQL allows any crew of the plan
+// crew's zone); and it is on its cadence date unless the day balancing moved
+// it (SQL allows half a cadence either side for any visit). SQL cannot know
+// which visits were moved. Keys, foreign keys, NOT NULL and unique columns
+// are checked in rules.js.
 
 const { toDay, toIso } = require('./days');
 const { scheduleDays } = require('./activity');
-const { EARLIEST_START, LATEST_FINISH, NOON, SLOT_MINUTES, MIN_SCHEDULED } = require('./operations');
-const { travelMinutes, isoWeekday, BOX, MIN_TRAVEL_MINUTES, SCHEDULE_HORIZON_DAYS, DAY_NAMES, RULE_STRENGTH } = require('./routing');
+const { EARLIEST_START, AIM_TO_FINISH, LATEST_FINISH, NOON, SLOT_MINUTES, MIN_SCHEDULED } = require('./operations');
+const {
+  travelMinutes, isoWeekday, maxShiftDays, BOX, MIN_TRAVEL_MINUTES, SCHEDULE_HORIZON_DAYS, DAY_NAMES, RULE_STRENGTH, DAY_CAPACITY, CADENCE_DAYS,
+} = require('./routing');
 const { waterAt } = require('./water');
 
 const TIME = /^(\d\d):(\d\d):00$/;
@@ -103,10 +109,15 @@ function checkDates(tables, asOf, fail) {
   }
 }
 
-// Each active plan has exactly its cadence dates after as_of through the
-// horizon, on its property, package and crew; an ended plan has none. The
-// first is the next cadence date after the plan's last history visit.
-function checkCadence(tables, asOf, reassigned, fail) {
+// Each active plan has one booked visit for each of its cadence dates after
+// as_of through the horizon, on its property, package and crew; an ended
+// plan has none. The first cadence date is the next one after the plan's
+// last history visit. A visit in `rebooked` (generator v8, so its day fits)
+// may sit up to maxShiftDays from its cadence date, still inside the
+// horizon, and every booked visit is then at least half a cadence after the
+// one before it (or the last history visit); every other visit is on its
+// cadence date.
+function checkCadence(tables, asOf, { reassigned, rebooked }, fail) {
   const zoneOf = new Map(tables.crews.map((c) => [c.crew_id, c.zone_id]));
   const asOfDay = toDay(asOf);
   const horizonEnd = asOfDay + SCHEDULE_HORIZON_DAYS;
@@ -114,16 +125,26 @@ function checkCadence(tables, asOf, reassigned, fail) {
   const booked = groupBy(tables.scheduled_visits, 'plan_id');
   for (const plan of tables.plans) {
     const where = `plan ${plan.plan_id}`;
-    const own = (booked.get(plan.plan_id) || []).slice().sort((a, b) => (a.visit_date < b.visit_date ? -1 : a.visit_date > b.visit_date ? 1 : 0));
+    const own = (booked.get(plan.plan_id) || []).slice().sort((a, b) => (a.visit_date < b.visit_date ? -1 : a.visit_date > b.visit_date ? 1 : a.scheduled_visit_id - b.scheduled_visit_id));
     if (plan.end_date !== null) {
       if (own.length > 0) fail(`${where}: ended ${plan.end_date} but has booked visits`);
       continue;
     }
     const past = (history.get(plan.plan_id) || []).slice().sort((a, b) => (a.visit_date < b.visit_date ? -1 : 1));
     const last = past[past.length - 1];
-    const want = scheduleDays({ start: toDay(plan.start_date), frequency: plan.frequency }, horizonEnd).filter((d) => d > asOfDay).map(toIso);
-    if (own.map((v) => v.visit_date).join() !== want.join()) fail(`${where}: booked dates do not follow its ${plan.frequency} cadence`);
-    if (last && want.length > 0 && scheduleDays({ start: toDay(plan.start_date), frequency: plan.frequency }, toDay(want[0])).map(toIso).slice(-2)[0] !== last.visit_date) {
+    const want = scheduleDays({ start: toDay(plan.start_date), frequency: plan.frequency }, horizonEnd).filter((d) => d > asOfDay);
+    const shift = maxShiftDays(plan.frequency);
+    const onCadence = own.length === want.length && own.every((v, i) => {
+      const d = toDay(v.visit_date);
+      return d === want[i] || (rebooked.has(v.scheduled_visit_id) && Math.abs(d - want[i]) <= shift && d > asOfDay && d <= horizonEnd);
+    });
+    if (!onCadence) fail(`${where}: booked dates do not follow its ${plan.frequency} cadence`);
+    let prev = last ? toDay(last.visit_date) : null;
+    for (const v of own) {
+      if (prev !== null && 2 * (toDay(v.visit_date) - prev) < CADENCE_DAYS[plan.frequency]) fail(`scheduled_visits ${v.scheduled_visit_id}: under half plan ${plan.plan_id}'s ${plan.frequency} cadence after its visit before`);
+      prev = toDay(v.visit_date);
+    }
+    if (last && want.length > 0 && scheduleDays({ start: toDay(plan.start_date), frequency: plan.frequency }, want[0]).map(toIso).slice(-2)[0] !== last.visit_date) {
       fail(`${where}: the first booked date is not the next cadence date after its last visit`);
     }
     for (const v of own) {
@@ -135,6 +156,23 @@ function checkCadence(tables, asOf, reassigned, fail) {
   }
   for (const v of tables.scheduled_visits) {
     if (v.plan_id === null || v.plan_id === undefined) fail(`scheduled_visits ${v.scheduled_visit_id}: has no plan`);
+  }
+}
+
+// Generator v8: every booked crew-day fits a normal day. Its drives (from
+// the crew's base, the drive home not counted) plus its service minutes are
+// at most DAY_CAPACITY (08:00 to 18:00), and its last stop ends by 18:00.
+// Cancelled stops count: they keep their booked slot.
+function checkDayCapacity(tables, fail) {
+  for (const day of groupBy(tables.scheduled_visits, (v) => `${v.crew_id}|${v.visit_date}`).values()) {
+    const planned = day.reduce((sum, v) => sum + v.travel_minutes_from_previous + v.scheduled_minutes, 0);
+    const end = Math.max(...day.map((v) => {
+      const m = TIME.exec(v.scheduled_start);
+      return m ? Number(m[1]) * 60 + Number(m[2]) + v.scheduled_minutes : Infinity;
+    }));
+    if (planned > DAY_CAPACITY || end > AIM_TO_FINISH) {
+      fail(`crew ${day[0].crew_id} on ${day[0].visit_date}: the booked day needs ${planned} minutes and ends ${end} minutes after midnight, more than a day from 08:00 to 18:00`);
+    }
   }
 }
 
@@ -192,17 +230,19 @@ function checkAbsences(tables, asOf, fail) {
   }
 }
 
-// `reassigned` holds the scheduled_visit_ids the planted scenarios moved to
-// another crew of the same zone; with none planted, every visit is on its
-// plan's crew.
-function checkRouting(tables, { asOf, reassigned = new Set() }) {
+// `reassigned` holds the scheduled_visit_ids on another crew of their plan
+// crew's zone (moved by the planted scenarios or, generator v8, so a day
+// fits) and `rebooked` those moved off their cadence date so a day fits;
+// with neither, every visit is on its plan's crew and cadence date.
+function checkRouting(tables, { asOf, reassigned = new Set(), rebooked = new Set() }) {
   const problems = [];
   const fail = (msg) => problems.push(msg);
   if (!tables.scheduled_visits) return problems;
   checkCoordinates(tables, fail);
   checkSchedule(tables, fail);
   checkDates(tables, asOf, fail);
-  checkCadence(tables, asOf, reassigned, fail);
+  checkCadence(tables, asOf, { reassigned, rebooked }, fail);
+  checkDayCapacity(tables, fail);
   if (tables.service_rules) checkServiceRules(tables, fail);
   if (tables.staff_absences) checkAbsences(tables, asOf, fail);
   return problems;

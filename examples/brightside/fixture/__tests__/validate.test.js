@@ -59,7 +59,7 @@ test.after(async () => {
 test('every check in checks/ passes on the committed seeds, with Brightside\'s forbidden columns', async (t) => {
   const { out } = await builtFixture();
   const checks = loadChecks(FIXTURE_DIR);
-  assert.equal(checks.length, 31);
+  assert.equal(checks.length, 32);
   const results = await validate({ checks, db: out, forbiddenColumns: FORBIDDEN });
   assert.deepEqual(results.filter((r) => r.outcome !== 'pass'), []);
 });
@@ -546,6 +546,21 @@ const BREAKS = [
     },
   },
   {
+    // Generator v8: a booked crew-day longer than 08:00 to 18:00. Its last
+    // stop runs long enough to need 601 minutes, still ending by 23:00, so
+    // no other check sees it (its times still follow its drives).
+    check: 'integrity-scheduled-day-capacity',
+    pick: (t_, take, used) => {
+      const days = new Map();
+      for (const v of t_.scheduled_visits.rows) days.set(crewDay(v), [...(days.get(crewDay(v)) || []), v]);
+      const day = [...days.values()].find((d) => d.every((x) => !used.scheduled.has(x.scheduled_visit_id)));
+      const last = day.find((x) => Number(x.route_order) === day.length);
+      for (const x of day) take('scheduled', x.scheduled_visit_id);
+      const planned = day.reduce((sum, x) => sum + Number(x.travel_minutes_from_previous) + Number(x.scheduled_minutes), 0);
+      return () => { last.scheduled_minutes = String(Number(last.scheduled_minutes) + Math.ceil((601 - planned) / 15) * 15); };
+    },
+  },
+  {
     // A day_of_week rule marked soft: day and window rules are hard (Story 14.2).
     check: 'integrity-rules',
     pick: (t_) => {
@@ -685,18 +700,47 @@ for (const [what, edit] of [
     plan.end_date = t_.fixture_meta.rows.find((r) => r.key === 'as_of').value;
     plan.status = 'cancelled';
   }],
-  ['a booked date a day off its cadence', (t_) => {
-    // A plan's only booked visit, alone on its crew-day, moved a day later
-    // onto a day its crew has nothing booked.
+  ['a booked date over half a cadence off its cadence date', (t_) => {
+    // A plan's only booked visit, alone on its crew-day, moved later by one
+    // day more than generator v8 may move it (3, 7 or 15 days: half its
+    // cadence) onto a day its crew has nothing booked. The property has no
+    // day_of_week rule (integrity-rules would see the new day).
     const count = new Map();
     for (const v of t_.scheduled_visits.rows) count.set(v.plan_id, (count.get(v.plan_id) || 0) + 1);
     const size = new Map();
     for (const v of t_.scheduled_visits.rows) size.set(crewDay(v), (size.get(crewDay(v)) || 0) + 1);
-    const next = (d) => new Date(Date.parse(`${d}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const frequency = new Map(t_.plans.rows.map((p) => [p.plan_id, p.frequency]));
+    const later = (x) => addDays(x.visit_date, { weekly: 4, biweekly: 8, monthly: 16 }[frequency.get(x.plan_id)]);
+    const dayRule = new Set(t_.service_rules.rows.filter((r) => r.rule_type === 'day_of_week').map((r) => r.property_id));
     const horizon = t_.fixture_meta.rows.find((r) => r.key === 'schedule_horizon_end').value;
-    const v = t_.scheduled_visits.rows.find((x) => count.get(x.plan_id) === 1 && size.get(crewDay(x)) === 1
-      && next(x.visit_date) <= horizon && !size.has(crewDay({ ...x, visit_date: next(x.visit_date) })));
-    v.visit_date = next(v.visit_date);
+    const v = t_.scheduled_visits.rows.find((x) => count.get(x.plan_id) === 1 && size.get(crewDay(x)) === 1 && !dayRule.has(x.property_id)
+      && later(x) <= horizon && !size.has(crewDay({ ...x, visit_date: later(x) })));
+    v.visit_date = later(v);
+  }],
+  ['two booked visits under half a cadence apart', (t_) => {
+    // Generator v8 may move a booked visit up to half a cadence either side
+    // of its cadence date, but never to under half a cadence after the visit
+    // before. A weekly plan's two booked visits a week apart move 3 days
+    // towards each other (each within its shift), each the last stop of its
+    // crew-day onto a day its crew has nothing booked. The property has no
+    // day_of_week rule (integrity-rules would see the new days).
+    const size = new Map();
+    for (const v of t_.scheduled_visits.rows) size.set(crewDay(v), (size.get(crewDay(v)) || 0) + 1);
+    const weekly = new Set(t_.plans.rows.filter((p) => p.frequency === 'weekly').map((p) => p.plan_id));
+    const dayRule = new Set(t_.service_rules.rows.filter((r) => r.rule_type === 'day_of_week').map((r) => r.property_id));
+    const movable = (x, to) => Number(x.route_order) === size.get(crewDay(x)) && !size.has(crewDay({ ...x, visit_date: to }));
+    const rows = t_.scheduled_visits.rows;
+    for (const a of rows) {
+      if (!weekly.has(a.plan_id) || dayRule.has(a.property_id) || !movable(a, addDays(a.visit_date, 3))) continue;
+      const b = rows.find((x) => x.plan_id === a.plan_id && x.visit_date === addDays(a.visit_date, 7));
+      if (!b || !movable(b, addDays(b.visit_date, -3))) continue;
+      a.visit_date = addDays(a.visit_date, 3);
+      b.visit_date = addDays(b.visit_date, -3);
+      a.route_order = '1';
+      b.route_order = '1';
+      return;
+    }
+    throw new Error('no pair to move');
   }],
   ['an active plan with its next date not booked', (t_) => {
     // A plan's only booked visit, last on its crew-day, removed.
@@ -713,6 +757,29 @@ for (const [what, edit] of [
     assert.deepEqual(failures(await validateBroken(t, [], edit)), [['integrity-scheduled-cadence', 1]]);
   });
 }
+
+function addDays(iso, n) {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+}
+
+// Generator v8: a booked visit may sit up to half a cadence from its
+// cadence date (moved so a crew-day fits). A weekly plan's visit moved 3
+// days later, the last stop of its crew-day onto a day its crew has nothing
+// booked, its property with no day_of_week rule, fails no check.
+test('a booked visit moved within half its cadence fails no check', async (t) => {
+  const results = await validateBroken(t, [], (t_) => {
+    const size = new Map();
+    for (const v of t_.scheduled_visits.rows) size.set(crewDay(v), (size.get(crewDay(v)) || 0) + 1);
+    const weekly = new Set(t_.plans.rows.filter((p) => p.frequency === 'weekly').map((p) => p.plan_id));
+    const dayRule = new Set(t_.service_rules.rows.filter((r) => r.rule_type === 'day_of_week').map((r) => r.property_id));
+    const horizon = t_.fixture_meta.rows.find((r) => r.key === 'schedule_horizon_end').value;
+    const v = t_.scheduled_visits.rows.find((x) => weekly.has(x.plan_id) && !dayRule.has(x.property_id) && addDays(x.visit_date, 3) <= horizon
+      && Number(x.route_order) === size.get(crewDay(x)) && !size.has(crewDay({ ...x, visit_date: addDays(x.visit_date, 3) })));
+    v.visit_date = addDays(v.visit_date, 3);
+    v.route_order = '1';
+  });
+  assert.deepEqual(failures(results), []);
+});
 
 // Story 14.2: a booked visit may move to another crew of its zone on its own
 // day (the planted scenarios do), but never to another zone's crew. The

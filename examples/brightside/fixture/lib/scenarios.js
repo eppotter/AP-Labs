@@ -9,7 +9,8 @@
 // sets a few properties' rules and staff absences outright.
 //
 //   S1 zig-zag day   crew 4 on as_of+1: seven stops booked going back and
-//                    forth between cities (one city at a time, in turn).
+//                    forth between cities (one city at a time, in turn),
+//                    short enough to fit 08:00 to 18:00 (generator v8).
 //   S2 cancellation  crew 2 on as_of+2: an afternoon stop cancelled on as_of,
 //                    in a small estate on Pinecrest's east edge. Around it:
 //                    one clear best fill (Pinecrest, next visit 3 days later,
@@ -39,7 +40,10 @@ const { toDay, toIso } = require('./days');
 const { travelMinutes, isoWeekday, crewDayKey, DAY_NAMES } = require('./routing');
 const { EARLIEST_START, LATEST_FINISH, NOON, SLOT_MINUTES, MIN_SCHEDULED } = require('./operations');
 
-const S1 = Object.freeze({ crewId: 4, dayOffset: 1, stops: 7, join: Object.freeze([27]) });
+// Generator v8: S1's day fits 08:00 to 18:00 (lib/routing.js balanceDays).
+// Two short stops of crew 5 join (19, 43) and crew 4's two longest stops
+// (29, 55) go to crew 5, so the zig-zag day still has seven stops.
+const S1 = Object.freeze({ crewId: 4, dayOffset: 1, stops: 7, join: Object.freeze([19, 27, 43]), leave: Object.freeze({ 29: 5, 55: 5 }) });
 
 const S2 = Object.freeze({
   crewId: 2,
@@ -112,6 +116,12 @@ function roundRobin(rows, city) {
 // (moved visits, scenario properties) for its rules and absences.
 function createPlant() {
   const reassigned = new Set();
+  // The crew-days the scenarios set, and the properties whose every visit
+  // the scenarios lean on (S2's estate, whose next visits make its candidates,
+  // and S3's morning-only homes): lib/routing.js balanceDays (generator v8)
+  // moves no visit of either.
+  const fixedDays = new Set();
+  const fixedProperties = new Set();
   const s1Properties = new Set();
   const explicitRules = new Map();
 
@@ -142,12 +152,21 @@ function createPlant() {
         r.crew_id = crewId;
       }
       routes.set(key, ordered);
+      fixedDays.add(key);
     };
 
-    // S1: one visit joins crew 4's day; the day is booked city by city in turn.
+    // S1: three visits join crew 4's day and two leave it for crew 5 (at the
+    // end of crew 5's day); the day is booked city by city in turn.
     const s1Day = dayOf(asOf, S1.dayOffset);
     const s1Key = crewDayKey({ visit_date: s1Day, crew_id: S1.crewId });
     const joined = S1.join.map((id) => take(id, s1Day));
+    for (const [id, crewId] of Object.entries(S1.leave)) {
+      const r = take(Number(id), s1Day);
+      if (r.crew_id !== S1.crewId) throw new Error(`scenario: scheduled visit ${id} is not crew ${S1.crewId}'s`);
+      r.crew_id = crewId;
+      reassigned.add(r.scheduled_visit_id);
+      routes.get(crewDayKey(r)).push(r);
+    }
     const own = routes.get(s1Key).splice(0);
     const s1Rows = own.concat(joined);
     setDay(S1.crewId, s1Day, roundRobin(s1Rows, city));
@@ -172,6 +191,8 @@ function createPlant() {
         explicitRules.set(r.property_id, S3.morning.includes(r.property_id) ? [{ rule_type: 'time_of_day', value: 'morning' }] : []);
       }
     }
+    for (const pid of Object.keys(S2.estate)) fixedProperties.add(Number(pid));
+    for (const pid of S3.morning) fixedProperties.add(pid);
   }
 
   // S1's stops keep their drawn rules but no time window: the engine starts
@@ -188,7 +209,7 @@ function createPlant() {
     return S3.absent.map((staffId) => ({ staff_id: staffId, absence_date: day, reported_on: asOf }));
   }
 
-  return { coordinates, schedule, rules, absences, reassigned };
+  return { coordinates, schedule, rules, absences, reassigned, fixedDays, fixedProperties, morningOnly: new Set(S3.morning) };
 }
 
 // ---- the mirror and the checks -----------------------------------------------
