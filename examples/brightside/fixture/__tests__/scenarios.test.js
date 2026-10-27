@@ -43,7 +43,7 @@ test('targets.json keeps truths as they were and holds the routing targets under
     'route-change-s2-count', 'route-change-s3-crosszone']);
   assert.deepEqual(routing, {
     'scheduled-stops-next-14d': 825,
-    'route-optimize-s1-drive': 140,
+    'route-optimize-s1-drive': 134,
     'route-change-s2-top': S2.bestFill,
     'route-change-s2-count': 2,
     'route-change-s3-crosszone': { in_zone: 5, cross_zone: 1, unplaced: 0 },
@@ -79,8 +79,8 @@ test('the generator plants the routing targets, and refuses when one misses', ()
   const config = readSeedConfig();
   const got = routingFigures(tables(), { asOf: AS_OF });
   for (const id of ROUTING_TARGET_IDS.filter((x) => x !== 'route-change-s3-crosszone')) assert.equal(got[id], config.routing[id], id);
-  assert.throws(() => generate({ ...config, routing: { ...config.routing, 'route-optimize-s1-drive': 141 } }),
-    /planted routing figures missed: route-optimize-s1-drive 140 \(target 141\)/);
+  assert.throws(() => generate({ ...config, routing: { ...config.routing, 'route-optimize-s1-drive': 135 } }),
+    /planted routing figures missed: route-optimize-s1-drive 134 \(target 135\)/);
   assert.throws(() => generate({ ...config, routing: { ...config.routing, 'route-change-s3-crosszone': { in_zone: 6, cross_zone: 1, unplaced: 0 } } }),
     /route-change-s3-crosszone adds up to 7, not crew 7's 6 stops/);
   // The scenarios' ids fit the recorded seed only.
@@ -158,6 +158,7 @@ test('staff_absences: S3\'s two, then background cleaners only, at most one per 
 test('without routing targets nothing is planted: no visit moves crew and no crew lead is absent', () => {
   const run7 = generate(SMALL);
   assert.deepEqual(run7.reassigned, []);
+  assert.deepEqual(run7.rebooked, []);
   const role = new Map(run7.tables.staff.map((s) => [s.staff_id, s.role]));
   assert.ok(run7.tables.staff_absences.every((a) => role.get(a.staff_id) === 'cleaner'));
   assert.deepEqual(checkRouting(run7.tables, { asOf: AS_OF }), []);
@@ -175,7 +176,12 @@ test('S1: crew 4 on as_of + 1 has seven booked stops going back and forth betwee
   assert.equal(route.length, 7);
   assert.ok(route.every((v) => v.status === 'scheduled'));
   const cities = route.map((v) => city.get(v.property_id));
-  assert.deepEqual(cities, ['Clayfield', 'Riverbend', 'Southmere', 'Clayfield', 'Southmere', 'Clayfield', 'Southmere']);
+  // Generator v8: crew 5's 19 and 43 joined and crew 4's 29 and 55 left, so
+  // the day fits 08:00 to 18:00; two cities in turn.
+  assert.deepEqual(cities, ['Clayfield', 'Southmere', 'Clayfield', 'Southmere', 'Clayfield', 'Southmere', 'Clayfield']);
+  assert.deepEqual(route.map((v) => v.scheduled_visit_id), [4, 2, 19, 43, 27, 50, 38]);
+  const last = route.at(-1);
+  assert.ok(Number(last.scheduled_start.slice(0, 2)) * 60 + Number(last.scheduled_start.slice(3, 5)) + last.scheduled_minutes <= 18 * 60, 'ends by 18:00');
   // The booked drive: every leg travelMatrix's figure, from the crew's base.
   const place = new Map(t.properties.map((p) => [p.property_id, { lat: p.geo_lat_e6, lon: p.geo_lon_e6 }]));
   const crew = t.crews.find((c) => c.crew_id === S1.crewId);

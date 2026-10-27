@@ -13,7 +13,9 @@
 // route in date then crew order, each booked property's rules in property_id
 // order, then each open membership's absence chance, day by day. With the
 // recorded seed, lib/scenarios.js plants S1 to S3 on top (data-design §5);
-// planting draws nothing.
+// planting draws nothing. Then balanceDays (generator v8) moves stops so
+// every crew-day fits 08:00 to 18:00; it draws nothing either, so every
+// draw is v7's.
 //
 // Coordinates are synthetic: random points in a box around a round-number
 // point in Columbus, Ohio (Story 15.7, AD-R22), so a street map can sit under
@@ -226,6 +228,161 @@ function timeDay(stops) {
 // A crew-day's key: its date, then its crew in number order.
 const crewDayKey = (r) => `${r.visit_date}|${String(r.crew_id).padStart(6, '0')}`;
 
+// Generator v8: every booked crew-day fits a normal day. Starting at
+// DAY_START (08:00) from the crew's base, each stop starts once the crew has
+// driven there (to the next 5 minutes, as timeDay books it) and the last one
+// ends by AIM_TO_FINISH (18:00); the drive home is not counted. So the day's
+// drives plus service minutes are at most DAY_CAPACITY, and timeDay books it
+// from 08:00 (checks/integrity-scheduled-day-capacity.sql).
+const DAY_CAPACITY = AIM_TO_FINISH - DAY_START;
+// How far a visit may move to a later day: under half its cadence, the
+// routing engine's own rule for moving a visit (kit/runtime/routing/gapfill.js:
+// at least half a cadence since the previous visit). A monthly cadence counts
+// 30 days, as the adapter does.
+const CADENCE_DAYS = { weekly: 7, biweekly: 14, monthly: 30 };
+const maxShiftDays = (frequency) => Math.floor(CADENCE_DAYS[frequency] / 2);
+
+// Each stop's start, and the minutes from DAY_START until the last stop
+// ends, booked as timeDay books a day that fits.
+function dayPlan(route, from, placeOf, minutesOf) {
+  let at = from;
+  let cursor = DAY_START;
+  const starts = [];
+  for (const r of route) {
+    const next = placeOf(r);
+    const start = ceilTo(cursor + travelMinutes(at, next), 5);
+    starts.push(start);
+    cursor = start + minutesOf(r);
+    at = next;
+  }
+  return { load: cursor - DAY_START, starts };
+}
+const dayLoad = (route, from, placeOf, minutesOf) => dayPlan(route, from, placeOf, minutesOf).load;
+
+// The booked schedule gives each plan's visits to the plan's own crew on its
+// cadence dates, with no limit on a crew-day (as the history does, which
+// stays as it is), so some crew-days held far more than a day's work
+// (generator v7: 44 of 410 past 18:00 from 08:00, the worst to 23:47).
+// balanceDays takes each crew-day over DAY_CAPACITY, in date then crew order,
+// and gives away one stop at a time until it fits:
+//   1. to another crew of its zone on the same day with room, at the
+//      cheapest place in that crew's route (the move adding the fewest
+//      minutes in all; ties to the lower scheduled_visit_id, then crew);
+//   2. failing that, to the nearest later day, at most maxShiftDays and never
+//      past the horizon, then (near the horizon's end) the nearest earlier
+//      day after as_of, on any crew of its zone with room (its own
+//      included), by the same cost; never onto a day the property is
+//      already booked, nor under half a cadence from its plan's visit
+//      before or after.
+// A day that still does not fit throws: no visit is dropped. Days in
+// `fixedDays` (the planted scenarios') neither give nor take a stop, and
+// visits of `fixedProperties` never move. A visit of a `morningOnly`
+// property (a planted morning rule) must start before noon: a day that
+// would start one later is first given its morning-only stops at the
+// front, and no move may push one past noon. Draws nothing. Returns the
+// ids of the visits on another crew (`reassigned`) or day (`rebooked`)
+// than they had before it ran.
+function balanceDays(routes, {
+  crews, base, placeOf, minutesFor, frequencyOf, lastVisitOf, firstDay, horizonEnd,
+  fixedDays = new Set(), fixedProperties = new Set(), morningOnly = new Set(), capacity = DAY_CAPACITY,
+}) {
+  const sorted = crews.slice().sort((a, b) => a.crew_id - b.crew_id);
+  const zoneCrews = groupBy(sorted, 'zone_id');
+  const zoneOf = new Map(crews.map((c) => [c.crew_id, c.zone_id]));
+  const keyOf = (iso, crewId) => crewDayKey({ visit_date: iso, crew_id: crewId });
+  const planOf = (crewId, route) => dayPlan(route, base.get(crewId), placeOf, (r) => minutesFor(r, crewId));
+  const loadOf = (crewId, route) => planOf(crewId, route).load;
+  const fits = (crewId, route) => {
+    const { load, starts } = planOf(crewId, route);
+    return load <= capacity && route.every((r, i) => !morningOnly.has(r.property_id) || starts[i] < NOON);
+  };
+  const all = [...routes.values()].flat();
+  const original = new Map(all.map((r) => [r.scheduled_visit_id, { crew_id: r.crew_id, visit_date: r.visit_date }]));
+  const bookedOn = new Set(all.map((r) => `${r.property_id}|${r.visit_date}`));
+  const ofPlan = groupBy(all, 'plan_id');
+  // A visit may go to `to` when its plan's visits either side (or the last
+  // history visit) stay at least half a cadence away.
+  const spaced = (r, to) => {
+    const at = toDay(r.visit_date);
+    const half = (d) => 2 * d >= CADENCE_DAYS[frequencyOf(r)];
+    let prev = lastVisitOf(r.plan_id);
+    let next = null;
+    for (const o of ofPlan.get(r.plan_id)) {
+      if (o === r) continue;
+      const d = toDay(o.visit_date);
+      if (d < at && (prev === null || d > prev)) prev = d;
+      if (d > at && (next === null || d < next)) next = d;
+    }
+    return (prev === null || half(to - prev)) && (next === null || half(next - to));
+  };
+  // The days a stop may go to, nearest first: its own, the later days its
+  // cadence allows, then (near the horizon's end) the earlier ones.
+  const reachOf = (r, day) => {
+    const most = maxShiftDays(frequencyOf(r));
+    const out = [0];
+    for (let k = 1; k <= Math.min(most, horizonEnd - day); k++) out.push(k);
+    for (let k = 1; k <= Math.min(most, day - firstDay); k++) out.push(-k);
+    return out;
+  };
+  const better = (a, b) => !b || a.rank < b.rank || (a.rank === b.rank && (a.cost < b.cost
+    || (a.cost === b.cost && (a.r.scheduled_visit_id < b.r.scheduled_visit_id
+      || (a.r.scheduled_visit_id === b.r.scheduled_visit_id && a.crewId < b.crewId)))));
+  for (let day = firstDay; day <= horizonEnd; day++) {
+    const iso = toIso(day);
+    for (const crew of sorted) {
+      const key = keyOf(iso, crew.crew_id);
+      const route = routes.get(key);
+      if (!route || fixedDays.has(key)) continue;
+      if (!fits(crew.crew_id, route) && route.some((r) => morningOnly.has(r.property_id))) {
+        const front = route.filter((r) => morningOnly.has(r.property_id)).concat(route.filter((r) => !morningOnly.has(r.property_id)));
+        route.splice(0, route.length, ...front);
+      }
+      let load = loadOf(crew.crew_id, route);
+      while (!fits(crew.crew_id, route)) {
+        let best = null;
+        route.forEach((r, i) => {
+          if (fixedProperties.has(r.property_id)) return;
+          const rest = route.slice(0, i).concat(route.slice(i + 1));
+          if (route.some((x) => morningOnly.has(x.property_id)) && !planOf(crew.crew_id, rest).starts.every((t, k) => !morningOnly.has(rest[k].property_id) || t < NOON)) return;
+          const freed = load - loadOf(crew.crew_id, rest);
+          reachOf(r, day).forEach((shift, rank) => {
+            if (best && best.rank < rank) return;
+            const to = toIso(day + shift);
+            if (shift !== 0 && (bookedOn.has(`${r.property_id}|${to}`) || !spaced(r, day + shift))) return;
+            for (const other of zoneCrews.get(zoneOf.get(crew.crew_id))) {
+              const otherKey = keyOf(to, other.crew_id);
+              if ((shift === 0 && other.crew_id === crew.crew_id) || fixedDays.has(otherKey)) continue;
+              const target = routes.get(otherKey) || [];
+              const before = loadOf(other.crew_id, target);
+              for (let j = 0; j <= target.length; j++) {
+                const into = target.slice(0, j).concat([r], target.slice(j));
+                if (!fits(other.crew_id, into)) continue;
+                const after = loadOf(other.crew_id, into);
+                const move = { rank, cost: after - before - freed, r, i, crewId: other.crew_id, to, j, rest: load - freed };
+                if (better(move, best)) best = move;
+              }
+            }
+          });
+        });
+        if (!best) throw new Error(`crew ${crew.crew_id} on ${iso}: ${route.length} booked visits need ${load} minutes (a day has ${capacity}) or start a morning-only stop after noon, and no stop has room on its zone's crews that day or the days its cadence allows`);
+        route.splice(best.i, 1);
+        const otherKey = keyOf(best.to, best.crewId);
+        if (!routes.has(otherKey)) routes.set(otherKey, []);
+        routes.get(otherKey).splice(best.j, 0, best.r);
+        bookedOn.delete(`${best.r.property_id}|${iso}`);
+        bookedOn.add(`${best.r.property_id}|${best.to}`);
+        Object.assign(best.r, { crew_id: best.crewId, visit_date: best.to, minutes: minutesFor(best.r, best.crewId) });
+        load = best.rest;
+      }
+    }
+  }
+  const ids = (pick) => all.filter(pick).map((r) => r.scheduled_visit_id).sort((a, b) => a - b);
+  return {
+    reassigned: ids((r) => r.crew_id !== original.get(r.scheduled_visit_id).crew_id),
+    rebooked: ids((r) => r.visit_date !== original.get(r.scheduled_visit_id).visit_date),
+  };
+}
+
 function buildSchedule(rng, tables, { properties, crews, asOf, plant }) {
   const asOfDay = toDay(asOf);
   const horizonEnd = asOfDay + SCHEDULE_HORIZON_DAYS;
@@ -270,6 +427,25 @@ function buildSchedule(rng, tables, { properties, crews, asOf, plant }) {
     routes.set(key, cities.flatMap((c) => shuffled(rng, byCity.get(c))));
   }
   if (plant) plant.schedule(rows, routes, { asOf, city: (r) => home.get(r.property_id).city });
+  // Generator v8: every crew-day then fits a normal day (balanceDays).
+  const frequency = new Map(tables.plans.map((p) => [p.plan_id, p.frequency]));
+  const lastVisit = new Map();
+  for (const v of tables.visits) {
+    if (v.plan_id !== null && !(lastVisit.get(v.plan_id) >= toDay(v.visit_date))) lastVisit.set(v.plan_id, toDay(v.visit_date));
+  }
+  const moves = balanceDays(routes, {
+    crews: crews.filter((c) => (heads.get(c.crew_id) || 0) > 0),
+    base,
+    placeOf: (r) => where(home.get(r.property_id)),
+    minutesFor: (r, crewId) => Math.max(MIN_SCHEDULED, Math.round(r.labour_minutes / heads.get(crewId) / SLOT_MINUTES) * SLOT_MINUTES),
+    frequencyOf: (r) => frequency.get(r.plan_id),
+    lastVisitOf: (planId) => (lastVisit.has(planId) ? lastVisit.get(planId) : null),
+    firstDay: asOfDay + 1,
+    horizonEnd,
+    fixedDays: plant ? plant.fixedDays : new Set(),
+    fixedProperties: plant ? plant.fixedProperties : new Set(),
+    morningOnly: plant ? plant.morningOnly : new Set(),
+  });
   for (const [, route] of [...routes].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     if (route.length === 0) continue;
     const { crew_id: crewId, visit_date: iso } = route[0];
@@ -289,7 +465,7 @@ function buildSchedule(rng, tables, { properties, crews, asOf, plant }) {
       r.travel_minutes_from_previous = r.travel;
     });
   }
-  return rows.map((r) => ({
+  const scheduledVisits = rows.map((r) => ({
     scheduled_visit_id: r.scheduled_visit_id,
     property_id: r.property_id,
     plan_id: r.plan_id,
@@ -305,6 +481,7 @@ function buildSchedule(rng, tables, { properties, crews, asOf, plant }) {
     route_order: r.route_order,
     travel_minutes_from_previous: r.travel_minutes_from_previous,
   }));
+  return { scheduledVisits, moves };
 }
 
 // ---- customer rules -------------------------------------------------------
@@ -390,19 +567,21 @@ function buildAbsences(rng, tables, { asOf, plant }) {
   return absent.map((a, i) => ({ absence_id: i + 1, ...a }));
 }
 
-// Returns the two extended tables, scheduled_visits, service_rules and
-// staff_absences. `tables` is read, never changed: the extended tables are
-// new row objects with the columns appended. `plant` (lib/scenarios.js, the
+// Returns `tables`: the two extended tables, scheduled_visits, service_rules
+// and staff_absences; and `moves`: the booked visits balanceDays put on
+// another crew of their zone (reassigned) or a later day (rebooked). The
+// input `tables` is read, never changed: the extended tables are new row
+// objects with the columns appended. `plant` (lib/scenarios.js, the
 // recorded seed only) plants S1 to S3. `waterRng` (WATER_STREAM) redraws a
 // point that fell on water.
 function buildRouting(rng, tables, { zones, asOf, plant = null, waterRng }) {
   let properties = placeProperties(rng, tables.properties, waterRng);
   if (plant) properties = plant.coordinates(properties, point);
   const crews = placeCrews(tables.crews, zones);
-  const scheduledVisits = buildSchedule(rng, tables, { properties, crews, asOf, plant });
+  const { scheduledVisits, moves } = buildSchedule(rng, tables, { properties, crews, asOf, plant });
   const serviceRules = buildRules(rng, scheduledVisits, plant);
   const staffAbsences = buildAbsences(rng, tables, { asOf, plant });
-  return { properties, crews, scheduled_visits: scheduledVisits, service_rules: serviceRules, staff_absences: staffAbsences };
+  return { tables: { properties, crews, scheduled_visits: scheduledVisits, service_rules: serviceRules, staff_absences: staffAbsences }, moves };
 }
 
 // The depots table (generator v7): the Office only. Built from a constant,
@@ -417,6 +596,11 @@ const scheduleHorizonEnd = (asOf) => toIso(toDay(asOf) + SCHEDULE_HORIZON_DAYS);
 module.exports = {
   buildRouting,
   buildDepots,
+  balanceDays,
+  dayLoad,
+  maxShiftDays,
+  DAY_CAPACITY,
+  CADENCE_DAYS,
   placeProperties,
   travelMinutes,
   isoWeekday,

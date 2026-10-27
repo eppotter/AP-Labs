@@ -332,6 +332,15 @@ rounded to 0.002°, GRD-007), its two coordinate columns are forbidden like the 
 it is only ever called "Office". Routing's four views and the five routing truths still start from
 each crew's base, so v7 changed no other table and no truth.
 
+Every booked crew-day fits a normal day (generator v8): starting at 08:00 from the crew's base,
+its drives plus service minutes end by 18:00 (the drive home not counted; cancelled stops keep
+their slot). Before v8 each plan's visits stayed on its own crew with no limit, so 44 of 410
+crew-days ran past 18:00 (crew 1 on 2026-10-03 to 23:47). v8 gives a full day's extra stops to
+another crew of its zone that day, else moves them to the nearest later day (earlier only near the
+horizon's end) at most half a cadence away. No visit is dropped. This changed S1's stops (two
+short stops joined, two long ones left) and its booked drive from 140 to 134 minutes, and dropped
+31 preferred-crew rules whose visits now sit on two crews; the other four figures stayed.
+
 ```truth
 id: scheduled-stops-next-14d
 statement: "825 stops are booked (status scheduled, not cancelled) from the day after as_of through as_of + 14, the 14th day included."
@@ -344,9 +353,9 @@ signed_off: pending
 
 ```truth
 id: route-optimize-s1-drive
-statement: "S1, crew 4 on as_of+1 (seven stops booked back and forth between cities): the booked day drives 140 minutes. The check fails unless the suggested day drives no longer, and neither day breaks a hard rule or leaves a stop unplaced."
+statement: "S1, crew 4 on as_of+1 (seven stops booked back and forth between cities): the booked day drives 134 minutes. The check fails unless the suggested day drives no longer, and neither day breaks a hard rule or leaves a stop unplaced."
 run: [node, examples/brightside/fixture/truths/routing.js, route-optimize-s1-drive]
-expect: 140
+expect: 134
 tolerance: 0
 owner: Dana Reyes
 signed_off: pending

@@ -80,6 +80,23 @@ survive, but the silent ones would not. Cost: a view of "all of a crew's days" i
 the two tables. It is disjoint by date (history <= as_of < scheduled), so use UNION ALL, never UNION.
 Carry a `source` column because the two id spaces overlap.
 
+**Amended 2026-10-27 (fix to Story 14.1, generator v8, after Ely's live check of Plan a route):**
+every booked crew-day fits a normal day. Starting at 08:00 from the crew's base, its drives (the
+drive home not counted) plus service minutes end by 18:00, cancelled stops included (they keep
+their slot). v7 booked each plan's visits on the plan's own crew with no limit, as the history
+does, so 44 of 410 crew-days ran past 18:00 and 3 past 23:00 (crew 1 on 2026-10-03: 11 stops to
+23:47). The 08:00 start was chosen over 06:00 because Plan a route starts at 08:00, and with
+06:00 three zone-days still could not fit. The generator (`lib/routing.js` `balanceDays`) gives a
+full day's stops, one at a time, to another crew of its zone the same day; failing that, to the
+nearest later day at most half a cadence away (3, 7 or 15 days: the routing engine's own rule
+for a moved visit), and only near the horizon's end to an earlier day. No visit is dropped. With
+the recorded seed: 412 crew-days, none over; 89 visits on another crew of their zone (S1 to S3's
+included), 20 on another day (18 one day later, 1 two days later, 1 one day earlier). The history
+is unchanged byte for byte; `service_rules` loses 31 preferred-crew rules whose property's visits
+now sit on two crews. `integrity-scheduled-day-capacity` checks the day; `integrity-scheduled-cadence`
+allows a booked visit half a cadence either side of its cadence date, at least half a cadence after
+the visit before it (the generator allows it only for the visits it moved).
+
 ## 3. Coordinates vs forbidden columns
 
 Yes: forbid all four. The guard (kit/runtime/sql `checkForbidden`) matches the column NAME in any
@@ -237,6 +254,12 @@ booked minutes, S2 top property 762 with 2 candidates, S3 5 / 1 / 0. No plant ch
 Built (fix to 15.7, generator v6, points off water): re-computed from `travelMatrix` on v6, S1's
 booked drive is 140 minutes (was 139); 825 stops, S2 762 of 2 and S3 5 / 1 / 0 are unchanged. No
 plant changed.
+Built (fix to 14.1, generator v8, every crew-day fits 08:00 to 18:00): S1's zig-zag day ran 695
+minutes, so the S1 plant changed: crew 5's two short stops (19, 43) join and crew 4's two longest
+(29, 55) go to crew 5, still seven stops, now two cities in turn, ending 17:50. S1's booked drive
+is 134 minutes (was 140); re-computed from `travelMatrix` and the engine, 825 stops, S2 762 of 2
+and S3 5 / 1 / 0 are unchanged. The planted days and S2's estate and S3's morning-only homes are
+never moved by the balancing.
 
 | id | statement | run | expect |
 |---|---|---|---|

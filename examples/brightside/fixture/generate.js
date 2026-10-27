@@ -40,7 +40,7 @@ const { checkRouting } = require('./lib/routing-rules');
 const { createPlant, checkScenarios, checkRoutingTargets, missedRoutingTargets } = require('./lib/scenarios');
 
 // Bump when a change to this code changes the output for the same seed.
-const GENERATOR_VERSION = 7;
+const GENERATOR_VERSION = 8;
 
 const FIXTURE_DIR = __dirname;
 const SEED_FILE = path.join(FIXTURE_DIR, 'seed.json');
@@ -133,14 +133,24 @@ function generate(config) {
   // routing stream's draws do not move (generator v6).
   const routingRng = createRng(deriveSeed(seed, ROUTING_STREAM));
   const waterRng = createRng(deriveSeed(seed, WATER_STREAM));
-  Object.assign(tables, buildRouting(routingRng, tables, { zones: ZONES, asOf: AS_OF, plant, waterRng }));
+  const routed = buildRouting(routingRng, tables, { zones: ZONES, asOf: AS_OF, plant, waterRng });
+  Object.assign(tables, routed.tables);
+  // The booked visits now on another crew of their zone than their plan's
+  // (planted, or moved so every crew-day fits, generator v8) and off their
+  // cadence date (moved so every crew-day fits).
+  const byId = (a, b) => a - b;
+  const planCrew = new Map(tables.visits.filter((v) => v.plan_id !== null).map((v) => [v.plan_id, v.crew_id]));
+  const moved = new Set([...(plant ? plant.reassigned : []), ...routed.moves.reassigned]);
+  const reassigned = tables.scheduled_visits.filter((v) => moved.has(v.scheduled_visit_id) && v.crew_id !== planCrew.get(v.plan_id))
+    .map((v) => v.scheduled_visit_id).sort(byId);
+  const rebooked = routed.moves.rebooked.slice().sort(byId);
   // The Office (generator v7): a constant, no draw, so nothing above moves.
   tables.depots = buildDepots();
   tables.fixture_meta = fixtureMeta(config, tables);
   const ruleOpts = { zones: ZONES, historyStart: HISTORY_START, asOf: AS_OF };
   const problems = checkRules(tables, ruleOpts).concat(
     checkOperations(tables, ruleOpts),
-    checkRouting(tables, { ...ruleOpts, reassigned: plant ? plant.reassigned : new Set() }),
+    checkRouting(tables, { ...ruleOpts, reassigned: new Set(reassigned), rebooked: new Set(rebooked) }),
     plant ? checkScenarios(tables, ruleOpts) : [],
   );
   if (problems.length > 0) {
@@ -160,9 +170,10 @@ function generate(config) {
   for (const table of TABLES) {
     files.set(`${SEEDS_DIR}/${table.name}.csv`, toCsv(table, tables[table.name]));
   }
-  // reassigned: the booked visits the planted scenarios moved to another
-  // crew of their zone (none without routing targets).
-  return { tables, files, reassigned: plant ? [...plant.reassigned].sort((a, b) => a - b) : [] };
+  // reassigned: the booked visits on another crew of their zone than their
+  // plan's (the planted scenarios' and balanceDays'); rebooked: those on a
+  // later day than their cadence date (balanceDays').
+  return { tables, files, reassigned, rebooked };
 }
 
 // The name a generated file is stored under: seeds/<table>.csv.gz for every
