@@ -21,7 +21,9 @@ const { loadProfile } = require('../../../../kit/lib/profile');
 const FIXTURE_DIR = path.join(__dirname, '..');
 const REPO = path.resolve(FIXTURE_DIR, '..', '..', '..');
 const SMALL = { seed: 7, clients: 60 };
-const COORDINATE_COLUMNS = ['properties.geo_lat_e6', 'properties.geo_lon_e6', 'crews.base_geo_lat_e6', 'crews.base_geo_lon_e6'];
+const COORDINATE_COLUMNS = ['properties.geo_lat_e6', 'properties.geo_lon_e6', 'crews.base_geo_lat_e6', 'crews.base_geo_lon_e6',
+  // Story 15.15: the Office.
+  'depots.geo_lat_e6', 'depots.geo_lon_e6'];
 
 // A point on Alum Creek Reservoir, north of Westerville (the live check's
 // stop sat on it), and one on land (the box's centre, near campus).
@@ -124,11 +126,25 @@ test('generation stays deterministic with redraws, and the routing stream is the
   assert.notEqual(routing.WATER_STREAM, routing.ROUTING_STREAM);
 });
 
-test('synthetic-off-water declares the four coordinate columns and holds exactly lib/water.js\'s edges', () => {
+// Story 15.15: the Office is not random, so it is never redrawn: it is
+// checked, and had it been on water the story would have stopped (it sits
+// near Hoover Reservoir's outline, about 200 m west of it).
+test('the Office is off water as is and snapped, and the off-water check reads the depots table', () => {
+  const { lat, lon } = routing.OFFICE;
+  assert.equal(waterAt(lat, lon), null);
+  assert.equal(waterAt(snap(lat), snap(lon)), null);
+  assert.equal(onWater(lat, lon), false);
+  assert.equal(snap(lat), lat, 'already a grid point');
+  assert.equal(snap(lon), lon, 'already a grid point');
+  const check = loadChecks(FIXTURE_DIR).find((c) => c.id === 'synthetic-off-water');
+  assert.match(check.sql, /SELECT 'depots', d\.depot_id, CAST\(d\.geo_lat_e6 AS BIGINT\), CAST\(d\.geo_lon_e6 AS BIGINT\)\n  FROM depots d/);
+});
+
+test('synthetic-off-water declares the six coordinate columns and holds exactly lib/water.js\'s edges', () => {
   const check = loadChecks(FIXTURE_DIR).find((c) => c.id === 'synthetic-off-water');
   assert.ok(check, 'checks/synthetic-off-water.sql exists');
   assert.deepEqual(check.protectedColumns.slice().sort(), COORDINATE_COLUMNS.slice().sort());
-  assert.equal(check.description, 'Synthetic only: no home or crew base sits on water in the Columbus box.');
+  assert.equal(check.description, 'Synthetic only: no home, crew base or the Office sits on water in the Columbus box.');
   const edges = [...check.sql.matchAll(/SELECT '((?:[^']|'')+)'(?: AS body)?, (-?\d+)(?: AS lat1)?, (-?\d+)(?: AS lon1)?, (-?\d+)(?: AS lat2)?, (-?\d+)(?: AS lon2)?\n/g)]
     .map((m) => [m[1].replace(/''/g, "'"), ...m.slice(2).map(Number)]);
   const want = WATER.flatMap((w) => w.ring.map(([lat1, lon1], i) => [w.name, lat1, lon1, ...w.ring[(i + 1) % w.ring.length]]));

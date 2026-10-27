@@ -9,7 +9,8 @@
 // staff, pay_rates and timesheets, and appended columns to crew_memberships,
 // properties and visits. The routing build (lib/routing.js) appended
 // coordinates to crews and properties and added scheduled_visits,
-// service_rules and staff_absences. Appended
+// service_rules and staff_absences; generator v7 added depots (the Office,
+// Story 15.15). Appended
 // columns and tables always go last, so every earlier column keeps its place
 // and its values.
 
@@ -315,6 +316,20 @@ const TABLES = [
       { name: 'reported_on', type: 'DATE', notNull: true },
     ],
     unique: [['staff_id', 'absence_date']],
+  },
+  {
+    // Where crews start and end in Plan a route (Story 15.15, AD-R23): one
+    // row, the Office (lib/routing.js OFFICE). Not random: a point Ely chose,
+    // rounded to 0.002 degrees. Shown only by name, never by address. The two
+    // coordinates are forbidden columns; only travelMatrix and mapPoints read
+    // them, as the depot node source.
+    name: 'depots',
+    columns: [
+      { name: 'depot_id', type: 'VARCHAR', pk: true },
+      { name: 'name', type: 'VARCHAR', notNull: true },
+      { name: 'geo_lat_e6', type: 'INTEGER', notNull: true },
+      { name: 'geo_lon_e6', type: 'INTEGER', notNull: true },
+    ],
   },
   {
     name: 'fixture_meta',

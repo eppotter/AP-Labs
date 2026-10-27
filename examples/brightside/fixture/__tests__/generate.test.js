@@ -199,7 +199,7 @@ test('schema.sql and the seed files agree on tables and columns', () => {
   const schema = schemaColumns();
   const expected = ['zones', 'packages', 'add_ons', 'crews', 'staff', 'pay_rates', 'crew_memberships', 'clients', 'properties',
     'plans', 'plan_price_changes', 'visits', 'invoices', 'invoice_lines', 'payments', 'timesheets', 'scheduled_visits', 'service_rules',
-    'staff_absences', 'fixture_meta'];
+    'staff_absences', 'depots', 'fixture_meta'];
   assert.deepEqual(Object.keys(schema), expected, 'load order: referenced tables first');
   assert.deepEqual(fs.readdirSync(path.join(FIXTURE_DIR, 'seeds')).sort(), expected.map((t) => (t === 'fixture_meta' ? `${t}.csv` : `${t}.csv.gz`)).sort());
   for (const table of expected) assert.deepEqual(committed(table).header, schema[table], table);
@@ -214,6 +214,7 @@ test('schema.sql and the seed files agree on tables and columns', () => {
     'status_changed_on', 'arrival_window', 'scheduled_start', 'scheduled_minutes', 'labour_minutes', 'route_order', 'travel_minutes_from_previous']);
   assert.deepEqual(schema.service_rules, ['rule_id', 'property_id', 'rule_type', 'value', 'strength']);
   assert.deepEqual(schema.staff_absences, ['absence_id', 'staff_id', 'absence_date', 'reported_on']);
+  assert.deepEqual(schema.depots, ['depot_id', 'name', 'geo_lat_e6', 'geo_lon_e6']);
   assert.deepEqual(schema.staff, ['staff_id', 'name', 'role', 'hire_date', 'end_date', 'hourly_rate_cents']);
   assert.deepEqual(schema.pay_rates, ['rate_id', 'staff_id', 'start_date', 'end_date', 'role', 'hourly_rate_cents']);
   assert.deepEqual(schema.timesheets, ['timesheet_id', 'visit_id', 'staff_id', 'clock_in', 'clock_out', 'minutes']);

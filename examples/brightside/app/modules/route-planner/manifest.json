@@ -1,0 +1,11 @@
+{
+  "id": "route-planner",
+  "hub": "brightside",
+  "label": "Plan a route",
+  "description": "Reorder one crew's day from the Office: suggestions only, nothing is changed",
+  "resource": "ROUTING_ALL_CREWS",
+  "archetype": "routing-map",
+  "screen": "route-editor",
+  "environments": ["dev"],
+  "adapter": "adapter.js"
+}

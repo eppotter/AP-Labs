@@ -18,6 +18,19 @@
 // client name and city, and is filtered by the scope (a crew lead's labels
 // name no other crew).
 //
+// Plan a route (Story 15.15, AD-R23, AD-R26): route({ day, crewId, depot,
+// scope }) gives { input, travel, distance } for one crew's day from the
+// Office: the crew (a crew lead's own, from the scope, whatever crewId says)
+// and its booked stops that day, the crew's baseNode the Office (depot, a
+// depot:<id> node, read from the data's depots table like any node) and
+// returnToBase true. travel and distance cover exactly [Office, stops] x
+// [stops, Office], each read within max_pairs. distance(from, to) is the
+// leg's km_tenths (whole tenths of a km, Story 15.13, AD-R25), the unit the
+// archetype sums; it is never shown, logged or sent per leg (only a route's
+// total, in whole km, is shown). A crew the day does not know gives no crew
+// and no stops (the archetype says the crew is not working that day). Its
+// SQL is crews.sql and day.sql: no coordinate column.
+//
 // data is a full data object from createData (it has travelMatrix). A
 // module's or job's ctx.data has only run and describe, so it is refused
 // (sdk.travelMatrix rejects with RoutingFault data_unavailable). routing is
@@ -83,6 +96,7 @@ const STRENGTHS = Object.freeze(['hard', 'soft']);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const DIGITS = /^\d+$/;
 const NODE_ID = /^(crew|property):(\d+)$/;
+const DEPOT_NODE = /^depot:[A-Za-z0-9_-]{1,64}$/;
 
 const fault = (field, problem) => new RoutingFault({ field, problem });
 const propertyNode = (id) => `property:${id}`;
@@ -222,9 +236,9 @@ function createAdapter({ data, routing } = {}) {
     return { asOf: as, crews, stops, cancelled };
   }
 
-  // Reads every rectangle, each split to stay within max_pairs, into one
-  // travel function. A pair two rectangles share is kept once.
-  async function travelFor(rects) {
+  // Reads every rectangle, each split to stay within max_pairs, into the
+  // matrix rows. A pair two rectangles share is kept once.
+  async function matrixRows(rects) {
     const rows = new Map();
     for (const [fromIds, toIds] of rects) {
       const from = unique(fromIds);
@@ -240,7 +254,12 @@ function createAdapter({ data, routing } = {}) {
         }
       }
     }
-    return engine.travel.fromMatrix([...rows.values()]);
+    return [...rows.values()];
+  }
+
+  // The rectangles' drive minutes as one travel function.
+  async function travelFor(rects) {
+    return engine.travel.fromMatrix(await matrixRows(rects));
   }
 
   // The day's input for optimizeDay and placeOrphans. crewIds (optional)
@@ -368,6 +387,16 @@ function createAdapter({ data, routing } = {}) {
   // gapDay and labels.sql.
 
   const leadOf = (scope) => (scope && scope.all !== true && typeof scope.crewId === 'string' ? scope.crewId : null);
+  // The scope route() and input() require (fail closed): { all: true } gives
+  // null (any crew), { crewId } a lead's crew id. A missing or malformed
+  // scope is refused naming only the field, never read as "all crews".
+  const requiredLeadOf = (scope) => {
+    if (scope === undefined || scope === null) throw fault('scope', 'missing');
+    if (typeof scope !== 'object' || Array.isArray(scope)) throw fault('scope', 'not_object');
+    if (scope.all === true) return null;
+    if (typeof scope.crewId === 'string' && scope.crewId !== '') return scope.crewId;
+    throw fault('scope', 'not_object');
+  };
   const isUnknownCrew = (err) => err instanceof RoutingFault && ['crewIds', 'crewId'].includes(err.details.field)
     && err.details.problem === 'unknown_crew';
 
@@ -379,7 +408,7 @@ function createAdapter({ data, routing } = {}) {
   // whole day, so the archetype's configuration check refuses them (never
   // an empty map).
   async function input({ day, view, scope } = {}) {
-    const lead = leadOf(scope);
+    const lead = requiredLeadOf(scope);
     if (view === 'gap') {
       if (lead === null) return gapDay(day, null);
       try {
@@ -424,8 +453,41 @@ function createAdapter({ data, routing } = {}) {
     return out;
   }
 
+  // --- Plan a route (Story 15.15, AD-R26): one crew's day from the Office.
+
+  async function route({
+    day, crewId, depot, scope,
+  } = {}) {
+    checkDay(day);
+    if (typeof depot !== 'string' || !DEPOT_NODE.test(depot)) throw fault('depot', 'bad_node');
+    // A crew lead's crew comes from the scope, never from the click; only an
+    // explicit all-crews scope may pick any crew.
+    const lead = requiredLeadOf(scope);
+    const wanted = lead !== null ? lead : crewId;
+    if (typeof wanted !== 'string' || !DIGITS.test(wanted)) throw fault('crewId', 'bad_id');
+    const booked = await bookedDay(day);
+    const crews = booked.crews.filter((c) => c.crewId === wanted)
+      .map((c) => ({ ...c, baseNode: depot, returnToBase: true }));
+    const stops = crews.length ? booked.stops.filter((s) => s.currentCrewId === wanted) : [];
+    const input = { day, asOf: booked.asOf, limits: { ...limits }, crews, stops };
+    engine.validateInput(input);
+
+    // [Office, stops] x [stops, Office]: every leg a reorder can drive.
+    const nodes = unique(stops.map((s) => s.node));
+    const rows = nodes.length ? await matrixRows([[[depot, ...nodes], [...nodes, depot]]]) : [];
+    const tenths = new Map(rows.map((r) => [`${r.from_node}\u0000${r.to_node}`, r.km_tenths]));
+    // A leg's distance in whole tenths of a km. Throws, never guesses, for a
+    // pair it was not given; the value is never put in a fault.
+    const distance = (from, to) => {
+      const d = tenths.get(`${from}\u0000${to}`);
+      if (!Number.isSafeInteger(d) || d < 0) throw fault('distance', 'no_travel');
+      return d;
+    };
+    return { input, travel: engine.travel.fromMatrix(rows), distance };
+  }
+
   return Object.freeze({
-    asOf, input, labels, dayInput, gapInput,
+    asOf, input, labels, dayInput, gapInput, route,
   });
 }
 

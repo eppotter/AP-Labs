@@ -31,11 +31,39 @@ test('GRD-002 names the four coordinate columns and is a draft again', () => {
   assert.match(grd, /\n- status: draft\b/);
 });
 
-test('GRD-002 names travelMatrix as the one coordinate exception, minutes only', () => {
+// Story 15.15 (AD-R25) changed "whole-minute drive times only": travelMatrix
+// also returns an estimated distance, and only a route's total is shown.
+test('GRD-002 names travelMatrix as the one coordinate exception: minutes and an estimated distance, never a position', () => {
   const grd = card('GRD-002');
   assert.match(grd, /stay forbidden to every query and every other read path/);
   assert.match(grd, /one named exception is the kit's drive-time read, `travelMatrix`/);
-  assert.match(grd, /whole-minute drive times between two places only, never\s+a latitude or longitude/);
+  assert.match(grd.replace(/\s+/g, ' '), /whole-minute drive times and an estimated distance \(straight line × 1\.3, in tenths of a km\) between two places only, never a latitude or longitude/);
+});
+
+// Story 15.15 (AD-R23, AD-R25, DEP-032): the story's GRD-002 and GRD-007
+// words, quoted, and both cards still drafts so guardrails.md stays pending.
+const GRD_002_DISTANCE = "Only a route's total distance is shown, in whole km; the distance of one leg is never shown or logged.";
+const GRD_002_OFFICE = [
+  "The Office, where every crew starts and ends in Plan a route, is a point in the data's `depots` table.",
+  'Its coordinate columns are forbidden like the others.',
+  'The map shows it with its own marker.',
+  "It is called 'Office' in the list, never by address.",
+].join(' ');
+const GRD_007_OFFICE = 'One point is not random: the Office, a point Ely chose in Westerville, rounded to 0.002° (about 150 m).';
+
+test('GRD-002 and GRD-007 carry Story 15.15\'s Office and distance words, pending DEP-032', () => {
+  const grd2 = card('GRD-002').replace(/\s+/g, ' ');
+  assert.ok(grd2.includes(GRD_002_DISTANCE), 'the distance line');
+  assert.ok(grd2.includes(GRD_002_OFFICE), 'the Office line');
+  for (const column of ['depots.geo_lat_e6', 'depots.geo_lon_e6']) assert.ok(grd2.includes(column), column);
+  assert.match(grd2, /pending DEP-032/);
+  assert.match(grd2, /- status: draft\b/);
+  const grd7 = card('GRD-007').replace(/\s+/g, ' ');
+  assert.ok(grd7.includes(GRD_007_OFFICE), 'the GRD-007 Office exception');
+  assert.match(grd7, /pending DEP-032/);
+  assert.match(grd7, /- status: draft\b/);
+  // No street address is written for the Office: only the rounded point's words.
+  assert.doesNotMatch(read(), /Office[^\n]*\b\d+ [A-Z][a-z]+ (St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Blvd|Ln|Lane|Way|Ct|Pl)\b/);
 });
 
 // Story 15.5 (AD-R12): GRD-002 states the map image rule in plain words with

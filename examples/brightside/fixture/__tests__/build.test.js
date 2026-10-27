@@ -32,7 +32,7 @@ test('Brightside builds in under 60 seconds with every table at its fixture_meta
 
   const m = meta();
   const expected = Object.fromEntries(Object.entries(m).filter(([k]) => k.startsWith('rows_')).map(([k, v]) => [k.slice(5), Number(v)]));
-  assert.equal(Object.keys(expected).length, 19);
+  assert.equal(Object.keys(expected).length, 20);
   const loaded = Object.fromEntries(result.tables.filter((x) => x.name !== 'fixture_meta').map((x) => [x.name, x.rows]));
   assert.deepEqual(loaded, expected);
 
@@ -63,8 +63,9 @@ test('Brightside builds in under 60 seconds with every table at its fixture_meta
 // and the planted scenarios, still v4: unpublished) from 4+c090cded7e68;
 // Story 15.7 (generator v5: the coordinates move to Columbus) from
 // 4+dd14e6d231b7; its fix (generator v6: no point on water) from
-// 5+5dc9a0ad58fb.
-const VERSION_AS_PLAIN_CSV = '6+37b2437c36e6';
+// 5+5dc9a0ad58fb; Story 15.15 (generator v7: the depots table, the Office)
+// from 6+37b2437c36e6.
+const VERSION_AS_PLAIN_CSV = '7+0a69704ab581';
 
 // A copy of the fixture with every seed unzipped to plain seeds/<table>.csv.
 function plainCopy(t) {

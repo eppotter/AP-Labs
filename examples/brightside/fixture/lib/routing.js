@@ -72,6 +72,14 @@ const JITTER_KM = 2.5;
 // Every coordinate lies inside this box (checks/synthetic-coordinates.sql).
 const BOX = { latMin: 39700000, latMax: 40300000, lonMin: -83400000, lonMax: -82600000 };
 
+// The Office (Story 15.15, AD-R23, generator v7): the one depot, where every
+// crew starts and ends in Plan a route. Not random, unlike every other point:
+// a point Ely chose in Westerville, rounded to 0.002° (about 150 m), the map
+// grid, so it is already a grid point. Ely confirmed it may ship in the
+// fixture (DEP-035). It takes no draw, so no other value moves. It is near
+// Hoover Reservoir's outline but off it (checks/synthetic-off-water.sql).
+const OFFICE = Object.freeze({ depot_id: 'office', name: 'Office', lat: 40122000, lon: -82908000 });
+
 // City centres in km [east, north] of the box's centre. Central's cities sit
 // closer together, as the history's shorter central drives show. Generator
 // v6 moved three whose centre was on water onto land, keeping the zone's
@@ -397,11 +405,18 @@ function buildRouting(rng, tables, { zones, asOf, plant = null, waterRng }) {
   return { properties, crews, scheduled_visits: scheduledVisits, service_rules: serviceRules, staff_absences: staffAbsences };
 }
 
+// The depots table (generator v7): the Office only. Built from a constant,
+// with no draw, so every other table stays v6's byte for byte.
+function buildDepots() {
+  return [{ depot_id: OFFICE.depot_id, name: OFFICE.name, geo_lat_e6: OFFICE.lat, geo_lon_e6: OFFICE.lon }];
+}
+
 // fixture_meta's last booked day.
 const scheduleHorizonEnd = (asOf) => toIso(toDay(asOf) + SCHEDULE_HORIZON_DAYS);
 
 module.exports = {
   buildRouting,
+  buildDepots,
   placeProperties,
   travelMinutes,
   isoWeekday,
@@ -420,6 +435,7 @@ module.exports = {
   MIN_TRAVEL_MINUTES,
   BOX,
   CENTRE,
+  OFFICE,
   LAT_E6_PER_KM,
   LON_E6_PER_KM,
   JITTER_KM,

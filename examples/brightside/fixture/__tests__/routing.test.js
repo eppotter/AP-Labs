@@ -4,7 +4,8 @@
 // after as_of (generator v4). Story 15.7: the coordinates move to a box in
 // Columbus, Ohio (generator v5); only the box's centre and bounds change, so
 // every draw and every non-routing value stays as v4 had it. Fix to 15.7: no
-// point on water (generator v6, lib/water.js). Example tests (AD-1
+// point on water (generator v6, lib/water.js). Story 15.15: the Office, one
+// depots row, and nothing else (generator v7). Example tests (AD-1
 // carve-out): they read Brightside's own fixture and go with it in a fork.
 
 const test = require('node:test');
@@ -29,6 +30,8 @@ const REPO = path.resolve(FIXTURE_DIR, '..', '..', '..');
 const PROFILE = loadProfile(path.join(REPO, 'profiles', 'brightside', 'profile.yml'));
 const SMALL = { seed: 7, clients: 60 };
 const COORDINATE_COLUMNS = ['properties.geo_lat_e6', 'properties.geo_lon_e6', 'crews.base_geo_lat_e6', 'crews.base_geo_lon_e6'];
+// Story 15.15 (generator v7): the Office's two.
+const DEPOT_COLUMNS = ['depots.geo_lat_e6', 'depots.geo_lon_e6'];
 
 // Each v3 seed's header and the sha256 of its whole v3 content, recorded from
 // the committed v3 files before the v4 generator ran. Every v3 column must
@@ -97,7 +100,39 @@ const V5_SEEDS = {
   staff_absences: ['absence_id,staff_id,absence_date,reported_on', '55fadd7fe56e73d2752eac529b0ae7526b16d4e40161d74fd572e3590060317c'],
 };
 // v6's routing counts: one time_of_day rule fell away with its window.
-const V6_META = { rows_scheduled_visits: '1720', rows_service_rules: '780', rows_staff_absences: '5', schedule_horizon_end: '2026-10-28' };
+const V6_ROUTING_META = { rows_scheduled_visits: '1720', rows_service_rules: '780', rows_staff_absences: '5', schedule_horizon_end: '2026-10-28' };
+
+// Story 15.15 (generator v7): the sha256 of every v6 seed's whole content,
+// recorded from the committed v6 files before the v7 generator ran. v7 adds
+// the depots table and nothing else: every other seed is byte-identical, and
+// fixture_meta changes only in generator_version and the new rows_depots.
+const V6_SEEDS = {
+  add_ons: '1d24020a1595ce14b2642c3abec3bdddbb70f9657761dfc1f326260158fe46c4',
+  clients: '30d2b1b7d8ed478d254a3127c585f1f5d213fd98ec96c27359c427f52f929a6a',
+  crew_memberships: '646d62cec8592b5a550e7ee514916f2bbdc283652f82b4833e25b50124441cb0',
+  crews: '536dae84d7b7e663e1e96b39930d2c04e6bd6c25a26379d87c6c31e1953bba30',
+  invoice_lines: '27f9ce59a1b099e97ada39d371e2820afe8c96db460bc17c40a529a7514c7fe9',
+  invoices: '21c2ec5851729994e2e71548ab071367dabd2af022818dce541c20c917af8cd0',
+  packages: 'f7e783b29c23c44d8a8cfcd16bee06f017bf5a33eee13216b653531f8a00ebcc',
+  pay_rates: 'a3b504c7002532a890dccd2aa4d133c8feb3b9f5c361146d07f740b4bfb089fd',
+  payments: '6577c8d32ba971d40b3614e5f339fdd229d4c36bef73c45d85292d47eddc51c4',
+  plan_price_changes: '3d7570e7980df40bc8f719163d6b4016bcfa5a04bbcda273480ce165028d77be',
+  plans: '6bdfefd9755cf02630df3c4650017120d9da17f614696e46a971fedc50728798',
+  properties: '586b7c623632919f5896048475bb9a6e9bf69eb6739181c4a34c5ccb068eef99',
+  scheduled_visits: '361d90b3d293d54d392692216d92fa1a1058e82209874a41782bb52dcd5238d5',
+  service_rules: 'c7f2ba006f8a03159fd1f1aafdfe87c8eafd1ac27a0ddf098409eee8525b0f73',
+  staff: 'd2db07cdbbf57664c03e0a0d7bf2723d576ec236bb291d8fda50ce19efc3f629',
+  staff_absences: '55fadd7fe56e73d2752eac529b0ae7526b16d4e40161d74fd572e3590060317c',
+  timesheets: '7bab81055390ef83244227cb154fbfe2c1b3753be4e42e41a4e8dd48a356e10b',
+  visits: '72d93a37df05ac155aaef94f2f0b557e781d78e64303e6d8e809ab4bb1e1e7b3',
+  zones: '7603749c0cc3aa3c898a4004174c1ae25037100c1c1902320a8f3934bd4ac570',
+};
+// v6's fixture_meta, whole: v7 sets generator_version 7 and adds rows_depots 1.
+const V6_META = 'key,value\nas_of,2026-09-30\ngenerator_version,6\nhistory_start,2024-10-01\nrows_add_ons,5\nrows_clients,2000\n'
+  + 'rows_crew_memberships,108\nrows_crews,15\nrows_invoice_lines,47133\nrows_invoices,38434\nrows_packages,3\nrows_pay_rates,287\n'
+  + 'rows_payments,39680\nrows_plan_price_changes,1013\nrows_plans,1584\nrows_properties,2186\nrows_scheduled_visits,1720\n'
+  + 'rows_service_rules,780\nrows_staff,89\nrows_staff_absences,5\nrows_timesheets,115302\nrows_visits,40895\nrows_zones,5\n'
+  + 'schedule_horizon_end,2026-10-28\nseed,20241001\n';
 
 const seedText = (table) => {
   const file = path.join(FIXTURE_DIR, storedName(`seeds/${table}.csv`));
@@ -119,11 +154,12 @@ let recorded;
 const recordedRun = () => (recorded ??= generate(readSeedConfig()));
 const recordedTables = () => recordedRun().tables;
 
-test('generator v6: seed.json and fixture_meta record it, and fixture_meta has the horizon and the new table\'s count', () => {
-  assert.equal(GENERATOR_VERSION, 6);
-  assert.equal(readSeedConfig().generator_version, 6);
+test('generator v7: seed.json and fixture_meta record it, and fixture_meta has the horizon and the new tables\' counts', () => {
+  assert.equal(GENERATOR_VERSION, 7);
+  assert.equal(readSeedConfig().generator_version, 7);
   const meta = Object.fromEntries(recordedTables().fixture_meta.map((m) => [m.key, m.value]));
-  assert.equal(meta.generator_version, '6');
+  assert.equal(meta.generator_version, '7');
+  assert.equal(meta.rows_depots, '1');
   assert.equal(meta.schedule_horizon_end, '2026-10-28', 'as_of + 28 days');
   assert.equal(meta.rows_scheduled_visits, String(recordedTables().scheduled_visits.length));
 });
@@ -156,7 +192,33 @@ test('v6 keeps every v5 value but the coordinates, the booked drives, starts and
     assert.equal(seedText(table).split('\n')[0], (V5_SEEDS[table] || V3_SEEDS[table])[0], `${table}: every column is pinned`);
   }
   const meta = Object.fromEntries(seedText('fixture_meta').trim().split('\n').slice(1).map((l) => l.split(',')));
-  for (const [key, value] of Object.entries(V6_META)) assert.equal(meta[key], value, `fixture_meta ${key}`);
+  for (const [key, value] of Object.entries(V6_ROUTING_META)) assert.equal(meta[key], value, `fixture_meta ${key}`);
+});
+
+test('v7 adds the depots table and nothing else: every other seed is v6\'s byte for byte', () => {
+  const seeds = fs.readdirSync(path.join(FIXTURE_DIR, 'seeds')).map((f) => f.replace(/\.csv(\.gz)?$/, '')).sort();
+  assert.deepEqual(seeds, [...Object.keys(V6_SEEDS), 'depots', 'fixture_meta'].sort());
+  for (const [table, digest] of Object.entries(V6_SEEDS)) assert.equal(sha256(seedText(table)), digest, `${table}: changed from v6`);
+  const v7Meta = V6_META.replace('generator_version,6\n', 'generator_version,7\n').replace('rows_crews,15\n', 'rows_crews,15\nrows_depots,1\n');
+  assert.equal(seedText('fixture_meta'), v7Meta, 'fixture_meta: only generator_version and rows_depots');
+  // The planted scenarios' moved visits are v6's too (S1 to S3 unchanged).
+  assert.deepEqual(recordedRun().reassigned, [27, 79, 80, 100, 172, 184, 191]);
+});
+
+test('the depots table is one row, the Office, at lib/routing.js OFFICE, a grid point inside the box and off water', () => {
+  assert.equal(seedText('depots'), `depot_id,name,geo_lat_e6,geo_lon_e6\noffice,Office,${routing.OFFICE.lat},${routing.OFFICE.lon}\n`);
+  // A point Ely chose in Westerville, rounded to 0.002 degrees (DEP-035).
+  assert.deepEqual({ ...routing.OFFICE }, { depot_id: 'office', name: 'Office', lat: 40122000, lon: -82908000 });
+  assert.ok(Object.isFrozen(routing.OFFICE));
+  const { lat, lon } = routing.OFFICE;
+  assert.equal(lat % 2000, 0);
+  assert.equal(Math.abs(lon) % 2000, 0);
+  const { BOX } = routing;
+  assert.ok(lat >= BOX.latMin && lat <= BOX.latMax && lon >= BOX.lonMin && lon <= BOX.lonMax);
+  // The same row for any seed: it takes no draw.
+  assert.deepEqual(generate(SMALL).tables.depots, recordedTables().depots);
+  assert.deepEqual(recordedTables().depots, [{ depot_id: 'office', name: 'Office', geo_lat_e6: lat, geo_lon_e6: lon }]);
+  assert.deepEqual(checkRouting(recordedTables(), { asOf: AS_OF, reassigned: new Set(recordedRun().reassigned) }), []);
 });
 
 test('only the routing columns and table are new', () => {
@@ -186,29 +248,36 @@ test('the generator\'s drive constants are the profile\'s and travelMatrix\'s', 
   });
 });
 
-test('the profile\'s node kinds are property and crew only, on the columns the generator writes, all four forbidden', () => {
+test('the profile\'s node kinds are property, crew and depot, on the columns the generator writes, all six forbidden', () => {
   const nodes = PROFILE.routing.coordinates.nodes;
-  assert.deepEqual(nodes.map((n) => n.kind), ['property', 'crew']);
+  assert.deepEqual(nodes.map((n) => n.kind), ['property', 'crew', 'depot']);
   const tables = generate(SMALL).tables;
   for (const n of nodes) {
     const row = tables[n.table][0];
-    for (const col of [n.id_column, n.lat_column, n.lon_column]) assert.ok(Number.isSafeInteger(row[col]), `${n.table}.${col}`);
+    assert.ok(row[n.id_column] !== undefined && row[n.id_column] !== null, `${n.table}.${n.id_column}`);
+    for (const col of [n.lat_column, n.lon_column]) assert.ok(Number.isSafeInteger(row[col]), `${n.table}.${col}`);
   }
   const declared = nodes.flatMap((n) => [`${n.table}.${n.lat_column}`, `${n.table}.${n.lon_column}`]);
-  assert.deepEqual(declared, COORDINATE_COLUMNS);
-  for (const c of COORDINATE_COLUMNS) assert.ok(PROFILE.sql.forbidden_columns.includes(c), `${c} is forbidden`);
+  assert.deepEqual(declared, [...COORDINATE_COLUMNS, ...DEPOT_COLUMNS]);
+  for (const c of declared) assert.ok(PROFILE.sql.forbidden_columns.includes(c), `${c} is forbidden`);
+  // Story 15.15: routing.depot names the Office's row; no coordinate is in the profile.
+  assert.deepEqual(PROFILE.routing.depot, { node: `depot:${routing.OFFICE.depot_id}`, label: 'Office' });
+  const text = fs.readFileSync(path.join(REPO, 'profiles', 'brightside', 'profile.yml'), 'utf8');
+  assert.ok(!text.includes(String(routing.OFFICE.lat)) && !text.includes(String(routing.OFFICE.lon)), 'the profile holds no Office coordinate');
 });
 
-test('synthetic-coordinates declares exactly the four coordinate columns in its protected-columns header, and no other check names one', () => {
+test('synthetic-coordinates declares exactly the six coordinate columns in its protected-columns header, and no other check names one', () => {
   const checks = loadChecks(FIXTURE_DIR);
   const coords = checks.find((c) => c.id === 'synthetic-coordinates');
-  assert.deepEqual(coords.protectedColumns.slice().sort(), COORDINATE_COLUMNS.slice().sort());
-  // Story 15.7: its header says where the points come from, and it checks lib/routing.js BOX.
-  assert.equal(coords.description, 'Synthetic only: random points in a real metro, never taken from an address.');
+  assert.deepEqual(coords.protectedColumns.slice().sort(), [...COORDINATE_COLUMNS, ...DEPOT_COLUMNS].sort());
+  // Story 15.7: its header says where the points come from, and it checks
+  // lib/routing.js BOX. Story 15.15: the Office too, the one point not random.
+  assert.equal(coords.description, 'Synthetic only: random points in a real metro, never from an address; the Office is a rounded point Ely chose.');
   const { BOX } = routing;
-  assert.equal(coords.sql.split(`NOT BETWEEN ${BOX.latMin} AND ${BOX.latMax}`).length - 1, 2, 'both latitudes against BOX');
-  assert.equal(coords.sql.split(`NOT BETWEEN ${BOX.lonMin} AND ${BOX.lonMax}`).length - 1, 2, 'both longitudes against BOX');
-  assert.equal((coords.sql.match(/NOT BETWEEN/g) || []).length, 4);
+  assert.equal(coords.sql.split(`NOT BETWEEN ${BOX.latMin} AND ${BOX.latMax}`).length - 1, 3, 'every latitude against BOX');
+  assert.equal(coords.sql.split(`NOT BETWEEN ${BOX.lonMin} AND ${BOX.lonMax}`).length - 1, 3, 'every longitude against BOX');
+  assert.equal((coords.sql.match(/NOT BETWEEN/g) || []).length, 6);
+  assert.match(coords.sql, /FROM depots d/);
   // Fix to 15.7: synthetic-off-water reads them too, under the same header (water.test.js).
   for (const c of checks.filter((x) => x.id !== 'synthetic-coordinates' && x.id !== 'synthetic-off-water')) {
     assert.doesNotMatch(c.sql, /geo_l(at|on)_e6/, `${c.id} reads no coordinate`);
@@ -342,6 +411,9 @@ test('the routing rules catch each broken rule', () => {
     // Fix to 15.7: a point on water, as is or only once snapped to the map grid.
     [(t) => { Object.assign(t.properties[0], { geo_lat_e6: 40200000, geo_lon_e6: -82970000 }); }, /properties 1: coordinates on water \(Alum Creek Reservoir\)/],
     [(t) => { Object.assign(t.crews[0], { base_geo_lat_e6: 40120000, base_geo_lon_e6: -82880000 }); }, /crews 1: base coordinates on water \(Hoover Reservoir\)/],
+    // Story 15.15: the Office, outside the box or on water.
+    [(t) => { t.depots[0].geo_lon_e6 = 0; }, /depots office: coordinates outside the synthetic box/],
+    [(t) => { Object.assign(t.depots[0], { geo_lat_e6: 40120000, geo_lon_e6: -82880000 }); }, /depots office: coordinates on water \(Hoover Reservoir\)/],
     [(t) => { first(t).travel_minutes_from_previous += 1; }, /travel is not travelMatrix's figure/],
     [(t) => { first(t).route_order = 9; }, /route_order is not 1 to/],
     [(t) => { const v = first(t); v.arrival_window = v.arrival_window === 'morning' ? 'afternoon' : 'morning'; }, /arrival_window .* disagrees/],

@@ -229,8 +229,9 @@ async function demo(t, { llmOff }) {
   const menuArgs = app.views[0].args;
   assert.equal(app.views[0].method, 'open');
   const entries = (view) => view.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id.replace(/:open$/, ''));
-  // routing is the dev-only Routing map (Story 15.5): Dana holds ROUTING_ALL_CREWS by name.
-  assert.deepEqual(entries(menuArgs.view).sort(), ['dataset', 'hello-world', 'labour-cost', 'outbox', 'routing', 'unpaid-invoices', 'win-back']);
+  // routing is the dev-only Routing map (Story 15.5) and route-planner the dev-only Plan a
+  // route (Story 15.15), on the same resource: Dana holds ROUTING_ALL_CREWS by name.
+  assert.deepEqual(entries(menuArgs.view).sort(), ['dataset', 'hello-world', 'labour-cost', 'outbox', 'route-planner', 'routing', 'unpaid-invoices', 'win-back']);
   ctx.menu = { id: 'V1', type: 'modal', private_metadata: menuArgs.view.private_metadata, title: menuArgs.view.title };
   // Someone the profile doesn't know sees only the open-access entries.
   await app.dispatchCommand('/brightside', { user_id: 'U0NOTINPROFILE' });

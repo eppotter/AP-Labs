@@ -3,8 +3,10 @@
 # routing block with the generator's day (06:00 / 08:00 / 18:00 / 23:00,
 # 15-minute slots), 40 km/h and a 1.3 detour. Story 15.5 adds the routing
 # map's audience for the Routing module test: a dispatcher (every crew), the
-# lead of crew 8 (S3's zone) and a member with neither key. Every name and
-# Slack id is made up. Tests read this, never profiles/brightside/profile.yml.
+# lead of crew 8 (S3's zone) and a member with neither key. Story 15.15
+# adds the Office: the depots coordinate columns, the depot node source and
+# routing.depot. Every name and Slack id is made up. Tests read this, never
+# profiles/brightside/profile.yml.
 # Deleted with the example in a fork.
 schema_version: 1
 client: { id: routing-fixture, name: Routing Fixture Co }
@@ -26,15 +28,19 @@ sql:
     - properties.geo_lon_e6
     - crews.base_geo_lat_e6
     - crews.base_geo_lon_e6
+    - depots.geo_lat_e6
+    - depots.geo_lon_e6
 routing:
   coordinates:
     nodes:
       - { kind: property, table: properties, id_column: property_id, lat_column: geo_lat_e6, lon_column: geo_lon_e6 }
       - { kind: crew, table: crews, id_column: crew_id, lat_column: base_geo_lat_e6, lon_column: base_geo_lon_e6 }
+      - { kind: depot, table: depots, id_column: depot_id, lat_column: geo_lat_e6, lon_column: geo_lon_e6 }
   speed_kmh: 40
   detour_factor: 1.3
   min_travel_minutes: 5
   limits: { earliest_start: 360, default_start: 480, aim_finish: 1080, latest_finish: 1380, slot_minutes: 15 }
+  depot: { node: "depot:office", label: Office }
   audience:
     all_crews: ROUTING_ALL_CREWS
     own_crew: ROUTING_OWN_CREW

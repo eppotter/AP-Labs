@@ -5,6 +5,7 @@
 // to write output that breaks one; the SQL checks test the same rules on the
 // built database:
 //   synthetic-coordinates            every coordinate inside the fixture box
+//                                    (homes, crew bases and the Office)
 //   synthetic-off-water              no coordinate on lib/water.js's water,
 //                                    as is or snapped to the map grid
 //   integrity-scheduled-route-order  route_order 1..n per crew-day
@@ -54,6 +55,12 @@ function checkCoordinates(tables, fail) {
   for (const c of tables.crews) {
     if (!inBox(c.base_geo_lat_e6, c.base_geo_lon_e6)) fail(`crews ${c.crew_id}: base coordinates outside the synthetic box`);
     else if (waterAt(c.base_geo_lat_e6, c.base_geo_lon_e6)) fail(`crews ${c.crew_id}: base coordinates on water (${waterAt(c.base_geo_lat_e6, c.base_geo_lon_e6)})`);
+  }
+  // The Office (generator v7): not random, so a failure here is reported,
+  // never fixed by moving the point (Story 15.15).
+  for (const d of tables.depots || []) {
+    if (!inBox(d.geo_lat_e6, d.geo_lon_e6)) fail(`depots ${d.depot_id}: coordinates outside the synthetic box`);
+    else if (waterAt(d.geo_lat_e6, d.geo_lon_e6)) fail(`depots ${d.depot_id}: coordinates on water (${waterAt(d.geo_lat_e6, d.geo_lon_e6)})`);
   }
 }
 
