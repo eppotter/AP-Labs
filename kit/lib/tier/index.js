@@ -36,6 +36,8 @@
 //         kit/runtime/archetypes/routing-map/audience.js, kit/runtime/slack/image.js
 //                                    who sees which crews on the routing map, and how
 //                                    its image leaves (a private Slack file)
+//         kit/runtime/basemap/**     the street-map tile fetcher: an outbound
+//                                    connection to the tile provider (DEP-029)
 //       A path near these but outside them (kit/fixture/build.js,
 //       kit/runtime/slack/hubs.js, kit/lib/review/**) keeps its profile tier.
 //       Compute a change's tier with renames as both paths
@@ -125,6 +127,9 @@ const ENGINE_T3 = Object.freeze([
   // Any later change to either is T3 under every profile.
   'kit/runtime/archetypes/routing-map/audience.js',
   'kit/runtime/slack/image.js',
+  // Epic 15 (plan routing-streetmap, Story 15.9, AD-R19): the street-map tile
+  // fetcher, the bot's outbound connection to the tile provider (DEP-029).
+  'kit/runtime/basemap/**',
 ]);
 
 // Minimal glob: `**` = any depth (incl. none), `*` = within one segment, every

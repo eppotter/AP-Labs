@@ -59,7 +59,15 @@ const ROUTING_DEFAULTS = Object.freeze({
   gap_fill: Object.freeze({ horizon_days: 14, limit: 5 }),
 });
 
-const LIMIT_ORDER = Object.freeze(['earliest_start', 'default_start', 'aim_finish', 'latest_finish']);
+// The street map's defaults (AD-R18, Story 15.9). The block itself has no
+// default: absent means no street map and no tile request.
+const BASEMAP_DEFAULTS = Object.freeze({
+  max_zoom: 19,
+  cache_days: 7,
+  max_cached_tiles: 512,
+});
+
+const LIMIT_ORDER =Object.freeze(['earliest_start', 'default_start', 'aim_finish', 'latest_finish']);
 
 // What the schema cannot say about routing: each coordinate column must also be
 // forbidden to every other query (AD-R9), node kinds are unique (they prefix
@@ -82,7 +90,87 @@ function routingProblems(routing, forbidden, p) {
     if (routing.limits[key] < routing.limits[before]) problems.push(`/routing/limits/${key} must not be before ${before}`);
   }
   if (routing.audience) problems.push(...audienceProblems(routing.audience, p));
+  if (routing.basemap) problems.push(...basemapProblems(routing.basemap));
   return problems;
+}
+
+// The street map's source (AD-R18): what the schema cannot say about its
+// strings. Every refusal names the key. The template is the only address the
+// tile fetcher ever calls, so it must be a plain https URL to a named host
+// with the three tile numbers in its path and nothing a request could smuggle
+// (credentials, a query, a fragment, other placeholders). The attribution is
+// shown in Slack, so it holds no Slack formatting characters. The User-Agent
+// carries a contact, as the providers' tile policies ask.
+const PLACEHOLDERS = ['{z}', '{x}', '{y}'];
+const ATTRIBUTION_MAX = 120;
+const ATTRIBUTION_BANNED = /[<>&*_~`|]/;
+// A library's or a browser's own User-Agent: providers block these.
+const DEFAULT_AGENTS = /^\s*(node|undici|node-fetch|axios|got|python|curl|wget|go-http-client|java|okhttp|libwww|mozilla|aiohttp|httpie|postman|requests|fetch)\b/i;
+const CONTACT_EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/;
+const CONTACT_URL = /https:\/\/[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/;
+const HEADER_SAFE = /^[\x20-\x7e]+$/;
+
+function basemapProblems(b) {
+  const at = (key) => `/routing/basemap/${key}`;
+  const problems = [];
+  const template = templateProblem(b.url_template);
+  if (template) problems.push(`${at('url_template')} ${template}`);
+  const text = b.attribution.trim();
+  if (!text) problems.push(`${at('attribution')} must not be empty`);
+  else if (b.attribution.length > ATTRIBUTION_MAX) problems.push(`${at('attribution')} must be at most ${ATTRIBUTION_MAX} characters`);
+  else if (ATTRIBUTION_BANNED.test(b.attribution)) problems.push(`${at('attribution')} must not hold any of < > & * _ ~ \` |`);
+  else if (/[\r\n\t]/.test(b.attribution)) problems.push(`${at('attribution')} must be one line`);
+  const link = linkProblem(b.attribution_url);
+  if (link) problems.push(`${at('attribution_url')} ${link}`);
+  if (!HEADER_SAFE.test(b.user_agent)) problems.push(`${at('user_agent')} must be printable ASCII on one line`);
+  else if (DEFAULT_AGENTS.test(b.user_agent)) problems.push(`${at('user_agent')} must name this app, not a library's or browser's default`);
+  else if (!CONTACT_EMAIL.test(b.user_agent) && !CONTACT_URL.test(b.user_agent)) {
+    problems.push(`${at('user_agent')} must hold a contact (an email address or an https URL)`);
+  }
+  return problems;
+}
+
+// Why a URL fails the shared rules (https, a named host, no credentials),
+// or null. url is already parsed.
+function hostProblem(url) {
+  if (url.protocol !== 'https:') return 'must be an https URL';
+  if (url.username || url.password) return 'must not hold a user name or password';
+  const host = url.hostname.replace(/\.$/, '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) return 'must not name localhost';
+  if (host.startsWith('[') || /^[0-9.]+$/.test(host) || /^0x/i.test(host)) return 'must not name an IP address';
+  if (!host.includes('.')) return 'must name a full host name';
+  return null;
+}
+
+function templateProblem(template) {
+  for (const ph of PLACEHOLDERS) {
+    if (template.split(ph).length !== 2) return `must hold exactly one ${ph}`;
+  }
+  const rest = PLACEHOLDERS.reduce((s, ph) => s.replace(ph, ''), template);
+  if (/[{}]/.test(rest)) return 'must hold no placeholder other than {z}, {x} and {y}';
+  if (/[\s\\]/.test(template)) return 'must not hold spaces or backslashes';
+  const scheme = /^https:\/\/[^/?#]*/i.exec(template);
+  if (!scheme) return 'must be an https URL';
+  if (/[{]/.test(scheme[0])) return 'must keep {z}, {x} and {y} in the path, not the host';
+  if (/[?#]/.test(template)) return template.includes('#') ? 'must not hold a fragment' : 'must not hold a query';
+  let url;
+  try {
+    url = new URL(template.replace('{z}', '0').replace('{x}', '0').replace('{y}', '0'));
+  } catch {
+    return 'is not a valid URL';
+  }
+  return hostProblem(url);
+}
+
+function linkProblem(link) {
+  if (/[\s<>|\\]/.test(link)) return 'must not hold spaces or any of < > | \\';
+  let url;
+  try {
+    url = new URL(link);
+  } catch {
+    return 'is not a valid URL';
+  }
+  return hostProblem(url);
 }
 
 // The map audience (AD-R17): both keys declared in resources and different
@@ -247,6 +335,7 @@ function validateProfile(profile, file) {
   if (p.routing) {
     p.routing = { ...ROUTING_DEFAULTS, ...p.routing, gap_fill: { ...ROUTING_DEFAULTS.gap_fill, ...p.routing.gap_fill } };
     if (p.routing.audience) p.routing.audience = { crew_leads: [], ...p.routing.audience };
+    if (p.routing.basemap) p.routing.basemap = { ...BASEMAP_DEFAULTS, ...p.routing.basemap };
     problems.push(...routingProblems(p.routing, p.sql.forbidden_columns, p));
   }
 
@@ -274,5 +363,5 @@ function loadProfile(file = findProfilePath()) {
 }
 
 module.exports = {
-  loadProfile, validateProfile, findProfilePath, governingProfilePath, ProfileError, NotGoverningError, PROFILE_REL, LLM_DEFAULTS, ROUTING_DEFAULTS,
+  loadProfile, validateProfile, findProfilePath, governingProfilePath, ProfileError, NotGoverningError, PROFILE_REL, LLM_DEFAULTS, ROUTING_DEFAULTS, BASEMAP_DEFAULTS,
 };
