@@ -123,6 +123,23 @@ const MAP_WORDS = Object.freeze({
   streetsUnavailable: () => 'Street map unavailable, showing the plain map.',
 });
 
+// Plan a route's own words (Story 15.14, AD-R26, AD-R27). The crew, the
+// Office's label and the day are escaped by the caller.
+const ROUTE_WORDS = Object.freeze({
+  pick: () => 'Pick a crew and a day, then press *Show stops*.',
+  expired: (label) => `This plan has expired, go back and open ${label} again.`,
+  updating: () => 'Map updating…',
+  notUpdated: () => 'Map not updated; the list is current.',
+  note: (office, time) => `Times and driving are from the ${office} at ${time}. Routing's other views start from each crew's base.`,
+  noStops: (crew, day) => `${crew} has no stops booked on ${day}, so there is nothing to plan.`,
+  tooMany: (crew, n, max) => `${crew} has too many stops to plan here (${n}; at most ${max}).`,
+  notWorking: (crew, day) => `${crew} isn't working on ${day}, so there is nothing to plan.`,
+  crewOut: (crew, day) => `${crew} is marked out on ${day}. The list is read-only.`,
+  best: () => 'Already the best order found.',
+  unplaced: () => 'Optimize could not place this stop, so it is kept at the end.',
+  pickCrew: () => 'Pick a crew first, then press *Show stops*.',
+});
+
 const MESSAGES = [
   [NotSetUp, ({ client, admin }) => `You're not set up in ${escapeText(client)}'s bot yet, so you only see what's open to everyone. Ask ${admin} to add you.`],
   [AccessDenied, ({ label, admin }) => `You don't have access to ${escapeText(label)}; ask ${admin}.`],
@@ -272,5 +289,5 @@ function messageFor(err, { admin = 'your admin' } = {}) {
 }
 
 module.exports = {
-  messageFor, escapeText, welcomeText, feedbackText, joinWelcomeText, pushResultText, READ_WORDS, MAP_WORDS,
+  messageFor, escapeText, welcomeText, feedbackText, joinWelcomeText, pushResultText, READ_WORDS, MAP_WORDS, ROUTE_WORDS,
 };

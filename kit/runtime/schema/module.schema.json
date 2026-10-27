@@ -22,6 +22,7 @@
     },
     "handler": { "description": "The handler file in the module's folder.", "type": "string", "$ref": "#/$defs/file", "pattern": "^[a-z0-9][a-z0-9._-]*\\.js$" },
     "adapter": { "description": "A routing-map module's adapter file in the module's folder (Story 15.4, AD-R16): it exports createAdapter({ data, routing }) giving asOf, input and labels.", "type": "string", "$ref": "#/$defs/file", "pattern": "^[a-z0-9][a-z0-9._-]*\\.js$" },
+    "screen": { "description": "A routing-map module's screen (Story 15.14, AD-R26): views (the default: Routing's four map views) or route-editor (Plan a route: one crew's day from the Office, reordered by hand; needs routing.depot in the profile and route() in the adapter).", "enum": ["views", "route-editor"] },
     "parameters": {
       "type": "array",
       "items": {
@@ -98,7 +99,7 @@
     { "if": { "properties": { "archetype": { "const": "scoped-pull" } } }, "then": { "required": ["parameters", "query"] } },
     { "if": { "properties": { "archetype": { "const": "approval-write" } } }, "then": { "required": ["parameters", "query", "row_id", "write"] } },
     { "if": { "properties": { "archetype": { "not": { "const": "approval-write" } } } }, "then": { "properties": { "write": false } } },
-    { "if": { "properties": { "archetype": { "const": "routing-map" } } }, "then": { "required": ["adapter"] }, "else": { "properties": { "adapter": false } } }
+    { "if": { "properties": { "archetype": { "const": "routing-map" } } }, "then": { "required": ["adapter"] }, "else": { "properties": { "adapter": false, "screen": false } } }
   ],
   "$defs": {
     "slug": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 },

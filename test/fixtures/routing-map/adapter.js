@@ -16,6 +16,15 @@
 //                                and { clientName, city } for a place, and
 //                                nothing else; its query is filtered by the
 //                                scope (a crew lead gets no other crew's name)
+//   route({ day, crewId, depot, scope })  (Story 15.14, AD-R26) { input,
+//                                travel, distance } for Plan a route: that
+//                                crew and its stops (a crew lead: only their
+//                                own crew, whatever crewId says), its baseNode
+//                                the Office (depot), a crew in day.json "out"
+//                                marked out (available false); travel and
+//                                distance from the matrix's minutes and
+//                                km_tenths. distance throws for a pair the
+//                                matrix lacks, never 0.
 //
 // Like an app's adapter it reads only through data.run (so a data outage
 // reaches the archetype as DataUnavailable). fakeData() answers its three
@@ -80,7 +89,34 @@ function createAdapter({ data } = {}) {
     return out;
   }
 
-  return Object.freeze({ asOf, input, labels });
+  async function route({
+    day, crewId, depot, scope,
+  }) {
+    const rows = await data.run(SQL.day, { day }, { declared: ['day'] });
+    const p = rows[0].payload;
+    const lead = scope && scope.all !== true ? scope.crewId : null;
+    const wanted = lead || crewId;
+    const crews = p.crews.filter((c) => c.crewId === wanted)
+      .map((c) => ({ ...c, baseNode: depot, ...(p.out.includes(c.crewId) ? { headcountPresent: 0, available: false } : {}) }));
+    const stops = p.stops.filter((st) => st.currentCrewId === wanted && crews.length > 0);
+    const km = new Map(p.matrix.map((r) => [`${r.from_node}>${r.to_node}`, r.km_tenths]));
+    const distance = (from, to) => {
+      const d = km.get(`${from}>${to}`);
+      if (d === undefined) throw new sdk.RoutingFault({ field: 'distance', problem: 'no_travel' });
+      return d;
+    };
+    return {
+      input: {
+        day, asOf: p.asOf, limits: p.limits, crews, stops,
+      },
+      travel: engine.travel.fromMatrix(p.matrix),
+      distance,
+    };
+  }
+
+  return Object.freeze({
+    asOf, input, labels, route,
+  });
 }
 
 // The data the adapter reads, from day.json. calls: every run, in order.
