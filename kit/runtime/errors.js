@@ -172,8 +172,10 @@ class ScoringFault extends RuntimeRefusal {
 // refused, unavailable or failed (fixed words: never DuckDB's text, the SQL,
 // a path or a value), or the map renderer (Story 15.3, AD-R14) refused its
 // model (an unknown key) or could not draw (the rasterizer did not load, drew
-// nothing usable, or drew over 1 MB), or refused an SVG holding a reference
-// or style (unsafe_svg). A setup fault in the
+// nothing usable, or drew over its size cap), or refused an SVG holding a
+// reference or style (unsafe_svg), or street tiles that are not checked
+// 256 x 256 PNGs or do not cover the frame (basemap_invalid, Story 15.10).
+// A setup fault in the
 // adapter, so no plan is shown. field is a path like "stops[2].node"; the
 // value itself is never carried. details: { field, problem }, plus { from,
 // to } (node ids) when problem is 'no_travel'. problem is one of
@@ -183,7 +185,7 @@ const ROUTING_PROBLEMS = Object.freeze([
   'bad_id', 'bad_node', 'bad_date', 'bad_strength', 'unknown_crew', 'duplicate', 'no_travel',
   'unknown_rule', 'not_overridable', 'not_function', 'unknown_weight', 'bad_weights',
   'routing_off', 'too_many_pairs', 'not_coordinate_column', 'shared_column_name', 'no_position', 'data_unavailable', 'query_refused', 'query_failed',
-  'unknown_key', 'renderer_unavailable', 'renderer_failed', 'image_too_large', 'unsafe_svg',
+  'unknown_key', 'renderer_unavailable', 'renderer_failed', 'image_too_large', 'unsafe_svg', 'basemap_invalid',
 ]);
 class RoutingFault extends RuntimeRefusal {
   constructor(details) {

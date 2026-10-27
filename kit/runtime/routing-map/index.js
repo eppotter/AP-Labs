@@ -7,9 +7,20 @@
 // alone requires @resvg/resvg-js, lazily. It takes pixel points from
 // mapPoints (AD-R13), never coordinates, and holds no client names.
 //
-//   renderSvg(view, model)   the SVG text (svg.js documents the model)
-//   renderPng(view, model)   the PNG bytes, checked against imageSize
-//   imageSize(view, frame)   { width, height } of the image for a frame
+//   renderSvg(view, model, { base }?)    the SVG text (svg.js documents the
+//                                        model; base 'plain' or 'streets')
+//   renderPng(view, model, { basemap }?) the PNG bytes, checked against
+//                                        imageSize; with a basemap (Story
+//                                        15.10, AD-R21) the plot is drawn with
+//                                        the wash over the street tiles
+//   imageSize(view, frame)               { width, height } of the image
+//
+// A basemap is { tiles: [{ col, row, png }], ox, oy }: pixel offsets and
+// checked PNG bytes only, never tile numbers (png.js composeBasemap). With no
+// basemap the PNG is the plain map, byte for byte what it was before street
+// tiles. A basemap whose PNG fails (a tile refused, over MAX_PNG_BYTES, the
+// rasterizer failing) throws its RoutingFault; the archetype then draws the
+// plain map once.
 //
 // rasterize (png.js) is not exported: the rasterizer can read local files an
 // SVG names, so the public entry only rasterizes what renderSvg drew. Only
@@ -18,12 +29,21 @@
 // The routing-map archetype (Story 15.4) is the one caller; the sdk does not
 // export it.
 
-const { renderSvg, imageSize, VIEWS } = require('./svg');
+const {
+  renderSvg, imageSize, panelCount, VIEWS,
+} = require('./svg');
 const { rasterize, MAX_PNG_BYTES } = require('./png');
 
-function renderPng(view, model) {
-  const svg = renderSvg(view, model);
-  return rasterize(svg, imageSize(view, model.frame));
+function renderPng(view, model, { basemap = null } = {}) {
+  if (basemap === null) {
+    const svg = renderSvg(view, model);
+    return rasterize(svg, imageSize(view, model.frame));
+  }
+  const svg = renderSvg(view, model, { base: 'streets' });
+  const layout = { frame: { width: model.frame.width, height: model.frame.height }, panels: panelCount(view) };
+  return rasterize.streets(svg, basemap, layout, imageSize(view, model.frame));
 }
 
-module.exports = { renderSvg, renderPng, imageSize, VIEWS, MAX_PNG_BYTES };
+module.exports = {
+  renderSvg, renderPng, imageSize, VIEWS, MAX_PNG_BYTES,
+};

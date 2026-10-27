@@ -49,8 +49,24 @@
 // points and the SVG stay in this function: never logged, kept or sent. Logs
 // carry the module, the view and fixed reasons only. mapPoints also returns
 // the tile mosaic under the points (Story 15.8, AD-R20): tile numbers are
-// rough locations, so the mosaic goes nowhere yet, not to the renderer, the
-// logs, Slack or an error (Story 15.10 passes it to the tile fetcher only).
+// rough locations, so the mosaic goes to the tile fetcher only, never to the
+// renderer, the logs, Slack or an error.
+//
+// Street map (Story 15.10, AD-R18, AD-R21). When the profile has a
+// routing.basemap block and mapPoints gave a mosaic, the draw asks
+// kit/runtime/basemap fetchMosaic for the tiles, with the click's
+// AbortSignal (aborted by a newer click, Back or Close: sessions.signal).
+// Then, before anything is drawn or uploaded, it checks again: a newer
+// click or a closed view abandons quietly; an expired session shows the
+// expired message; access withdrawn shows the refusal. The renderer gets the
+// tiles as pixel offsets and bytes ({ tiles: [{ col, row, png }], ox, oy })
+// and draws the plot over them; a context block straight under the image
+// holds the profile's attribution, escaped, linked to attribution_url. The
+// alt text is unchanged. No tiles for any reason (the fetch gave null, no
+// mosaic, the kill switch), or a PNG with tiles that fails (a tile refused,
+// over the size cap, the rasterizer failing): the plain map, drawn once
+// more without tiles, with "Street map unavailable, showing the plain map."
+// under it; only if that plain draw fails too is it the error exit.
 //
 // Exits: Back and Close (view_closed, else the sweep: the hub), an error (a
 // plain message in the view, with Back), an expired trigger (the hub's
@@ -64,6 +80,7 @@ const { textBlocks } = require('../../slack/format');
 const { altText, ImageError } = require('../../slack/image');
 const { renderPng } = require('../../routing-map');
 const { mapPoints: readPoints } = require('../../data/map');
+const { fetchMosaic: readTiles, REASONS: TILE_REASONS } = require('../../basemap');
 const audience = require('./audience');
 const {
   planView, choices, resolvePick, pickKind, namer, zoneLabel, textOf, VIEWS, VIEW_LABELS, FRAME,
@@ -80,7 +97,9 @@ const MAX_OPTIONS = 100;
 const MAX_OPTION_TEXT = 75;
 const MAX_LABEL = 100;
 const LABEL_KEYS = Object.freeze(['crewName', 'clientName', 'city']);
-const RENDER_PROBLEMS = new Set(['renderer_unavailable', 'renderer_failed', 'image_too_large', 'unsafe_svg']);
+const RENDER_PROBLEMS = new Set(['renderer_unavailable', 'renderer_failed', 'image_too_large', 'unsafe_svg', 'basemap_invalid']);
+// An attribution link Slack's mrkdwn can carry: https, no space, < > or |.
+const LINK = /^https:\/\/[^\s<>|]+$/;
 
 // --- dates, by arithmetic on the calendar alone -----------------------------------
 
@@ -181,16 +200,32 @@ function checkLabels(raw, asked) {
 
 const unique = (list) => [...new Set(list)];
 
+// The context block straight under the image: the street map's attribution
+// (escaped; a link when attribution_url is one Slack can carry), or the
+// fixed note when the plain map shows instead.
+function captionBlock(source, streets) {
+  let text;
+  if (streets === 'shown') {
+    const words = escapeText(source.attribution);
+    const url = source.attribution_url;
+    text = typeof url === 'string' && LINK.test(url) ? `<${escapeText(url)}|${words}>` : words;
+  } else {
+    text = MAP_WORDS.streetsUnavailable();
+  }
+  return { type: 'context', elements: [{ type: 'mrkdwn', text }] };
+}
+
 // --- the archetype ---------------------------------------------------------------------
 
 function createRoutingMap({
   profile, data, log, admin = 'your admin', viewModal = () => undefined,
-  mapPoints = readPoints, render = renderPng, now = () => Date.now(),
+  mapPoints = readPoints, render = renderPng, fetchMosaic = readTiles, now = () => Date.now(),
 }) {
   const sessions = createSessions({ now });
   const adapters = new Map(); // module id -> adapter
   const routing = (profile && profile.routing) || null;
   const gapFill = (routing && routing.gap_fill) || { horizon_days: 14, limit: 5 };
+  const streetSource = (routing && routing.basemap) || null;
 
   function adapterFor(mod) {
     if (!data) throw new DataUnavailable('no data source');
@@ -206,6 +241,9 @@ function createRoutingMap({
   const headOf = (s) => (s && s.options && s.range ? controls({
     picks: s.picks, options: s.options, range: s.range, scope: s.scope, seq: s.seq,
   }) : []);
+
+  // A render failure's fixed problem code, safe to log.
+  const drawProblem = (err) => (err instanceof RoutingFault ? err.details.problem : 'error');
 
   // A refused scope as words, logged with a reason (never the person).
   function refusalText(mod, refused) {
@@ -241,8 +279,11 @@ function createRoutingMap({
   // draw still current when its work is done commits them to the session,
   // so a superseded draw never changes what the next click draws or the
   // selects the next view shows (PR #226 review).
-  async function draw({ mod, s, number, show, showMap }) {
+  async function draw({
+    mod, s, number, show, showMap, recheck,
+  }) {
     const current = () => sessions.isCurrent(s, number);
+    const signal = sessions.signal(s);
     const superseded = () => {
       if (current()) return false;
       log.info('map superseded', { module: mod.id, step: 'draw' });
@@ -251,13 +292,34 @@ function createRoutingMap({
     const st = {
       picks: { ...s.picks }, options: s.options, range: s.range, scope: s.scope, seq: number,
     };
+    // After the tile fetch, before anything is drawn: is this draw still
+    // wanted, by someone still allowed to see it?
+    const checkpoint = () => {
+      if (sessions.expired(s)) return { expired: true };
+      if (signal.aborted || !current()) return { halt: true };
+      const refusal = recheck ? recheck() : null;
+      return refusal ? { refused: refusal } : null;
+    };
     let shown;
     try {
-      shown = await work({ mod, s, st });
+      shown = await work({
+        mod, s, st, signal, checkpoint,
+      });
     } catch (err) {
       shown = { plain: textMessage(s, failureText(mod, st.picks.view, err), headOf(st)) };
     }
+    if (shown.expired) {
+      sessions.drop(s.id);
+      log.info('routing map click refused', { action: 'draw', reason: 'expired' });
+      await show({ text: MAP_WORDS.expired(escapeText(mod.label)) });
+      return;
+    }
     if (superseded()) return;
+    if (shown.refused) {
+      sessions.drop(s.id);
+      await show({ text: shown.refused });
+      return;
+    }
     s.picks.crew = st.picks.crew;
     s.picks.zone = st.picks.zone;
     s.options = st.options;
@@ -272,7 +334,9 @@ function createRoutingMap({
   // Works one draw out: { plain } (a message) or { map } (a message with
   // its image), writing only st (the draw's own copy). Throws on any
   // failure; nothing here talks to Slack.
-  async function work({ mod, s, st }) {
+  async function work({
+    mod, s, st, signal, checkpoint,
+  }) {
     const { scope } = st;
     const { view, day } = st.picks;
     const adapter = adapterFor(mod);
@@ -304,16 +368,65 @@ function createRoutingMap({
     };
     if (plan.empty) return { plain: textMessage(s, plan.empty(n), headOf(st)) };
     const nodes = unique(plan.nodes);
-    // Only the points are taken; the mosaic is left behind (AD-R20).
+    // The points go to the renderer; the mosaic only to the tile fetcher (AD-R20).
     const read = await mapPoints(data, nodes, FRAME);
     const points = read && Array.isArray(read.points) ? read.points : [];
     const placed = new Set(points.map((p) => p && p.node));
     // A requested node with no position is an engine fault (AD-R13, F16).
     if (!nodes.every((node) => placed.has(node))) throw fault('mapPoints', 'no_position');
+    let basemap = null;
+    if (streetSource) {
+      const mosaic = read && read.mosaic;
+      if (mosaic) {
+        basemap = await tilesFor(mod, mosaic, signal);
+        const stop = checkpoint();
+        if (stop) return stop;
+      } else {
+        log.info('street map not drawn', { module: mod.id, view, reason: 'no_mosaic' });
+      }
+    }
     const built = plan.build(n);
-    const png = render(view, { frame: { ...FRAME }, points, ...built.model });
+    const model = { frame: { ...FRAME }, points, ...built.model };
+    let png;
+    let streets = streetSource ? 'unavailable' : 'off';
+    if (basemap) {
+      try {
+        png = render(view, model, { basemap });
+        streets = 'shown';
+      } catch (err) {
+        // One plain retry; if that fails too, it is the error exit.
+        log.warn('street map not drawn', { module: mod.id, view, reason: drawProblem(err) });
+        png = render(view, model);
+      }
+    } else {
+      png = render(view, model);
+    }
     const alt = altText({ view: VIEW_LABELS[view], crew: built.alt.crew, stops: built.alt.stops });
-    return { map: withModal(s, { head: headOf(st), image: { png, alt }, blocks: textBlocks(textOf(built)) }) };
+    const caption = streets === 'off' ? [] : [captionBlock(streetSource, streets)];
+    return { map: withModal(s, { head: headOf(st), image: { png, alt }, blocks: [...caption, ...textBlocks(textOf(built))] }) };
+  }
+
+  // The tiles under a mosaic, or null. fetchMosaic never throws (anything
+  // that does is null too). One line per fetch, "street map tiles": how
+  // many tiles the view needed, how many the cache held, and the fixed
+  // reason code (null when the tiles came), never which tiles (Story 15.11's
+  // live check reads it to see that reopening a view sends no requests).
+  const count = (v) => (Number.isSafeInteger(v) && v >= 0 ? v : 0);
+  async function tilesFor(mod, mosaic, signal) {
+    let got;
+    try {
+      got = await fetchMosaic(mosaic, {
+        profile, signal, log, now,
+      });
+    } catch {
+      got = null;
+    }
+    const ok = Boolean(got && got.basemap);
+    const reason = ok ? null : (got && TILE_REASONS.includes(got.reason) ? got.reason : 'fetch_failed');
+    log.info('street map tiles', {
+      module: mod.id, requested: count(got && got.requested), cached: count(got && got.cached), reason,
+    });
+    return ok ? got.basemap : null;
   }
 
   // The days the picker may show, from the adapter's asOf, read once per
@@ -334,8 +447,19 @@ function createRoutingMap({
   }
 
   // Open: the hub has pushed "Loading…" and knows the view's id.
+  // Is this person still allowed this map? null when so, else the refusal
+  // words. resolve: the hub's re-check of the module (when it gives one).
+  const recheckFor = (mod, person, resolve) => () => {
+    if (typeof resolve === 'function') {
+      const again = resolve(mod.id);
+      if (!again || !again.mod) return (again && again.refusal) || messageFor(new AccessDenied({ label: mod.label, admin }));
+    }
+    const decided = audience.scopeFor(profile, person.user);
+    return decided.scope ? null : refusalText(mod, decided);
+  };
+
   async function open({
-    mod, person, viewId, show, showMap,
+    mod, person, viewId, show, showMap, resolve,
   }) {
     const decided = audience.scopeFor(profile, person.user);
     if (!decided.scope) {
@@ -350,7 +474,7 @@ function createRoutingMap({
     log.info('routing map opened', { module: mod.id, scope: decided.scope.all === true ? 'all crews' : 'own crew' });
     if (!await withRange(mod, s, show)) return;
     await draw({
-      mod, s, number, show, showMap,
+      mod, s, number, show, showMap, recheck: recheckFor(mod, person, resolve),
     });
   }
 
@@ -416,7 +540,7 @@ function createRoutingMap({
     }
     if (sessions.isCurrent(s, number)) await show(textMessage(s, MAP_WORDS.drawing(), headOf(s)), { current });
     await draw({
-      mod, s, number, show, showMap,
+      mod, s, number, show, showMap, recheck: recheckFor(mod, person, resolve),
     });
   }
 

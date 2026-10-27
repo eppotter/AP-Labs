@@ -66,7 +66,12 @@ function setup(t, { profile = PROFILE, host } = {}) {
   return { tiles, run, logs, fetchMosaic, log };
 }
 
-const expectNull = (result, reason) => assert.deepEqual(result, { basemap: null, reason });
+// A null result: its reason, and the two counts (whole numbers, never which tiles).
+const expectNull = (result, reason) => {
+  assert.deepEqual(Object.keys(result).sort(), ['basemap', 'cached', 'reason', 'requested']);
+  assert.deepEqual({ basemap: result.basemap, reason: result.reason }, { basemap: null, reason });
+  for (const k of ['requested', 'cached']) assert.ok(Number.isInteger(result[k]) && result[k] >= 0, k);
+};
 
 test('only the view\'s cols x rows tiles are requested, each a plain GET with the profile\'s User-Agent and redirect: error', async (t) => {
   const { tiles, run } = setup(t);
@@ -86,6 +91,17 @@ test('only the view\'s cols x rows tiles are requested, each a plain GET with th
   result.basemap.tiles.forEach(({ col, row, png }) => assert.ok(png.equals(tileAt({ x: 1100 + col, y: 1500 + row })), `${col},${row}`));
   assert.deepEqual([result.basemap.ox, result.basemap.oy], [-40, -100]);
   assert.equal(globalCalls, 0);
+});
+
+test('Story 15.10: the result counts the tiles the map needed and the ones the cache held fresh, and names no tile', async (t) => {
+  const { run } = setup(t);
+  const first = await run();
+  assert.deepEqual(Object.keys(first).sort(), ['basemap', 'cached', 'reason', 'requested']);
+  assert.deepEqual([first.requested, first.cached], [6, 0]);
+  const again = await run();
+  assert.deepEqual([again.requested, again.cached], [6, 6]);
+  const invalid = await run({ ...MOSAIC, cols: 0 });
+  assert.deepEqual([invalid.reason, invalid.requested, invalid.cached], ['mosaic_invalid', 0, 0]);
 });
 
 test('cached tiles are not requested again: the same view sends nothing, an overlapping one only its new tiles', async (t) => {

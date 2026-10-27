@@ -5,6 +5,9 @@
 //   // fetchMosaic from kit/runtime/basemap (only the routing-map archetype and the smoke script)
 //   const { basemap, reason } = await fetchMosaic(mosaic, { profile, fetch, now, signal, log });
 //   // basemap: { tiles: [{ col, row, png }], ox, oy }, or null with a fixed reason code
+//   // also requested and cached: how many tiles the map needed and how many
+//   // of those the cache held fresh (counts only, never which tiles; 0 and 0
+//   // when it stopped before working out the tiles), Story 15.10
 //
 // mosaic is mapPoints' { z, tx0, ty0, cols, rows, ox, oy } (AD-R20). Only that
 // view's cols x rows tiles are fetched (no neighbours, no other zoom, no
@@ -324,17 +327,26 @@ function createBasemap() {
         // A logger that fails never breaks the map.
       }
     };
+    let requested = 0;
+    let cached = 0;
     const fail = (reason) => {
       logEvent('warn', 'basemap_unavailable', { reason });
-      return { basemap: null, reason };
+      return {
+        basemap: null, reason, requested, cached,
+      };
     };
     try {
       if (isOff(env)) return fail('switched_off');
       const block = profile && profile.routing && profile.routing.basemap;
-      if (!block) return { basemap: null, reason: 'no_basemap' };
+      if (!block) {
+        return {
+          basemap: null, reason: 'no_basemap', requested, cached,
+        };
+      }
       const source = { ...FALLBACK, ...block };
       const tiles = tileList(mosaic, source.max_zoom);
       if (!tiles) return fail('mosaic_invalid');
+      requested = tiles.length;
       if (signal && signal.aborted) return fail('aborted');
       if (typeof fetch !== 'function') return fail('fetch_failed');
       const ctx = { fetch, now };
@@ -345,6 +357,7 @@ function createBasemap() {
         const e = cache.get(`${source.url_template}\n${t.z}/${t.x}/${t.y}`);
         return e && e.freshUntil > start;
       }).length;
+      cached = fresh;
       if (fresh < tiles.length && coolingDown(source.url_template, start)) return fail('cooling_down');
 
       const map = new AbortController();
@@ -369,6 +382,8 @@ function createBasemap() {
         return {
           basemap: { tiles: tiles.map((t, i) => ({ col: t.col, row: t.row, png: results[i].png })), ox: mosaic.ox, oy: mosaic.oy },
           reason: null,
+          requested,
+          cached,
         };
       } finally {
         clearTimeout(timer);
