@@ -134,6 +134,21 @@
 // unexpected failure. A "map not shown" message dropped on hash_conflict
 // (a newer update won) is logged and dropped quietly. Who may open it is the profile's routing audience
 // (archetypes/routing-map/audience canOpen), not the manifest's resource.
+//
+// Plan a route (Story 15.14, AD-R26, AD-R27): a routing-map module with
+// screen "route-editor" opens the same way, on the same listener and the
+// same lifecycle. When the profile has no routing.depot or its adapter has
+// no route(), Open shows "not available" and no modal opens (fail closed).
+// Its reorders change the list at once under the picture already shown
+// (showList): the same slack_file id (mapFiles.reuse: only while its record
+// is live and it is under 10 minutes old), else the list with no image, and
+// if Slack refuses the reused file (deleted, expired) the list is shown again
+// with no image. The map follows through showMap, which then deletes the
+// earlier file. An editor's map that fails (upload, ratelimited, not
+// accepted) shows its fallback, the list with "Map not updated; the list is
+// current.", instead of the plain "map not shown". The hub remembers which
+// file each map view shows (shownFiles), forgotten when a plain message
+// replaces the map and on view_closed.
 
 const access = require('../access');
 const {
@@ -160,7 +175,9 @@ const {
   createApprovalWrite, pushHooks, verbOf: writeVerbOf, ACTION_PATTERN: WRITE_ACTION,
 } = require('../archetypes/approval-write');
 const { QUERY_ARCHETYPES } = require('../registry');
-const { uploadsMapImages, ImageError, NotAccepted } = require('./image');
+const {
+  uploadsMapImages, ImageError, NotAccepted, fileNotReady,
+} = require('./image');
 const { textBlocks } = require('./format');
 const routingAudience = require('../archetypes/routing-map/audience');
 const { createRoutingMap, ACTION_PATTERN: ROUTING_MAP_ACTION } = require('../archetypes/routing-map');
@@ -286,6 +303,8 @@ function registerHubs(app, {
   // carry only the session id. routingMapOptions: test seams (mapPoints,
   // render, now); never the AI service.
   const mapViews = new Map(); // routing map view id -> { hash, queue }
+  // owner -> { id, alt, caption }: the map file a view shows now (Story 15.14).
+  const shownFiles = new Map();
   const routingMap = createRoutingMap({
     ...routingMapOptions, profile, data, log, admin, viewModal: (sessionId) => ({ ...MAP_VIEW, privateMetadata: sessionId }),
   });
@@ -413,13 +432,18 @@ function registerHubs(app, {
     mod, owner, message, show, current = () => true,
   }) => {
     const {
-      image, head = [], text: words, blocks: tail = [], modal,
+      image, head = [], text: words, blocks: tail = [], modal, caption = [], fallback,
     } = message;
-    // The plain "map not shown" message. A newer request (Superseded) or a
-    // newer update to the view (Dropped, hash_conflict) won: nothing to
-    // tell, and the view's files are that newer show's to replace.
+    // The plain "map not shown" message, or the message's own fallback (Plan
+    // a route: the list stays). A newer request (Superseded) or a newer
+    // update to the view (Dropped, hash_conflict) won: nothing to tell, and
+    // the view's files are that newer show's to replace.
     const notShown = async (earlier) => {
       if (!current()) return;
+      if (typeof fallback === 'function') {
+        await fallback();
+        return;
+      }
       try {
         await show({ blocks: [...head, ...textBlocks(MAP_NOT_SHOWN)], ...(modal ? { modal } : {}) }, { current });
       } catch (err) {
@@ -455,7 +479,7 @@ function registerHubs(app, {
     }
     const fileId = block.slack_file.id;
     const text = typeof words === 'string' && words ? textBlocks(words) : [];
-    const shown = { blocks: [...head, ...text, block, ...tail], ...(modal ? { modal } : {}) };
+    const shown = { blocks: [...head, ...text, block, ...caption, ...tail], ...(modal ? { modal } : {}) };
     let attempt;
     try {
       attempt = await mapFiles.showing(async () => {
@@ -480,17 +504,52 @@ function registerHubs(app, {
       return 'failed';
     }
     log.info('map image shown', { module: mod.id, attempt });
+    shownFiles.set(owner, { id: fileId, alt: block.alt_text, caption });
     // A view switch: the maps recorded before this upload go now; a newer
     // click's file, recorded after it, is never touched.
     await mapFiles.release(owner, { among: earlier, why: 'replaced' });
     return 'shown';
   };
 
+  // Plan a route's list, shown at once under the picture the view already
+  // shows (Story 15.14, AD-R27). message: { head, blocks, modal }, shown as
+  // head, the reused image and its caption, blocks. The image is reused only
+  // when mapFiles.reuse allows it; when Slack refuses the reused file, the
+  // list is shown again with no image. A file no longer shown is deleted.
+  const showList = async (owner, show, message, { current } = {}) => {
+    const { head = [], blocks: tail = [], modal } = message;
+    const opts = modal ? { modal } : {};
+    const prev = shownFiles.get(owner) || null;
+    let reused = null;
+    if (prev) {
+      const got = mapFiles.reuse(owner, prev.id, prev.alt);
+      if (got.block) reused = got.block;
+      else log.info('map image not reused', { reason: got.reason });
+    }
+    const bare = { blocks: [...head, ...tail], ...opts };
+    if (reused) {
+      try {
+        await show({ blocks: [...head, reused, ...prev.caption, ...tail], ...opts }, { current });
+        return;
+      } catch (err) {
+        if (!fileNotReady(err)) throw err;
+        log.info('map image not reused', { reason: 'refused by slack' });
+      }
+    }
+    await show(bare, { current });
+    if (prev) {
+      if (shownFiles.get(owner) === prev) shownFiles.delete(owner);
+      await mapFiles.release(owner, { only: prev.id, why: 'replaced' });
+    }
+  };
+
   // A plain message into a map view; once it shows, the view's earlier map
   // files go (it no longer shows them).
   const showPlain = async (owner, show, message) => {
     const earlier = mapFiles ? mapFiles.filesOf(owner) : [];
+    const prev = shownFiles.get(owner);
     await show(message);
+    if (prev && shownFiles.get(owner) === prev) shownFiles.delete(owner);
     if (earlier.length) await mapFiles.release(owner, { among: earlier, why: 'replaced' });
   };
 
@@ -608,10 +667,12 @@ function registerHubs(app, {
     const actionId = action && action.action_id;
     const mod = registry.module(moduleIdFromAction(actionId));
     const shown = mod && isVisible(mod, env);
-    // A map module opens only when its files can be cleaned up (fail closed).
+    // A map module opens only when its files can be cleaned up, and Plan a
+    // route only with an Office and an adapter route() (fail closed).
     const mapModule = Boolean(shown && uploadsMapImages(mod));
     const mapBlocked = mapModule && !(mapFiles && mapFiles.ready());
-    const opens = shown && !mapBlocked;
+    const editorBlocked = mapModule && !mapBlocked && mod.archetype === 'routing-map' && routingMap.unready(mod);
+    const opens = shown && !mapBlocked && !editorBlocked;
     const target = replyTarget(args, {
       where: 'open', title: opens ? mod.label : 'Not available', hubId: opens ? mod.hub : null, viewOptions: opens && mapModule ? MAP_VIEW : undefined,
     });
@@ -623,6 +684,11 @@ function registerHubs(app, {
       }
       if (mapBlocked) {
         log.warn('hub action refused', { action_id: actionId, reason: 'map files cannot be cleaned up', env });
+        await target.reply(NOT_AVAILABLE);
+        return;
+      }
+      if (editorBlocked) {
+        log.warn('hub action refused', { action_id: actionId, reason: editorBlocked, env });
         await target.reply(NOT_AVAILABLE);
         return;
       }
@@ -673,6 +739,7 @@ function registerHubs(app, {
     if (typeof viewId !== 'string' || !viewId || typeof userId !== 'string' || !userId) return;
     routingMap.closed({ userId, viewId });
     mapViews.delete(viewId);
+    shownFiles.delete(`${userId}:${viewId}`);
     if (!mapFiles) return;
     const res = await mapFiles.release(`${userId}:${viewId}`, { why: 'view_closed' });
     log.info('map view closed', { deleted: res.deleted, kept: res.kept, cleared: Boolean(body.is_cleared) });
@@ -766,6 +833,18 @@ function registerHubs(app, {
         showMap: (message, { current, mod }) => showMap({
           mod, owner, message, show: render, current,
         }),
+        showList: async (message, { current } = {}) => {
+          try {
+            await showList(owner, render, message, { current });
+          } catch (err) {
+            if (err instanceof Superseded) {
+              log.info('map superseded', { module: 'routing-map', step: 'list' });
+              return;
+            }
+            if (!(err instanceof Dropped)) throw err;
+            log.info('stale view result dropped', { action: 'routing-map', reason: 'hash_conflict' });
+          }
+        },
       });
     } catch (err) {
       // The plain error replaces whatever the view showed, so the view's
@@ -774,6 +853,7 @@ function registerHubs(app, {
       // delete keeps its record for the sweep (mapFiles.release).
       log.error('handler failed', { handler: 'hub:routing-map', err });
       const earlier = mapFiles.filesOf(owner);
+      shownFiles.delete(owner);
       try {
         await update({ text: PLAIN_ERROR, modal: keep });
       } catch (showErr) {

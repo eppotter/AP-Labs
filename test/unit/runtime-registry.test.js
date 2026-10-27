@@ -392,6 +392,18 @@ test('a routing-map module has no handler, query, parameters, scoring or row_id;
   assert.deepEqual(problems, ['modules/echo/manifest.json: field "adapter" is used only by a routing-map module']);
 });
 
+test('Story 15.14: a routing-map module may name its screen, views or route-editor; any other value, or a screen on another archetype, is refused', () => {
+  for (const screen of ['views', 'route-editor']) {
+    const { registry, problems } = editRouting((m) => { m.screen = screen; });
+    assert.deepEqual(problems, [], screen);
+    assert.equal(registry.module('routing').screen, screen);
+  }
+  assert.equal(loadRouting().registry.module('routing').screen, undefined, 'no screen: the views (the default)');
+  assert.match(editRouting((m) => { m.screen = 'editor'; }).problems[0], /field "screen" must be equal to one of the allowed values/);
+  const { problems } = loadEdited((d) => editJson(d, 'modules/echo/manifest.json', (m) => { m.screen = 'route-editor'; }));
+  assert.deepEqual(problems, ['modules/echo/manifest.json: field "screen" is used only by a routing-map module']);
+});
+
 test('a routing-map module needs the profile\'s routing audience, and its resource is the audience\'s all_crews key', () => {
   const noAudience = loadRouting(() => {}, { withProfile: { ...ROUTING_PROFILE, routing: { ...ROUTING_PROFILE.routing, audience: undefined } } });
   assert.deepEqual(noAudience.problems, [`${ROUTING_FILE}: field "archetype" routing-map needs routing.audience in the profile (who sees which crews)`]);

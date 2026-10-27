@@ -58,7 +58,12 @@
 // YYYY-MM-DD, a select or date picker outside an actions, section or input
 // block, an actions block with more than 25 elements, and an image block
 // whose slack_file id this workspace never uploaded or has deleted (answered
-// like a file not ready: invalid_arguments, "invalid slack file"). With
+// like a file not ready: invalid_arguments, "invalid slack file"). Story
+// 15.14 adds: two blocks with the same block_id, two elements with the same
+// action_id in one block, a button value over 2000 characters, a button's
+// text over 75 characters, and an accessibility_label over 75 characters
+// (invalid_blocks). A reused slack_file id that was deleted is refused like
+// any deleted one. With
 // this.checkHashes set, a views.update whose hash is not the view's current
 // one (for a view this fake opened or pushed) answers hash_conflict, as
 // Slack does; it is off by default because older tests replay a click's
@@ -361,6 +366,10 @@ const MAX_OPTIONS = 100;
 const MAX_OPTION_TEXT = 75;
 const MAX_ACTIONS_ELEMENTS = 25;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_BLOCK_ID = 255;
+const MAX_BUTTON_TEXT = 75;
+const MAX_BUTTON_VALUE = 2000;
+const MAX_ACCESSIBILITY_LABEL = 75;
 const SELECTS = new Set(['static_select', 'datepicker']);
 
 // Why Slack would reject this view's frame (title, blocks, metadata), or null.
@@ -377,12 +386,24 @@ function invalidView(view) {
 // in this view, or null.
 function invalidElements(view) {
   const blocks = view && Array.isArray(view.blocks) ? view.blocks : [];
+  const blockIds = new Set();
   for (const b of blocks) {
     if (!b) continue;
+    if (b.block_id !== undefined) {
+      if (typeof b.block_id !== 'string' || !b.block_id || b.block_id.length > MAX_BLOCK_ID) return `a block_id is 1 to ${MAX_BLOCK_ID} characters`;
+      if (blockIds.has(b.block_id)) return 'block_id must be unique in a view';
+      blockIds.add(b.block_id);
+    }
     if (b.type === 'section' && b.text && typeof b.text.text === 'string' && b.text.text.length > MAX_SECTION_TEXT) return `a section's text is over ${MAX_SECTION_TEXT} characters`;
     if (b.type === 'actions' && (!Array.isArray(b.elements) || b.elements.length > MAX_ACTIONS_ELEMENTS)) return `an actions block holds 1 to ${MAX_ACTIONS_ELEMENTS} elements`;
     const elements = b.type === 'actions' ? b.elements : [b.accessory, b.element].filter(Boolean);
+    const actionIds = new Set();
     for (const e of elements) {
+      const actionId = e && e.action_id;
+      if (actionId !== undefined) {
+        if (actionIds.has(actionId)) return 'action_id must be unique in a block';
+        actionIds.add(actionId);
+      }
       const bad = invalidElement(e);
       if (bad) return bad;
     }
@@ -395,6 +416,14 @@ function invalidElements(view) {
 
 function invalidElement(e) {
   if (!e || typeof e !== 'object') return null;
+  if (e.type === 'button') {
+    const text = e.text && e.text.text;
+    if (!e.text || e.text.type !== 'plain_text' || typeof text !== 'string' || !text || Array.from(text).length > MAX_BUTTON_TEXT) return `a button's text is plain_text of 1 to ${MAX_BUTTON_TEXT} characters`;
+    if (e.value !== undefined && (typeof e.value !== 'string' || e.value.length > MAX_BUTTON_VALUE)) return `a button's value is at most ${MAX_BUTTON_VALUE} characters`;
+  }
+  if (e.accessibility_label !== undefined && (typeof e.accessibility_label !== 'string' || !e.accessibility_label || Array.from(e.accessibility_label).length > MAX_ACCESSIBILITY_LABEL)) {
+    return `an accessibility_label is 1 to ${MAX_ACCESSIBILITY_LABEL} characters`;
+  }
   if (e.type === 'static_select') {
     if (!Array.isArray(e.options) || e.options.length === 0 || e.options.length > MAX_OPTIONS) return `a static_select holds 1 to ${MAX_OPTIONS} options`;
     for (const o of e.options) {

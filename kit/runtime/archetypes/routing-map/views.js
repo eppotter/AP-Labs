@@ -40,6 +40,8 @@ const VIEWS = Object.freeze(['compare', 'change', 'zone', 'gap']);
 const VIEW_LABELS = Object.freeze({
   compare: 'Booked vs optimized', change: 'Route change', zone: 'Zone', gap: 'Gap fill',
 });
+// Plan a route's map (Story 15.14, AD-R28): "Route map: Planned route, <crew>, <n> stops".
+const ROUTE_LABEL = 'Planned route';
 // The frame mapPoints draws into, per panel (a two-panel image is twice as
 // wide). Inside mapPoints's bounds (200..2000, padding 0..200).
 const FRAME = Object.freeze({ width: 700, height: 560, padding: 40 });
@@ -72,12 +74,14 @@ function dayOf(input) {
   return { input, crews, color, crewById, stopById };
 }
 
-// A crew's booked stops, in booked order: routeOrder, then start, then id.
-function booked(d, crewId) {
+// A crew's booked stops, in booked order: routeOrder, then start, then id
+// (Plan a route's Reset to booked uses the same order).
+function bookedStops(input, crewId) {
   const rank = (v) => (Number.isInteger(v) ? v : Number.MAX_SAFE_INTEGER);
-  return d.input.stops.filter((s) => s.currentCrewId === crewId)
+  return input.stops.filter((s) => s.currentCrewId === crewId)
     .sort((a, b) => rank(a.routeOrder) - rank(b.routeOrder) || rank(a.start) - rank(b.start) || compareIds(a.stopId, b.stopId));
 }
+const booked = (d, crewId) => bookedStops(d.input, crewId);
 
 const nodeOf = (d, stopId) => {
   const s = d.stopById.get(stopId);
@@ -376,6 +380,6 @@ function textOf(built) {
 }
 
 module.exports = {
-  planView, choices, resolvePick, pickKind, namer, zoneLabel, textOf, dayWords, clock, hiddenLine,
-  VIEWS, VIEW_LABELS, FRAME, MAX_CANDIDATES, SUGGEST_ONLY, ALT_LABEL,
+  planView, choices, resolvePick, pickKind, namer, zoneLabel, textOf, dayWords, clock, hiddenLine, bookedStops,
+  VIEWS, VIEW_LABELS, ROUTE_LABEL, FRAME, MAX_CANDIDATES, SUGGEST_ONLY, ALT_LABEL,
 };

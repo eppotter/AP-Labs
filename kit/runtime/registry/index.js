@@ -49,6 +49,11 @@
 // an audience (AD-R17), and the module's resource must be that audience's
 // all_crews key: who may open it is decided by the audience (all_crews, or
 // own_crew with a crew_leads row), never by the resource alone.
+//
+// Story 15.14: a routing-map module may name its screen: "views" (the
+// default) or "route-editor" (Plan a route, AD-R26). Whether the profile has
+// routing.depot and the adapter a route() is checked when it opens (the hub
+// shows "not available" and opens no modal), since the adapter is made then.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -104,6 +109,7 @@ function schemaProblems(validate, data, file) {
       // The only false schema: a write block outside approval-write (AD-15).
       if (e.keyword === 'false schema' && e.instancePath === '/write') return `${file}: field "write" is used only by an approval-write module (writes go through that archetype)`;
       if (e.keyword === 'false schema' && e.instancePath === '/adapter') return `${file}: field "adapter" is used only by a routing-map module`;
+      if (e.keyword === 'false schema' && e.instancePath === '/screen') return `${file}: field "screen" is used only by a routing-map module`;
       const field = fieldName(e.instancePath);
       return field ? `${file}: field "${field}"${note} ${e.message}` : `${file}: ${e.message}`;
     });

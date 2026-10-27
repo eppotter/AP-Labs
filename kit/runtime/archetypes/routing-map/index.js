@@ -68,6 +68,20 @@
 // more without tiles, with "Street map unavailable, showing the plain map."
 // under it; only if that plain draw fails too is it the error exit.
 //
+// Plan a route (Story 15.14, AD-R26, AD-R27): a module with screen
+// "route-editor" is the route editor in ./editor.js, on the same audience,
+// sessions, hub listener and map lifecycle. Its adapter also gives
+//   route({ day, crewId, depot, scope })  { input, travel, distance }: the
+//                               day's input for that crew (every crew's
+//                               baseNode the Office, depot), travel covering
+//                               [Office, stops] x [stops, Office], and
+//                               distance(from, to) in whole tenths of a km
+// unready(mod) says why such a module cannot open (no routing.depot in the
+// profile, or no route()): the hub then shows "not available" and opens no
+// modal. Each screen refuses the other's actions (logged by reason only):
+// view and zone are Routing's; show, up, down, optimize, reset and change
+// are Plan a route's; crew and day are both screens'.
+//
 // Exits: Back and Close (view_closed, else the sweep: the hub), an error (a
 // plain message in the view, with Back), an expired trigger (the hub's
 // path), an expired session ("this map has expired"), access withdrawn
@@ -75,7 +89,9 @@
 // (refused, nothing changes).
 
 const { DataUnavailable, ConfigFault, AccessDenied, RoutingFault } = require('../../errors');
-const { messageFor, escapeText, MAP_WORDS } = require('../../messages');
+const {
+  messageFor, escapeText, MAP_WORDS, ROUTE_WORDS,
+} = require('../../messages');
 const { textBlocks } = require('../../slack/format');
 const { altText, ImageError } = require('../../slack/image');
 const { renderPng } = require('../../routing-map');
@@ -86,10 +102,16 @@ const {
   planView, choices, resolvePick, pickKind, namer, zoneLabel, textOf, VIEWS, VIEW_LABELS, FRAME,
 } = require('./views');
 const { createSessions, STATUS } = require('./session');
+const { createEditor, SCREEN: EDITOR, ACTIONS: EDITOR_ACTIONS } = require('./editor');
 
 const ARCHETYPE = 'routing-map';
-const ACTIONS = Object.freeze(['view', 'day', 'crew', 'zone']);
-const ACTION_PATTERN = /^routing-map:(view|day|crew|zone)$/;
+const VIEW_ACTIONS = Object.freeze(['view', 'day', 'crew', 'zone']);
+const ACTIONS = Object.freeze([...new Set([...VIEW_ACTIONS, ...EDITOR_ACTIONS])]);
+const ACTION_PATTERN = /^routing-map:(view|day|crew|zone|show|up|down|optimize|reset|change)$/;
+// Which actions each screen takes (AD-R26).
+const SCREEN_ACTIONS = Object.freeze({ views: new Set(VIEW_ACTIONS), [EDITOR]: new Set(EDITOR_ACTIONS) });
+const EDITOR_ONLY = new Set(EDITOR_ACTIONS.filter((a) => !VIEW_ACTIONS.includes(a)));
+const screenOf = (mod) => (mod && mod.screen === EDITOR ? EDITOR : 'views');
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PAST_DAYS = 7;
@@ -219,7 +241,7 @@ function captionBlock(source, streets) {
 
 function createRoutingMap({
   profile, data, log, admin = 'your admin', viewModal = () => undefined,
-  mapPoints = readPoints, render = renderPng, fetchMosaic = readTiles, now = () => Date.now(),
+  mapPoints = readPoints, render = renderPng, fetchMosaic = readTiles, now = () => Date.now(), editor: editorOptions,
 }) {
   const sessions = createSessions({ now });
   const adapters = new Map(); // module id -> adapter
@@ -458,6 +480,29 @@ function createRoutingMap({
     return decided.scope ? null : refusalText(mod, decided);
   };
 
+  const editor = createEditor({
+    profile,
+    data,
+    log,
+    admin,
+    sessions,
+    adapterFor,
+    checkLabels,
+    mapPoints,
+    render: (...args) => render(...args),
+    tilesFor: (...args) => tilesFor(...args),
+    captionBlock,
+    failureText: (...args) => failureText(...args),
+    drawProblem,
+    withModal,
+    inRange,
+    streetSource,
+    ...(editorOptions || {}),
+  });
+
+  // Why this module cannot open here (a fixed reason), or false.
+  const unready = (mod) => (screenOf(mod) === EDITOR ? editor.unready(mod) : false);
+
   async function open({
     mod, person, viewId, show, showMap, resolve,
   }) {
@@ -466,13 +511,18 @@ function createRoutingMap({
       await show({ text: refusalText(mod, decided) });
       return;
     }
+    const screen = screenOf(mod);
     const s = sessions.open({
-      userId: person.id, viewId, moduleId: mod.id, picks: { view: 'compare', day: null, crew: null, zone: null },
+      userId: person.id, viewId, moduleId: mod.id, screen, picks: { view: 'compare', day: null, crew: null, zone: null },
     });
     s.scope = decided.scope;
     const number = sessions.next(s);
     log.info('routing map opened', { module: mod.id, scope: decided.scope.all === true ? 'all crews' : 'own crew' });
     if (!await withRange(mod, s, show)) return;
+    if (screen === EDITOR) {
+      await editor.open({ mod, s, show });
+      return;
+    }
     await draw({
       mod, s, number, show, showMap, recheck: recheckFor(mod, person, resolve),
     });
@@ -481,7 +531,7 @@ function createRoutingMap({
   // A select or date click. from: the view the click came from. resolve:
   // the hub's re-check that this person may still open the module here.
   async function click({
-    actionId, action, from, person, resolve, show, showMap,
+    actionId, action, from, person, resolve, show, showMap, showList,
   }) {
     const m = ACTION_PATTERN.exec(typeof actionId === 'string' ? actionId : '');
     const which = m ? m[1] : null;
@@ -490,7 +540,8 @@ function createRoutingMap({
     if (found.status === STATUS.EXPIRED) {
       log.info('routing map click refused', { action: which, reason: 'expired' });
       const title = from && from.title && typeof from.title.text === 'string' && from.title.text ? escapeText(from.title.text) : 'it';
-      await show({ text: MAP_WORDS.expired(title) });
+      const editing = found.screen ? found.screen === EDITOR : EDITOR_ONLY.has(which);
+      await show({ text: editing ? ROUTE_WORDS.expired(title) : MAP_WORDS.expired(title) });
       return;
     }
     if (found.status === STATUS.NOT_YOURS) {
@@ -501,6 +552,11 @@ function createRoutingMap({
       return;
     }
     const s = found.session;
+    // A screen never takes another screen's action (AD-R26).
+    if (!SCREEN_ACTIONS[s.screen].has(which)) {
+      log.warn('routing map click refused', { action: which, reason: 'another screen' });
+      return;
+    }
     const allowed = resolve(s.moduleId);
     if (!allowed.mod) {
       sessions.drop(s.id);
@@ -518,6 +574,12 @@ function createRoutingMap({
     }
     s.scope = decided.scope;
     if (!await withRange(mod, s, show)) return;
+    if (s.screen === EDITOR) {
+      await editor.click({
+        which, action, s, mod, show, showMap, showList, recheck: recheckFor(mod, person, resolve),
+      });
+      return;
+    }
     let refusedDay = false;
     if (which === 'view') {
       const v = action && action.selected_option && action.selected_option.value;
@@ -545,10 +607,10 @@ function createRoutingMap({
   }
 
   return {
-    open, click, closed: (who) => sessions.closed(who), sessions,
+    open, click, unready, closed: (who) => sessions.closed(who), sessions,
   };
 }
 
 module.exports = {
-  createRoutingMap, controls, dayRange, isRealDate, checkLabels, MAP_WORDS, ACTION_PATTERN, ACTIONS, ARCHETYPE,
+  createRoutingMap, controls, dayRange, isRealDate, checkLabels, MAP_WORDS, ACTION_PATTERN, ACTIONS, ARCHETYPE, SCREEN_ACTIONS,
 };
