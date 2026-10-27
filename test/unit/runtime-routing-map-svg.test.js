@@ -356,3 +356,44 @@ test('numbers 1 to 99 are distinct digit paths of whole pixels; anything else is
   assert.deepEqual([Math.min(...xs(numberPath(8, 100, 100))), Math.max(...xs(numberPath(8, 100, 100)))], [97, 103]);
   assert.deepEqual([Math.min(...xs(numberPath(88, 100, 100))), Math.max(...xs(numberPath(88, 100, 100)))], [93, 107]);
 });
+
+// --- Story 15.10: the street map's background (AD-R21) ---------------------------------------
+
+// sha256 of each fixture's plain SVG as drawn before street tiles (computed
+// with main's svg.js at Story 15.9): the plain map has not moved a byte.
+const PLAIN_SVG_SHA256 = Object.freeze({
+  compare: 'f46b7bce79841b2d171015f8f48e7235c432fdff501cbfdc064ac66167ba1d22',
+  change: '4cea0276d478a01a29b4715c32b55ddce3db8b841fd4107fc03ebb47236fcda1',
+  zone: '0cbf86c1f14bdae8012babba645d5ca62b71c9e00c8392158aea11cddeb0bc45',
+  gap: '6fe1f9d8b5fbcdd40a8fb36ca61d9b4a09d2f986e0df6ad7ca8386b037118aa3',
+});
+
+test('Story 15.10: with no base or base plain, every fixture\'s SVG is byte for byte what it was before street tiles', () => {
+  const sha = (s) => require('node:crypto').createHash('sha256').update(s).digest('hex');
+  for (const view of VIEWS) {
+    assert.equal(sha(renderSvg(view, model(view))), PLAIN_SVG_SHA256[view], view);
+    assert.equal(renderSvg(view, model(view), { base: 'plain' }), renderSvg(view, model(view)), view);
+    assert.equal(renderSvg(view, model(view), {}), renderSvg(view, model(view)), view);
+  }
+});
+
+test('Story 15.10: base streets swaps the white background for a translucent white wash, set by attribute; nothing else changes', () => {
+  for (const view of VIEWS) {
+    const plain = renderSvg(view, model(view));
+    const streets = renderSvg(view, model(view), { base: 'streets' });
+    const { width, height } = imageSize(view, model(view).frame);
+    const [bg] = elements(streets);
+    assert.deepEqual(bg, {
+      name: 'rect', attrs: { x: '0', y: '0', width: String(width), height: String(height), fill: '#FFFFFF', 'fill-opacity': '0.45' },
+    });
+    assert.ok(!/url\(|style|href|<image/i.test(streets), `${view}: no url(, style or reference`);
+    const rest = (svg) => svg.split('\n').slice(2).join('\n');
+    assert.equal(rest(streets), rest(plain), `${view}: only the background differs`);
+  }
+});
+
+test('Story 15.10: an unknown option or base is refused with fixed words', () => {
+  assert.deepEqual(faultOf(() => renderSvg('gap', model('gap'), { base: 'satellite' })).problem, 'out_of_range');
+  assert.deepEqual(faultOf(() => renderSvg('gap', model('gap'), { tiles: [] })).problem, 'unknown_key');
+  assert.deepEqual(faultOf(() => renderSvg('gap', model('gap'), 'streets')).problem, 'not_object');
+});

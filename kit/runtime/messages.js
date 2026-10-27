@@ -75,8 +75,9 @@ const ROUTING_WORDS = Object.freeze({
   unknown_key: ({ field }) => `"${field}" holds a field the map does not take`,
   renderer_unavailable: ({ field }) => `"${field}" can't be drawn: the map drawing tool didn't load`,
   renderer_failed: ({ field }) => `"${field}" couldn't be drawn`,
-  image_too_large: ({ field }) => `"${field}" came out larger than 1 MB`,
+  image_too_large: ({ field }) => `"${field}" came out larger than the size Slack is sent`,
   unsafe_svg: ({ field }) => `"${field}" was refused: it names something outside the map`,
+  basemap_invalid: ({ field }) => `"${field}" was refused: its street map squares are not ones the map can draw`,
 });
 
 // The AI service's refusals (Story 9.1). Each points to the typed form, which
@@ -115,6 +116,7 @@ const MAP_WORDS = Object.freeze({
   planFailed: (admin) => `The map for this day couldn't be worked out, so nothing is drawn. I've logged the problem; please tell ${admin}. Press Back to return to the menu.`,
   drawFailed: (admin) => `The map couldn't be drawn this time, so nothing is shown. Press Back to return to the menu and try again; if it keeps happening, tell ${admin}.`,
   noCrews: (day) => `No crews are working on ${day}, so there's nothing to draw.`,
+  streetsUnavailable: () => 'Street map unavailable, showing the plain map.',
 });
 
 const MESSAGES = [

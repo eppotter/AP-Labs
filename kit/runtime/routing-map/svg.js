@@ -386,13 +386,31 @@ function imageSize(view, frame) {
   return { width: TWO_PANELS[view] ? frame.width * 2 : frame.width, height: frame.height };
 }
 
-function renderSvg(view, model) {
+// The background: opaque white for the plain map; for a map drawn over
+// street tiles (base 'streets', Story 15.10, AD-R21) a translucent white wash,
+// set by attribute (no url(), no style), so the plot reads over the streets.
+const BASES = Object.freeze(['plain', 'streets']);
+const WASH_OPACITY = '0.45';
+
+function background(base, width, height) {
+  const attrs = [['x', 0], ['y', 0], ['width', width], ['height', height], ['fill', '#FFFFFF']];
+  if (base === 'streets') attrs.push(['fill-opacity', WASH_OPACITY]);
+  return el('rect', attrs);
+}
+
+// options.base: 'plain' (the default, the SVG unchanged since Story 15.3) or
+// 'streets' (the wash; png.js composeBasemap puts the tiles under it).
+function renderSvg(view, model, options = {}) {
+  if (!isObject(options)) throw fault('options', 'not_object');
+  for (const key of Object.keys(options)) if (key !== 'base') throw fault('options', 'unknown_key');
+  const base = options.base === undefined ? 'plain' : options.base;
+  if (!BASES.includes(base)) throw fault('options.base', 'out_of_range');
   const drawing = checkModel(view, model);
   const { frame } = drawing;
   const { width, height } = imageSize(view, frame);
   const lines = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
-    el('rect', [['x', 0], ['y', 0], ['width', width], ['height', height], ['fill', '#FFFFFF']]),
+    background(base, width, height),
   ];
   drawing.panels.forEach((p, i) => lines.push(...panel(p, i * frame.width)));
   if (drawing.panels.length === 2) lines.push(el('line', [['x1', frame.width], ['y1', 0], ['x2', frame.width], ['y2', height], ['stroke', '#999999'], ['stroke-width', 2]]));
@@ -400,4 +418,12 @@ function renderSvg(view, model) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { renderSvg, imageSize, VIEWS, PALETTE, MAX_COLOR, MAX_CANDIDATES };
+// How many panels a view draws: two for compare and change, else one.
+const panelCount = (view) => {
+  if (!VIEWS.includes(view)) throw fault('view', 'out_of_range');
+  return TWO_PANELS[view] ? 2 : 1;
+};
+
+module.exports = {
+  renderSvg, imageSize, panelCount, VIEWS, BASES, PALETTE, MAX_COLOR, MAX_CANDIDATES,
+};

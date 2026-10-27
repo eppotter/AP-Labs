@@ -5,7 +5,11 @@
 // day.json) read by the fixture adapter; mapPoints is the fixture's stand-in
 // (a spy); the renderer is the real one (a spy keeps each model). Every way
 // out of the modal has a test: Back, Close, each error, an expired trigger,
-// an expired session, access withdrawn.
+// an expired session, access withdrawn. Story 15.10 adds the street map
+// (the real tile fetcher on test/fixtures/fake-tiles.js, the source from
+// test/fixtures/profiles/routing-basemap.yml) and its exits: a newer click,
+// Back or Close, an expired session or withdrawn access while tiles load,
+// and a failed draw with tiles.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -55,7 +59,7 @@ function quietLog() {
 // recorded in slept, never slept.
 function setup({
   data = fx.fakeData(), mapPoints = fx.fakeMapPoints(), render = renderPng, store = createStore(), sweeping = () => true,
-  canUse, llm, client, noMapFiles = false, mod = routingModule(),
+  canUse, llm, client, noMapFiles = false, mod = routingModule(), profile: withProfile = profile, fetchMosaic,
 } = {}) {
   const app = new FakeSlackApp({ views: true });
   app.checkHashes = true;
@@ -65,13 +69,14 @@ function setup({
     store, client: client === undefined ? app.client : client, log, sweeping, sleep: async (ms) => { slept.push(ms); },
   });
   const models = [];
-  const spyRender = (view, model) => {
-    models.push({ view, model });
-    return render(view, model);
+  const spyRender = (view, model, ...opts) => {
+    models.push({ view, model, opts });
+    return render(view, model, ...opts);
   };
   registerHubs(app, {
-    registry: createRegistry({ hubs: [HUB], modules: [mod] }), profile, env: 'dev', log, store, data, llm,
-    ...(mapFiles ? { mapFiles } : {}), ...(canUse ? { canUse } : {}), routingMap: { mapPoints, render: spyRender },
+    registry: createRegistry({ hubs: [HUB], modules: [mod] }), profile: withProfile, env: 'dev', log, store, data, llm,
+    ...(mapFiles ? { mapFiles } : {}), ...(canUse ? { canUse } : {}),
+    routingMap: { mapPoints, render: spyRender, ...(fetchMosaic ? { fetchMosaic } : {}) },
   });
   return {
     app, log, store, data, mapPoints, models, slept, mapFiles,
@@ -1149,4 +1154,322 @@ test('the fake refuses what Slack refuses in a map view: titles, blocks, metadat
   const pushed = await app.client.views.push({ trigger_id: app.issueTrigger('T-x'), view: view([]) });
   await app.client.views.update({ view_id: pushed.view.id, hash: pushed.view.hash, view: view([]) });
   await assert.rejects(app.client.views.update({ view_id: pushed.view.id, hash: pushed.view.hash, view: view([]) }), (e) => e.data.error === 'hash_conflict');
+});
+
+// --- Story 15.10: streets under the plot (AD-R18, AD-R19, AD-R21) ----------------------------
+
+const { createBasemap, REASONS } = require('../../kit/runtime/basemap');
+const { createFakeTiles } = require('../fixtures/fake-tiles');
+
+const SOURCE = loadProfile(path.join(__dirname, '../fixtures/profiles/routing-basemap.yml')).routing.basemap;
+// The audience profile with a street map source (the basemap fixture's block).
+const streetProfile = (over = {}) => ({ ...profile, routing: { ...profile.routing, basemap: { ...SOURCE, ...over } } });
+// A mosaic that covers the archetype's 700 x 560 frame: 4 x 3 tiles.
+const STREET_MOSAIC = Object.freeze({ ...fx.FAKE_MOSAIC, cols: 4 });
+const TILE_COUNT = STREET_MOSAIC.cols * STREET_MOSAIC.rows;
+const CAPTION = '<https://tiles.example.org/copyright|© Example Map contributors>';
+const UNAVAILABLE = 'Street map unavailable, showing the plain map.';
+
+// The real tile fetcher (a fresh cache) on the fake tile server, spied:
+// calls holds each { mosaic, opts }; hold(call) may delay or change a call.
+function streetFetcher({ env = {}, hold } = {}) {
+  const tiles = createFakeTiles();
+  const { fetchMosaic } = createBasemap();
+  const calls = [];
+  const real = (mosaic, opts) => fetchMosaic(mosaic, { ...opts, fetch: tiles.fetch, env });
+  const fn = async (mosaic, opts) => {
+    const call = { mosaic, opts };
+    calls.push(call);
+    if (hold) {
+      const held = await hold(call, real);
+      if (held !== undefined) return held;
+    }
+    return real(mosaic, opts);
+  };
+  return { tiles, calls, fn };
+}
+
+function streetSetup({ fetcher = streetFetcher(), mosaic = STREET_MOSAIC, ...rest } = {}) {
+  const ctx = setup({
+    profile: streetProfile(), mapPoints: fx.fakeMapPoints({ mosaic }), fetchMosaic: fetcher.fn, ...rest,
+  });
+  return { ...ctx, fetcher };
+}
+
+// Resolves when signal aborts, with what fetchMosaic gives for an abort.
+const untilAborted = (signal) => new Promise((resolve) => {
+  const done = () => resolve({
+    basemap: null, reason: 'aborted', requested: TILE_COUNT, cached: 0,
+  });
+  if (signal.aborted) done();
+  else signal.addEventListener('abort', done, { once: true });
+});
+
+const captionOf = (view) => {
+  const types = view.blocks.map((b) => b.type);
+  const at = types.indexOf('image');
+  const next = view.blocks[at + 1];
+  return next && next.type === 'context' ? next.elements.map((e) => e.text).join('') : null;
+};
+const tileLines = (ctx) => ctx.log.lines.filter((l) => l.msg === 'street map tiles');
+
+test('Story 15.10: with a basemap block and a mosaic the streets show: the view\'s tiles fetched, drawn under the plot, the attribution straight under the image; alt text unchanged', async () => {
+  const ctx = streetSetup();
+  await open(ctx);
+  const shown = lastView(ctx.app);
+  assert.deepEqual(shown.blocks.map((b) => b.type), ['actions', 'context', 'image', 'context', 'section']);
+  assert.equal(captionOf(shown), CAPTION);
+  assert.deepEqual(blocksOf(shown, 'image')[0].alt_text, 'Route map: Booked vs optimized, Maple crew, 4 stops', 'the alt text holds no attribution');
+  // The fetcher got the view's mosaic, the profile and a live signal.
+  const [call] = ctx.fetcher.calls;
+  assert.deepEqual(call.mosaic, STREET_MOSAIC);
+  assert.ok(call.opts.signal instanceof AbortSignal);
+  assert.equal(call.opts.signal.aborted, false);
+  assert.equal(call.opts.profile.routing.basemap.url_template, SOURCE.url_template);
+  assert.equal(ctx.fetcher.tiles.requests.length, TILE_COUNT);
+  // The renderer got pixel offsets and bytes only.
+  const [{ view, model, opts }] = ctx.models;
+  assert.deepEqual(Object.keys(opts[0]), ['basemap']);
+  const { basemap } = opts[0];
+  assert.deepEqual(Object.keys(basemap).sort(), ['ox', 'oy', 'tiles']);
+  assert.deepEqual([basemap.ox, basemap.oy], [STREET_MOSAIC.ox, STREET_MOSAIC.oy]);
+  assert.equal(basemap.tiles.length, TILE_COUNT);
+  for (const t of basemap.tiles) assert.deepEqual(Object.keys(t).sort(), ['col', 'png', 'row']);
+  assert.equal(Object.hasOwn(model, 'basemap'), false);
+  // What was uploaded is the map drawn over those tiles.
+  assert.ok(ctx.app.uploads[0].file.equals(renderPng(view, model, { basemap })));
+  assert.ok(!ctx.app.uploads[0].file.equals(renderPng(view, model)));
+});
+
+test('Story 15.10: one "street map tiles" line per fetch, holding only the module, the counts and the reason code; reopening the view requests nothing new', async () => {
+  const ctx = streetSetup();
+  await open(ctx);
+  await open(ctx);
+  const lines = tileLines(ctx);
+  assert.equal(lines.length, 2);
+  assert.deepEqual(lines.map((l) => [l.level, l.fields]), [
+    ['info', { module: 'routing', requested: TILE_COUNT, cached: 0, reason: null }],
+    ['info', { module: 'routing', requested: TILE_COUNT, cached: TILE_COUNT, reason: null }],
+  ]);
+  assert.equal(ctx.fetcher.tiles.requests.length, TILE_COUNT, 'the second Open sent no tile request');
+  // A failed fetch: its fixed reason code, still only counts.
+  const down = streetSetup();
+  down.fetcher.tiles.respond = { status: 503 };
+  await open(down);
+  assert.deepEqual(tileLines(down)[0].fields, { module: 'routing', requested: TILE_COUNT, cached: 0, reason: 'server_error' });
+  // A fetcher that throws or answers oddly: fetch_failed, counts 0.
+  for (const odd of [async () => { throw new Error('https://tiles.example.org/13/2417/3066.png'); }, async () => ({ basemap: null, reason: 'see https://x' }), async () => null]) {
+    const c = streetSetup({ fetcher: { fn: odd, calls: [] } });
+    await open(c);
+    assert.deepEqual(tileLines(c)[0].fields, { module: 'routing', requested: 0, cached: 0, reason: 'fetch_failed' });
+    assert.equal(captionOf(lastView(c.app)), UNAVAILABLE);
+  }
+  for (const l of [...tileLines(ctx), ...tileLines(down)]) assert.ok(l.fields.reason === null || REASONS.includes(l.fields.reason));
+});
+
+test('Story 15.10: the attribution is escaped, and linked only when attribution_url is an https link Slack can carry', async () => {
+  const cases = [
+    [{ attribution: '<b>Maps & co</b>' }, '<https://tiles.example.org/copyright|&lt;b&gt;Maps &amp; co&lt;/b&gt;>'],
+    [{ attribution_url: 'javascript:alert(1)' }, '© Example Map contributors'],
+    [{ attribution_url: 'https://evil.example/|<!channel>' }, '© Example Map contributors'],
+    [{ attribution_url: 'https://tiles.example.org/c?a=1&b=2' }, '<https://tiles.example.org/c?a=1&amp;b=2|© Example Map contributors>'],
+  ];
+  for (const [over, want] of cases) {
+    const ctx = setup({
+      profile: streetProfile(over), mapPoints: fx.fakeMapPoints({ mosaic: STREET_MOSAIC }), fetchMosaic: streetFetcher().fn,
+    });
+    await open(ctx);
+    assert.equal(captionOf(lastView(ctx.app)), want, JSON.stringify(over));
+  }
+});
+
+test('Story 15.10: no basemap block: no tile fetch, no caption, the plain map as before', async () => {
+  const fetcher = streetFetcher();
+  const ctx = setup({ fetchMosaic: fetcher.fn, mapPoints: fx.fakeMapPoints({ mosaic: STREET_MOSAIC }) });
+  await open(ctx);
+  for (const v of ['change', 'zone', 'gap']) await click(ctx, 'routing-map:view', pick(v));
+  assert.equal(fetcher.calls.length, 0);
+  assert.equal(fetcher.tiles.requests.length, 0);
+  assert.ok(ctx.models.every((m) => m.opts.length === 0), 'the renderer got no basemap');
+  assert.equal(captionOf(lastView(ctx.app)), null);
+  assert.equal(tileLines(ctx).length, 0);
+});
+
+test('Story 15.10: the fetch gives null, for any reason: the plain map with "Street map unavailable, showing the plain map."; never the error exit', async () => {
+  const responds = [{ status: 503 }, { status: 429 }, { status: 403 }, { body: 'html' }, { body: 'small' }, { body: 'garbage' }, { body: 'oversize' }];
+  const runs = responds.map((respond) => ({ name: JSON.stringify(respond), fetcher: (() => { const f = streetFetcher(); f.tiles.respond = respond; return f; })() }));
+  runs.push({ name: 'the kill switch', fetcher: streetFetcher({ env: { APLABS_BASEMAP_OFF: '1' } }) });
+  runs.push({ name: 'an unknown host', fetcher: streetFetcher(), profile: streetProfile({ url_template: 'https://no-such-tiles.example.org/{z}/{x}/{y}.png' }) });
+  runs.push({ name: 'no mosaic', fetcher: streetFetcher(), mosaic: null });
+  for (const run of runs) {
+    const ctx = streetSetup({ fetcher: run.fetcher, ...(run.mosaic === null ? { mosaic: null } : {}), ...(run.profile ? { profile: run.profile } : {}) });
+    await open(ctx);
+    await click(ctx, 'routing-map:view', pick('zone'));
+    const shown = lastView(ctx.app);
+    assert.equal(blocksOf(shown, 'image').length, 1, `${run.name}: a map shows`);
+    assert.equal(captionOf(shown), UNAVAILABLE, run.name);
+    assert.equal(blocksOf(shown, 'image')[0].alt_text, 'Route map: Zone, Zone north, 7 stops', run.name);
+    assert.ok(ctx.models.every((m) => m.opts.length === 0), `${run.name}: drawn plain`);
+    assert.equal(ctx.app.uploads.length, 2, run.name);
+    assert.ok(!ctx.log.lines.some((l) => l.msg === 'routing map not drawn'), `${run.name}: never the error exit`);
+    if (run.mosaic === null) assert.equal(run.fetcher.calls.length, 0, 'no mosaic, no fetch');
+  }
+});
+
+test('Story 15.10: rasterizing with tiles fails: one plain-map retry with the note; if that fails too, the error exit', async () => {
+  for (const problem of ['renderer_failed', 'image_too_large', 'basemap_invalid', 'renderer_unavailable']) {
+    const tilesFail = (view, model, opts) => {
+      if (opts && opts.basemap) throw new RoutingFault({ field: 'map image', problem });
+      return renderPng(view, model);
+    };
+    const ctx = streetSetup({ render: tilesFail });
+    await open(ctx);
+    assert.deepEqual(ctx.models.map((m) => m.opts.length), [1, 0], `${problem}: tiles, then plain once`);
+    assert.equal(captionOf(lastView(ctx.app)), UNAVAILABLE, problem);
+    assert.equal(ctx.app.uploads.length, 1);
+    assert.deepEqual(ctx.log.lines.find((l) => l.msg === 'street map not drawn').fields, { module: 'routing', view: 'compare', reason: problem });
+  }
+  // A tile the fetcher let through that the renderer refuses: the real path.
+  const small = require('../fixtures/fake-tiles').SMALL_PNG;
+  const odd = async () => ({
+    basemap: { tiles: Array.from({ length: TILE_COUNT }, (_, i) => ({ col: i % 4, row: Math.floor(i / 4), png: small })), ox: STREET_MOSAIC.ox, oy: STREET_MOSAIC.oy },
+    reason: null, requested: TILE_COUNT, cached: 0,
+  });
+  const real = streetSetup({ fetcher: { fn: odd, calls: [] } });
+  await open(real);
+  assert.equal(captionOf(lastView(real.app)), UNAVAILABLE);
+  assert.equal(real.log.lines.find((l) => l.msg === 'street map not drawn').fields.reason, 'basemap_invalid');
+  // Both fail: the error exit, nothing uploaded.
+  const always = streetSetup({ render: () => { throw new RoutingFault({ field: 'map image', problem: 'renderer_failed' }); } });
+  await open(always);
+  await errorExit(always, DRAW_FAILED);
+  assert.equal(always.models.length, 2, 'one retry, no more');
+  assert.deepEqual(always.app.uploads, []);
+});
+
+test('Story 15.10 exit: a newer click while tiles load aborts that fetch; the older click uploads nothing and the newer map shows', async () => {
+  let held = null;
+  const fetcher = streetFetcher({
+    hold: async (call) => {
+      if (!held) return undefined;
+      const h = held;
+      held = null;
+      h.call = call;
+      return untilAborted(call.opts.signal);
+    },
+  });
+  const ctx = streetSetup({ fetcher });
+  await open(ctx);
+  held = {};
+  const pending = held;
+  const older = click(ctx, 'routing-map:view', pick('zone'));
+  await settle();
+  assert.ok(pending.call, 'the older click is loading tiles');
+  assert.equal(pending.call.opts.signal.aborted, false);
+  await click(ctx, 'routing-map:view', pick('gap'));
+  await older;
+  assert.equal(pending.call.opts.signal.aborted, true, 'the older fetch was aborted');
+  assert.equal(ctx.app.uploads.length, 2, 'Open and the newer click only');
+  const shown = lastView(ctx.app);
+  assert.equal(blocksOf(shown, 'image')[0].alt_text, 'Route map: Gap fill, Maple crew, 4 stops');
+  assert.equal(captionOf(shown), CAPTION);
+  assert.ok(!calls(ctx.app, 'update').some((u) => /Zone/.test(JSON.stringify(blocksOf(u.view, 'image')))), 'the older map never shows');
+  assert.deepEqual(ctx.store.mapFilesOf('UDISPATCH:V1'), ['F2']);
+});
+
+for (const [how, cleared] of [['Back', false], ['Close', true]]) {
+  test(`Story 15.10 exit: ${how} while tiles load aborts the fetch; no file is uploaded`, async () => {
+    let call = null;
+    const fetcher = streetFetcher({ hold: async (c) => { call = c; return untilAborted(c.opts.signal); } });
+    const ctx = streetSetup({ fetcher });
+    const opening = open(ctx);
+    await settle();
+    assert.ok(call, 'Open is loading tiles');
+    await ctx.app.dispatchViewClosed('hub:map', { user: U.dispatch, view: { id: 'V1' }, is_cleared: cleared });
+    await opening;
+    assert.equal(call.opts.signal.aborted, true);
+    assert.deepEqual(ctx.app.uploads, []);
+    assert.equal(ctx.store.mapFileCount(), 0);
+    assert.deepEqual(ctx.app.views.map((v) => v.method), ['push'], 'nothing shown after the view closed');
+  });
+}
+
+test('Story 15.10 exit: the session expires during the tile fetch: the expired message, nothing uploaded (every clock frozen)', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-02T15:00:00Z') });
+  let expire = false;
+  const fetcher = streetFetcher({
+    hold: async () => {
+      if (expire) t.mock.timers.tick(15 * MIN + 1);
+      return undefined;
+    },
+  });
+  const ctx = streetSetup({ fetcher });
+  await open(ctx);
+  assert.equal(ctx.app.uploads.length, 1);
+  expire = true;
+  await click(ctx, 'routing-map:view', pick('zone'));
+  const shown = lastView(ctx.app);
+  assert.deepEqual(texts(shown), [MAP_WORDS.expired('Routing')]);
+  assert.equal(shown.close.text, 'Back');
+  assert.equal(ctx.app.uploads.length, 1, 'nothing uploaded');
+  assert.equal(ctx.store.mapFilesOf('UDISPATCH:V1').length, 0, 'the earlier map deleted');
+  expire = false;
+  await click(ctx, 'routing-map:view', pick('gap'));
+  assert.deepEqual(texts(lastView(ctx.app)), [MAP_WORDS.expired('Routing')], 'the session is gone');
+});
+
+test('Story 15.10 exit: access withdrawn during the tile fetch: the refusal in the view, nothing uploaded (on a click and on Open)', async () => {
+  let withdrawn = false;
+  let withdraw = false;
+  const fetcher = streetFetcher({ hold: async () => { if (withdraw) withdrawn = true; return undefined; } });
+  const ctx = streetSetup({ fetcher, canUse: () => (withdrawn ? 'denied' : 'allowed') });
+  await open(ctx);
+  withdraw = true;
+  await click(ctx, 'routing-map:view', pick('zone'));
+  assert.deepEqual(texts(lastView(ctx.app)), [`You don't have access to Routing; ask ${ADMIN}.`]);
+  assert.equal(lastView(ctx.app).callback_id, 'hub:map');
+  assert.equal(ctx.app.uploads.length, 1, 'nothing uploaded');
+  assert.equal(ctx.store.mapFileCount(), 0, 'the map no longer shown is deleted');
+  withdrawn = false;
+  withdraw = false;
+  await click(ctx, 'routing-map:view', pick('gap'));
+  assert.match(texts(lastView(ctx.app))[0], /^This map has expired/);
+
+  let gone = false;
+  const onOpen = streetSetup({ fetcher: streetFetcher({ hold: async () => { gone = true; return undefined; } }), canUse: () => (gone ? 'denied' : 'allowed') });
+  await open(onOpen);
+  assert.deepEqual(texts(lastView(onOpen.app)), [`You don't have access to Routing; ask ${ADMIN}.`]);
+  assert.deepEqual(onOpen.app.uploads, []);
+});
+
+test('Story 15.10: no tile number, mosaic or tile URL in any log line, Slack call or error', async () => {
+  const ctxs = [];
+  const shown = streetSetup();
+  await open(shown);
+  for (const v of ['change', 'zone', 'gap']) await click(shown, 'routing-map:view', pick(v));
+  ctxs.push(shown);
+  const down = streetSetup();
+  down.fetcher.tiles.respond = { status: 503 };
+  await open(down);
+  ctxs.push(down);
+  ctxs.push(streetSetup({ profile: streetProfile({ url_template: 'https://no-such-tiles.example.org/{z}/{x}/{y}.png' }) }));
+  await open(ctxs.at(-1));
+  ctxs.push(streetSetup({ render: () => { throw new RoutingFault({ field: 'map image', problem: 'renderer_failed' }); } }));
+  await open(ctxs.at(-1));
+  const numbers = [];
+  for (let c = 0; c < STREET_MOSAIC.cols; c += 1) numbers.push(String(STREET_MOSAIC.tx0 + c));
+  for (let r = 0; r < STREET_MOSAIC.rows; r += 1) numbers.push(String(STREET_MOSAIC.ty0 + r));
+  for (const c of ctxs) {
+    const errors = c.log.lines.filter((l) => l.fields && l.fields.err).map((l) => l.fields.err);
+    const records = [
+      ['log', c.log.lines], ['views', c.app.views], ['uploads', c.app.uploads.map(({ file, ...rest }) => rest)],
+      ['deleted', c.app.deleted], ['responded', c.app.responded], ['posted', c.app.posted], ['errors', errors],
+    ];
+    for (const [name, rec] of records) {
+      assert.equal(holdsMosaic(rec), false, `${name} holds a mosaic or a tile key`);
+      const text = JSON.stringify(rec) + (name === 'errors' ? errors.map((e) => `${e && e.message} ${e && e.stack}`).join('\n') : '');
+      for (const n of numbers) assert.ok(!text.includes(n), `${name} holds a tile number`);
+      assert.ok(!/mosaic|tx0|ty0|\{z\}|\/\d+\/\d+\/\d+\.png|tiles\.example\.org\/\d|no-such-tiles/.test(text), `${name} names a tile, the mosaic or a tile URL`);
+    }
+  }
 });

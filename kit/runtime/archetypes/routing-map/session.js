@@ -15,6 +15,11 @@
 // asks isCurrent(session, number) before it uploads and again before it shows
 // its map: a newer click makes it abandon, whatever order the work finishes.
 //
+// Street tiles (Story 15.10): each accepted click also gets an AbortSignal
+// (signal(s)), aborted when a newer click comes in, when the view closes
+// (Back or Close) or when the session is dropped, so the tile fetch for a
+// draw nobody will see stops at once.
+//
 // Every function is synchronous, so nothing runs between a check and a
 // change. The clock is now(), Date.now by default (node:test mock.timers
 // moves it).
@@ -36,10 +41,22 @@ function createSessions({ now = () => Date.now(), ttlMs = TTL_MS, max = MAX_SESS
 
   const alive = (s) => s.expires > now();
 
+  // The draw in flight, if any, has nobody left to show to.
+  const stopWork = (s) => {
+    if (s.work) s.work.abort();
+  };
+
+  function remove(id) {
+    const s = sessions.get(id);
+    if (!s) return;
+    stopWork(s);
+    sessions.delete(id);
+  }
+
   function prune() {
-    for (const [id, s] of sessions) if (!alive(s)) sessions.delete(id);
+    for (const [id, s] of sessions) if (!alive(s)) remove(id);
     // Still full: the oldest go first (a Map keeps insertion order).
-    while (sessions.size >= max) sessions.delete(sessions.keys().next().value);
+    while (sessions.size >= max) remove(sessions.keys().next().value);
   }
 
   // A new session for this user's view. Returns it.
@@ -54,6 +71,7 @@ function createSessions({ now = () => Date.now(), ttlMs = TTL_MS, max = MAX_SESS
       options: null,
       seq: 0,
       expires: now() + ttlMs,
+      work: null,
     };
     sessions.set(s.id, s);
     return s;
@@ -66,7 +84,7 @@ function createSessions({ now = () => Date.now(), ttlMs = TTL_MS, max = MAX_SESS
     const s = sessions.get(id);
     if (!s) return { status: STATUS.EXPIRED };
     if (!alive(s)) {
-      sessions.delete(id);
+      remove(id);
       return { status: STATUS.EXPIRED };
     }
     if (s.userId !== userId || s.viewId !== viewId) return { status: STATUS.NOT_YOURS, sameUser: s.userId === userId };
@@ -74,27 +92,37 @@ function createSessions({ now = () => Date.now(), ttlMs = TTL_MS, max = MAX_SESS
   }
 
   // An accepted click: the session lives another 15 minutes and the click
-  // takes the next number. Returns that number.
+  // takes the next number (and a fresh signal; the previous click's is
+  // aborted). Returns that number.
   function next(s) {
+    stopWork(s);
+    s.work = new AbortController();
     s.seq += 1;
     s.expires = now() + ttlMs;
     return s.seq;
   }
 
+  // The AbortSignal of the session's newest click.
+  const signal = (s) => (s.work ? s.work.signal : AbortSignal.abort());
+
+  // True when this session is still held but its 15 minutes have run out
+  // (not when it was dropped or closed).
+  const expired = (s) => sessions.get(s.id) === s && !alive(s);
+
   // True while number is the newest request and the session still exists.
   const isCurrent = (s, number) => sessions.get(s.id) === s && s.seq === number && alive(s);
 
   function drop(id) {
-    sessions.delete(id);
+    remove(id);
   }
 
-  // The view closed: its session goes.
+  // The view closed: its session goes, and its draw in flight stops.
   function closed({ userId, viewId }) {
-    for (const [id, s] of sessions) if (s.userId === userId && s.viewId === viewId) sessions.delete(id);
+    for (const [id, s] of sessions) if (s.userId === userId && s.viewId === viewId) remove(id);
   }
 
   return {
-    open, lookup, next, isCurrent, drop, closed, get size() { return sessions.size; },
+    open, lookup, next, signal, isCurrent, expired, drop, closed, get size() { return sessions.size; },
   };
 }
 

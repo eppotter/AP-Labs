@@ -100,6 +100,14 @@ function setup() {
 
 const lastView = (app) => app.views.at(-1).args.view;
 const lines = (view) => view.blocks.filter((b) => b.type === 'section').map((b) => b.text.text).join('\n').split('\n');
+// Whether text holds value as a whole token, not inside a longer run of
+// letters or digits. The output carries a random session id (a UUID in
+// private_metadata), and a fixture postal code such as 00012 is 5 digits: a
+// plain substring check fails whenever the UUID happens to hold those digits
+// (PR #239 CI). A leaked postal code or coordinate stands on its own
+// ("Fernhill 00012", "postal_code":"00012"), so it still matches.
+const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const holdsToken = (text, value) => new RegExp(`(?<![0-9A-Za-z])${escape(String(value))}(?![0-9A-Za-z])`).test(text);
 const pick = (value) => ({ type: 'static_select', selected_option: { value, text: { type: 'plain_text', text: value } } });
 const date = (day) => ({ type: 'datepicker', selected_date: day });
 
@@ -170,6 +178,17 @@ test(`S3's day (as_of+3): the route change view for crew 7's zone places 5 in zo
   assert.match(image.alt_text, /^Route map: Route change, Zone /);
 });
 
+test('the leak check finds a postal code or coordinate standing alone, and not inside a random session id', () => {
+  for (const leak of ['Fernhill 00012', '{"postal_code":"00012"}', '00012', '(00012)', '"lat":39961234']) {
+    assert.ok(holdsToken(leak, leak.includes('3996') ? 39961234 : '00012'), leak);
+  }
+  assert.ok(holdsToken('"lon":-82998123,', -82998123));
+  for (const id of ['ad48dfbe-8157-41ee-9662-2700012e0b1b', '"private_metadata":"a00012b"', '100012', '000123', 'x39961234']) {
+    assert.ok(!holdsToken(id, id.includes('3996') ? 39961234 : '00012'), id);
+  }
+  assert.ok(holdsToken('at 12 Oak St, Fernhill', '12 Oak St'));
+});
+
 test('a dispatcher draws all four views on S3\'s day; nothing shows a coordinate, street address or postal code as text', async () => {
   const ctx = setup();
   await openOn(ctx, DISPATCH, dayOf(S3.dayOffset));
@@ -188,11 +207,11 @@ test('a dispatcher draws all four views on S3\'s day; nothing shows a coordinate
   const props = await raw.run('SELECT street_address, postal_code, geo_lat_e6, geo_lon_e6 FROM properties');
   const bases = await raw.run('SELECT base_geo_lat_e6 AS geo_lat_e6, base_geo_lon_e6 AS geo_lon_e6 FROM crews');
   for (const p of props) {
-    assert.ok(!said.includes(p.street_address), 'a street address reached Slack or the logs');
-    assert.ok(!said.includes(p.postal_code), 'a postal code reached Slack or the logs');
+    assert.ok(!holdsToken(said, p.street_address), `a street address reached Slack or the logs: ${p.street_address}`);
+    assert.ok(!holdsToken(said, p.postal_code), `a postal code reached Slack or the logs: ${p.postal_code}`);
   }
   for (const p of [...props, ...bases]) {
-    assert.ok(!said.includes(String(p.geo_lat_e6)) && !said.includes(String(p.geo_lon_e6)), 'a coordinate reached Slack or the logs');
+    assert.ok(!holdsToken(said, p.geo_lat_e6) && !holdsToken(said, p.geo_lon_e6), 'a coordinate reached Slack or the logs');
   }
   assert.ok(!/"x"\s*:|"y"\s*:/.test(said), 'a pixel position reached Slack or the logs');
 });

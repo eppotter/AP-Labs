@@ -529,6 +529,7 @@ function registerHubs(app, {
       mod,
       person,
       viewId,
+      resolve: resolveModule(person, `${mod.id}:open`, ROUTING_MAPS),
       show: (m) => showPlain(owner, render, m),
       showMap: (message, { current, mod: drawn = mod } = {}) => showMap({
         mod: drawn, owner, message, show: render, current,
