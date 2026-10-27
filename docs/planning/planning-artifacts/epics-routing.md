@@ -10,13 +10,13 @@ inputDocuments:
 
 # AP-Labs - Epic Breakdown: route optimization
 
-**Status: approved by Ely 2026-10-26 (`approve plan routing`).**
+**Status: approved by Ely 2026-10-26 (`approve plan routing`).** Amendment routing-streetmap (Stories 15.7 to 15.11): awaiting `approve plan routing-streetmap`.
 
 ## Overview
 
-The routing spec (`SPEC.md`, standing in for a PRD) and SQLsmith's `data-design.md`, broken into epics (phases) and stories (one PR each). Sequencing (Ely): the generic engine goes into the template first, on synthetic test fixtures; Brightside gets it only once the engine is built. Epics continue at 12. Stories cite `architecture-routing.md` (AD-R1 to AD-R17) and the runtime ADs they inherit. Epic 15 (the Slack map modal) was added 2026-10-26 on Ely's decisions; Story 14.5's CLI stays as the no-Slack test path.
+The routing spec (`SPEC.md`, standing in for a PRD) and SQLsmith's `data-design.md`, broken into epics (phases) and stories (one PR each). Sequencing (Ely): the generic engine goes into the template first, on synthetic test fixtures; Brightside gets it only once the engine is built. Epics continue at 12. Stories cite `architecture-routing.md` (AD-R1 to AD-R22) and the runtime ADs they inherit. Epic 15 (the Slack map modal) was added 2026-10-26 on Ely's decisions; Story 14.5's CLI stays as the no-Slack test path. Stories 15.7 to 15.11 (a street map under the plot) were added later the same day (amendment routing-streetmap, below).
 
-Estimates: **S** about half a day, under ~300 lines; **M** about a day; **L** up to two days. 19 stories: 4 S, 12 M, 3 L.
+Estimates: **S** about half a day, under ~300 lines; **M** about a day; **L** up to two days. 24 stories: 5 S, 16 M, 3 L.
 
 Computed tiers (`APLABS_PROFILE=$PWD/profiles/brightside/profile.yml node kit/lib/tier <paths>`, 2026-10-26):
 
@@ -25,7 +25,7 @@ Computed tiers (`APLABS_PROFILE=$PWD/profiles/brightside/profile.yml node kit/li
 | 12 | T2 declared (computes T1) | all: 13.3 adds `kit/runtime/routing/**` as T2, so Epic 12 runs at a declared T2 |
 | 13 | T3 | 13.1, 13.2, 13.3 |
 | 14 | T3 | 14.4 (`profiles/brightside/context/data.md`); 14.1 computes T1, treated as T2 |
-| 15 | T3 | all six: 15.1 `kit/runtime/store/**`, `kit/runtime/jobs/**`; 15.2 `kit/runtime/data/**` engine floor, `profiles/_schema/**`, `kit/lib/profile/**`; 15.3 `Dockerfile` (T3 whatever it computes) and `.github/workflows/**`; 15.4 `kit/lib/tier/**` and the access filter; 15.5 and 15.6 `profiles/**` and the guardrail sign-off gate |
+| 15 | T3 | all six: 15.1 `kit/runtime/store/**`, `kit/runtime/jobs/**`; 15.2 `kit/runtime/data/**` engine floor, `profiles/_schema/**`, `kit/lib/profile/**`; 15.3 `Dockerfile` (T3 whatever it computes) and `.github/workflows/**`; 15.4 `kit/lib/tier/**` and the access filter; 15.5 and 15.6 `profiles/**` and the guardrail sign-off gate; 15.7 `profiles/**` (`data.md`, `guardrails.md`); 15.8 `kit/runtime/data/**` engine floor; 15.9 `profiles/_schema/**`, `kit/lib/profile/**`, `kit/lib/tier/**`; 15.10 computes T2, declared T3 (the `unsafe_svg` defence and what leaves the process); 15.11 `profiles/**` and guardrails |
 
 ### Architect T3 review, round 1 (2026-10-26)
 
@@ -53,18 +53,26 @@ Decisions by the Orchestrator; folded as follows.
 - **F17 date range:** the date picker is bounded to [as_of − 7 days, as_of + `gap_fill.horizon_days`]; the server refuses other dates with a plain message. AD-R16, 15.4.
 - **F18 blocking:** Epic 15 blocks on Dana's audience list only at 15.5.
 
+### Amendment: routing-streetmap (2026-10-26)
+
+Ely, after seeing the plain plot in dev Slack ("we need a map here"): a street map under the plot from free OpenStreetMap tiles ($0, no account), the demo company moved onto a real US metro (Columbus, Ohio), and new stories built now, after `approve plan routing-streetmap`. Architect review: approve with conditions, all folded into AD-R18 to AD-R22 and the stories below. Gate items, risks and the cut list are under the amendment note at the top of `architecture-routing.md`. Build order: 15.7 alongside (15.8 alongside 15.9), then 15.10, then 15.11; 15.6 waits for the reworded GRD-002 to be signed (DEP-025).
+
 ### Deferred (DEP notes; not ledger rows)
 
-- **DEP: MotherDuck republish** of the v4 fixture (new tables and columns). Owner: Ely (a credentialed human step, runtime AD-18).
+- **DEP: MotherDuck republish** of the v5 fixture after 15.7 (new tables and columns, coordinates in Columbus), one publish; v4 is not published on its own (DEP-027, changed by routing-streetmap). Owner: Ely (a credentialed human step, runtime AD-18).
 - **DEP (blocker for 15.5, no longer a deferral): Slack audience and resource keys** for the routing module: which people are dispatchers (all crews), which are crew leads and of which crew, and the two resource keys (AD-R17). Owner: Dana Reyes. 15.1 to 15.4 build on fixture profiles and do not wait for it; 15.5 cannot merge without it. The Orchestrator asks for it with the other up-front questions.
-- **DEP (blocker for 15.6): Dana Reyes signs the map image rule** as an update to GRD-002 (AD-R12, T3 guardrail change), with its precision and linger numbers, and the DM fallback too if 15.1 needs it (the image would then show in push notification previews and the person's Files list). Owner: Dana Reyes, via Ely. 15.5 merges with the rule marked pending; 15.6 (prod) waits for the signature.
+- **DEP (blocker for 15.6): Dana Reyes signs the map image rule** as an update to GRD-002 (AD-R12, T3 guardrail change), with its precision and linger numbers, and the DM fallback too if 15.1 needs it (the image would then show in push notification previews and the person's Files list). Owner: Dana Reyes, via Ely. 15.5 merges with the rule marked pending; 15.6 (prod) waits for the signature. **Changed (routing-streetmap):** Dana signs the reworded rule from 15.11 (the street layer and what the tile server learns), not 15.5's wording (DEP-025).
+- **DEP-029: a new outbound connection,** `kit/runtime/basemap` to the tile provider (AD-R18, R19). Approver: Ely for the template, at the gate; Dana for Brightside, through DEP-025. Blocks 15.9.
+- **DEP-030: the contact address in the tile User-Agent:** a monitored role address, not a personal one (it ships in the distribution repo). Owner: Ely. Blocks 15.11.
+- **DEP-031 (deferred): a production tile provider per client fork.** OpenStreetMap's free service can be withdrawn and is not for production; keyed providers need the secrets path. Owner: each engagement lead. A fork-guide note says so.
+- **Deferred notes (routing-streetmap, no rows):** a disk tile cache; the attribution drawn into the image (needs glyphs); a land mask for the synthetic points.
 - **DEP (blocker for 15.4): the 15.1 live check.** Ely opens the dev-only map check in dev Slack and reports what he sees. Owner: Ely.
 - **DEP: dependency review of `@resvg/resvg-js`** (licence, platform packages, Docker image) in 15.3. Owner: architect review, Ely approves.
 - **DEP: a new record kind in `kit/runtime/store`** for uploaded map file ids and their expiry (15.1). Approver: Ely.
 - **Named risk (accepted, F5):** if the process dies between a map upload and recording its file id, that file is never swept. It is shared nowhere, but it stays in Slack's file storage until someone removes it by hand. Without `files:read` the kit cannot find it. The window is one Slack call long.
 - **Fork-guide note:** a fork on an older kit rejects a `routing:` block (`additionalProperties: false`); update the kit first.
 
-**Shared files (never build these in parallel):** `kit/runtime/routing/index.js` and `contract.js` (12.1–12.5, strictly in order); `kit/runtime/sdk/index.js` (12.1, 13.2); `test/unit/engine-boundary.test.js` (12.1, 13.2, 15.2, 15.3, 15.4); `kit/lib/profile` + schema (13.1 before 13.2 and 13.3; 13.1 before 15.2); `kit/runtime/data/index.js` (13.2 before 15.2); `kit/runtime/slack/{hubs,image}.js` and `test/fixtures/fake-slack.js` (15.1 before 15.4); `profiles/brightside/profile.yml` and `context/guardrails.md` (13.3 before 15.5); `examples/brightside/app/modules/routing/manifest.json` (15.5 before 15.6); `examples/brightside/fixture/{generate.js,lib/tables.js,lib/routing.js,schema.sql,seed.json,targets.json}` (14.1 before 14.2). 13.3 must merge before 14.1 so the coordinate columns are forbidden before they exist. Epic 13 may run alongside Epic 12 after 12.1 (no shared files except `engine-boundary.test.js`: the later builder merges main first). Epic 15 order: 15.1 and 15.2 may run in parallel (the later merges main first for `engine-boundary.test.js`); 15.3 after Epic 12; 15.4 after 15.1's live check, 15.2 and 15.3; 15.5 after 15.4 and Epic 14; 15.6 after Dana signs GRD-002.
+**Shared files (never build these in parallel):** `kit/runtime/routing/index.js` and `contract.js` (12.1–12.5, strictly in order); `kit/runtime/sdk/index.js` (12.1, 13.2); `test/unit/engine-boundary.test.js` (12.1, 13.2, 15.2, 15.3, 15.4); `kit/lib/profile` + schema (13.1 before 13.2 and 13.3; 13.1 before 15.2); `kit/runtime/data/index.js` (13.2 before 15.2); `kit/runtime/slack/{hubs,image}.js` and `test/fixtures/fake-slack.js` (15.1 before 15.4); `profiles/brightside/profile.yml` and `context/guardrails.md` (13.3 before 15.5); `examples/brightside/app/modules/routing/manifest.json` (15.5 before 15.6); `examples/brightside/fixture/{generate.js,lib/tables.js,lib/routing.js,schema.sql,seed.json,targets.json}` (14.1 before 14.2). 13.3 must merge before 14.1 so the coordinate columns are forbidden before they exist. Epic 13 may run alongside Epic 12 after 12.1 (no shared files except `engine-boundary.test.js`: the later builder merges main first). Epic 15 order: 15.1 and 15.2 may run in parallel (the later merges main first for `engine-boundary.test.js`); 15.3 after Epic 12; 15.4 after 15.1's live check, 15.2 and 15.3; 15.5 after 15.4 and Epic 14; 15.6 after Dana signs GRD-002. **Routing-streetmap:** 15.7, 15.8 and 15.9 may run in parallel; 15.7 and 15.8 both edit `docs/planning/specs/spec-routing/data-design.md` (different sections; the later merges main first); 15.10 after 15.8 and 15.9 (it shares `kit/runtime/archetypes/routing-map/index.js` and `test/unit/runtime-routing-map-archetype.test.js` with 15.8); 15.11 after 15.7 and 15.10 (it shares `profiles/brightside/context/guardrails.md` with 15.7); 15.6 after 15.11 and Dana's signature.
 
 ## Requirements Inventory
 
@@ -77,7 +85,7 @@ Decisions by the Orchestrator; folded as follows.
 - FR5: Drive time through one estimator interface, haversine now. (CAP-5)
 - FR6: Every row explains itself; cross-zone moves only as flagged recommendations. (CAP-6)
 - FR7: Brightside's fixture gains coordinates, a future schedule, rules and absences, deterministically, with routing truths. (CAP-7)
-- FR8: A Slack modal shows a plain map of the route and switches between four views (booked vs optimized, before vs after a change, a zone's crews, gap fill). (CAP-8)
+- FR8: A Slack modal shows a plain map of the route and switches between four views (booked vs optimized, before vs after a change, a zone's crews, gap fill). Amended (routing-streetmap): with the profile's `routing.basemap` on, a street map sits under the plot, with the provider's credit under the image; without it, or when tiles fail, the plain map. (CAP-8)
 - FR9: Dispatchers see every crew; a crew lead sees only their own, from a profile mapping. (CAP-9)
 
 ### NonFunctional Requirements
@@ -111,8 +119,8 @@ Decisions by the Orchestrator; folded as follows.
 | FR4 | 12.2 |
 | FR5 | 12.1, 13.2 |
 | FR6 | 12.3, 12.4, 12.5, 14.5 |
-| FR7 | 13.3, 14.1, 14.2, 14.3, 14.4 |
-| FR8 | 15.1, 15.2, 15.3, 15.4, 15.5, 15.6 |
+| FR7 | 13.3, 14.1, 14.2, 14.3, 14.4, 15.7 |
+| FR8 | 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8, 15.9, 15.10, 15.11 |
 | FR9 | 15.2, 15.4, 15.5 |
 
 ## Epic List
@@ -127,7 +135,7 @@ The governed data path: profile block, forbidden columns, `travelMatrix`. T3. St
 Fixture, adapter, truths, a read-only CLI. T3 (14.4). Stories 14.1–14.5.
 
 ### Epic 15: Dispatchers and crew leads see the route on a map in Slack
-A private map image in a routing modal, four views, filtered by audience. T3 (computed 2026-10-26). Stories 15.1–15.6. Ely's suggested shape had four stories; `mapPoints` is split from the spike into its own story (15.2) because it is a T3 engine read like 13.2, while the spike is a live check, and the two share no files; 15.6 is the one-line prod switch that waits for Dana's GRD-002 signature (F12).
+A private map image in a routing modal, four views, filtered by audience. T3 (computed 2026-10-26). Stories 15.1–15.11. 15.7–15.11 (routing-streetmap) put a street map under the plot and move the demo to Columbus, Ohio. Ely's suggested shape had four stories; `mapPoints` is split from the spike into its own story (15.2) because it is a T3 engine read like 13.2, while the spike is a live check, and the two share no files; 15.6 is the one-line prod switch that waits for Dana's GRD-002 signature (F12).
 
 ## Epic 12: A routing engine any field-service fork can call
 
@@ -243,7 +251,7 @@ A private map image in a routing modal, four views, filtered by audience. T3 (co
 
 ## Epic 15: Dispatchers and crew leads see the route on a map in Slack
 
-Added 2026-10-26 (Ely). Only 15.5 waits for Dana Reyes's audience list (F18); 15.6 waits for her GRD-002 signature. Tiers per story computed 2026-10-26 with `node kit/lib/tier` on the files listed; all are T3 (F3).
+Added 2026-10-26 (Ely). Only 15.5 waits for Dana Reyes's audience list (F18); 15.6 waits for her GRD-002 signature, now of the wording 15.11 writes. Tiers per story computed 2026-10-26 with `node kit/lib/tier` on the files listed; all are T3 (F3).
 
 ### Story 15.1: Spike: a private image in a modal (live check)
 **Implements:** FR8 · **Estimate:** M · **Tier:** T3 (`kit/runtime/store/**` new record kind, `kit/runtime/jobs/**` the sweep job) · **Architecture:** AD-R12, R15, R16
@@ -344,3 +352,71 @@ Result: AD-R15's primary path holds (no DM fallback). Story 15.4 may proceed; it
 
 **Given** `npm run onboard -- --status` shows GRD-002 signed by Dana Reyes with the map image rule **When** this PR opens **Then** its one change adds `"prod"` to the routing module's `environments`, and the PR body quotes the sign-off date
 **Given** GRD-002 still pending **Then** this story does not start
+**Changed (routing-streetmap):** the signature 15.6 waits for is of GRD-002 as 15.11 rewords it (the street layer and what the tile server learns), so 15.6 starts only after 15.11 merges and Dana signs that wording (DEP-025). Its one-line change is the same.
+
+### Story 15.7: The demo moves to Columbus (fixture v5)
+**Implements:** FR7, FR8 · **Estimate:** M (may grow to L if S2's or S3's planted shape breaks) · **Tier:** T3 (computed: `profiles/**` via `context/data.md` and `context/guardrails.md`) · **Architecture:** AD-R22
+**Files:** `examples/brightside/fixture/{generate.js,targets.json}`, `examples/brightside/fixture/lib/routing.js` (and `lib/scenarios.js` only if a plant breaks), `examples/brightside/fixture/checks/synthetic-coordinates.sql`, `examples/brightside/fixture/seeds/*`, `examples/brightside/fixture/__tests__/{routing,scenarios}.test.js`, `examples/brightside/test/{dataset,routing-module}.test.js`, `profiles/brightside/context/data.md`, `profiles/brightside/context/guardrails.md` (the GRD-007 line), `docs/planning/specs/spec-routing/data-design.md` §1, §5
+
+**Given** the seed **When** generated twice **Then** the files are identical, GENERATOR_VERSION is 5, and among the coordinate constants only `CENTRE` and `BOX` changed
+**And** every non-routing column is byte-identical to v4 (a test diffs them); the row counts of `scheduled_visits`, `service_rules` and `staff_absences` equal v4's, or the PR says why
+**And** every coordinate is inside the new `BOX`: `synthetic-coordinates.sql` checks it, and its header says "random points in a real metro, never taken from an address"
+**And** S1–S3 are recomputed from `travelMatrix`, and `targets.json` `routing` and the `data.md` truths are re-pinned: S1 optimized ≤ booked with 0 hard breaks; S2 still the afternoon gap on crew 2 at as_of+2; S3 still 5 / 1 / 0. If a shape breaks, `lib/scenarios.js` (the plant, never the engine) is adjusted and the PR says so
+**And** `npm run verify` reconciles all five routing truths offline, and no output line holds a coordinate
+**And** `data.md` says drive time is haversine × detour ÷ speed, not road time
+**And** GRD-007 says the coordinates are random synthetic points in the Columbus area: markers sit near real streets and homes, and none is or comes from a real address; marked pending (with DEP-025)
+**Untested until Ely runs it:** the MotherDuck republish of v5 (DEP-027).
+
+### Story 15.8: `mapPoints` in Web Mercator, with the tile mosaic
+**Implements:** FR8 · **Estimate:** M · **Tier:** T3 (computed: `kit/runtime/data/**` engine floor) · **Architecture:** AD-R20, AD-R13 amended
+**Files:** `kit/runtime/data/map.js`, `kit/runtime/archetypes/routing-map/index.js` (the new return shape only), `test/unit/runtime-data-map.test.js`, `test/unit/runtime-routing-map-archetype.test.js`, `docs/planning/specs/spec-routing/data-design.md` §3
+
+**Given** a temp DuckDB with known coordinates **When** `mapPoints` runs **Then** it returns `{ points: [{ node, x, y }], mosaic: { z, tx0, ty0, cols, rows, ox, oy } }`, all integers
+**And** positions match hand-computed Web Mercator (snapped first); a reference point maps to its slippy-map tile index (a hand-computed constant in the test)
+**And** z is the largest whole zoom ≤ `max_zoom` (19) at which the widened box fits; the test derives the shown span from z and the frame and asserts at least 5 km each way
+**And** the mosaic covers the frame: ox ≤ 0, oy ≤ 0, ox + 256 × cols ≥ width, oy + 256 × rows ≥ height
+**Given** a box needing more than 64 tiles, crossing the antimeridian, or beyond ±85.0511° **Then** `mosaic` is null and the points still return
+**And** two nodes in one grid cell share a pixel; a single node is centred
+**Given** mosaic columns that differ between rows **Then** `query_failed`
+**And** every 15.2 refusal holds; the exact-keys, sdk and boundary tests are unchanged; `run()` still refuses the coordinate columns
+**And** the archetype passes the points to the renderer and the mosaic to nothing else yet (spies: no mosaic in logs, Slack calls or errors)
+
+### Story 15.9: The tile source: profile block and fetcher
+**Implements:** FR8 · **Estimate:** M · **Tier:** T3 (computed: `profiles/_schema/**`, `kit/lib/profile/**`, `kit/lib/tier/**`) · **Architecture:** AD-R18, AD-R19
+**Files:** `profiles/_schema/profile.schema.json`, `kit/lib/profile/index.js`, `kit/lib/tier/index.js`, `kit/runtime/basemap/{index,cache}.js`, `test/unit/{profile,tier,runtime-basemap,engine-boundary}.test.js`, `test/fixtures/fake-tiles.js`, `test/fixtures/profiles/routing-basemap.yml`, `test/fixtures/routing-map/tiles/*.png` (synthetic patterns, not OpenStreetMap imagery)
+
+**Given** a fixture profile with `routing.basemap` **Then** validation accepts the AD-R18 keys with their ranges and defaults; an absent block means no basemap
+**And** it refuses, naming the key: a template that is not https, has userinfo, an IP or localhost host, a query or a fragment; a template without exactly one each of `{z}`, `{x}`, `{y}`, or with other braces; an attribution that is empty, over 120 characters, or holds any of ``<>&*_~`|``; a `user_agent` with no email or https contact, or a library default; an unknown key
+**Given** a mosaic **When** `fetchMosaic` runs **Then** only cols × rows tiles are requested, minus cache hits (a request-count test), at most 2 at once, with `redirect: 'error'` and the profile's User-Agent
+**And** a 403, 429, 5xx, timeout, non-PNG, wrong size, oversize or abort gives `null` with its reason; one failed tile drops the layer; after a 403, 429 or 5xx nothing is requested for 10 minutes; `APLABS_BASEMAP_OFF` means no request
+**And** the cache honours max-age and Expires, falls back to `cache_days`, sends If-None-Match (a 304 refreshes the entry), stores nothing on no-store, evicts least recently used, and shares one fetch per tile; every clock is frozen with `mock.timers`
+**And** the fake tile server rejects what OpenStreetMap rejects: 403 for a missing or generic User-Agent; 404 for z outside 0–19 or x/y outside [0, 2^z); 400 for any query string; a non-GET refused. It sends Cache-Control and ETag, answers 304 on a matching ETag, and can answer 429, 503, slowly, oversize or non-PNG
+**And** logger and error spies find no URL, host path, z/x/y or body; `npm test` never reaches the network (global `fetch` stubbed to throw; every path injects `fetch`)
+**And** `ENGINE_T3` includes `kit/runtime/basemap/**` and `tier.test.js` proves T3 under any profile
+**And** the boundary test: basemap requires only `errors` and itself; only `kit/runtime/archetypes/routing-map/**` and `scripts/smoke-routing-map.js` require it; `kit/runtime/routing-map/**` never does
+
+### Story 15.10: Streets under the plot: compositing, attribution, fallback
+**Implements:** FR8 · **Estimate:** M · **Tier:** T3 declared (computes T2; it changes the `unsafe_svg` defence and what leaves the process) · **Architecture:** AD-R21, AD-R18
+**Files:** `kit/runtime/routing-map/{png,svg,index}.js`, `kit/runtime/archetypes/routing-map/{index,views}.js`, `kit/runtime/messages.js`, `scripts/smoke-routing-map.js`, `test/unit/runtime-routing-map-{png,svg,archetype}.test.js`. `.github/workflows/ci.yml` unchanged (no `workflow` scope needed).
+
+**Given** no basemap **Then** the PNG is byte-identical to today's for each fixture (a regression test, one machine)
+**Given** a basemap `{ tiles: [{ col, row, png }], ox, oy }` **Then** `composeBasemap` draws the tiles under both panels of the two-panel views, with the wash instead of white; the same model and tile bytes give a byte-identical PNG twice, at the frame's dimensions
+**And** `<image`, `href` and `url(` in the plot SVG are still refused (`unsafe_svg`), with or without a basemap; a tile that is not a 256×256 PNG is refused (`basemap_invalid`); the composed SVG has exactly tiles × panels `<image` elements, each `data:image/png;base64,`
+**And** `MAX_PNG_BYTES` is set from measuring the four views with realistic synthetic tiles (the maximum × 2, at most 4 MB); a PNG over it is re-drawn plain
+**Given** a basemap block and a non-null mosaic **When** a view draws **Then** the streets show, with a context block straight under the image holding the profile's attribution, escaped, linked to `attribution_url`; the alt-text template is unchanged and holds no attribution
+**Given** the fetch returns null (any reason) **Then** the plain map shows with "Street map unavailable, showing the plain map."; never the error exit
+**Exits:** all of 15.4's exits still pass. New, one test each: a newer click while tiles load (the fetch is aborted, nothing uploaded); Back or Close while tiles load (aborted, no file); the session expires during the fetch (the expired message); access withdrawn during the fetch (the refusal, nothing uploaded); rasterizing with tiles fails (one plain-map retry, then the error exit)
+**And** spies find no z/x/y, mosaic or URL in logs, Slack calls or errors
+**And** the smoke script, inside the image with `--network none`, renders one view with fixture tiles and checks its size against the cap, and runs `fetchMosaic` against the OpenStreetMap template and asserts null within the time budget. Only CI can run it: named as untested in the builder's report and the PR, and the first CI run is its test
+
+### Story 15.11: Brightside turns the street map on; GRD-002 reworded
+**Implements:** FR8 · **Estimate:** S · **Tier:** T3 (computed: `profiles/**`, guardrails) · **Architecture:** AD-R12 amended, AD-R18
+**Files:** `profiles/brightside/profile.yml`, `profiles/brightside/context/guardrails.md`, `docs/runtime/{routing-map,container}.md`, `docs/planning/specs/spec-routing/{SPEC,HANDOFF}.md` (only what the routing-streetmap docs PR left), `docs/fork-guide.md` (one line for DEP-031: a fork sets its own production tile provider in `routing.basemap`)
+
+**Given** the Brightside profile **Then** `routing.basemap` holds `url_template` `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, `attribution` `© OpenStreetMap contributors`, `attribution_url` `https://www.openstreetmap.org/copyright`, `user_agent` `aplabs-routing-map/<version> (+<DEP-030 contact>)` naming no client, `max_zoom` 19, `cache_days` 7; the module stays `environments: ["dev"]`
+**And** GRD-002's map-image part carries this wording, marked pending (`npm run onboard -- --status` shows it pending):
+> The picture now has a street map under it. Anyone who sees it can read each marker's area directly, to about 150 m (a block), with no need to line it up. Next to the window's list (client name, city, stop number), a screenshot shows roughly where a named client lives. To draw the streets, the bot asks the street-map provider (OpenStreetMap, through its delivery network) for the map squares of the area shown. The provider learns which area of 5 km or more is being viewed, and when, from the bot's server address. It never learns which stops or customers. The bot keeps those squares in memory only. The provider's name and credit show under the picture. If the street map can't be fetched, the plain map shows.
+
+**And** `docs/runtime/container.md` names outbound 443 to the tile host
+**Live check (Ely, dev Slack; untested until run; kept short):** all four views show streets, with markers on streets (note any on water); the attribution caption shows on desktop and iOS; kill switch on gives the plain map and the note; a bad host gives the plain map and the note within about 8 s; the modal shows the larger PNG (note its size and time to draw); OpenStreetMap answers 200; re-opening the same view sends no new tile requests (a debug log printing only a count); and 15.1's open items (Close sends `view_closed`; a second person's Files search finds nothing)
+**And** 15.6 keeps its rule, now with the reworded GRD-002 signed (DEP-025)

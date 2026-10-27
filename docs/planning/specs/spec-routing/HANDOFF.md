@@ -12,8 +12,8 @@
 |---|---|
 | `docs/planning/specs/spec-routing/SPEC.md` | The spec: CAP-1 to CAP-9 and the not-doing list |
 | `docs/planning/specs/spec-routing/data-design.md` | Fixture additions, the `travelMatrix` and `mapPoints` read paths, the engine input contract, the truths S1–S3 |
-| `docs/planning/planning-artifacts/architecture-routing.md` | Decisions AD-R1 to AD-R17 and the computed tiers |
-| `docs/planning/planning-artifacts/epics-routing.md` | Epics 12–15 (19 PRs), acceptance criteria, files per story, DEP notes, both review notes |
+| `docs/planning/planning-artifacts/architecture-routing.md` | Decisions AD-R1 to AD-R22 (AD-R18 to R22 from routing-streetmap) and the computed tiers |
+| `docs/planning/planning-artifacts/epics-routing.md` | Epics 12–15 (24 PRs, 15.7 to 15.11 from routing-streetmap), acceptance criteria, files per story, DEP notes, both review notes |
 
 ## 2. What we're building
 
@@ -37,7 +37,7 @@ Both only suggest. Techs make the calls.
 
 Added later the same day (Epic 15, the Slack map):
 - A Slack modal shows a map of the route, opened from the hub menu. A select menu switches between four views: booked vs optimized, before vs after a route change, all crews in a zone, and gap fill.
-- The map is a plain plot drawn on our server as a PNG: numbered stops, a line color per crew, zone outlines, the crew base. No street tiles and nothing sent to a map provider; a street basemap waits for the maps connector.
+- The map is a plot drawn on our server as a PNG: numbered stops, a line color per crew, zone outlines, the crew base. **Changed later the same day (routing-streetmap, Ely: "we need a map here"):** when the profile turns it on, a street map sits under the plot, from free OpenStreetMap tiles for the demo; the bot asks the provider only for the map squares of the area shown, keeps them in memory, and shows the provider's credit under the image. If they can't be fetched, the plain plot shows. The demo company moves to Columbus, Ohio. Drive time stays straight-line × a factor, not road time. Stories 15.7 to 15.11; Dana re-signs GRD-002 before prod.
 - Users: dispatchers see every crew; a crew lead sees only their own crew. Who is a crew lead of which crew lives in the profile. Dana signs off the audience; that blocks Story 15.5 only.
 - **Rule change (T3 guardrail):** no coordinate, street address or postal code ever appears as text anywhere (Slack, logs, reasons, the AI). A map image is allowed, only inside the routing modal, only for the routing audience, never in a channel, never sent to the AI. It reveals approximate locations: each place is rounded to about 200 m (within about 150 m of the real spot), every map covers at least 5 km, and each image is deleted from Slack within 20 minutes. Dana signs this as a GRD-002 update, written at Story 15.5.
 - The module ships to dev first (15.5); a one-line PR (15.6) turns on prod once Dana has signed.
