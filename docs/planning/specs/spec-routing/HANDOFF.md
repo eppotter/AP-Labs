@@ -12,8 +12,8 @@
 |---|---|
 | `docs/planning/specs/spec-routing/SPEC.md` | The spec: CAP-1 to CAP-9 and the not-doing list |
 | `docs/planning/specs/spec-routing/data-design.md` | Fixture additions, the `travelMatrix` and `mapPoints` read paths, the engine input contract, the truths S1–S3 |
-| `docs/planning/planning-artifacts/architecture-routing.md` | Decisions AD-R1 to AD-R22 (AD-R18 to R22 from routing-streetmap) and the computed tiers |
-| `docs/planning/planning-artifacts/epics-routing.md` | Epics 12–15 (24 PRs, 15.7 to 15.11 from routing-streetmap), acceptance criteria, files per story, DEP notes, both review notes |
+| `docs/planning/planning-artifacts/architecture-routing.md` | Decisions AD-R1 to AD-R28 (AD-R18 to R22 from routing-streetmap, AD-R23 to R28 from routing-editor) and the computed tiers |
+| `docs/planning/planning-artifacts/epics-routing.md` | Epics 12–15 (28 PRs, 15.7 to 15.11 from routing-streetmap, 15.12 to 15.15 from routing-editor), acceptance criteria, files per story, DEP notes, both review notes |
 
 ## 2. What we're building
 
@@ -41,6 +41,14 @@ Added later the same day (Epic 15, the Slack map):
 - Users: dispatchers see every crew; a crew lead sees only their own crew. Who is a crew lead of which crew lives in the profile. Dana signs off the audience; that blocks Story 15.5 only.
 - **Rule change (T3 guardrail):** no coordinate, street address or postal code ever appears as text anywhere (Slack, logs, reasons, the AI). A map image is allowed, only inside the routing modal, only for the routing audience, never in a channel, never sent to the AI. It reveals approximate locations: each place is rounded to about 200 m (within about 150 m of the real spot), every map covers at least 5 km, and each image is deleted from Slack within 20 minutes. Dana signs this as a GRD-002 update, written at Story 15.5.
 - The module ships to dev first (15.5); a one-line PR (15.6) turns on prod once Dana has signed.
+
+Added 2026-10-27 (routing-editor, Ely):
+- A new menu option, **Plan a route**, next to Routing (which keeps its four views), for the same people. Step 1: pick a crew and a date. Step 2: the stops as a list with ↑/↓ to reorder, the map at the top redrawn for the current order, Optimize, and the total drive time and distance at the top.
+- Every crew starts and ends at the **Office**, a point in Westerville, Ohio, stored rounded to about 150 m and shown only as "Office". It is a row in the data, not coordinates in the profile (the architect's change to Ely's wording; a gate item). Only Plan a route uses it for now; whether it replaces crew bases everywhere is deferred (DEP-034).
+- A hand-made order that breaks a rule is allowed and flagged, with a count at the top.
+- Suggest only: nothing is saved or sent.
+- Distance: only the route's total, in whole km; never a leg's.
+- Stories 15.12 to 15.15. Dana signs the GRD-002 and GRD-007 additions (DEP-032) before 15.6 turns on prod for both modules.
 
 From the architect's round 2 review (Orchestrator's calls):
 - All Epic 15 stories are T3.
@@ -75,7 +83,8 @@ Decided in review, and open to change at the gate:
 6. **Ely, at Story 15.1:** approve the new store record kind for map file ids. Then open the dev-only map check in dev Slack and report whether the image shows in the modal, whether Back and Close are seen, and whether the file is gone after delete. Also try to open, share and download the image, have someone outside the audience search Files for `route-map.png`, and note whether the image shows straight after upload. If the image does not show, the fallback (send it to your own DM with the bot) needs Dana's yes, knowing it would then show in notification previews and the Files list.
 7. **Ely, at Story 15.3:** approve the new `@resvg/resvg-js` dependency after its review. The story changes `.github/workflows/ci.yml`; if the push is refused for the `workflow` scope, the agent stops and posts `--kind blocked`.
 8. **Ely, at Story 15.5:** give Dana's audience list before it merges, then walk the live check in dev Slack. Ask Dana to sign the GRD-002 map image rule (with its numbers).
-9. **Ely, at Story 15.6:** once Dana has signed GRD-002, approve the one-line PR that turns on prod.
+9. **Ely, at Story 15.6:** once Dana has signed GRD-002 (DEP-025, and DEP-032 for Plan a route), approve the PR that turns on prod for both routing modules.
+10. **Ely, routing-editor:** write `approve plan routing-editor`; agree the Office is a data row, not profile coordinates (AD-R23); answer DEP-035 (ship the Office point you chose, or a synthetic one) before Story 15.15; after 15.15, republish fixture v7 (DEP-033); walk 15.15's short live check in dev Slack.
 
 ## 5. Notes for the agent on the new machine
 

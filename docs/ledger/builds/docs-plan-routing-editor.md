@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-10-27 | — | docs | T3 | Plan routing-editor: a new "Plan a route" option in Brightside's menu, where a dispatcher or crew lead picks a crew and a day, reorders the stops with ↑/↓ or Optimize, and sees the map, the total drive time and distance, and any rule breaks for that order, every crew starting and ending at one Office (a data row, not profile coordinates). Suggest only. Adds AD-R23 to AD-R28 and Stories 15.12 to 15.15, amends AD-R2, R9, R12, R16, the SPEC, data design and handoff; 15.6 now turns on prod for both routing modules. | DEP-032, DEP-033, DEP-034, DEP-035 |

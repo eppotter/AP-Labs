@@ -36,6 +36,15 @@ every draw and every non-routing value is v5's. The changed start times flip 8 b
 windows, and the three `time_of_day` rules drawn from them follow: two change window and one
 falls away (780 rules, was 781). Booked visits (1,720) and absences (5) keep their counts. S1's booked drive goes from 139 to 140 minutes; 825 stops, S2 762 of 2 and S3
 5 / 1 / 0 are unchanged; no plant changed.
+**Amended 2026-10-27 (routing-editor, Story 15.15, architecture AD-R23):** generator v7 adds one
+table, `depots(depot_id, name, geo_lat_e6, geo_lon_e6)` (INTEGER micro-degrees), with one row:
+`office`, 40122000, −82908000 (Westerville, rounded to 0.002°). Nothing else changes: every other
+table is byte-identical to v6, and S1 to S3 do not move. Only the rounded constant appears in the
+generator, like `CENTRE`; no street address appears in any file. The point must be inside `BOX`
+and pass `synthetic-off-water.sql` (it is near the Hoover outline; if it fails, Ely is told, it is
+not moved silently). Whether the point may ship to every fork is DEP-035. The profile forbids both
+coordinate columns and declares the `depot` node source in the same PR (a node source without its
+table breaks every routing read). MotherDuck needs a republish (DEP-033).
 
 | Table / columns | Grain | Keys | How generated |
 |---|---|---|---|
@@ -88,6 +97,15 @@ rectangle (from × to), capped by pair count, never an N×N over every node. It 
 detour / speed inside DuckDB, rounds to 1e-6 before rounding up, and returns integer minutes only.
 Every DuckDB error becomes a fixed-text RoutingFault. Coordinates never reach JS module code, logs,
 Slack or an LLM.
+
+**Amended 2026-10-27 (routing-editor, Story 15.13, architecture AD-R25):** the select list becomes
+`from_node, to_node, minutes, km_tenths`, all INTEGER. `km_tenths` = round(haversine × detour × 10),
+from the same CTE as the minutes, so it is the straight-line estimate in tenths of a km, not road
+distance. It is not derived from minutes: each leg's minutes round up with a 5-minute floor, so
+minutes × speed would count every leg as at least 3.3 km at 40 km/h. The engine never sees it; the
+adapter sums it for a route's total, shown only in whole km. A leg's `km_tenths` is never shown,
+logged or sent (about 77 m per step, finer than the map grid). Node ids may now also be
+`depot:<id>` (the Office). SQLsmith confirms the SQL at Story 15.13.
 
 Map read path (added 2026-10-26 for the Slack map, Epic 15; SQLsmith to confirm the SQL at Story
 15.2): a second read, `mapPoints(nodeIds, frame)`, in the same closure and under the same guard,
@@ -150,7 +168,8 @@ A Brightside adapter (examples/brightside) maps tables to this:
 - `crews[]`: { crewId, zoneId, baseNode, headcountPlanned, headcountPresent, available: bool }.
   The adapter sets `available: false` when the lead is absent or nobody is present (definition
   pending Dana Reyes's confirmation).
-- Node ids are kind-prefixed strings: `property:<property_id>`, `crew:<crew_id>`.
+- Node ids are kind-prefixed strings: `property:<property_id>`, `crew:<crew_id>`, and (amended
+  2026-10-27, routing-editor) `depot:<depot_id>` for the Office.
 - `stops[]`: { stopId, node, currentCrewId, labourMinutes, serviceMinutes (for headcountPresent,
   round to 15, min 30), locked: bool, rules: { preferredCrewId?, allowedIsoDays?, window? } }.
 - `candidates[]` (route change): stops from later days with { plannedDate, cadenceDays, prevVisitDate,
