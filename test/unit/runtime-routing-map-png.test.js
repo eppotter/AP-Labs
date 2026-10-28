@@ -14,6 +14,7 @@ const { spawnSync } = require('node:child_process');
 const map = require('../../kit/runtime/routing-map');
 const {
   rasterize: rasterizeSvg, createRasterizer, composeBasemap, isTile, pngSize, MAX_PNG_BYTES, MEASURED_PNG_BYTES, MAX_PNG_CEILING,
+  SLACK_UPLOAD_BYTES, PNG_CAP, ROUTE_SCALES,
 } = require('../../kit/runtime/routing-map/png');
 const { RoutingFault } = require('../../kit/runtime/errors');
 
@@ -57,6 +58,14 @@ function stubModule(png, calls = []) {
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200"><rect x="0" y="0" width="300" height="200" fill="#FFFFFF"/></svg>';
 
+// The PNG size renderPng draws a view at when it fits: Plan a route's map
+// (route) at 2x (Story 15.18), Routing's four views at the image size.
+const drawnSize = (view, frame) => {
+  const size = map.imageSize(view, frame);
+  return view === 'route' ? { width: size.width * 2, height: size.height * 2 } : size;
+};
+const scalesOf = (view) => (view === 'route' ? { scales: ROUTE_SCALES } : undefined);
+
 test('each fixture rasterizes twice to the same bytes, at the image size, under MAX_PNG_BYTES', () => {
   for (const view of map.VIEWS) {
     const { model } = load(view);
@@ -64,8 +73,7 @@ test('each fixture rasterizes twice to the same bytes, at the image size, under 
     const b = map.renderPng(view, JSON.parse(JSON.stringify(model)));
     assert.ok(Buffer.isBuffer(a));
     assert.ok(a.equals(b), `${view}: identical bytes`);
-    const size = map.imageSize(view, model.frame);
-    assert.deepEqual(pngSize(a), size, view);
+    assert.deepEqual(pngSize(a), drawnSize(view, model.frame), view);
     assert.ok(a.length < MAX_PNG_BYTES, `${view}: ${a.length} bytes`);
     assert.ok(a.length > 1000, `${view}: something was drawn`);
   }
@@ -275,7 +283,7 @@ const hrefsOf = (svg) => [...svg.matchAll(/href="([^"]*)"/g)].map((m) => m[1]);
 test('Story 15.10: with no basemap each fixture\'s PNG is byte-identical to the plain rasterize of the unchanged SVG (one machine)', () => {
   for (const view of map.VIEWS) {
     const { model } = load(view);
-    const plain = rasterizeSvg(map.renderSvg(view, model), map.imageSize(view, model.frame));
+    const plain = rasterizeSvg(map.renderSvg(view, model), map.imageSize(view, model.frame), scalesOf(view));
     assert.ok(map.renderPng(view, model).equals(plain), view);
     assert.ok(map.renderPng(view, model, {}).equals(plain), view);
     assert.ok(map.renderPng(view, model, { basemap: null }).equals(plain), view);
@@ -298,7 +306,7 @@ test('Story 15.10: composeBasemap puts the same tiles under every panel, under t
     assert.equal(lines[0], svg.split('\n')[0]);
     const layers = lines.filter((l) => l.startsWith('<svg x='));
     assert.deepEqual(layers, Array.from({ length: panelsOf(view) }, (_, p) => `<svg x="${p * model.frame.width}" y="0" width="${model.frame.width}" height="${model.frame.height}">`));
-    const washAt = lines.findIndex((l) => l.includes('fill-opacity="0.45"'));
+    const washAt = lines.findIndex((l) => l.includes(`fill-opacity="${view === 'route' ? '0.6' : '0.45'}"`));
     const lastImage = lines.map((l, i) => (l.startsWith('<image') ? i : -1)).filter((i) => i >= 0).at(-1);
     assert.ok(lastImage < washAt, `${view}: every tile is under the wash`);
     assert.equal(out.replace(/<svg x=[^\n]*\n(<image[^\n]*\n)*<\/svg>\n/g, ''), svg, `${view}: the plot SVG is unchanged around the tiles`);
@@ -379,7 +387,7 @@ test('Story 15.10: with tiles, the same model and tile bytes give byte-identical
     const a = map.renderPng(view, model, { basemap });
     const b = map.renderPng(view, JSON.parse(JSON.stringify(model)), { basemap: copy });
     assert.ok(a.equals(b), `${view}: identical bytes`);
-    assert.deepEqual(pngSize(a), map.imageSize(view, model.frame), view);
+    assert.deepEqual(pngSize(a), drawnSize(view, model.frame), view);
     assert.ok(!a.equals(map.renderPng(view, model)), `${view}: not the plain map`);
     assert.ok(a.length <= MAX_PNG_BYTES, `${view}: ${a.length} bytes`);
   }
@@ -459,8 +467,8 @@ test('Story 15.13: the route view rasterizes plain and over the synthetic street
   const { model } = load('route');
   const plain = map.renderPng('route', model);
   assert.ok(plain.equals(map.renderPng('route', JSON.parse(JSON.stringify(model)))));
-  assert.deepEqual(pngSize(plain), { width: model.frame.width, height: model.frame.height });
-  assert.ok(plain.equals(rasterizeSvg(map.renderSvg('route', model), map.imageSize('route', model.frame))), 'the plain path is the plain rasterize');
+  assert.deepEqual(pngSize(plain), { width: model.frame.width * 2, height: model.frame.height * 2 }, 'drawn at 2x (Story 15.18)');
+  assert.ok(plain.equals(rasterizeSvg(map.renderSvg('route', model), map.imageSize('route', model.frame), { scales: ROUTE_SCALES })), 'the plain path is the plain rasterize');
   t.diagnostic(`route: ${plain.length} bytes plain (cap ${MAX_PNG_BYTES})`);
   assert.ok(plain.length < MAX_PNG_BYTES);
   // At the archetype's frame on the worst grid (4 x 4 dense street tiles).
@@ -470,10 +478,10 @@ test('Story 15.13: the route view rasterizes plain and over the synthetic street
   const a = map.renderPng('route', big, { basemap });
   const b = map.renderPng('route', JSON.parse(JSON.stringify(big)), { basemap: { ...basemap, tiles: basemap.tiles.map((x) => ({ ...x, png: Buffer.from(x.png) })) } });
   assert.ok(a.equals(b), 'identical bytes over the same tiles');
-  assert.deepEqual(pngSize(a), { width: FRAME.width, height: FRAME.height });
+  assert.deepEqual(pngSize(a), { width: FRAME.width * 2, height: FRAME.height * 2 }, 'at 2x: under the cap over dense tiles (Story 15.18)');
   assert.ok(!a.equals(map.renderPng('route', big)), 'not the plain map');
-  t.diagnostic(`route: ${a.length} bytes with streets (cap ${MAX_PNG_BYTES})`);
-  assert.ok(a.length < MAX_PNG_BYTES, `${a.length} bytes`);
+  t.diagnostic(`route: ${a.length} bytes with streets at 2x (cap ${PNG_CAP})`);
+  assert.ok(a.length < PNG_CAP, `${a.length} bytes`);
 });
 
 test('Story 15.13: unsafe_svg holds for the route view: a reference added to its SVG is refused, plain or over tiles', () => {
@@ -490,5 +498,124 @@ test('Story 15.13: unsafe_svg holds for the route view: a reference added to its
       assert.equal(e.details.problem, 'unsafe_svg', `${base}: ${piece}`);
       assert.equal(calls.length, 0, 'the rasterizer never saw it');
     }
+  }
+});
+
+// --- Story 15.18: Plan a route's map at 2x (AD-R29) ------------------------------------------
+
+const ORIGINAL = Object.freeze({ fitTo: { mode: 'original' }, font: { loadSystemFonts: false }, logLevel: 'off' });
+
+test('Story 15.18: the cap is the smaller of MAX_PNG_BYTES and the Slack upload\'s 1 MB check (not raised), and it is the default', () => {
+  const image = require('../../kit/runtime/slack/image');
+  assert.equal(SLACK_UPLOAD_BYTES, image.MAX_PNG_BYTES, 'the same number as the upload check');
+  assert.equal(image.MAX_PNG_BYTES, 1024 * 1024, 'the upload check is still 1 MB');
+  assert.equal(PNG_CAP, Math.min(MAX_PNG_BYTES, SLACK_UPLOAD_BYTES));
+  const ok = createRasterizer({ load: () => stubModule(fakePng(300, 200, PNG_CAP)) });
+  assert.equal(ok(SVG, { width: 300, height: 200 }).length, PNG_CAP);
+  const big = createRasterizer({ load: () => stubModule(fakePng(300, 200, PNG_CAP + 1)) });
+  assert.equal(faultOf(() => big(SVG, { width: 300, height: 200 })).message, TOO_LARGE);
+});
+
+test('Story 15.18: with no scales the rasterizer is called exactly as before (Routing\'s four views); with scales, at resvg\'s zoom, sized up', () => {
+  const calls = [];
+  const r = createRasterizer({ load: () => stubModule(() => fakePng(300, 200), calls) });
+  r(SVG, { width: 300, height: 200 });
+  r(SVG, { width: 300, height: 200 }, { scales: [1] });
+  assert.deepEqual(calls.map((c) => c.opts), [ORIGINAL, ORIGINAL]);
+  const zoomed = [];
+  const z = createRasterizer({ load: () => stubModule(() => fakePng(450, 300), zoomed) });
+  assert.deepEqual(pngSize(z(SVG, { width: 300, height: 200 }, { scales: [1.5] })), { width: 450, height: 300 });
+  assert.deepEqual(zoomed[0].opts, { ...ORIGINAL, fitTo: { mode: 'zoom', value: 1.5 } });
+  // A PNG not of the size times the scale is refused.
+  const wrong = createRasterizer({ load: () => stubModule(fakePng(300, 200)) });
+  assert.equal(faultOf(() => wrong(SVG, { width: 300, height: 200 }, { scales: [2] })).message, FAILED);
+  // An odd side times 1.5 rounds up, as resvg sizes it.
+  const odd = '<svg xmlns="http://www.w3.org/2000/svg" width="333" height="201" viewBox="0 0 333 201"><rect x="0" y="0" width="10" height="10" fill="#000000"/></svg>';
+  assert.deepEqual(pngSize(rasterizeSvg(odd, { width: 333, height: 201 }, { scales: [1.5] })), { width: 500, height: 302 });
+  assert.deepEqual(ROUTE_SCALES, [2, 1.5, 1]);
+});
+
+test('Story 15.18: scales other than a falling list drawn from 2, 1.5 and 1 are refused before anything is drawn', () => {
+  const calls = [];
+  const r = createRasterizer({ load: () => stubModule(fakePng(300, 200), calls) });
+  for (const bad of [{ scales: [] }, { scales: [3] }, { scales: [1, 2] }, { scales: [2, 2] }, { scales: '2' }, { scales: [2], more: 1 }, [2], null]) {
+    const e = faultOf(() => r(SVG, { width: 300, height: 200 }, bad));
+    assert.deepEqual(e.details, { field: 'scales', problem: 'out_of_range' }, JSON.stringify(bad));
+    const s = faultOf(() => r.streets(SVG, {}, {}, { width: 300, height: 200 }, bad));
+    assert.equal(s.details.field, 'scales');
+  }
+  assert.equal(calls.length, 0);
+});
+
+// The route view over dense synthetic tiles at the archetype's frame, at
+// each scale alone, with no cap: the sizes the ladder chooses between.
+function routeOverTiles() {
+  const model = { ...load('route').model, frame: { ...FRAME } };
+  const basemap = basemapFor(FRAME, { ox: -100, oy: -50, pngs: STREETS });
+  const svg = map.renderSvg('route', model, { base: 'streets' });
+  const layout = { ...layoutOf('route', FRAME), pixelated: true };
+  const size = map.imageSize('route', FRAME);
+  const free = createRasterizer({ maxBytes: 64 * 1024 * 1024 });
+  const at = Object.fromEntries(ROUTE_SCALES.map((z) => [z, free.streets(svg, basemap, layout, size, { scales: [z] })]));
+  return {
+    model, basemap, svg, layout, size, at,
+  };
+}
+
+test('Story 15.18: the route view rasterizes at 2x: the PNG is twice the frame\'s width and height, plain and over tiles; measured under the cap', (t) => {
+  const r = routeOverTiles();
+  for (const z of ROUTE_SCALES) t.diagnostic(`route over dense synthetic tiles (${r.basemap.tiles.length}), ${z}x: ${r.at[z].length} bytes (cap ${PNG_CAP})`);
+  const png = map.renderPng('route', r.model, { basemap: r.basemap });
+  assert.deepEqual(pngSize(png), { width: 2 * FRAME.width, height: 2 * FRAME.height });
+  assert.ok(png.equals(r.at[2]), 'the 2x drawing');
+  assert.ok(png.length <= PNG_CAP);
+  const plain = map.renderPng('route', r.model);
+  assert.deepEqual(pngSize(plain), { width: 2 * FRAME.width, height: 2 * FRAME.height });
+  t.diagnostic(`route plain at 2x: ${plain.length} bytes`);
+});
+
+test('Story 15.18: a 2x PNG over the cap is re-drawn at 1.5x', () => {
+  const r = routeOverTiles();
+  const capped = createRasterizer({ maxBytes: r.at[2].length - 1 });
+  const png = capped.streets(r.svg, r.basemap, r.layout, r.size, { scales: ROUTE_SCALES });
+  assert.ok(png.equals(r.at[1.5]));
+  assert.deepEqual(pngSize(png), { width: 1050, height: 840 });
+});
+
+test('Story 15.18: a 1.5x PNG over the cap is re-drawn at 1x', () => {
+  const r = routeOverTiles();
+  const capped = createRasterizer({ maxBytes: r.at[1.5].length - 1 });
+  const png = capped.streets(r.svg, r.basemap, r.layout, r.size, { scales: ROUTE_SCALES });
+  assert.ok(png.equals(r.at[1]));
+  assert.deepEqual(pngSize(png), { width: FRAME.width, height: FRAME.height });
+});
+
+test('Story 15.18: a 1x PNG over the cap is image_too_large, and the plain map (what the archetype then draws) still fits', () => {
+  const r = routeOverTiles();
+  const capped = createRasterizer({ maxBytes: r.at[1].length - 1 });
+  const e = faultOf(() => capped.streets(r.svg, r.basemap, r.layout, r.size, { scales: ROUTE_SCALES }));
+  assert.deepEqual(e.details, { field: 'map image', problem: 'image_too_large' });
+  const plain = capped(map.renderSvg('route', r.model), r.size, { scales: ROUTE_SCALES });
+  assert.deepEqual(pngSize(plain), { width: 2 * FRAME.width, height: 2 * FRAME.height });
+});
+
+test('Story 15.18: pixelated tiles carry image-rendering="optimizeSpeed" and pass every compose check; Routing\'s views never ask for it', () => {
+  const { model } = load('route');
+  const basemap = basemapFor(model.frame);
+  const svg = map.renderSvg('route', model, { base: 'streets' });
+  const out = composeBasemap(svg, basemap, { ...layoutOf('route', model.frame), pixelated: true });
+  const images = out.split('\n').filter((l) => l.startsWith('<image'));
+  assert.equal(images.length, basemap.tiles.length);
+  for (const l of images) assert.match(l, /^<image x="-?\d+" y="-?\d+" width="256" height="256" image-rendering="optimizeSpeed" href="data:image\/png;base64,/);
+  assert.equal(composeBasemap(svg, basemap, layoutOf('route', model.frame)).includes('image-rendering'), false, 'not without it');
+  assert.equal(faultOf(() => composeBasemap(svg, basemap, { ...layoutOf('route', model.frame), pixelated: 'yes' })).details.field, 'layout');
+  for (const view of ['compare', 'change', 'zone', 'gap']) {
+    const m = load(view).model;
+    const size = map.imageSize(view, m.frame);
+    const calls = [];
+    const stub = createRasterizer({ load: () => stubModule(() => fakePng(size.width, size.height), calls) });
+    stub.streets(map.renderSvg(view, m, { base: 'streets' }), basemapFor(m.frame), layoutOf(view, m.frame), size);
+    assert.equal(calls[0].svg.includes('image-rendering'), false, view);
+    assert.deepEqual(calls[0].opts, ORIGINAL, view);
   }
 });

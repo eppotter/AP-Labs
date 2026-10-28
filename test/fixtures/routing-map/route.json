@@ -1,5 +1,5 @@
 {
-  "_comment": "Synthetic map model for the Plan a route view (Story 15.13, AD-R28). Not client data: pixel points in a frame, as mapPoints returns them; no coordinates, no names. depot:hq is the Office; crew c2's stops are in a planned order, not their booked one.",
+  "_comment": "Synthetic map model for the Plan a route view (Story 15.13, AD-R28). Not client data: pixel points in a frame, as mapPoints returns them; no coordinates, no names. depot:hq is the Office; crew c2's stops are in a planned order, not their booked one. A stop is a node or { node, flag } (Story 15.18): p3 has a soft rule break, p5 a hard one, p4 none said outright.",
   "view": "route",
   "model": {
     "frame": {
@@ -24,7 +24,14 @@
     ],
     "route": {
       "crewId": "c2",
-      "stops": ["property:p1", "property:p2", "property:p3", "property:p4", "property:p5", "property:p6"]
+      "stops": [
+        "property:p1",
+        "property:p2",
+        { "node": "property:p3", "flag": "soft" },
+        { "node": "property:p4", "flag": "none" },
+        { "node": "property:p5", "flag": "hard" },
+        "property:p6"
+      ]
     },
     "depot": "depot:hq"
   }

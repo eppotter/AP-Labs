@@ -11,8 +11,9 @@
 //
 // 1. For each synthetic map model in test/fixtures/routing-map/ (mounted
 //    read-only; test/ is not in the image) it renders the SVG, rasterizes it
-//    twice, and checks the PNG is a PNG of the image's width and height, the
-//    same bytes both times, and at most MAX_PNG_BYTES.
+//    twice, and checks the PNG is a PNG of the image's width and height (the
+//    route view's twice that: Plan a route's map is drawn at 2x, Story
+//    15.18), the same bytes both times, and at most PNG_CAP.
 // 2. It draws one two-panel view over the synthetic street tiles
 //    (test/fixtures/routing-map/tiles/streets-*.png) twice, and checks the
 //    same size and byte checks, and the size against the cap.
@@ -28,7 +29,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const map = require('../kit/runtime/routing-map');
-const { rasterize, pngSize, MAX_PNG_BYTES } = require('../kit/runtime/routing-map/png');
+const {
+  rasterize, pngSize, MAX_PNG_BYTES, PNG_CAP, ROUTE_SCALES,
+} = require('../kit/runtime/routing-map/png');
 const { createBasemap, MAP_TIMEOUT_MS } = require('../kit/runtime/basemap');
 
 const FIXTURES = path.join(__dirname, '..', 'test', 'fixtures', 'routing-map');
@@ -56,12 +59,15 @@ function smoke(dir = FIXTURES) {
   console.log(`routing-map smoke: platform ${process.platform}/${process.arch}`);
   for (const view of map.VIEWS) {
     const m = model(dir, view);
-    const want = map.imageSize(view, m.frame);
+    const size = map.imageSize(view, m.frame);
+    const scaled = view === 'route' ? { scales: ROUTE_SCALES } : undefined;
+    const zoom = scaled ? ROUTE_SCALES[0] : 1;
+    const want = { width: size.width * zoom, height: size.height * zoom };
     const a = map.renderPng(view, m);
-    const b = rasterize(map.renderSvg(view, m), want);
+    const b = rasterize(map.renderSvg(view, m), size, scaled);
     assert.deepEqual(pngSize(a), want, `${view}: the PNG is ${want.width}x${want.height}`);
     assert.ok(a.equals(b), `${view}: the same bytes twice`);
-    assert.ok(a.length <= MAX_PNG_BYTES, `${view}: at most ${MAX_PNG_BYTES} bytes`);
+    assert.ok(a.length <= PNG_CAP, `${view}: at most ${PNG_CAP} bytes`);
     console.log(`routing-map smoke: ok - ${view} ${want.width}x${want.height}, ${a.length} bytes`);
   }
 }

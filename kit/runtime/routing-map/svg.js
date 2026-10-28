@@ -2,7 +2,9 @@
 
 // The route map as SVG (Story 15.3, AD-R14). renderSvg(view, model) is pure:
 // no clock, randomness, I/O or async, integer arithmetic only, so the same
-// model gives byte-identical SVG on every machine. The SVG holds no <text>,
+// model gives byte-identical SVG on every machine (the route view's leg
+// chevrons are the one exception to whole pixels: a square root, which IEEE 754
+// rounds the same everywhere, and positions to a tenth). The SVG holds no <text>,
 // no font, no style sheet, no href and no external reference: numbers are
 // digit paths (glyphs.js), and no id, name or label from the model is ever
 // written into it, only shapes, whole-pixel positions and fixed colors.
@@ -36,18 +38,32 @@
 //               rank 1..5)
 //   route       route { crewId, stops[] }, depot (a node): one panel, Plan a
 //               route's (Story 15.13, AD-R28). The Office (depot) has its own
-//               marker, a house shape with no text; the stops are numbered
-//               1..n in the order given; one closed line runs Office ->
-//               stops -> Office in the crew's color. The crew's base square
-//               is not drawn: the Office is where the day starts and ends. A
-//               stop that is the Office, or a stop given twice, is duplicate.
+//               marker with no text; the stops are numbered 1..n in the order
+//               given; one closed line runs Office -> stops -> Office in the
+//               crew's color. The crew's base square is not drawn: the Office
+//               is where the day starts and ends. A stop that is the Office,
+//               or a stop given twice, is duplicate. A stop is a node, or
+//               { node, flag } with flag none, soft or hard (Story 15.18,
+//               AD-R29: the hardest rule break at that stop); any other flag
+//               is out_of_range.
+//               The look (Story 15.18, AD-R29): the line 6 px over a 10 px
+//               white casing, round joins, a small white chevron at the middle
+//               of each leg pointing along travel (a leg too short to show
+//               one past its two markers gets none); each stop a pin of
+//               radius 17 in the crew's color with a white 3 px ring, a soft
+//               dark halo and a bold filled number (glyphs.js boldNumberPath);
+//               a soft flag adds an orange outer ring, a hard flag a red one;
+//               the Office a dark navy rounded square with a white ring and
+//               a white house. Over street tiles its wash is 0.6, not 0.45.
+//               The four Routing views above are drawn as before (Story
+//               15.18 changes none of their bytes).
 //
 // Every refusal is a RoutingFault naming the field's path, never its value: a
 // node missing from points is no_position, more than 99 stops on a crew or an
 // unknown view is out_of_range.
 
 const { RoutingFault } = require('../errors');
-const { numberPath, MAX_NUMBER } = require('./glyphs');
+const { numberPath, boldNumberPath, MAX_NUMBER } = require('./glyphs');
 
 const VIEWS = Object.freeze(['compare', 'change', 'zone', 'gap', 'route']);
 const TWO_PANELS = Object.freeze({ compare: ['booked', 'optimized'], change: ['before', 'after'] });
@@ -84,9 +100,28 @@ const RING_R = 16;
 const NEIGHBOUR_R = [17, 22];
 const BASE_HALF = 8;
 const DIAMOND = 14;
-// The Office: a house (walls and a roof) with a door, offsets from its point.
-const HOUSE = Object.freeze([[-12, 11], [12, 11], [12, -2], [0, -14], [-12, -2]]);
-const DOOR = Object.freeze({ dx: -4, dy: 1, width: 8, height: 10 });
+// Plan a route's look (Story 15.18, AD-R29).
+const PIN = Object.freeze({
+  r: 17, ring: 3, halo: [[21, '0.12'], [19, '0.18']], haloDrop: 1, flagR: 21, flagWidth: 5,
+});
+const FLAGS = Object.freeze(['none', 'soft', 'hard']);
+const FLAG_COLORS = Object.freeze({ soft: '#F08C00', hard: '#E03131' });
+const LINE = Object.freeze({ width: 6, casing: 10 });
+// The leg chevron, an open V stroked in white: pixels along (u) and across
+// (n) the leg from its middle, sized to sit inside the 6 px line.
+const ARROW = Object.freeze({
+  tip: 2.5, back: 2.5, half: 2.5, width: 2,
+});
+const MIN_ARROW_LEG = 2 * (PIN.r + PIN.ring) + 8;
+// The Office: a rounded square with a house (walls and a roof) and a door,
+// offsets from its point.
+const OFFICE = Object.freeze({
+  half: 15, corner: 6, ring: 3, fill: '#1D3557',
+});
+const HOUSE = Object.freeze([[-8, 9], [8, 9], [8, -1], [0, -9], [-8, -1]]);
+const DOOR = Object.freeze({
+  dx: -3, dy: 2, width: 6, height: 7,
+});
 // The hull pads each point by this octagon (whole pixels, about 28 out).
 const OCTAGON = Object.freeze([[28, 0], [20, 20], [0, 28], [-20, 20], [-28, 0], [-20, -20], [0, -28], [20, -20]]);
 
@@ -266,12 +301,23 @@ function checkPlannedRoute(value, depotNode, ctx) {
   const stops = list(need(r, 'stops', 'route.stops'), 'route.stops');
   if (stops.length > MAX_NUMBER) throw fault('route.stops', 'out_of_range');
   const seen = new Set([depotNode]);
-  const at = stops.map((s, j) => {
+  const at = stops.map((raw, j) => {
     const field = `route.stops[${j}]`;
-    const p = placed(s, field, ctx.pts);
-    if (seen.has(s)) throw fault(field, 'duplicate');
-    seen.add(s);
-    return p;
+    let node = raw;
+    let flag = 'none';
+    if (isObject(raw)) {
+      object(raw, field, ['node', 'flag']);
+      node = need(raw, 'node', `${field}.node`);
+      if (has(raw, 'flag')) {
+        flag = raw.flag;
+        if (typeof flag !== 'string') throw fault(`${field}.flag`, 'not_text');
+        if (!FLAGS.includes(flag)) throw fault(`${field}.flag`, 'out_of_range');
+      }
+    }
+    const p = placed(node, isObject(raw) ? `${field}.node` : field, ctx.pts);
+    if (seen.has(node)) throw fault(field, 'duplicate');
+    seen.add(node);
+    return { x: p.x, y: p.y, flag };
   });
   return { crew, office, stops: at };
 }
@@ -346,28 +392,80 @@ const hollow = (p, stroke, dx) => el('circle', [['cx', p.x + dx], ['cy', p.y], [
 const ring = (p, r, width, dx) => el('circle', [['cx', p.x + dx], ['cy', p.y], ['r', r], ['fill', 'none'], ['stroke', '#000000'], ['stroke-width', width]]);
 const dashed = (a, b, stroke, width, dash, dx) => el('line', [['x1', a.x + dx], ['y1', a.y], ['x2', b.x + dx], ['y2', b.y], ['stroke', stroke], ['stroke-width', width], ['stroke-dasharray', dash], ['stroke-linecap', 'round']]);
 
-// The Office's marker: a black house with a white door, its own shape (no
-// text, AD-R14), unlike a crew's base square or a stop's circle.
+// --- Plan a route's map (Story 15.13, AD-R28; its look Story 15.18, AD-R29) ----
+
+// A soft dark halo: two translucent black discs, dropped a pixel.
+const halo = (cx, cy) => PIN.halo.map(([r, opacity]) => el('circle', [
+  ['cx', cx], ['cy', cy + PIN.haloDrop], ['r', r], ['fill', '#000000'], ['fill-opacity', opacity],
+]));
+
+// A stop's pin: the halo, the flag's outer ring (none for flag none), the
+// disc in the crew's color with a white ring, the bold number on top.
+function pin(p, n, colors, dx) {
+  const cx = p.x + dx;
+  const out = halo(cx, p.y);
+  if (p.flag !== 'none') {
+    out.push(el('circle', [['cx', cx], ['cy', p.y], ['r', PIN.flagR], ['fill', 'none'], ['stroke', FLAG_COLORS[p.flag]], ['stroke-width', PIN.flagWidth]]));
+  }
+  out.push(
+    el('circle', [['cx', cx], ['cy', p.y], ['r', PIN.r], ['fill', colors.fill], ['stroke', '#FFFFFF'], ['stroke-width', PIN.ring]]),
+    el('path', [['d', boldNumberPath(n, cx, p.y)], ['fill', colors.ink]]),
+  );
+  return out;
+}
+
+// The Office's marker, its own shape (no text, AD-R14), unlike a stop's
+// pin: a dark navy rounded square with a white ring over a soft halo, a
+// white house with a navy door.
 function office(p, dx) {
   const cx = p.x + dx;
+  const s = OFFICE.half;
+  const h = s + 2;
   const corners = HOUSE.map(([ox, oy]) => `${cx + ox},${p.y + oy}`).join(' ');
   return [
-    el('polygon', [['points', corners], ['fill', '#000000'], ['stroke', '#FFFFFF'], ['stroke-width', 2], ['stroke-linejoin', 'round']]),
-    el('rect', [['x', cx + DOOR.dx], ['y', p.y + DOOR.dy], ['width', DOOR.width], ['height', DOOR.height], ['fill', '#FFFFFF']]),
+    el('rect', [['x', cx - h], ['y', p.y - h + PIN.haloDrop], ['width', 2 * h], ['height', 2 * h], ['rx', OFFICE.corner + 2], ['fill', '#000000'], ['fill-opacity', '0.18']]),
+    el('rect', [['x', cx - s], ['y', p.y - s], ['width', 2 * s], ['height', 2 * s], ['rx', OFFICE.corner], ['fill', OFFICE.fill], ['stroke', '#FFFFFF'], ['stroke-width', OFFICE.ring]]),
+    el('polygon', [['points', corners], ['fill', '#FFFFFF']]),
+    el('rect', [['x', cx + DOOR.dx], ['y', p.y + DOOR.dy], ['width', DOOR.width], ['height', DOOR.height], ['fill', OFFICE.fill]]),
   ];
 }
 
-// Plan a route's drawing: the closed line, the numbered stops, then the
-// Office on top (the line starts and ends under it).
+// A number to a tenth of a pixel, as text ("12.3", "-4", never "-0").
+const tenth = (v) => String(Math.round(v * 10) / 10 + 0);
+
+// The chevron at the middle of the leg a -> b, pointing toward b; none when
+// the leg is too short for it to show between the two markers.
+function legArrow(a, b, dx) {
+  const vx = b.x - a.x;
+  const vy = b.y - a.y;
+  const len = Math.sqrt(vx * vx + vy * vy);
+  if (len < MIN_ARROW_LEG) return [];
+  const ux = vx / len;
+  const uy = vy / len;
+  const mx = (a.x + b.x) / 2 + dx;
+  const my = (a.y + b.y) / 2;
+  const at = (along, across) => `${tenth(mx + ux * along - uy * across)},${tenth(my + uy * along + ux * across)}`;
+  const d = `M${at(-ARROW.back, ARROW.half)}L${at(ARROW.tip, 0)}L${at(-ARROW.back, -ARROW.half)}`;
+  return [el('path', [['d', d], ['fill', 'none'], ['stroke', '#FFFFFF'], ['stroke-width', ARROW.width], ['stroke-linecap', 'round'], ['stroke-linejoin', 'round']])];
+}
+
+// Plan a route's drawing: the cased closed line and its chevrons, the pins,
+// then the Office on top (the line starts and ends under it).
 function planned(r, dx) {
   const out = [];
   if (r.stops.length) {
-    out.push(el('polyline', [
-      ['points', pointList([r.office, ...r.stops, r.office], dx)], ['fill', 'none'], ['stroke', paletteOf(r.crew).fill],
-      ['stroke-width', 4], ['stroke-linejoin', 'round'], ['stroke-linecap', 'round'], ['stroke-dasharray', dashOf(r.crew)],
-    ]));
+    const loop = [r.office, ...r.stops, r.office];
+    const points = pointList(loop, dx);
+    out.push(
+      el('polyline', [['points', points], ['fill', 'none'], ['stroke', '#FFFFFF'], ['stroke-width', LINE.casing], ['stroke-linejoin', 'round'], ['stroke-linecap', 'round']]),
+      el('polyline', [
+        ['points', points], ['fill', 'none'], ['stroke', paletteOf(r.crew).fill],
+        ['stroke-width', LINE.width], ['stroke-linejoin', 'round'], ['stroke-linecap', 'round'], ['stroke-dasharray', dashOf(r.crew)],
+      ]),
+    );
+    for (let i = 1; i < loop.length; i += 1) out.push(...legArrow(loop[i - 1], loop[i], dx));
   }
-  r.stops.forEach((s, i) => out.push(...stopMarker(s, i + 1, paletteOf(r.crew), dx)));
+  r.stops.forEach((s, i) => out.push(...pin(s, i + 1, paletteOf(r.crew), dx)));
   out.push(...office(r.office, dx));
   return out;
 }
@@ -448,11 +546,14 @@ function imageSize(view, frame) {
 // street tiles (base 'streets', Story 15.10, AD-R21) a translucent white wash,
 // set by attribute (no url(), no style), so the plot reads over the streets.
 const BASES = Object.freeze(['plain', 'streets']);
+// Plan a route's map washes the streets more (Story 15.18, AD-R29), so its
+// pins and line stand out; Routing's four views keep 0.45.
 const WASH_OPACITY = '0.45';
+const ROUTE_WASH_OPACITY = '0.6';
 
-function background(base, width, height) {
+function background(view, base, width, height) {
   const attrs = [['x', 0], ['y', 0], ['width', width], ['height', height], ['fill', '#FFFFFF']];
-  if (base === 'streets') attrs.push(['fill-opacity', WASH_OPACITY]);
+  if (base === 'streets') attrs.push(['fill-opacity', view === 'route' ? ROUTE_WASH_OPACITY : WASH_OPACITY]);
   return el('rect', attrs);
 }
 
@@ -468,7 +569,7 @@ function renderSvg(view, model, options = {}) {
   const { width, height } = imageSize(view, frame);
   const lines = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
-    background(base, width, height),
+    background(view, base, width, height),
   ];
   drawing.panels.forEach((p, i) => lines.push(...panel(p, i * frame.width)));
   if (drawing.panels.length === 2) lines.push(el('line', [['x1', frame.width], ['y1', 0], ['x2', frame.width], ['y2', height], ['stroke', '#999999'], ['stroke-width', 2]]));
@@ -483,5 +584,5 @@ const panelCount = (view) => {
 };
 
 module.exports = {
-  renderSvg, imageSize, panelCount, VIEWS, BASES, PALETTE, MAX_COLOR, MAX_CANDIDATES,
+  renderSvg, imageSize, panelCount, VIEWS, BASES, PALETTE, MAX_COLOR, MAX_CANDIDATES, FLAGS, FLAG_COLORS,
 };
