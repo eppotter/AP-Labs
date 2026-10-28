@@ -22,9 +22,11 @@ const { createMapFiles, REUSE_MS } = require('../../kit/runtime/slack/image');
 const { createEngineJobs } = require('../../kit/runtime/jobs');
 const { renderPng } = require('../../kit/runtime/routing-map');
 const { RoutingFault, DataUnavailable } = require('../../kit/runtime/errors');
-const { MAP_WORDS, ROUTE_WORDS } = require('../../kit/runtime/messages');
+const { MAP_WORDS, ROUTE_WORDS, escapeName } = require('../../kit/runtime/messages');
 const { ID_PATTERN } = require('../../kit/runtime/archetypes/routing-map/session');
-const { parseMove, movesAt, MAX_STOPS } = require('../../kit/runtime/archetypes/routing-map/editor');
+const {
+  parseMove, movesAt, optimizedWords, shortDay, headerText, MAX_STOPS,
+} = require('../../kit/runtime/archetypes/routing-map/editor');
 const routing = require('../../kit/runtime/routing');
 const { FakeSlackApp } = require('../fixtures/fake-slack');
 const fx = require('../fixtures/routing-map/adapter');
@@ -47,7 +49,7 @@ const U = Object.freeze({
   ghost: { id: 'ULEADGHOST', name: 'lead ghost' },
   member: { id: 'UMEMBER', name: 'member' },
 });
-const NOTE = "Times and driving are from the Office at 08:00. Routing's other views start from each crew's base.";
+const CAPTION = 'Estimates from the Office at 08:00 · suggestions only, nothing is saved';
 const UPDATING = 'Map updating…';
 const NOT_UPDATED = 'Map not updated; the list is current.';
 const DATA_DOWN = "The data isn't available right now, so I can't answer that. The app is still running; please tell your admin.";
@@ -123,7 +125,7 @@ function setup({
 const calls = (app, method) => app.views.filter((v) => v.method === method).map((v) => v.args);
 const lastView = (app) => app.views.at(-1).args.view;
 const blocksOf = (view, type) => view.blocks.filter((b) => b.type === type);
-const texts = (view) => blocksOf(view, 'section').map((b) => b.text.text);
+const texts = (view) => blocksOf(view, 'section').filter((b) => b.text).map((b) => b.text.text);
 const contexts = (view) => blocksOf(view, 'context').map((b) => b.elements.map((e) => e.text).join(''));
 const open = (ctx, user = U.dispatch, id = 'route-planner') => ctx.app.dispatchAction(`${id}:open`, { user, view: MENU });
 const pick = (value) => ({ type: 'static_select', selected_option: { value, text: { type: 'plain_text', text: value } } });
@@ -164,7 +166,9 @@ const topButtons = (view) => blocksOf(view, 'actions').find((b) => /^routing-map
 const versionOf = (view) => Number(topButtons(view).block_id.split(':').at(-1));
 // "Client, Area" per row, from its first line "<n> *hh:mm Client* · Area".
 const orderOf = (view) => rows(view).map((r) => r.text.split('\n')[0].replace(/^\S+ \*\d\d:\d\d (\(next day\) )?/, '').replace('* · ', ', '));
-const header = (view) => texts(view)[0];
+const header = (view) => blocksOf(view, 'header')[0].text.text;
+// The four summary fields under the header (Story 15.17).
+const fields = (view) => view.blocks.find((b) => b.type === 'section' && /^routing-map:summary:/.test(b.block_id)).fields.map((f) => f.text);
 const imageOf = (view) => blocksOf(view, 'image')[0];
 
 // Opens Plan a route and shows a crew's stops (v1 by default).
@@ -244,7 +248,7 @@ test('step 1: a crew is kept with no redraw, a day in range redraws step 1 with 
 
 // --- step 2 ---------------------------------------------------------------------
 
-test('Show stops: the header totals, the image, the fixed note, the actions row, the Office first and last and one section per stop with a ⋯ menu; no up or first on the first, no down or last on the last; no actions row per stop', async () => {
+test('Show stops: the header block, the four summary fields, the actions row (Optimize primary), the caption, the image, the Office bookends and one section per stop with a ⋯ menu; no up or first on the first, no down or last on the last; no actions row per stop', async () => {
   const ctx = setup();
   const view = await shown(ctx);
   // First the list at once with "Map updating…", then the map.
@@ -253,26 +257,29 @@ test('Show stops: the header totals, the image, the fixed note, the actions row,
   assert.deepEqual(contexts(list)[0], UPDATING);
   assert.equal(map, view);
   assert.deepEqual(view.blocks.map((b) => b.type), [
-    'section', 'image', 'context', 'actions', 'section',
+    'header', 'section', 'actions', 'context', 'image', 'section',
     'section', 'section', 'section', 'section', 'section',
   ]);
-  assert.equal(header(view), '*Maple crew, Monday 2026-11-02*\nDrive 28 min · about 17 km · last stop done 14:25 · back at Office 14:31 · no rule breaks');
+  assert.deepEqual(blocksOf(view, 'header')[0].text, { type: 'plain_text', text: 'Maple crew · Mon 2 Nov', emoji: false });
+  assert.deepEqual(fields(view), ['🚐 *Drive*\n28 min', '📏 *Distance*\nabout 17 km', '🏁 *Back at Office*\n14:31', '✅ *Rule breaks*\nnone']);
+  assert.ok(view.blocks[1].fields.every((f) => f.type === 'mrkdwn'));
   assert.deepEqual(imageOf(view), { type: 'image', slack_file: { id: 'F1' }, alt_text: 'Route map: Planned route, Maple crew, 4 stops' });
-  assert.deepEqual(contexts(view), [NOTE], 'no street map in this profile: no caption; the note');
-  assert.deepEqual(topButtons(view).elements.map((e) => [e.action_id, e.text.text, e.accessibility_label]), [
-    ['routing-map:optimize', 'Optimize', 'Optimize the order from the Office'],
-    ['routing-map:reset', 'Reset to booked', 'Put the stops back in the booked order'],
-    ['routing-map:change', 'Change crew or day', 'Change the crew or the day'],
+  assert.deepEqual(contexts(view), [CAPTION], 'no street map in this profile: no attribution; the caption above the image');
+  assert.ok(!JSON.stringify(view).includes("Routing's other views"), 'the old note is gone');
+  assert.deepEqual(topButtons(view).elements.map((e) => [e.type, e.action_id, e.text.text, e.accessibility_label, e.style]), [
+    ['button', 'routing-map:optimize', 'Optimize', 'Optimize the order from the Office', 'primary'],
+    ['button', 'routing-map:reset', 'Reset to booked', 'Put the stops back in the booked order', undefined],
+    ['button', 'routing-map:change', 'Change crew or day', 'Change the crew or the day', undefined],
   ]);
   assert.deepEqual(texts(view), [
-    header(view),
-    'Office · leave 07:55',
+    '🏠 *Leave Office* 07:55',
     '1️⃣ *08:00 Ana Ruiz* · Riverton\n🚐 5 min',
     '2️⃣ *10:10 Ben Ode* · Riverton\n🚐 6 min',
     '3️⃣ *11:45 Cara Lind* · Lakeside\n🚐 5 min',
     '4️⃣ *12:55 Dev Patel* · Lakeside\n🚐 6 min',
-    'Office · back 14:31',
+    '🏠 *Back at Office* 14:31',
   ]);
+  assert.equal(blocksOf(view, 'context').filter((b) => /^routing-map:after:/.test(b.block_id)).length, 0, 'no stop finishes past 17:00: no "After" line');
   const r = rows(view);
   for (const x of r) {
     assert.equal(x.accessory.type, 'overflow');
@@ -316,25 +323,25 @@ test('the total distance is the route\'s, Office to Office, in whole km; a leg\'
   const legs = [OFFICE, ...V1_NODES, OFFICE];
   let tenths = 0;
   for (let i = 1; i < legs.length; i += 1) tenths += km.get(`${legs[i - 1]}>${legs[i]}`);
-  assert.match(header(view), new RegExp(` about ${Math.round(tenths / 10)} km `));
+  assert.equal(fields(view)[1], `📏 *Distance*\nabout ${Math.round(tenths / 10)} km`);
   const all = JSON.stringify(ctx.app.views);
-  assert.equal((all.match(/ km/g) || []).length, calls(ctx.app, 'update').filter((u) => /about \d+ km/.test(JSON.stringify(u))).length, 'only the header says km');
+  assert.equal((all.match(/ km/g) || []).length, calls(ctx.app, 'update').filter((u) => /about \d+ km/.test(JSON.stringify(u))).length, 'only the Distance field says km');
 });
 
-test('a row with a rule break shows it shortened on its second line, and the header counts them with the hard ones', async () => {
+test('a row with a rule break shows it shortened on its second line, and the Rule breaks field counts them with the hard ones', async () => {
   const day = JSON.parse(JSON.stringify(DAY));
   day.stops.find((s) => s.stopId === 's1').locked = true;
   const ctx = setup({ data: fx.fakeData({ day }) });
   let view = await shown(ctx);
-  assert.match(header(view), /· no rule breaks$/);
+  assert.equal(fields(view)[3], '✅ *Rule breaks*\nnone');
   await menu(ctx, moveOf(view, 1, 'down'));
   view = lastView(ctx.app);
   assert.deepEqual(orderOf(view), ['Ben Ode, Riverton', 'Ana Ruiz, Riverton', 'Cara Lind, Lakeside', 'Dev Patel, Lakeside']);
-  assert.match(header(view), /· 1 rule break \(1 hard\)$/);
+  assert.equal(fields(view)[3], '🔴 *Rule breaks*\n1 (1 hard)');
   assert.equal(rows(view)[1].text, '2️⃣ *09:40 Ana Ruiz* · Riverton\n🚐 6 min · 🔴 missed locked start (starts 09:40)');
 });
 
-test('times past 24:00 show as "hh:mm (next day)"', async () => {
+test('times past 24:00 show as "hh:mm (next day)" in the rows and "hh:mm (+1 day)" in the summary and the Office row; back past the latest finish is 🔴; the "After 17:00" line sits before the first stop finishing past the aim', async () => {
   const day = JSON.parse(JSON.stringify(DAY));
   Object.assign(day.stops.find((s) => s.stopId === 's4'), { locked: true, start: 1400 });
   const ctx = setup({ data: fx.fakeData({ day }) });
@@ -342,8 +349,16 @@ test('times past 24:00 show as "hh:mm (next day)"', async () => {
   // Two breaks: the hard one (crew day limits) shows, before the soft
   // aim-finish, which is counted.
   assert.equal(rows(view)[3].text, '4️⃣ *23:20 Dev Patel* · Lakeside\n🚐 6 min · 🔴 over crew day (ends 00:50 next day) · +1 more');
-  assert.match(header(view), /last stop done 00:50 \(next day\) · back at Office 00:56 \(next day\) · /);
-  assert.equal(texts(view).at(-1), 'Office · back 00:56 (next day)\n⚠ crew day limits: back after 19:00');
+  assert.equal(fields(view)[2], '🏁 *Back at Office*\n00:56 (+1 day)');
+  assert.equal(fields(view)[3], '🔴 *Rule breaks*\n3 (2 hard)', 'two at the stop, one hard; the late return, hard');
+  assert.equal(texts(view).at(-1), '🏠 *Back at Office* 00:56 (+1 day)\n🔴 past the crew day\'s end (19:00)');
+  // The aim-finish line: one, straight before stop 4 (the first to finish past 17:00).
+  const after = view.blocks.filter((b) => b.type === 'context' && /^routing-map:after:/.test(b.block_id));
+  assert.equal(after.length, 1);
+  assert.deepEqual(after[0].elements.map((e) => e.text), ['After 17:00']);
+  const at = view.blocks.indexOf(after[0]);
+  assert.match(view.blocks[at + 1].block_id, /^routing-map:stop:4:/);
+  assert.match(view.blocks[at - 1].block_id, /^routing-map:stop:3:/);
 });
 
 test('a reorder reads nothing: one mapPoints read on Show stops (the Office and the stops), none on a tap', async () => {
@@ -385,7 +400,7 @@ test('↓: the list updates first under the same file with "Map updating…", th
   view = lastView(ctx.app);
   assert.equal(ctx.app.uploads.length, 2);
   assert.equal(imageOf(view).slack_file.id, 'F2');
-  assert.deepEqual(contexts(view), [NOTE], '"Map updating…" gone');
+  assert.deepEqual(contexts(view), [CAPTION], '"Map updating…" gone');
   assert.deepEqual(ctx.app.deleted, ['F1']);
   assert.deepEqual(ctx.store.mapFilesOf('UDISPATCH:V1'), ['F2']);
   assert.deepEqual(ctx.models.at(-1).model.route.stops.map((s) => s.node), ['property:s2', 'property:s1', 'property:s3', 'property:s4']);
@@ -518,15 +533,23 @@ test('Optimize: the order is optimizeDay\'s from the Office; tapped again, "Alre
   assert.deepEqual(expected, ['s1', 's3', 's2', 's4']);
   assert.deepEqual(ctx.models.at(-1).model.route.stops.map((s) => s.node), expected.map((s) => `property:${s}`));
   assert.deepEqual(orderOf(opt), ['Ana Ruiz, Riverton', 'Cara Lind, Lakeside', 'Ben Ode, Riverton', 'Dev Patel, Lakeside']);
-  assert.equal(header(opt), '*Maple crew, Monday 2026-11-02*\nDrive 26 min · about 12 km · last stop done 14:15 · back at Office 14:21 · no rule breaks');
+  assert.deepEqual(fields(opt), ['🚐 *Drive*\n26 min', '📏 *Distance*\nabout 12 km', '🏁 *Back at Office*\n14:21', '✅ *Rule breaks*\nnone']);
+  // The status line, before → after, above the caption; kept with the new map.
+  const status = 'Optimized: drive 28 min → 26 min (\u22122 min), back 14:31 → 14:21';
+  assert.deepEqual(contexts(opt), [status, CAPTION]);
+  const [optList] = calls(ctx.app, 'update').slice(-2).map((u) => u.view);
+  assert.deepEqual(contexts(optList), [`${status}\n${UPDATING}`, CAPTION], 'the list first: the status and "Map updating…"');
   const uploads = ctx.app.uploads.length;
   await tap(ctx, 'optimize', `${versionOf(opt)}:optimize`);
   const again = lastView(ctx.app);
-  assert.equal(contexts(again)[0], ROUTE_WORDS.best());
+  assert.deepEqual(contexts(again), [ROUTE_WORDS.best(), CAPTION]);
   assert.equal(ROUTE_WORDS.best(), 'Already the best order found.');
   assert.equal(imageOf(again).slack_file.id, imageOf(opt).slack_file.id, 'the map shown already is of this order');
   assert.equal(ctx.app.uploads.length, uploads, 'no new map');
   assert.equal(versionOf(again), versionOf(opt));
+  // A move after Optimize: the status line goes.
+  await menu(ctx, moveOf(again, 1, 'down'));
+  assert.deepEqual(contexts(lastView(ctx.app)), [CAPTION]);
 });
 
 test('Optimize: stops it cannot place are appended in booked order and flagged; nothing is dropped', async () => {
@@ -563,6 +586,8 @@ test('Reset to booked: the booked order, with times estimated again from the Off
   const view = lastView(ctx.app);
   assert.deepEqual(texts(view).slice(1), texts(booked).slice(1));
   assert.equal(header(view), header(booked));
+  assert.deepEqual(fields(view), fields(booked));
+  assert.deepEqual(contexts(view), [CAPTION], 'no Optimize line after Reset');
   assert.deepEqual(ctx.models.at(-1).model.route.stops.map((s) => s.node), V1_NODES);
 });
 
@@ -577,7 +602,7 @@ test('a crew lead: only their crew is offered; a crafted crewId still gives thei
   await choose(ctx, 'crew', pick('v3'), { user: U.leadA });
   await show(ctx, { user: U.leadA });
   const view = lastView(ctx.app);
-  assert.match(header(view), /^\*Maple crew, /);
+  assert.match(header(view), /^Maple crew · /);
   assert.deepEqual(spy.seen.route, [{
     day: DAY.day, crewId: 'v1', depot: OFFICE, scope: { crewId: 'v1' },
   }]);
@@ -670,7 +695,7 @@ test('picking another day reads that day\'s crews once and offers them; a lead k
   [actions] = blocksOf(lastView(lead.app), 'actions');
   assert.deepEqual(actions.elements[0].options.map((o) => o.value), ['v1'], 'their crew again on a day it works');
   await show(lead, { user: U.leadA });
-  assert.match(header(lastView(lead.app)), /^\*Maple crew, Monday 2026-11-02\*/);
+  assert.equal(header(lastView(lead.app)), 'Maple crew · Mon 2 Nov');
 });
 
 test('the crew\'s map colour is the one Routing\'s views give it (its place among the day\'s crews), not always 0 (PR #248 review)', async () => {
@@ -701,7 +726,10 @@ test('a person outside the audience is refused at Open; nothing is read', async 
 test('the crew is out that day: a banner, and the list is read-only (no ⋯ menus, no Optimize); a crafted move is refused', async () => {
   const ctx = setup();
   const view = await shown(ctx, { crew: 'v2' });
-  assert.equal(texts(view)[1], `*${ROUTE_WORDS.crewOut('Birch crew', 'Monday 2026-11-02')}*`);
+  assert.equal(header(view), 'Birch crew · Mon 2 Nov');
+  assert.equal(fields(view).length, 4, 'the summary still shows');
+  assert.equal(texts(view)[0], `*${ROUTE_WORDS.crewOut('Birch crew', 'Monday 2026-11-02')}*`);
+  assert.deepEqual(topButtons(view).elements.map((e) => [e.type, e.text.text]), [['button', 'Change crew or day']]);
   assert.equal(ROUTE_WORDS.crewOut('Birch crew', 'Monday 2026-11-02'), 'Birch crew is marked out on Monday 2026-11-02. The list is read-only.');
   assert.deepEqual(topButtons(view).elements.map((e) => e.action_id), ['routing-map:change']);
   assert.equal(rows(view).length, 3);
@@ -777,7 +805,11 @@ test('40 stops fit one view in fewer than 60 blocks: every block within Slack\'s
   const view = await shown(ctx);
   assert.equal(rows(view).length, 40);
   assert.ok(view.blocks.length < 60, `${view.blocks.length} blocks`);
-  assert.equal(view.blocks.length, 47, 'header, image, the ring legend, note, actions, two Office rows, 40 stop rows');
+  assert.equal(view.blocks.length, 49, 'header, fields, actions, caption, image, the ring legend, two Office rows, the "After" line, 40 stop rows');
+  assert.equal(blocksOf(view, 'header').length, 1);
+  assert.equal(blocksOf(view, 'context').filter((b) => /^routing-map:after:/.test(b.block_id)).length, 1);
+  // With the status line and a street map's attribution as well: still far under 100.
+  assert.ok(view.blocks.length + 2 < 100);
   const ids = view.blocks.map((b) => b.block_id).filter(Boolean);
   assert.equal(new Set(ids).size, ids.length);
   assert.equal(rows(view)[0].text.split(' ')[0], '1️⃣');
@@ -1307,7 +1339,8 @@ test('a street map (Story 15.10): the attribution straight under the image, kept
   const list = calls(ctx.app, 'update').at(-2).view;
   const i = list.blocks.findIndex((b) => b.type === 'image');
   assert.equal(list.blocks[i + 1].elements[0].text, caption, 'the reused image keeps its caption');
-  assert.equal(list.blocks[i + 2].elements[0].text, UPDATING);
+  assert.deepEqual(contexts(list).slice(0, 2), [UPDATING, CAPTION], 'the status and the caption above the image');
+  assert.equal(list.blocks[i - 1].elements[0].text, CAPTION);
 });
 
 test('a click from outside a modal is told to open it in its window', async () => {
@@ -1338,4 +1371,74 @@ test('Story 15.18: each stop\'s map flag is its hardest rule break from evaluate
   const plain = await shown(calm);
   assert.ok(calm.models.at(-1).model.route.stops.every((s) => s.flag === 'none'));
   assert.ok(!contexts(plain).includes(ROUTE_WORDS.legend()));
+});
+
+// --- Story 15.17: the summary header (AD-R29) -------------------------------------------------
+
+test('Story 15.17: the Optimize line reads drive and back time before → after; hours as "1 h 37", past midnight "(+1 day)", no change in drive no bracket', () => {
+  const ev = (driveMinutes, backAt) => ({ cost: { driveMinutes }, backAt });
+  assert.equal(optimizedWords(ev(97, 1420), ev(85, 1390)), 'Optimized: drive 1 h 37 → 1 h 25 (\u221212 min), back 23:40 → 23:10');
+  assert.equal(optimizedWords(ev(52, 1446), ev(61, 1430)), 'Optimized: drive 52 min → 1 h 01 (+9 min), back 00:06 (+1 day) → 23:50');
+  assert.equal(optimizedWords(ev(30, 900), ev(30, 890)), 'Optimized: drive 30 min → 30 min, back 15:00 → 14:50');
+  assert.equal(shortDay('2026-10-03'), 'Sat 3 Oct');
+  assert.equal(shortDay('2026-11-02'), 'Mon 2 Nov');
+  assert.equal(ROUTE_WORDS.breaksField(3, 0), '🟠 *Rule breaks*\n3 (0 hard)', 'soft only: orange');
+  assert.equal(ROUTE_WORDS.breaksField(5, 2), '🔴 *Rule breaks*\n5 (2 hard)');
+  assert.equal(ROUTE_WORDS.breaksField(0, 0), '✅ *Rule breaks*\nnone');
+});
+
+test('Story 15.17: the caption and the Office rows name the Office from the profile and the start time from the day\'s limits, never fixed words', async () => {
+  const day = JSON.parse(JSON.stringify(DAY));
+  day.limits.defaultStart = 510;
+  const yard = { ...profile, routing: { ...profile.routing, depot: { ...profile.routing.depot, label: 'Main Yard' } } };
+  const ctx = setup({ data: fx.fakeData({ day }), profile: yard });
+  const view = await shown(ctx);
+  assert.deepEqual(contexts(view), ['Estimates from the Main Yard at 08:30 · suggestions only, nothing is saved']);
+  assert.match(texts(view)[0], /^🏠 \*Leave Main Yard\* \d\d:\d\d$/);
+  assert.match(texts(view).at(-1), /^🏠 \*Back at Main Yard\* \d\d:\d\d$/);
+  assert.match(fields(view)[2], /^🏁 \*Back at Main Yard\*\n\d\d:\d\d$/);
+});
+
+test('Story 15.17 (#256): a client, area or Office name holding * _ ~ or ` can\'t break the row\'s bold; the header is plain_text, so the crew\'s name shows as written; the longest label fits Slack\'s 150, and longer text would be cut', async () => {
+  // A label is at most 100 characters (index.js checkLabels).
+  const long = `Maple ${'x'.repeat(94)}`;
+  // Replaces only the labels asked for (the crew list asks for crews only).
+  const swap = (over) => (got) => ({ ...got, ...Object.fromEntries(Object.entries(over).filter(([k]) => k in got)) });
+  const spy = spyAdapter({
+    editLabels: swap({
+      'crew:v1': { crewName: long },
+      'property:s1': { clientName: 'Ana *Ruiz*', city: 'River_ton ~x` & <y>' },
+    }),
+  });
+  const starred = { ...profile, routing: { ...profile.routing, depot: { ...profile.routing.depot, label: 'Office *HQ*' } } };
+  const ctx = setup({ mod: editorModule({ createAdapter: spy.createAdapter }), profile: starred });
+  const view = await shown(ctx);
+  assert.equal(rows(view)[0].text.split('\n')[0], '1️⃣ *08:00 Ana \u2217Ruiz\u2217* · River\u02CDton \u223Cx\u02CB &amp; &lt;y&gt;');
+  assert.equal(texts(view)[0], '🏠 *Leave Office \u2217HQ\u2217* 07:55');
+  assert.equal(escapeName('a*b_c~d`e&'), 'a\u2217b\u02CDc\u223Cd\u02CBe&amp;');
+  assert.equal(header(view), `${long} · Mon 2 Nov`, 'the longest label, whole (the fake checks the 150)');
+  const cut = headerText(`Maple ${'x'.repeat(200)}\n · Mon 2 Nov`);
+  assert.equal(Array.from(cut).length, 150, 'cut to Slack\'s 150');
+  assert.ok(cut.startsWith('Maple xxx') && cut.endsWith('…') && !cut.includes('\n'));
+  assert.equal(headerText('Maple  crew\n· Mon 2 Nov'), 'Maple crew · Mon 2 Nov', 'one line');
+  // A short name with marks shows as written in the plain_text header.
+  const plain = spyAdapter({ editLabels: swap({ 'crew:v1': { crewName: 'Maple & *Co*' } }) });
+  const c2 = setup({ mod: editorModule({ createAdapter: plain.createAdapter }) });
+  assert.equal(header(await shown(c2)), 'Maple & *Co* · Mon 2 Nov');
+});
+
+test('Story 15.17: the fake refuses a header Slack would refuse (not plain_text, empty, over 150 characters), a section with more than 10 fields, and a field over 2000 characters; it accepts the limits', async () => {
+  const app = new FakeSlackApp({ views: true });
+  const view = (blocks) => ({ type: 'modal', title: { type: 'plain_text', text: 'Plan a route' }, blocks });
+  const update = (v) => app.client.views.update({ view_id: 'V1', view: v });
+  const refused = (v, what) => assert.rejects(update(v), (e) => e.data.error === 'invalid_blocks', what);
+  const headerBlock = (text, type = 'plain_text') => ({ type: 'header', text: { type, text } });
+  const field = (text) => ({ type: 'mrkdwn', text });
+  const section = (list) => ({ type: 'section', fields: list });
+  await update(view([headerBlock('x'.repeat(150)), section(Array.from({ length: 10 }, () => field('y'.repeat(2000))))]));
+  await refused(view([headerBlock('x'.repeat(151))]), 'header over 150');
+  await refused(view([headerBlock('x', 'mrkdwn')]), 'header not plain_text');
+  await refused(view([headerBlock('')]), 'header empty');
+  await refused(view([section(Array.from({ length: 11 }, () => field('y')))]), 'more than 10 fields');
+  await refused(view([section([field('y'.repeat(2001))])]), 'a field over 2000');
 });

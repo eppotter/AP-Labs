@@ -70,7 +70,9 @@
 // refuses it (invalid_blocks): fewer than 2 or more than 5 options, an
 // option's text not plain_text of 1 to 75 characters, an option's value
 // missing or over 150 characters, and an accessibility_label (an overflow
-// has none). With
+// has none). Story 15.17 adds the header block and a section's fields
+// (invalid_blocks): a header's text not plain_text of 1 to 150 characters,
+// more than 10 fields, a field's text over 2000 characters. With
 // this.checkHashes set, a views.update whose hash is not the view's current
 // one (for a view this fake opened or pushed) answers hash_conflict, as
 // Slack does; it is off by default because older tests replay a click's
@@ -382,6 +384,9 @@ const SELECTS = new Set(['static_select', 'datepicker']);
 const MIN_OVERFLOW_OPTIONS = 2;
 const MAX_OVERFLOW_OPTIONS = 5;
 const MAX_OPTION_VALUE = 150;
+const MAX_HEADER_TEXT = 150;
+const MAX_FIELDS = 10;
+const MAX_FIELD_TEXT = 2000;
 
 // Why Slack would reject this view's frame (title, blocks, metadata), or null.
 function invalidView(view) {
@@ -406,6 +411,14 @@ function invalidElements(view) {
       blockIds.add(b.block_id);
     }
     if (b.type === 'section' && b.text && typeof b.text.text === 'string' && b.text.text.length > MAX_SECTION_TEXT) return `a section's text is over ${MAX_SECTION_TEXT} characters`;
+    if (b.type === 'header') {
+      const text = b.text && b.text.text;
+      if (!b.text || b.text.type !== 'plain_text' || typeof text !== 'string' || !text || Array.from(text).length > MAX_HEADER_TEXT) return `a header's text is plain_text of 1 to ${MAX_HEADER_TEXT} characters`;
+    }
+    if (b.type === 'section' && b.fields !== undefined) {
+      if (!Array.isArray(b.fields) || b.fields.length === 0 || b.fields.length > MAX_FIELDS) return `a section holds 1 to ${MAX_FIELDS} fields`;
+      if (b.fields.some((f) => !f || typeof f.text !== 'string' || !f.text || f.text.length > MAX_FIELD_TEXT)) return `a field's text is 1 to ${MAX_FIELD_TEXT} characters`;
+    }
     if (b.type === 'actions' && (!Array.isArray(b.elements) || b.elements.length > MAX_ACTIONS_ELEMENTS)) return `an actions block holds 1 to ${MAX_ACTIONS_ELEMENTS} elements`;
     const elements = b.type === 'actions' ? b.elements : [b.accessory, b.element].filter(Boolean);
     const actionIds = new Set();

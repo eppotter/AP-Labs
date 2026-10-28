@@ -23,6 +23,17 @@ function escapeText(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// A name shown inside mrkdwn formatting (a bold client, the Office in a bold
+// label): escaped, and with Slack's formatting marks (* _ ~ `) swapped for
+// look-alikes, so a name holding one can't end the bold early or start
+// italics or strikethrough (#256). Slack mrkdwn has no backslash escape.
+const LOOKALIKE = Object.freeze({
+  '*': '\u2217', _: '\u02CD', '~': '\u223C', '`': '\u02CB',
+});
+function escapeName(s) {
+  return escapeText(s).replace(/[*_~`]/g, (ch) => LOOKALIKE[ch]);
+}
+
 const sentWords = ({ items }) => `${items} ${items === 1 ? 'item was' : 'items were'} sent`;
 // When what went could not be recorded (sent.recorded false), a retry may send
 // it again, so the next step is always a check first, never a retry (#89).
@@ -130,7 +141,19 @@ const ROUTE_WORDS = Object.freeze({
   expired: (label) => `This plan has expired, go back and open ${label} again.`,
   updating: () => 'Map updating…',
   notUpdated: () => 'Map not updated; the list is current.',
-  note: (office, time) => `Times and driving are from the ${office} at ${time}. Routing's other views start from each crew's base.`,
+  // Story 15.17 (AD-R29): the caption at the top of step 2, the status line
+  // after Optimize, the Office bookends, the aim-finish divider and the four
+  // summary fields. Times are clock strings the caller builds.
+  caption: (office, time) => `Estimates from the ${office} at ${time} · suggestions only, nothing is saved`,
+  optimized: (drive, back) => `Optimized: drive ${drive}, back ${back}`,
+  leave: (office, time) => `🏠 *Leave ${office}* ${time}`,
+  back: (office, time) => `🏠 *Back at ${office}* ${time}`,
+  lateBack: (time) => `🔴 past the crew day's end (${time})`,
+  after: (time) => `After ${time}`,
+  drive: (words) => `🚐 *Drive*\n${words}`,
+  distance: (km) => `📏 *Distance*\nabout ${km} km`,
+  backField: (office, time) => `🏁 *Back at ${office}*\n${time}`,
+  breaksField: (total, hard) => (total ? `${hard ? '🔴' : '🟠'} *Rule breaks*\n${total} (${hard} hard)` : '✅ *Rule breaks*\nnone'),
   noStops: (crew, day) => `${crew} has no stops booked on ${day}, so there is nothing to plan.`,
   tooMany: (crew, n, max) => `${crew} has too many stops to plan here (${n}; at most ${max}).`,
   notWorking: (crew, day) => `${crew} isn't working on ${day}, so there is nothing to plan.`,
@@ -303,5 +326,5 @@ function messageFor(err, { admin = 'your admin' } = {}) {
 }
 
 module.exports = {
-  messageFor, escapeText, welcomeText, feedbackText, joinWelcomeText, pushResultText, READ_WORDS, MAP_WORDS, ROUTE_WORDS,
+  messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, READ_WORDS, MAP_WORDS, ROUTE_WORDS,
 };
