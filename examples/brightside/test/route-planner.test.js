@@ -519,7 +519,9 @@ function hub() {
 }
 
 const viewOf = (app) => app.views.at(-1).args.view;
-const sectionTexts = (view) => view.blocks.filter((b) => b.type === 'section').map((b) => b.text.text);
+const sectionTexts = (view) => view.blocks.filter((b) => b.type === 'section' && b.text).map((b) => b.text.text);
+// The summary under the header block (Story 15.17): Drive, Distance, Back at Office, Rule breaks.
+const summaryOf = (view) => view.blocks.find((b) => b.type === 'section' && Array.isArray(b.fields)).fields.map((f) => f.text);
 const settle = async (n = 30) => { for (let i = 0; i < n; i += 1) await new Promise((r) => { setImmediate(r); }); };
 function act(ctx, which, payload, user) {
   const v = viewOf(ctx.app);
@@ -540,9 +542,15 @@ test('through the hub: a dispatcher opens Plan a route, picks crew 4 on S1\'s da
   await settle();
   const view = viewOf(ctx.app);
   const texts = sectionTexts(view);
-  assert.match(texts[0], /\nDrive (\d+ h )?\d+ min · about \d+ km · last stop done \d\d:\d\d · back at Office \d\d:\d\d · /);
-  assert.match(texts[1], /^Office · leave \d\d:\d\d$/);
-  assert.match(texts.at(-1), /^Office · back \d\d:\d\d/);
+  assert.match(view.blocks[0].text.text, /^.+ · (Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2} [A-Z][a-z]{2}$/, 'the header block: crew and day');
+  const summary = summaryOf(view);
+  assert.equal(summary.length, 4);
+  assert.match(summary[0], /^🚐 \*Drive\*\n(\d+ h \d\d|\d+) min$/);
+  assert.match(summary[1], /^📏 \*Distance\*\nabout \d+ km$/);
+  assert.match(summary[2], /^🏁 \*Back at Office\*\n\d\d:\d\d( \(\+1 day\))?$/);
+  assert.match(summary[3], /^(✅|🟠|🔴) \*Rule breaks\*\n(none|\d+ \(\d+ hard\))$/);
+  assert.match(texts[0], /^🏠 \*Leave Office\* \d\d:\d\d$/);
+  assert.match(texts.at(-1), /^🏠 \*Back at Office\* \d\d:\d\d/);
   const stops = (await crewsWithStops(day)).find(([id]) => id === '4')[1];
   const isStop = (t) => /^\S+ \*\d\d:\d\d /.test(t);
   const client = (t) => t.split('*')[1];
@@ -577,7 +585,7 @@ test('through the hub: a crew lead gets their own crew\'s day from the Office', 
   await settle();
   const texts = sectionTexts(viewOf(ctx.app));
   const stops = (await crewsWithStops(day)).find(([id]) => id === lead)[1];
-  assert.match(texts[1], /^Office · leave /);
+  assert.ok(texts.some((t) => /^🏠 \*Leave Office\* /.test(t)));
   const isStop = (t) => /^\S+ \*\d\d:\d\d /.test(t);
   const client = (t) => t.split('*')[1];
   assert.equal(texts.filter(isStop).length, stops);

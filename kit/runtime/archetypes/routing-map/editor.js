@@ -6,11 +6,18 @@
 //
 //   step 1  a crew select (a crew lead sees only their own crew), a date
 //           picker (the archetype's day range, AD-R16) and Show stops.
-//   step 2  a header line (drive time, about N km, last stop done, back at
-//           the Office, the rule breaks), the map and its caption, a fixed
-//           note, an actions row (Optimize, Reset to booked, Change crew or
-//           day), then "Office · leave hh:mm", one section per stop and
-//           "Office · back hh:mm". A stop row (Story 15.16, AD-R29): its
+//   step 2  (Story 15.17, AD-R29) a header block (the crew and the day), a
+//           section of four fields (Drive, Distance, Back at Office, Rule
+//           breaks with the hard count), the crew-out banner when it is out,
+//           an actions row (Optimize, Reset to booked, Change crew or day),
+//           a status line (after Optimize: drive and back time before →
+//           after, or "Already the best order found."; "Map updating…"), a
+//           caption ("Estimates from the Office at 08:00 · suggestions
+//           only, nothing is saved"), the map and its attribution and ring
+//           legend, then "🏠 Leave Office hh:mm", one section per stop (an
+//           "After 18:00" line, the aim-finish, before the first stop that
+//           finishes past it) and "🏠 Back at Office hh:mm" (🔴 past the
+//           latest finish). A stop row (Story 15.16, AD-R29): its
 //           number (keycap emoji 1 to 10, then "11."), the bold time and
 //           client, the area; a second line with the drive minutes and the
 //           hardest rule break (🔴 hard before 🟠 soft), shortened, then
@@ -62,7 +69,9 @@
 const engine = require('../../routing');
 const { compareIds } = require('../../scoring');
 const { RoutingFault, ConfigFault } = require('../../errors');
-const { messageFor, escapeText, ROUTE_WORDS, MAP_WORDS } = require('../../messages');
+const {
+  messageFor, escapeText, escapeName, ROUTE_WORDS, MAP_WORDS,
+} = require('../../messages');
 const { textBlocks } = require('../../slack/format');
 const { altText } = require('../../slack/image');
 const { MAX_COLOR } = require('../../routing-map/svg');
@@ -78,6 +87,10 @@ const MAP_DELAY_MS = 750;
 const MAX_STOP_ID = 128;
 const MAX_OPTIONS = 100;
 const MAX_OPTION_TEXT = 75;
+const MAX_HEADER = 150;
+const MONTHS = Object.freeze(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']);
+const WEEKDAYS = Object.freeze(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+const MINUS = '\u2212';
 const DAY_MINUTES = 24 * 60;
 const SEP = ' · ';
 const WARN = '⚠';
@@ -93,7 +106,6 @@ const fault = (field, problem) => new RoutingFault({ field, problem });
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const unique = (list) => [...new Set(list)];
 const pad2 = (n) => String(n).padStart(2, '0');
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const crewNode = (crewId) => `crew:${crewId}`;
 const plainText = (text) => ({ type: 'plain_text', text, emoji: false });
 const cut = (s, max) => Array.from(String(s)).slice(0, max).join('');
@@ -102,6 +114,33 @@ const cut = (s, max) => Array.from(String(s)).slice(0, max).join('');
 const clockDay = (m) => (Number.isInteger(m) && m >= DAY_MINUTES ? `${clock(m % DAY_MINUTES)} (next day)` : clock(m));
 const numberOf = (k) => (k <= KEYCAPS.length ? KEYCAPS[k - 1] : `${k}.`);
 const driveWords = (m) => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${pad2(m % 60)} min`);
+// A clock time; past 24:00, "hh:mm (+1 day)" (the summary and the Office rows).
+const clockPlus = (m) => (Number.isInteger(m) && m >= DAY_MINUTES ? `${clock(m % DAY_MINUTES)} (+${Math.floor(m / DAY_MINUTES)} day)` : clock(m));
+// A drive time in the Optimize status line: "52 min", "1 h 37".
+const driveShort = (m) => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${pad2(m % 60)}`);
+
+// "Mon 2 Nov" for an ISO day (the header block).
+function shortDay(day) {
+  const [y, m, d] = day.split('-').map(Number);
+  return `${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d} ${MONTHS[m - 1]}`;
+}
+
+// A header block's plain_text: one line, at most 150 characters (code
+// points), "…" when cut.
+function headerText(s) {
+  const chars = Array.from(String(s).replace(/\s+/g, ' ').trim());
+  return chars.length <= MAX_HEADER ? chars.join('') : `${chars.slice(0, MAX_HEADER - 1).join('')}…`;
+}
+
+// Optimize's status line: drive and back time before → after.
+function optimizedWords(before, after) {
+  const delta = after.cost.driveMinutes - before.cost.driveMinutes;
+  const change = delta ? ` (${delta < 0 ? MINUS : '+'}${Math.abs(delta)} min)` : '';
+  return ROUTE_WORDS.optimized(
+    `${driveShort(before.cost.driveMinutes)} → ${driveShort(after.cost.driveMinutes)}${change}`,
+    `${clockPlus(before.backAt)} → ${clockPlus(after.backAt)}`,
+  );
+}
 
 // Waits ms, or less when the signal aborts (a newer click, Back, Close).
 function pause(ms, signal) {
@@ -149,10 +188,11 @@ function moved(order, i, target) {
 
 const sameOrder = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
-// Each stop node's client and area for its row, escaped; a stop with no
-// client name is "a stop", one with no area has none.
+// Each stop node's client and area for its row, escaped (formatting marks
+// too: the client is bold, #256); a stop with no client name is "a stop",
+// one with no area has none.
 function placesOf(labels, nodes) {
-  const text = (v) => (typeof v === 'string' && v ? escapeText(v) : null);
+  const text = (v) => (typeof v === 'string' && v ? escapeName(v) : null);
   return new Map(nodes.map((node) => {
     const l = labels.get(node) || {};
     return [node, { client: text(l.clientName) || 'a stop', area: text(l.city) }];
@@ -233,7 +273,7 @@ function createEditor({
     return typeof adapter.route === 'function' ? false : 'the adapter has no route()';
   }
 
-  const office = () => escapeText(depot.label);
+  const office = () => escapeName(depot.label);
   const refuse = (which, reason) => log.warn('routing map click refused', { action: which, reason });
   const message = (s, blocks) => withModal(s, { blocks });
 
@@ -400,6 +440,9 @@ function createEditor({
     const placed = new Set(points.map((p) => p && p.node));
     if (!nodes.every((node) => placed.has(node))) throw fault('mapPoints', 'no_position');
     const order = stops.map((st) => st.stopId);
+    // The crew's own name for the header (plain_text) and the banner.
+    const named = (labels.get(crewNode(crewId)) || {}).crewName;
+    const crewName = typeof named === 'string' && named.trim() ? named : `Crew ${crewId}`;
     // The colour Routing's views give this crew on this day (crewChoices).
     const color = s.colors instanceof Map && s.colors.has(crewId) ? s.colors.get(crewId) : 0;
     return {
@@ -415,7 +458,10 @@ function createEditor({
         version: 1,
         mapVersion: null,
         flagged: new Set(),
+        // Optimize's status line, shown while the order is that version.
+        note: null,
         out: crew.available === false,
+        crewName,
         names: n,
         places: placesOf(labels, stopNodes),
         color,
@@ -439,14 +485,15 @@ function createEditor({
     return { ev, km: Math.round(tenths / 10) };
   }
 
-  function breakWords(ev) {
+  // The Rule breaks field: every break, a late return counted as hard.
+  function breakField(ev) {
     let total = ev.lateBack ? 1 : 0;
     let hard = total;
     for (const st of ev.stops) {
       total += st.breaks.length;
       hard += st.breaks.filter((b) => b.strength === 'hard').length;
     }
-    return total ? `${plural(total, 'rule break')} (${hard} hard)` : 'no rule breaks';
+    return ROUTE_WORDS.breaksField(total, hard);
   }
 
   const button = (which, text, value, label) => ({
@@ -466,53 +513,58 @@ function createEditor({
   };
 
   // { head, blocks }: the list message, split around the place the image
-  // goes. status: a line under the image ("Map updating…", ...), or null.
+  // goes (head above it, blocks below). status: a transient line ("Map
+  // updating…", ...), or null; Optimize's own line shows while the order
+  // is the one it was about.
   function listParts(s, { ev, km }, status) {
     const p = s.plan;
-    const n = p.names;
     const v = p.version;
+    const { limits } = p.input;
     const id = (name) => `routing-map:${name}:${v}`;
-    const head = [{
-      type: 'section',
-      block_id: id('head'),
-      text: {
-        type: 'mrkdwn',
-        text: `*${n.crew(p.crewId)}, ${dayWords(p.day)}*\n${[
-          `Drive ${driveWords(ev.cost.driveMinutes)}`, `about ${km} km`, `last stop done ${clockDay(ev.finish)}`,
-          `back at ${office()} ${clockDay(ev.backAt)}`, breakWords(ev),
-        ].join(SEP)}`,
+    const mrkdwn = (text) => ({ type: 'mrkdwn', text });
+    const head = [
+      { type: 'header', block_id: id('title'), text: plainText(headerText(`${p.crewName}${SEP}${shortDay(p.day)}`)) },
+      {
+        type: 'section',
+        block_id: id('summary'),
+        fields: [
+          mrkdwn(ROUTE_WORDS.drive(driveWords(ev.cost.driveMinutes))),
+          mrkdwn(ROUTE_WORDS.distance(km)),
+          mrkdwn(ROUTE_WORDS.backField(office(), clockPlus(ev.backAt))),
+          mrkdwn(breakField(ev)),
+        ],
       },
-    }];
-    if (p.out) head.push({ type: 'section', block_id: id('out'), text: { type: 'mrkdwn', text: `*${ROUTE_WORDS.crewOut(n.crew(p.crewId), dayWords(p.day))}*` } });
+    ];
+    if (p.out) head.push({ type: 'section', block_id: id('out'), text: mrkdwn(`*${ROUTE_WORDS.crewOut(escapeName(p.crewName), dayWords(p.day))}*`) });
     const top = p.out ? [changeButton()] : [
-      button('optimize', 'Optimize', `${v}:optimize`, 'Optimize the order from the Office'),
+      { ...button('optimize', 'Optimize', `${v}:optimize`, 'Optimize the order from the Office'), style: 'primary' },
       button('reset', 'Reset to booked', `${v}:reset`, 'Put the stops back in the booked order'),
       changeButton(),
     ];
-    const blocks = [];
-    if (status) blocks.push({ type: 'context', block_id: id('status'), elements: [{ type: 'mrkdwn', text: status }] });
-    blocks.push(
-      { type: 'context', block_id: id('note'), elements: [{ type: 'mrkdwn', text: ROUTE_WORDS.note(office(), clock(p.input.limits.defaultStart)) }] },
-      { type: 'actions', block_id: id('actions'), elements: top },
-      { type: 'section', block_id: id('leave'), text: { type: 'mrkdwn', text: `${office()}${SEP}leave ${clockDay(ev.leaveAt)}` } },
-    );
-    const { limits } = p.input;
+    head.push({ type: 'actions', block_id: id('actions'), elements: top });
+    const lines = [p.note && p.note.version === v ? p.note.text : null, status].filter(Boolean);
+    if (lines.length) head.push({ type: 'context', block_id: id('status'), elements: [mrkdwn(lines.join('\n'))] });
+    head.push({ type: 'context', block_id: id('caption'), elements: [mrkdwn(ROUTE_WORDS.caption(office(), clock(limits.defaultStart)))] });
+    const blocks = [{ type: 'section', block_id: id('leave'), text: mrkdwn(ROUTE_WORDS.leave(office(), clockPlus(ev.leaveAt))) }];
+    // The aim-finish line sits before the first stop that finishes past it.
+    const late = ev.stops.findIndex((st) => st.finish > limits.aimFinish);
     ev.stops.forEach((st, i) => {
       const k = i + 1;
+      if (i === late) blocks.push({ type: 'context', block_id: id('after'), elements: [mrkdwn(ROUTE_WORDS.after(clock(limits.aimFinish)))] });
       const place = p.places.get(p.nodeOf.get(st.stopId)) || { client: 'a stop', area: null };
-      const lines = [
+      const rowLines = [
         `${numberOf(k)} *${clockDay(st.start)} ${place.client}*${place.area ? `${SEP}${place.area}` : ''}`,
         detailLine(st, limits),
       ];
-      if (p.flagged.has(st.stopId)) lines.push(`${WARN} ${ROUTE_WORDS.unplaced()}`);
+      if (p.flagged.has(st.stopId)) rowLines.push(`${WARN} ${ROUTE_WORDS.unplaced()}`);
       const accessory = p.out ? null : menu(v, i, ev.stops.length);
       blocks.push({
-        type: 'section', block_id: `routing-map:stop:${k}:${v}`, text: { type: 'mrkdwn', text: lines.join('\n') }, ...(accessory ? { accessory } : {}),
+        type: 'section', block_id: `routing-map:stop:${k}:${v}`, text: mrkdwn(rowLines.join('\n')), ...(accessory ? { accessory } : {}),
       });
     });
-    const back = [`${office()}${SEP}back ${clockDay(ev.backAt)}`];
-    if (ev.lateBack) back.push(`${WARN} crew day limits: back after ${clock(p.input.limits.latestFinish)}`);
-    blocks.push({ type: 'section', block_id: id('back'), text: { type: 'mrkdwn', text: back.join('\n') } });
+    const back = [ROUTE_WORDS.back(office(), clockPlus(ev.backAt))];
+    if (ev.lateBack) back.push(ROUTE_WORDS.lateBack(clock(limits.latestFinish)));
+    blocks.push({ type: 'section', block_id: id('back'), text: mrkdwn(back.join('\n')) });
     return { head, blocks };
   }
 
@@ -739,7 +791,7 @@ function createEditor({
     if (!version || !VERSION.test(version) || value.slice(at + 1) !== which) return refuse(which, 'malformed');
     if (Number(version) !== p.version) return refuse(which, 'stale version');
     let next;
-    let status = null;
+    let words = null;
     if (which === 'optimize') {
       const res = engine.optimizeDay(p.input, { travel: p.travel, returnToBase: true });
       const plan = res.plans.find((x) => x.crewId === p.crewId) || { stops: [] };
@@ -747,7 +799,7 @@ function createEditor({
       const rest = p.booked.filter((id) => !placed.includes(id));
       next = [...placed, ...rest];
       p.flagged = new Set(rest);
-      if (sameOrder(next, p.order)) status = ROUTE_WORDS.best();
+      words = sameOrder(next, p.order) ? ROUTE_WORDS.best() : optimizedWords(evaluate(p).ev, evaluate({ ...p, order: next }).ev);
     } else {
       next = p.booked.slice();
       p.flagged = new Set();
@@ -756,8 +808,11 @@ function createEditor({
       p.order = next;
       p.version += 1;
     }
+    // Optimize's line stays with this version (the map's update too); a
+    // later move or Reset makes a new version, and the line goes.
+    p.note = words ? { version: p.version, text: words } : null;
     log.info('routing map click', { module: mod.id, action: which, view: 'route' });
-    return changed({ ...go, status });
+    return changed(go);
   }
 
   return {
@@ -766,5 +821,5 @@ function createEditor({
 }
 
 module.exports = {
-  createEditor, parseMove, movesAt, SCREEN, ACTIONS, MAX_STOPS, MAP_DELAY_MS,
+  createEditor, parseMove, movesAt, optimizedWords, shortDay, headerText, SCREEN, ACTIONS, MAX_STOPS, MAP_DELAY_MS,
 };
