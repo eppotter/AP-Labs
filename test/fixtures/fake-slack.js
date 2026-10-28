@@ -10,7 +10,10 @@
 //       command, with ack, respond and a trigger_id.
 //   dispatchAction(action_id, { user, view, value })  every action listener
 //       whose pattern matches, with ack and respond. value is the button's
-//       value (default: the action id's first part). With view (a modal the click
+//       value (default: the action id's first part). With option (an
+//       overflow's option object, Story 15.16) the action is an overflow
+//       click as Slack sends it: { type: 'overflow', action_id,
+//       selected_option: { text, value } }, with no value of its own. With view (a modal the click
 //       came from), the body carries it, a container of type view and a
 //       trigger_id, and there is no respond (Slack sends no response_url for a
 //       click inside a modal).
@@ -63,7 +66,11 @@
 // action_id in one block, a button value over 2000 characters, a button's
 // text over 75 characters, and an accessibility_label over 75 characters
 // (invalid_blocks). A reused slack_file id that was deleted is refused like
-// any deleted one. With
+// any deleted one. Story 15.16 adds the overflow menu, refused as Slack
+// refuses it (invalid_blocks): fewer than 2 or more than 5 options, an
+// option's text not plain_text of 1 to 75 characters, an option's value
+// missing or over 150 characters, and an accessibility_label (an overflow
+// has none). With
 // this.checkHashes set, a views.update whose hash is not the view's current
 // one (for a view this fake opened or pushed) answers hash_conflict, as
 // Slack does; it is off by default because older tests replay a click's
@@ -330,11 +337,12 @@ class FakeSlackApp {
   // 'static_select', selected_option: { value } } or { type: 'datepicker',
   // selected_date } (Story 15.4).
   async dispatchAction(action_id, {
-    user = { id: 'U1', name: 'u1' }, view, value, action: extra,
+    user = { id: 'U1', name: 'u1' }, view, value, action: extra, option,
   } = {}) {
-    const action = extra
-      ? { action_id, ...extra }
-      : { type: 'button', action_id, value: value === undefined ? action_id.split(':')[0] : value };
+    let action;
+    if (option) action = { type: 'overflow', action_id, selected_option: { text: option.text, value: option.value } };
+    else if (extra) action = { action_id, ...extra };
+    else action = { type: 'button', action_id, value: value === undefined ? action_id.split(':')[0] : value };
     const body = { type: 'block_actions', user, actions: [action] };
     if (view) Object.assign(body, { view, container: { type: 'view', view_id: view.id }, trigger_id: this.issueTrigger('T-action') });
     const matching = this.actionListeners.filter(({ pattern }) => (
@@ -371,6 +379,9 @@ const MAX_BUTTON_TEXT = 75;
 const MAX_BUTTON_VALUE = 2000;
 const MAX_ACCESSIBILITY_LABEL = 75;
 const SELECTS = new Set(['static_select', 'datepicker']);
+const MIN_OVERFLOW_OPTIONS = 2;
+const MAX_OVERFLOW_OPTIONS = 5;
+const MAX_OPTION_VALUE = 150;
 
 // Why Slack would reject this view's frame (title, blocks, metadata), or null.
 function invalidView(view) {
@@ -416,6 +427,17 @@ function invalidElements(view) {
 
 function invalidElement(e) {
   if (!e || typeof e !== 'object') return null;
+  if (e.type === 'overflow') {
+    if (e.accessibility_label !== undefined) return 'an overflow has no accessibility_label';
+    if (!Array.isArray(e.options) || e.options.length < MIN_OVERFLOW_OPTIONS || e.options.length > MAX_OVERFLOW_OPTIONS) {
+      return `an overflow holds ${MIN_OVERFLOW_OPTIONS} to ${MAX_OVERFLOW_OPTIONS} options`;
+    }
+    for (const o of e.options) {
+      const text = o && o.text && o.text.text;
+      if (!o || !o.text || o.text.type !== 'plain_text' || typeof text !== 'string' || !text || Array.from(text).length > MAX_OPTION_TEXT) return `an option's text is plain_text of 1 to ${MAX_OPTION_TEXT} characters`;
+      if (typeof o.value !== 'string' || !o.value || o.value.length > MAX_OPTION_VALUE) return `an option needs a value of at most ${MAX_OPTION_VALUE} characters`;
+    }
+  }
   if (e.type === 'button') {
     const text = e.text && e.text.text;
     if (!e.text || e.text.type !== 'plain_text' || typeof text !== 'string' || !text || Array.from(text).length > MAX_BUTTON_TEXT) return `a button's text is plain_text of 1 to ${MAX_BUTTON_TEXT} characters`;
