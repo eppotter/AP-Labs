@@ -79,8 +79,11 @@
 // unready(mod) says why such a module cannot open (no routing.depot in the
 // profile, or no route()): the hub then shows "not available" and opens no
 // modal. Each screen refuses the other's actions (logged by reason only):
-// view and zone are Routing's; show, up, down, optimize, reset and change
-// are Plan a route's; crew and day are both screens'.
+// view and zone are Routing's; show, move, optimize, reset and change are
+// Plan a route's; crew and day are both screens'. The ↑/↓ buttons Story
+// 15.16 replaced (routing-map:up and :down) are heard only to say the plan
+// has expired: sessions live in memory, so a modal from before the deploy
+// has none.
 //
 // Exits: Back and Close (view_closed, else the sweep: the hub), an error (a
 // plain message in the view, with Back), an expired trigger (the hub's
@@ -107,7 +110,11 @@ const { createEditor, SCREEN: EDITOR, ACTIONS: EDITOR_ACTIONS } = require('./edi
 const ARCHETYPE = 'routing-map';
 const VIEW_ACTIONS = Object.freeze(['view', 'day', 'crew', 'zone']);
 const ACTIONS = Object.freeze([...new Set([...VIEW_ACTIONS, ...EDITOR_ACTIONS])]);
-const ACTION_PATTERN = /^routing-map:(view|day|crew|zone|show|up|down|optimize|reset|change)$/;
+const ACTION_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change)$/;
+// Retired action ids (Story 15.16): answered with the expired words only.
+const RETIRED_PATTERN = /^routing-map:(up|down)$/;
+// What the hub listens for: every action, and the retired ones.
+const LISTEN_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|up|down)$/;
 // Which actions each screen takes (AD-R26).
 const SCREEN_ACTIONS = Object.freeze({ views: new Set(VIEW_ACTIONS), [EDITOR]: new Set(EDITOR_ACTIONS) });
 const EDITOR_ONLY = new Set(EDITOR_ACTIONS.filter((a) => !VIEW_ACTIONS.includes(a)));
@@ -533,14 +540,16 @@ function createRoutingMap({
   async function click({
     actionId, action, from, person, resolve, show, showMap, showList,
   }) {
-    const m = ACTION_PATTERN.exec(typeof actionId === 'string' ? actionId : '');
-    const which = m ? m[1] : null;
+    const id = typeof actionId === 'string' ? actionId : '';
+    const m = ACTION_PATTERN.exec(id);
+    const old = RETIRED_PATTERN.exec(id);
+    const which = m ? m[1] : (old ? old[1] : null);
     const viewId = from && typeof from.id === 'string' ? from.id : null;
     const found = sessions.lookup(from && from.private_metadata, { userId: person.id, viewId });
+    const title = from && from.title && typeof from.title.text === 'string' && from.title.text ? escapeText(from.title.text) : 'it';
     if (found.status === STATUS.EXPIRED) {
       log.info('routing map click refused', { action: which, reason: 'expired' });
-      const title = from && from.title && typeof from.title.text === 'string' && from.title.text ? escapeText(from.title.text) : 'it';
-      const editing = found.screen ? found.screen === EDITOR : EDITOR_ONLY.has(which);
+      const editing = found.screen ? found.screen === EDITOR : (old !== null || EDITOR_ONLY.has(which));
       await show({ text: editing ? ROUTE_WORDS.expired(title) : MAP_WORDS.expired(title) });
       return;
     }
@@ -552,6 +561,13 @@ function createRoutingMap({
       return;
     }
     const s = found.session;
+    if (old) {
+      // A retired ↑/↓ on a live session (a crafted click): the plan ends.
+      log.info('routing map click refused', { action: which, reason: 'retired' });
+      sessions.drop(s.id);
+      await show({ text: s.screen === EDITOR ? ROUTE_WORDS.expired(title) : MAP_WORDS.expired(title) });
+      return;
+    }
     // A screen never takes another screen's action (AD-R26).
     if (!SCREEN_ACTIONS[s.screen].has(which)) {
       log.warn('routing map click refused', { action: which, reason: 'another screen' });
@@ -612,5 +628,5 @@ function createRoutingMap({
 }
 
 module.exports = {
-  createRoutingMap, controls, dayRange, isRealDate, checkLabels, MAP_WORDS, ACTION_PATTERN, ACTIONS, ARCHETYPE, SCREEN_ACTIONS,
+  createRoutingMap, controls, dayRange, isRealDate, checkLabels, MAP_WORDS, ACTION_PATTERN, RETIRED_PATTERN, LISTEN_PATTERN, ACTIONS, ARCHETYPE, SCREEN_ACTIONS,
 };

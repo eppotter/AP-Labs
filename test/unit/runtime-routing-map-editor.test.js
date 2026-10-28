@@ -1,6 +1,7 @@
 'use strict';
 
-// Story 15.14 (AD-R26, AD-R27, AD-R12 amended, AD-R16 amended): Plan a route,
+// Story 15.14 (AD-R26, AD-R27, AD-R12 amended, AD-R16 amended) and Story
+// 15.16 (AD-R29: one section per stop with a ⋯ overflow menu): Plan a route,
 // the route-editor screen of the routing-map archetype, through the hub on
 // the fake Slack app. A synthetic day (test/fixtures/routing-map/day.json,
 // with its made-up Office depot:hq) read by the fixture adapter's route();
@@ -23,7 +24,7 @@ const { renderPng } = require('../../kit/runtime/routing-map');
 const { RoutingFault, DataUnavailable } = require('../../kit/runtime/errors');
 const { MAP_WORDS, ROUTE_WORDS } = require('../../kit/runtime/messages');
 const { ID_PATTERN } = require('../../kit/runtime/archetypes/routing-map/session');
-const { parseMove, MAX_STOPS } = require('../../kit/runtime/archetypes/routing-map/editor');
+const { parseMove, movesAt, MAX_STOPS } = require('../../kit/runtime/archetypes/routing-map/editor');
 const routing = require('../../kit/runtime/routing');
 const { FakeSlackApp } = require('../fixtures/fake-slack');
 const fx = require('../fixtures/routing-map/adapter');
@@ -143,23 +144,26 @@ function choose(ctx, which, action, { user = U.dispatch, view } = {}) {
   return ctx.app.dispatchAction(`routing-map:${which}`, { user, view: fromView(ctx, { view }), action });
 }
 const show = (ctx, opts) => tap(ctx, 'show', 'show', opts);
-
-// The stop rows of a step-2 view: [text, [buttons]] per stop, in order.
-function rows(view) {
-  const out = [];
-  view.blocks.forEach((b, i) => {
-    if (b.type !== 'section' || !/^routing-map:stop:/.test(b.block_id)) return;
-    const next = view.blocks[i + 1];
-    const buttons = next && next.type === 'actions' && /^routing-map:move:/.test(next.block_id) ? next.elements : [];
-    out.push({ text: b.text.text, buttons });
-  });
-  return out;
+// A ⋯ menu option chosen, sent as Slack sends an overflow click (the value
+// in selected_option only). option: one of the view's options, or a crafted
+// { value }.
+function menu(ctx, option, { user = U.dispatch, view } = {}) {
+  return ctx.app.dispatchAction('routing-map:move', { user, view: fromView(ctx, { view }), option });
 }
-// The ↑ or ↓ button of stop k (1-based) in the view, or undefined.
-const moveOf = (view, k, which) => rows(view)[k - 1].buttons.find((e) => e.action_id === `routing-map:${which}`);
+
+// The stop rows of a step-2 view: { text, options } per stop, in order
+// (options: the ⋯ menu's, [] with no menu).
+function rows(view) {
+  return view.blocks.filter((b) => b.type === 'section' && /^routing-map:stop:/.test(b.block_id)).map((b) => ({
+    text: b.text.text, options: b.accessory ? b.accessory.options : [], accessory: b.accessory,
+  }));
+}
+// Stop k's (1-based) menu option for target (up, down, first, last), or undefined.
+const moveOf = (view, k, target) => rows(view)[k - 1].options.find((o) => o.value.endsWith(`:${target}`));
 const topButtons = (view) => blocksOf(view, 'actions').find((b) => /^routing-map:actions:/.test(b.block_id));
 const versionOf = (view) => Number(topButtons(view).block_id.split(':').at(-1));
-const orderOf = (view) => rows(view).map((r) => r.text.split(' · ')[1]);
+// "Client, Area" per row, from its first line "<n> *hh:mm Client* · Area".
+const orderOf = (view) => rows(view).map((r) => r.text.split('\n')[0].replace(/^\S+ \*\d\d:\d\d (\(next day\) )?/, '').replace('* · ', ', '));
 const header = (view) => texts(view)[0];
 const imageOf = (view) => blocksOf(view, 'image')[0];
 
@@ -240,7 +244,7 @@ test('step 1: a crew is kept with no redraw, a day in range redraws step 1 with 
 
 // --- step 2 ---------------------------------------------------------------------
 
-test('Show stops: the header totals, the image, the fixed note, the actions row, the Office first and last and one row per stop; no ↑ on the first, no ↓ on the last', async () => {
+test('Show stops: the header totals, the image, the fixed note, the actions row, the Office first and last and one section per stop with a ⋯ menu; no up or first on the first, no down or last on the last; no actions row per stop', async () => {
   const ctx = setup();
   const view = await shown(ctx);
   // First the list at once with "Map updating…", then the map.
@@ -250,7 +254,7 @@ test('Show stops: the header totals, the image, the fixed note, the actions row,
   assert.equal(map, view);
   assert.deepEqual(view.blocks.map((b) => b.type), [
     'section', 'image', 'context', 'actions', 'section',
-    'section', 'actions', 'section', 'actions', 'section', 'actions', 'section', 'actions', 'section',
+    'section', 'section', 'section', 'section', 'section',
   ]);
   assert.equal(header(view), '*Maple crew, Monday 2026-11-02*\nDrive 28 min · about 17 km · last stop done 14:25 · back at Office 14:31 · no rule breaks');
   assert.deepEqual(imageOf(view), { type: 'image', slack_file: { id: 'F1' }, alt_text: 'Route map: Planned route, Maple crew, 4 stops' });
@@ -263,19 +267,27 @@ test('Show stops: the header totals, the image, the fixed note, the actions row,
   assert.deepEqual(texts(view), [
     header(view),
     'Office · leave 07:55',
-    '1. 08:00 (est.) · Ana Ruiz, Riverton · 5 min drive',
-    '2. 10:10 (est.) · Ben Ode, Riverton · 6 min drive',
-    '3. 11:45 (est.) · Cara Lind, Lakeside · 5 min drive',
-    '4. 12:55 (est.) · Dev Patel, Lakeside · 6 min drive',
+    '1️⃣ *08:00 Ana Ruiz* · Riverton\n🚐 5 min',
+    '2️⃣ *10:10 Ben Ode* · Riverton\n🚐 6 min',
+    '3️⃣ *11:45 Cara Lind* · Lakeside\n🚐 5 min',
+    '4️⃣ *12:55 Dev Patel* · Lakeside\n🚐 6 min',
     'Office · back 14:31',
   ]);
   const r = rows(view);
-  assert.deepEqual(r.map((x) => x.buttons.map((e) => [e.text.text, e.value, e.accessibility_label])), [
-    [['↓', '1:s1', 'Move stop 1 down']],
-    [['↑', '1:s2', 'Move stop 2 up'], ['↓', '1:s2', 'Move stop 2 down']],
-    [['↑', '1:s3', 'Move stop 3 up'], ['↓', '1:s3', 'Move stop 3 down']],
-    [['↑', '1:s4', 'Move stop 4 up']],
+  for (const x of r) {
+    assert.equal(x.accessory.type, 'overflow');
+    assert.equal(x.accessory.action_id, 'routing-map:move');
+    assert.ok(!('accessibility_label' in x.accessory), 'an overflow carries no accessibility_label');
+    for (const o of x.options) assert.ok(!('accessibility_label' in o));
+  }
+  assert.deepEqual(r.map((x) => x.options.map((o) => [o.text.type, o.text.text, o.value])), [
+    [['plain_text', 'Move stop 1 down', '1:0:down'], ['plain_text', 'Move stop 1 to last', '1:0:last']],
+    [['plain_text', 'Move stop 2 up', '1:1:up'], ['plain_text', 'Move stop 2 down', '1:1:down'], ['plain_text', 'Move stop 2 to first', '1:1:first'], ['plain_text', 'Move stop 2 to last', '1:1:last']],
+    [['plain_text', 'Move stop 3 up', '1:2:up'], ['plain_text', 'Move stop 3 down', '1:2:down'], ['plain_text', 'Move stop 3 to first', '1:2:first'], ['plain_text', 'Move stop 3 to last', '1:2:last']],
+    [['plain_text', 'Move stop 4 up', '1:3:up'], ['plain_text', 'Move stop 4 to first', '1:3:first']],
   ]);
+  assert.ok(rows(view).every((x) => !x.text.includes('(est.)')), '"(est.)" appears nowhere in the rows');
+  assert.ok(!view.blocks.some((b) => b.type === 'actions' && /^routing-map:move:/.test(b.block_id)), 'no ↑/↓ actions row');
   const ids = view.blocks.map((b) => b.block_id).filter(Boolean);
   assert.equal(new Set(ids).size, ids.length, 'every block_id unique');
   // The engine's own numbers: evaluateOrder from the Office in booked order.
@@ -309,17 +321,17 @@ test('the total distance is the route\'s, Office to Office, in whole km; a leg\'
   assert.equal((all.match(/ km/g) || []).length, calls(ctx.app, 'update').filter((u) => /about \d+ km/.test(JSON.stringify(u))).length, 'only the header says km');
 });
 
-test('rows with rule breaks carry a warning line each, and the header counts them with the hard ones', async () => {
+test('a row with a rule break shows it shortened on its second line, and the header counts them with the hard ones', async () => {
   const day = JSON.parse(JSON.stringify(DAY));
   day.stops.find((s) => s.stopId === 's1').locked = true;
   const ctx = setup({ data: fx.fakeData({ day }) });
   let view = await shown(ctx);
   assert.match(header(view), /· no rule breaks$/);
-  await tap(ctx, 'down', moveOf(view, 1, 'down').value);
+  await menu(ctx, moveOf(view, 1, 'down'));
   view = lastView(ctx.app);
   assert.deepEqual(orderOf(view), ['Ben Ode, Riverton', 'Ana Ruiz, Riverton', 'Cara Lind, Lakeside', 'Dev Patel, Lakeside']);
   assert.match(header(view), /· 1 rule break \(1 hard\)$/);
-  assert.equal(rows(view)[1].text, '2. 09:40 (est.) · Ana Ruiz, Riverton · 6 min drive\n⚠ locked start: starts at 09:40, after its locked start of 08:00');
+  assert.equal(rows(view)[1].text, '2️⃣ *09:40 Ana Ruiz* · Riverton\n🚐 6 min · 🔴 missed locked start (starts 09:40)');
 });
 
 test('times past 24:00 show as "hh:mm (next day)"', async () => {
@@ -327,7 +339,9 @@ test('times past 24:00 show as "hh:mm (next day)"', async () => {
   Object.assign(day.stops.find((s) => s.stopId === 's4'), { locked: true, start: 1400 });
   const ctx = setup({ data: fx.fakeData({ day }) });
   const view = await shown(ctx);
-  assert.equal(rows(view)[3].text.split('\n')[0], '4. 23:20 (est.) · Dev Patel, Lakeside · 6 min drive');
+  // Two breaks: the hard one (crew day limits) shows, before the soft
+  // aim-finish, which is counted.
+  assert.equal(rows(view)[3].text, '4️⃣ *23:20 Dev Patel* · Lakeside\n🚐 6 min · 🔴 over crew day (ends 00:50 next day) · +1 more');
   assert.match(header(view), /last stop done 00:50 \(next day\) · back at Office 00:56 \(next day\) · /);
   assert.equal(texts(view).at(-1), 'Office · back 00:56 (next day)\n⚠ crew day limits: back after 19:00');
 });
@@ -337,7 +351,7 @@ test('a reorder reads nothing: one mapPoints read on Show stops (the Office and 
   const view = await shown(ctx);
   const reads = ctx.data.calls.length;
   assert.deepEqual(ctx.mapPoints.asked, [[OFFICE, ...V1_NODES]]);
-  await tap(ctx, 'down', moveOf(view, 2, 'down').value);
+  await menu(ctx, moveOf(view, 2, 'down'));
   await tap(ctx, 'optimize', `${versionOf(lastView(ctx.app))}:optimize`);
   await tap(ctx, 'reset', `${versionOf(lastView(ctx.app))}:reset`);
   assert.equal(ctx.data.calls.length, reads, 'no database read on a tap');
@@ -356,7 +370,7 @@ test('↓: the list updates first under the same file with "Map updating…", th
   await showing;
   let view = lastView(ctx.app);
   assert.equal(imageOf(view).slack_file.id, 'F1', 'Show stops draws at once');
-  const pending = tap(ctx, 'down', moveOf(view, 1, 'down').value);
+  const pending = menu(ctx, moveOf(view, 1, 'down'));
   await settle();
   view = lastView(ctx.app);
   assert.equal(imageOf(view).slack_file.id, 'F1', 'the same file, reused');
@@ -388,7 +402,7 @@ test('three taps within 1 s give one upload, for the final order; each list show
   const taps = [];
   for (let i = 0; i < 3; i += 1) {
     // Each tap moves the stop now first down one place.
-    taps.push(tap(ctx, 'down', moveOf(lastView(ctx.app), i + 1, 'down').value));
+    taps.push(menu(ctx, moveOf(lastView(ctx.app), i + 1, 'down')));
     await settle();
     assert.equal(imageOf(lastView(ctx.app)).slack_file.id, 'F1', `tap ${i + 1}: the list under the same file`);
     t.mock.timers.tick(300);
@@ -407,38 +421,55 @@ test('three taps within 1 s give one upload, for the final order; each list show
 
 // --- refusals (AD-R27) ------------------------------------------------------------
 
-test('a stale version, an unknown stop, ↑ on the first, ↓ on the last, or a malformed value: the order is unchanged and the refusal logged by reason only', async () => {
+test('a menu option with a stale version, an index out of range, a target not offered there, or a value that does not parse: the order is unchanged and the refusal logged by reason only', async () => {
   const ctx = setup();
   const view = await shown(ctx);
-  await tap(ctx, 'down', moveOf(view, 1, 'down').value);
+  await menu(ctx, moveOf(view, 1, 'down'));
   const now = lastView(ctx.app);
+  const v = versionOf(now);
   const before = { order: orderOf(now), updates: ctx.app.views.length, uploads: ctx.app.uploads.length };
+  const option = (value) => ({ text: { type: 'plain_text', text: 'Move stop 1 down' }, value });
   const cases = [
-    ['down', '1:s2', 'stale version'],
-    ['down', `${versionOf(now)}:s9`, 'unknown stop'],
-    ['up', `${versionOf(now)}:s2`, 'edge'],
-    ['down', `${versionOf(now)}:s4`, 'edge'],
-    ['up', 'not-a-move', 'malformed'],
-    ['up', `${versionOf(now)}:`, 'malformed'],
-    ['down', `0:s1`, 'malformed'],
-    ['up', `${versionOf(now)}:${'s'.repeat(2001)}`, 'malformed'],
-    ['optimize', '1:optimize', 'stale version'],
-    ['reset', `${versionOf(now)}:optimize`, 'malformed'],
+    [() => menu(ctx, option('1:0:down')), 'move', 'stale version'],
+    [() => menu(ctx, option(`${v}:4:up`)), 'move', 'out of range'],
+    [() => menu(ctx, option(`${v}:999:up`)), 'move', 'out of range'],
+    [() => menu(ctx, option(`${v}:0:up`)), 'move', 'not offered'],
+    [() => menu(ctx, option(`${v}:0:first`)), 'move', 'not offered'],
+    [() => menu(ctx, option(`${v}:3:down`)), 'move', 'not offered'],
+    [() => menu(ctx, option(`${v}:3:last`)), 'move', 'not offered'],
+    [() => menu(ctx, option('not-a-move')), 'move', 'malformed'],
+    [() => menu(ctx, option(`${v}:1`)), 'move', 'malformed'],
+    [() => menu(ctx, option(`${v}:1:sideways`)), 'move', 'malformed'],
+    [() => menu(ctx, option(`${v}:01:up`)), 'move', 'malformed'],
+    [() => menu(ctx, option(`0:1:up`)), 'move', 'malformed'],
+    [() => menu(ctx, option(`${v}:s2:up`)), 'move', 'malformed', 'a stop id, not an index'],
+    [() => menu(ctx, option(`${v}:1:up${'x'.repeat(2000)}`)), 'move', 'malformed'],
+    // A button-shaped click: the value is read from selected_option only.
+    [() => tap(ctx, 'move', `${v}:1:up`), 'move', 'malformed', 'no selected_option'],
+    [() => tap(ctx, 'optimize', '1:optimize'), 'optimize', 'stale version'],
+    [() => tap(ctx, 'reset', `${v}:optimize`), 'reset', 'malformed'],
   ];
-  for (const [which, value, reason] of cases) {
+  for (const [click, which, reason, what] of cases) {
     const lines = ctx.log.lines.length;
-    await tap(ctx, which, value);
+    await click();
     const said = ctx.log.lines.slice(lines);
-    assert.deepEqual(said, [{ level: 'warn', msg: 'routing map click refused', fields: { action: which, reason } }], `${which} ${value.slice(0, 20)}`);
+    assert.deepEqual(said, [{ level: 'warn', msg: 'routing map click refused', fields: { action: which, reason } }], what || `${which} ${reason}`);
   }
   assert.deepEqual(orderOf(lastView(ctx.app)), before.order);
   assert.equal(ctx.app.views.length, before.updates, 'the view untouched');
   assert.equal(ctx.app.uploads.length, before.uploads);
 });
 
-test('parseMove reads "<version>:<stopId>" and nothing else', () => {
-  assert.deepEqual(parseMove('3:s1'), { version: 3, stopId: 's1' });
-  for (const bad of [null, '', '3', ':s1', '03:s1', 'x:s1', '3:', `3:${'a'.repeat(129)}`, 'x'.repeat(2001)]) assert.equal(parseMove(bad), null, String(bad).slice(0, 20));
+test('parseMove reads "<version>:<index>:<target>" and nothing else; movesAt offers no up or first on the first stop, no down or last on the last, nothing on a one-stop day', () => {
+  assert.deepEqual(parseMove('3:0:down'), { version: 3, index: 0, target: 'down' });
+  assert.deepEqual(parseMove('12:39:first'), { version: 12, index: 39, target: 'first' });
+  for (const bad of [null, '', '3', '3:1', ':1:up', '03:1:up', 'x:1:up', '3:-1:up', '3:01:up', '3:1:', '3:1:UP', '3:1:up:x', '3:s1:up', `3:1:${'a'.repeat(40)}`, 'x'.repeat(2001)]) {
+    assert.equal(parseMove(bad), null, String(bad).slice(0, 20));
+  }
+  assert.deepEqual(movesAt(0, 1), []);
+  assert.deepEqual(movesAt(0, 2), ['down', 'last']);
+  assert.deepEqual(movesAt(1, 2), ['up', 'first']);
+  assert.deepEqual(movesAt(1, 3), ['up', 'down', 'first', 'last']);
 });
 
 test('a screen refuses another screen\'s actions: an editor action sent to a Routing session, and Routing\'s to Plan a route; the order unchanged, logged by reason only', async () => {
@@ -446,12 +477,12 @@ test('a screen refuses another screen\'s actions: an editor action sent to a Rou
   await open(ctx, U.dispatch, 'routing');
   const routingView = lastView(ctx.app);
   const views = ctx.app.views.length;
-  for (const [which, value] of [['show', 'show'], ['up', '1:s2'], ['down', '1:s1'], ['optimize', '1:optimize'], ['reset', '1:reset'], ['change', 'change']]) {
+  for (const [which, value] of [['show', 'show'], ['move', '1:1:up'], ['optimize', '1:optimize'], ['reset', '1:reset'], ['change', 'change']]) {
     await tap(ctx, which, value, { view: { id: 'V1', type: 'modal', hash: ctx.app.hashes.get('V1'), private_metadata: routingView.private_metadata, title: routingView.title } });
   }
   assert.equal(ctx.app.views.length, views, 'Routing\'s view untouched');
   const refused = ctx.log.lines.filter((l) => l.msg === 'routing map click refused');
-  assert.equal(refused.length, 6);
+  assert.equal(refused.length, 5);
   for (const l of refused) assert.deepEqual(Object.keys(l.fields), ['action', 'reason']);
   assert.ok(refused.every((l) => l.fields.reason === 'another screen'));
 
@@ -508,16 +539,16 @@ test('Optimize: stops it cannot place are appended in booked order and flagged; 
   assert.equal(rows(opt).length, 4, 'nothing dropped');
   assert.deepEqual(orderOf(opt), ['Ana Ruiz, Riverton', 'Cara Lind, Lakeside', 'Dev Patel, Lakeside', 'Ben Ode, Riverton']);
   const last = rows(opt)[3].text.split('\n');
-  assert.ok(last.includes(`⚠ ${ROUTE_WORDS.unplaced()}`));
-  assert.ok(last.some((l) => l.startsWith('⚠ locked start:')), 'and its break');
+  assert.equal(last[2], `⚠ ${ROUTE_WORDS.unplaced()}`, 'the "kept at the end" line stays, under the break');
+  assert.ok(last[1].includes('🔴 missed locked start'), 'and its break');
   assert.ok(rows(opt).slice(0, 3).every((r) => !r.text.includes(ROUTE_WORDS.unplaced())));
   // Moved up, it is no longer "kept at the end": the flag goes from both
-  // stops the move swapped; the rule break evaluateOrder finds stays.
-  await tap(ctx, 'up', moveOf(opt, 4, 'up').value);
+  // stops the move shifted; the rule break evaluateOrder finds stays.
+  await menu(ctx, moveOf(opt, 4, 'up'));
   const moved = lastView(ctx.app);
   assert.deepEqual(orderOf(moved), ['Ana Ruiz, Riverton', 'Cara Lind, Lakeside', 'Ben Ode, Riverton', 'Dev Patel, Lakeside']);
   assert.ok(rows(moved).every((r) => !r.text.includes(ROUTE_WORDS.unplaced())), 'no stop claims "at the end" now');
-  assert.ok(rows(moved)[2].text.split('\n').some((l) => l.startsWith('⚠ locked start:')), 'its break still shows');
+  assert.ok(rows(moved)[2].text.split('\n')[1].includes('🔴 missed locked start'), 'its break still shows');
   // Optimize again flags it again.
   await tap(ctx, 'optimize', `${versionOf(moved)}:optimize`);
   assert.ok(rows(lastView(ctx.app))[3].text.includes(ROUTE_WORDS.unplaced()));
@@ -526,7 +557,7 @@ test('Optimize: stops it cannot place are appended in booked order and flagged; 
 test('Reset to booked: the booked order, with times estimated again from the Office', async () => {
   const ctx = setup();
   const booked = await shown(ctx);
-  await tap(ctx, 'down', moveOf(booked, 1, 'down').value);
+  await menu(ctx, moveOf(booked, 1, 'down'));
   await tap(ctx, 'optimize', `${versionOf(lastView(ctx.app))}:optimize`);
   await tap(ctx, 'reset', `${versionOf(lastView(ctx.app))}:reset`);
   const view = lastView(ctx.app);
@@ -667,17 +698,17 @@ test('a person outside the audience is refused at Open; nothing is read', async 
 
 // --- read-only, empty and too many --------------------------------------------------------
 
-test('the crew is out that day: a banner, and the list is read-only (no ↑, ↓ or Optimize); a crafted move is refused', async () => {
+test('the crew is out that day: a banner, and the list is read-only (no ⋯ menus, no Optimize); a crafted move is refused', async () => {
   const ctx = setup();
   const view = await shown(ctx, { crew: 'v2' });
   assert.equal(texts(view)[1], `*${ROUTE_WORDS.crewOut('Birch crew', 'Monday 2026-11-02')}*`);
   assert.equal(ROUTE_WORDS.crewOut('Birch crew', 'Monday 2026-11-02'), 'Birch crew is marked out on Monday 2026-11-02. The list is read-only.');
   assert.deepEqual(topButtons(view).elements.map((e) => e.action_id), ['routing-map:change']);
   assert.equal(rows(view).length, 3);
-  assert.ok(rows(view).every((r) => r.buttons.length === 0));
+  assert.ok(rows(view).every((r) => r.accessory === undefined), 'no menus');
   assert.equal(imageOf(view).alt_text, 'Route map: Planned route, Birch crew, 3 stops');
   const n = ctx.app.views.length;
-  await tap(ctx, 'down', `${versionOf(view)}:s5`);
+  await menu(ctx, { value: `${versionOf(view)}:0:down` });
   await tap(ctx, 'optimize', `${versionOf(view)}:optimize`);
   assert.equal(ctx.app.views.length, n);
   assert.deepEqual(ctx.log.lines.filter((l) => l.msg === 'routing map click refused').map((l) => l.fields.reason), ['read only', 'read only']);
@@ -716,7 +747,7 @@ test('0 stops, or more than 40: a plain message with Change crew or day; no posi
   assert.deepEqual(big.app.uploads, []);
 });
 
-test('40 stops fit one view: every block within Slack\'s limits (the fake checks), every block_id unique', async () => {
+test('40 stops fit one view in fewer than 60 blocks: every block within Slack\'s limits (the fake checks), every block_id unique; 1 to 10 numbered with keycaps, 11 on with "11."', async () => {
   const nodes = Array.from({ length: 40 }, (_, i) => `property:z${i}`);
   const every = [OFFICE, ...nodes];
   const matrix = [];
@@ -745,12 +776,18 @@ test('40 stops fit one view: every block within Slack\'s limits (the fake checks
   const ctx = setup({ mod: forty, mapPoints });
   const view = await shown(ctx);
   assert.equal(rows(view).length, 40);
-  assert.ok(view.blocks.length <= 100, `${view.blocks.length} blocks`);
-  assert.equal(view.blocks.length, 86, 'header, image, note, actions, two Office rows, 40 stop rows, 40 button rows');
+  assert.ok(view.blocks.length < 60, `${view.blocks.length} blocks`);
+  assert.equal(view.blocks.length, 46, 'header, image, note, actions, two Office rows, 40 stop rows');
   const ids = view.blocks.map((b) => b.block_id).filter(Boolean);
   assert.equal(new Set(ids).size, ids.length);
-  assert.match(rows(view)[39].text, /^40\. \d\d:\d\d .*\(est\.\) · a stop · 5 min drive/);
+  assert.equal(rows(view)[0].text.split(' ')[0], '1️⃣');
+  assert.equal(rows(view)[8].text.split(' ')[0], '9️⃣');
+  assert.equal(rows(view)[9].text.split(' ')[0], '🔟');
+  assert.equal(rows(view)[10].text.split(' ')[0], '11.');
+  assert.match(rows(view)[39].text, /^40\. \*\d\d:\d\d( \(next day\))? a stop\*\n🚐 5 min/);
   assert.equal(moveOf(view, 40, 'down'), undefined);
+  assert.deepEqual(rows(view)[39].options.map((o) => o.text.text), ['Move stop 40 up', 'Move stop 40 to first']);
+  for (const r of rows(view)) for (const o of r.options) assert.ok(Array.from(o.text.text).length <= 75);
 });
 
 // --- the Slack fake rejects what Slack rejects (Story 15.14) --------------------------------
@@ -761,7 +798,7 @@ test('the fake refuses a duplicate block_id, a duplicate action_id in one block,
   const up = await app.client.files.uploadV2({ file: png, filename: 'route-map.png', title: 'Route map' });
   const id = up.files[0].files[0].id;
   const btn = (over = {}) => ({
-    type: 'button', action_id: 'routing-map:up', text: { type: 'plain_text', text: '↑' }, value: '1:s1', accessibility_label: 'Move stop 2 up', ...over,
+    type: 'button', action_id: 'routing-map:optimize', text: { type: 'plain_text', text: 'Optimize' }, value: '1:optimize', accessibility_label: 'Optimize the order from the Office', ...over,
   });
   const view = (blocks) => ({ type: 'modal', title: { type: 'plain_text', text: 'Plan a route' }, blocks });
   const section = (blockId) => ({ type: 'section', block_id: blockId, text: { type: 'mrkdwn', text: 'x' } });
@@ -769,7 +806,7 @@ test('the fake refuses a duplicate block_id, a duplicate action_id in one block,
   const update = (v) => app.client.views.update({ view_id: 'V1', view: v });
   const refused = (v, code, what) => assert.rejects(update(v), (e) => e.data.error === code, what);
   // What the editor sends is accepted.
-  await update(view([section('a'), image, { type: 'actions', block_id: 'b', elements: [btn(), btn({ action_id: 'routing-map:down', text: { type: 'plain_text', text: '↓' } })] }]));
+  await update(view([section('a'), image, { type: 'actions', block_id: 'b', elements: [btn(), btn({ action_id: 'routing-map:reset', text: { type: 'plain_text', text: 'Reset to booked' } })] }]));
   await refused(view([section('a'), section('a')]), 'invalid_blocks', 'duplicate block_id');
   await refused(view([{ type: 'actions', block_id: 'b', elements: [btn(), btn()] }]), 'invalid_blocks', 'duplicate action_id');
   await refused(view([{ type: 'actions', elements: [btn({ value: 'x'.repeat(2001) })] }]), 'invalid_blocks', 'value over 2000');
@@ -780,6 +817,115 @@ test('the fake refuses a duplicate block_id, a duplicate action_id in one block,
   await update(view([{ type: 'actions', block_id: 'b1', elements: [btn()] }, { type: 'actions', block_id: 'b2', elements: [btn()] }]));
   await app.client.files.delete({ file: id });
   await refused(view([image]), 'invalid_arguments', 'a deleted file reused');
+});
+
+test('the fake refuses an overflow Slack would refuse: fewer than 2 or more than 5 options, an option text over 75, an option value over 150, an accessibility_label, a duplicate action_id in one block; an overflow click carries selected_option.value only (Story 15.16)', async () => {
+  const app = new FakeSlackApp({ views: true });
+  const opt = (i, over = {}) => ({ text: { type: 'plain_text', text: `Move stop ${i} up` }, value: `1:${i}:up`, ...over });
+  const overflow = (over = {}) => ({
+    type: 'overflow', action_id: 'routing-map:move', options: [opt(1), opt(2)], ...over,
+  });
+  const row = (accessory) => ({
+    type: 'section', block_id: 's', text: { type: 'mrkdwn', text: 'x' }, accessory,
+  });
+  const view = (blocks) => ({ type: 'modal', title: { type: 'plain_text', text: 'Plan a route' }, blocks });
+  const update = (v) => app.client.views.update({ view_id: 'V1', view: v });
+  const refused = (v, what) => assert.rejects(update(v), (e) => e.data.error === 'invalid_blocks', what);
+  await update(view([row(overflow())]));
+  await update(view([row(overflow({ options: [1, 2, 3, 4, 5].map((i) => opt(i)) }))]));
+  await refused(view([row(overflow({ options: [opt(1)] }))]), 'one option');
+  await refused(view([row(overflow({ options: [1, 2, 3, 4, 5, 6].map((i) => opt(i)) }))]), 'six options');
+  await refused(view([row(overflow({ options: [opt(1), opt(2, { text: { type: 'plain_text', text: 'x'.repeat(76) } })] }))]), 'option text over 75');
+  await update(view([row(overflow({ options: [opt(1), opt(2, { text: { type: 'plain_text', text: 'x'.repeat(75) } })] }))]));
+  await refused(view([row(overflow({ options: [opt(1), opt(2, { text: { type: 'mrkdwn', text: 'x' } })] }))]), 'option text not plain_text');
+  await refused(view([row(overflow({ options: [opt(1), opt(2, { value: 'x'.repeat(151) })] }))]), 'option value over 150');
+  await update(view([row(overflow({ options: [opt(1), opt(2, { value: 'x'.repeat(150) })] }))]));
+  await refused(view([row(overflow({ options: [opt(1), opt(2, { value: '' })] }))]), 'option value empty');
+  await refused(view([row(overflow({ accessibility_label: 'Move stop 1' }))]), 'an overflow has no accessibility_label');
+  await refused(view([{ type: 'actions', block_id: 'a', elements: [overflow(), overflow()] }]), 'duplicate action_id in one block');
+  await update(view([row(overflow()), { ...row(overflow()), block_id: 't' }]));
+
+  // The click, as Slack sends it.
+  const seen = [];
+  app.action(/^routing-map:move$/, async ({ action, ack }) => { await ack(); seen.push(action); });
+  await app.dispatchAction('routing-map:move', { view: { id: 'V1', type: 'modal' }, option: opt(3) });
+  assert.deepEqual(seen, [{ type: 'overflow', action_id: 'routing-map:move', selected_option: { text: { type: 'plain_text', text: 'Move stop 3 up' }, value: '1:3:up' } }]);
+  assert.ok(!('value' in seen[0]));
+});
+
+// --- the ⋯ menu (Story 15.16, AD-R29) ------------------------------------------------------
+
+test('⋯ Move to first and Move to last move the stop to the ends; up and down move it one place; each redraws as ↑/↓ did (list first, then one map)', async () => {
+  const ctx = setup();
+  let view = await shown(ctx);
+  const uploads = ctx.app.uploads.length;
+  await menu(ctx, moveOf(view, 3, 'first'));
+  view = lastView(ctx.app);
+  assert.deepEqual(orderOf(view), ['Cara Lind, Lakeside', 'Ana Ruiz, Riverton', 'Ben Ode, Riverton', 'Dev Patel, Lakeside']);
+  assert.deepEqual(ctx.models.at(-1).model.route.stops, ['property:s3', 'property:s1', 'property:s2', 'property:s4']);
+  assert.equal(ctx.app.uploads.length, uploads + 1, 'one map');
+  const [list] = calls(ctx.app, 'update').slice(-2).map((u) => u.view);
+  assert.equal(contexts(list)[0], UPDATING, 'the list first, with "Map updating…"');
+  await menu(ctx, moveOf(view, 1, 'last'));
+  view = lastView(ctx.app);
+  assert.deepEqual(orderOf(view), ['Ana Ruiz, Riverton', 'Ben Ode, Riverton', 'Dev Patel, Lakeside', 'Cara Lind, Lakeside']);
+  await menu(ctx, moveOf(view, 4, 'up'));
+  view = lastView(ctx.app);
+  assert.deepEqual(orderOf(view), ['Ana Ruiz, Riverton', 'Ben Ode, Riverton', 'Cara Lind, Lakeside', 'Dev Patel, Lakeside']);
+  assert.equal(versionOf(view), 4);
+  assert.deepEqual(rows(view)[0].options.map((o) => o.value), ['4:0:down', '4:0:last'], 'the options carry the new version');
+  // Logged by action only: no index, target or stop id.
+  const moves = ctx.log.lines.filter((l) => l.fields && l.fields.action === 'move');
+  assert.equal(moves.length, 3);
+  for (const l of moves) assert.deepEqual(l.fields, { module: 'route-planner', action: 'move', view: 'route' });
+});
+
+test('a one-stop day has no menu', async () => {
+  const one = editorModule({
+    createAdapter: (args) => {
+      const real = fx.createAdapter(args);
+      return {
+        ...real,
+        route: async (q) => {
+          const got = await real.route(q);
+          return { ...got, input: { ...got.input, stops: got.input.stops.filter((st) => st.stopId === 's1') } };
+        },
+      };
+    },
+  });
+  const ctx = setup({ mod: one });
+  const view = await shown(ctx);
+  assert.equal(rows(view).length, 1);
+  assert.equal(rows(view)[0].accessory, undefined);
+  assert.equal(rows(view)[0].text, '1️⃣ *08:00 Ana Ruiz* · Riverton\n🚐 5 min');
+});
+
+test('a soft break alone shows 🟠, shortened: "past 17:00 (+30 min)"', async () => {
+  const day = JSON.parse(JSON.stringify(DAY));
+  Object.assign(day.stops.find((s) => s.stopId === 's4'), { locked: true, start: 960 });
+  const ctx = setup({ data: fx.fakeData({ day }) });
+  const view = await shown(ctx);
+  assert.equal(rows(view)[3].text, '4️⃣ *16:00 Dev Patel* · Lakeside\n🚐 6 min · 🟠 past 17:00 (+30 min)');
+});
+
+test('a routing-map:up or :down click (a modal opened before the deploy) gives the expired words; on a live session too, which then ends', async () => {
+  // Before the deploy: no session in this process.
+  const before = setup();
+  const view = await shown(before);
+  const fresh = setup();
+  for (const which of ['up', 'down']) {
+    await fresh.app.dispatchAction(`routing-map:${which}`, {
+      user: U.dispatch, value: '1:s1', view: { id: 'V1', type: 'modal', private_metadata: view.private_metadata, title: view.title },
+    });
+    assert.deepEqual(texts(lastView(fresh.app)), [ROUTE_WORDS.expired('Plan a route')], which);
+  }
+  assert.ok(fresh.log.lines.every((l) => l.msg !== 'routing map click refused' || l.fields.reason === 'expired'));
+  // A crafted one on a live session: the same words, the session ends.
+  await tap(before, 'up', '1:s2');
+  assert.deepEqual(texts(lastView(before.app)), [ROUTE_WORDS.expired('Plan a route')]);
+  assert.ok(before.log.lines.some((l) => l.msg === 'routing map click refused' && l.fields.action === 'up' && l.fields.reason === 'retired'));
+  await menu(before, { value: '1:0:down' });
+  assert.deepEqual(texts(lastView(before.app)), [ROUTE_WORDS.expired('Plan a route')], 'nothing works on it after');
 });
 
 // --- nothing leaks (AD-R12 amended, AD-R25) ---------------------------------------------------
@@ -803,7 +949,7 @@ test('no log line, Slack call or error holds a position, an x/y key, the mosaic,
     await shown(ctx, { user });
     const view = lastView(ctx.app);
     if (rows(view).length > 1 && moveOf(view, 1, 'down')) {
-      await tap(ctx, 'down', moveOf(view, 1, 'down').value, { user });
+      await menu(ctx, moveOf(view, 1, 'down'), { user });
       await tap(ctx, 'optimize', `${versionOf(lastView(ctx.app))}:optimize`, { user });
       await tap(ctx, 'reset', `${versionOf(lastView(ctx.app))}:reset`, { user });
       await tap(ctx, 'change', 'change', { user });
@@ -848,8 +994,8 @@ test('exit, Change crew or day: back to step 1 with the picks kept, and the file
   assert.equal(blocksOf(view, 'actions')[0].elements[0].initial_option.value, 'v3');
   assert.deepEqual(ctx.app.deleted, ['F1']);
   assert.equal(ctx.store.mapFileCount(), 0);
-  // ↑ ↓ from the old list are refused now; Show stops works again.
-  await tap(ctx, 'down', '1:s8');
+  // A menu option from the old list is refused now; Show stops works again.
+  await menu(ctx, { value: '1:0:down' });
   assert.ok(ctx.log.lines.some((l) => l.msg === 'routing map click refused' && l.fields.reason === 'another step'));
   await show(ctx);
   assert.equal(imageOf(lastView(ctx.app)).slack_file.id, 'F2');
@@ -859,12 +1005,12 @@ for (const cleared of [false, true]) {
   test(`exit, ${cleared ? 'Close (the X)' : 'Back'}: view_closed deletes the files; the session and its positions are gone`, async () => {
     const ctx = setup();
     const view = await shown(ctx);
-    await tap(ctx, 'down', moveOf(view, 1, 'down').value);
+    await menu(ctx, moveOf(view, 1, 'down'));
     assert.equal(await ctx.app.dispatchViewClosed('hub:map', { user: U.dispatch, view: { id: 'V1' }, is_cleared: cleared }), 1);
     assert.deepEqual(ctx.app.deleted, ['F1', 'F2']);
     assert.equal(ctx.store.mapFileCount(), 0);
     assert.ok(ctx.log.lines.some((l) => l.msg === 'map view closed' && l.fields.cleared === cleared));
-    await tap(ctx, 'up', '2:s1');
+    await menu(ctx, { value: '2:1:up' });
     assert.deepEqual(texts(lastView(ctx.app)), [ROUTE_WORDS.expired('Plan a route')]);
   });
 }
@@ -904,11 +1050,11 @@ test('exit, an expired session (15 minutes without use): "This plan has expired,
   const ctx = setup();
   const view = await shown(ctx);
   t.mock.timers.tick(14 * MIN);
-  await tap(ctx, 'down', moveOf(view, 1, 'down').value);
+  await menu(ctx, moveOf(view, 1, 'down'));
   assert.equal(versionOf(lastView(ctx.app)), 2, 'a tap within 15 minutes works and renews the session');
   t.mock.timers.tick(15 * MIN + 1);
   const uploads = ctx.app.uploads.length;
-  await tap(ctx, 'down', moveOf(lastView(ctx.app), 1, 'down').value);
+  await menu(ctx, moveOf(lastView(ctx.app), 1, 'down'));
   const shownNow = lastView(ctx.app);
   assert.deepEqual(texts(shownNow), ['This plan has expired, go back and open Plan a route again.']);
   assert.equal(shownNow.close.text, 'Back');
@@ -924,7 +1070,7 @@ test('exit, the session expires while the map waits: the expired words, nothing 
   await settle();
   t.mock.timers.tick(0);
   await first;
-  const pending = tap(ctx, 'down', moveOf(lastView(ctx.app), 1, 'down').value);
+  const pending = menu(ctx, moveOf(lastView(ctx.app), 1, 'down'));
   await settle();
   t.mock.timers.tick(15 * MIN + 1);
   await pending;
@@ -937,7 +1083,7 @@ test('exit, access withdrawn: on a tap, and while the map waits, the refusal sho
   const ctx = setup({ canUse: () => (withdrawn ? 'denied' : 'allowed') });
   const view = await shown(ctx);
   withdrawn = true;
-  await tap(ctx, 'down', moveOf(view, 1, 'down').value);
+  await menu(ctx, moveOf(view, 1, 'down'));
   assert.deepEqual(texts(lastView(ctx.app)), [`You don't have access to Plan a route; ask ${ADMIN}.`]);
   assert.equal(ctx.store.mapFileCount(), 0);
   assert.equal(ctx.app.uploads.length, 1);
@@ -949,10 +1095,10 @@ test('exit, access withdrawn: on a tap, and while the map waits, the refusal sho
   const update = late.app.client.views.update;
   late.app.client.views.update = async (args) => {
     const res = await update(args);
-    if (texts(args.view).some((x) => x.startsWith('1. 08:00 (est.) · Ben Ode'))) gone = true;
+    if (texts(args.view).some((x) => x.startsWith('1️⃣ *08:00 Ben Ode*'))) gone = true;
     return res;
   };
-  await tap(late, 'down', moveOf(v2, 1, 'down').value);
+  await menu(late, moveOf(v2, 1, 'down'));
   assert.deepEqual(texts(lastView(late.app)), [`You don't have access to Plan a route; ask ${ADMIN}.`]);
   assert.equal(late.app.uploads.length, 1, 'no map for it');
   assert.equal(late.store.mapFileCount(), 0);
@@ -962,10 +1108,10 @@ test('exit, a click from another user is refused and changes nothing; from anoth
   const ctx = setup();
   const view = await shown(ctx);
   const n = ctx.app.views.length;
-  await tap(ctx, 'down', moveOf(view, 1, 'down').value, { user: U.leadB });
+  await menu(ctx, moveOf(view, 1, 'down'), { user: U.leadB });
   assert.equal(ctx.app.views.length, n, 'the view is not touched');
   assert.ok(ctx.log.lines.some((l) => l.msg === 'routing map click refused' && l.fields.reason === 'another user'));
-  await tap(ctx, 'down', moveOf(view, 1, 'down').value, {
+  await menu(ctx, moveOf(view, 1, 'down'), {
     view: {
       id: 'V9', type: 'modal', private_metadata: view.private_metadata, title: view.title,
     },
@@ -1047,7 +1193,7 @@ test('exit, a map failure (render, upload, ratelimited, not accepted) keeps the 
     const tapped = setup();
     const before = await shown(tapped);
     how.fail(tapped.app);
-    await tap(tapped, 'down', moveOf(before, 1, 'down').value);
+    await menu(tapped, moveOf(before, 1, 'down'));
     view = lastView(tapped.app);
     assert.equal(contexts(view)[0], NOT_UPDATED, `${what} on a tap`);
     assert.equal(imageOf(view).slack_file.id, 'F1', `${what}: the map shown stays`);
@@ -1061,7 +1207,7 @@ test('exit, a render failure on a tap keeps the list under the map shown, with "
   const ctx = setup({ render: (...a) => { if (broken) throw new RoutingFault({ field: 'map image', problem: 'renderer_failed' }); return renderPng(...a); } });
   const view = await shown(ctx);
   broken = true;
-  await tap(ctx, 'down', moveOf(view, 1, 'down').value);
+  await menu(ctx, moveOf(view, 1, 'down'));
   const now = lastView(ctx.app);
   assert.equal(contexts(now)[0], NOT_UPDATED);
   assert.equal(imageOf(now).slack_file.id, 'F1');
@@ -1079,7 +1225,7 @@ test('exit, a reused file that expired (10 minutes) or was deleted: the list wit
   t.mock.timers.tick(0);
   await p;
   t.mock.timers.tick(REUSE_MS);
-  p = tap(ctx, 'down', moveOf(lastView(ctx.app), 1, 'down').value);
+  p = menu(ctx, moveOf(lastView(ctx.app), 1, 'down'));
   await settle();
   let view = lastView(ctx.app);
   assert.equal(blocksOf(view, 'image').length, 0, 'too old: the list with no image');
@@ -1094,7 +1240,7 @@ test('exit, a reused file that expired (10 minutes) or was deleted: the list wit
 
   // Deleted behind the hub's back (the sweep, or Slack): Slack refuses it.
   await ctx.app.client.files.delete({ file: 'F2' });
-  p = tap(ctx, 'down', moveOf(lastView(ctx.app), 2, 'down').value);
+  p = menu(ctx, moveOf(lastView(ctx.app), 2, 'down'));
   await settle();
   view = lastView(ctx.app);
   assert.equal(blocksOf(view, 'image').length, 0, 'deleted: the list with no image');
@@ -1122,13 +1268,13 @@ test('a list queued while a newer map is going to Slack reuses that newer file, 
     }
     return real(args);
   };
-  const first = tap(ctx, 'down', moveOf(lastView(ctx.app), 1, 'down').value);
+  const first = menu(ctx, moveOf(lastView(ctx.app), 1, 'down'));
   await settle();
   assert.equal(holding, true, 'the map with F2 is on its way');
   const listed = lastView(ctx.app);
   assert.equal(imageOf(listed).slack_file.id, 'F1', 'the first tap\'s list under F1');
   const sent = ctx.app.views.length;
-  const second = tap(ctx, 'down', moveOf(listed, 2, 'down').value);
+  const second = menu(ctx, moveOf(listed, 2, 'down'));
   await settle();
   assert.equal(ctx.app.views.length, sent, 'the second list waits its turn');
   release();
@@ -1155,7 +1301,7 @@ test('a street map (Story 15.10): the attribution straight under the image, kept
   const at = view.blocks.findIndex((b) => b.type === 'image');
   const caption = '<https://tiles.example.org/copyright|© Example Map contributors>';
   assert.equal(view.blocks[at + 1].elements[0].text, caption);
-  await tap(ctx, 'down', moveOf(view, 1, 'down').value);
+  await menu(ctx, moveOf(view, 1, 'down'));
   assert.equal(tiles.length, 2, 'the tiles for each map, from the session\'s mosaic (no new read)');
   assert.deepEqual(ctx.mapPoints.asked.length, 1);
   const list = calls(ctx.app, 'update').at(-2).view;
