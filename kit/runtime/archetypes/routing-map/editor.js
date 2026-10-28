@@ -9,9 +9,15 @@
 //   step 2  a header line (drive time, about N km, last stop done, back at
 //           the Office, the rule breaks), the map and its caption, a fixed
 //           note, an actions row (Optimize, Reset to booked, Change crew or
-//           day), then "Office · leave hh:mm", one row per stop (time, place,
-//           drive, a warning line per rule break, then ↑ ↓ buttons: no ↑ on
-//           the first stop, no ↓ on the last) and "Office · back hh:mm".
+//           day), then "Office · leave hh:mm", one section per stop and
+//           "Office · back hh:mm". A stop row (Story 15.16, AD-R29): its
+//           number (keycap emoji 1 to 10, then "11."), the bold time and
+//           client, the area; a second line with the drive minutes and the
+//           hardest rule break (🔴 hard before 🟠 soft), shortened, then
+//           "+N more"; and a ⋯ overflow menu (Move stop k up, down, to
+//           first, to last; none of up or first on the first stop, none of
+//           down or last on the last, no menu on a one-stop day or while
+//           the crew is out).
 //
 // Reads (AD-R17 scope first, never from the click): the crew list on Open
 // and again on each day picked (adapter.input and adapter.labels for crew
@@ -32,10 +38,12 @@
 // Only the route's total distance is shown, in whole km; a leg's distance is
 // never shown, logged or sent.
 //
-// Clicks: each ↑/↓ value is "<version>:<stopId>". A stale version, a stop
-// not in the order, ↑ on the first or ↓ on the last, a malformed value, a
-// click from the other step, or any change while the crew is out (read-only)
-// is refused: nothing changes and the refusal is logged by reason only.
+// Clicks: a menu option's value (read from selected_option.value) is
+// "<version>:<index>:<target>", an index into the order, never a stop id. A
+// stale version, an index out of range, a target the menu does not offer
+// at that index, a malformed value, a click from the other step, or any
+// change while the crew is out (read-only) is refused: nothing changes and
+// the refusal is logged by reason only.
 //
 // Two updates per accepted change (AD-R27): at once, the list under the
 // picture already shown (the hub's showList reuses the same slack_file) with
@@ -64,10 +72,9 @@ const {
 } = require('./views');
 
 const SCREEN = 'route-editor';
-const ACTIONS = Object.freeze(['crew', 'day', 'show', 'up', 'down', 'optimize', 'reset', 'change']);
+const ACTIONS = Object.freeze(['crew', 'day', 'show', 'move', 'optimize', 'reset', 'change']);
 const MAX_STOPS = 40;
 const MAP_DELAY_MS = 750;
-const MAX_VALUE = 2000;
 const MAX_STOP_ID = 128;
 const MAX_OPTIONS = 100;
 const MAX_OPTION_TEXT = 75;
@@ -75,6 +82,12 @@ const DAY_MINUTES = 24 * 60;
 const SEP = ' · ';
 const WARN = '⚠';
 const VERSION = /^[1-9][0-9]{0,8}$/;
+// A menu option's value: "<version>:<index>:<target>" (AD-R29).
+const MOVE = /^([1-9][0-9]{0,8}):(0|[1-9][0-9]{0,2}):(up|down|first|last)$/;
+const MAX_MOVE_VALUE = 32;
+const KEYCAPS = Object.freeze(['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']);
+const STRENGTH_MARK = Object.freeze({ hard: '🔴', soft: '🟠' });
+const DRIVE_MARK = '🚐';
 
 const fault = (field, problem) => new RoutingFault({ field, problem });
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -87,7 +100,7 @@ const cut = (s, max) => Array.from(String(s)).slice(0, max).join('');
 
 // A clock time; past 24:00, "hh:mm (next day)" (AD-R24).
 const clockDay = (m) => (Number.isInteger(m) && m >= DAY_MINUTES ? `${clock(m % DAY_MINUTES)} (next day)` : clock(m));
-const estimated = (m) => (Number.isInteger(m) && m >= DAY_MINUTES ? `${clock(m % DAY_MINUTES)} (next day, est.)` : `${clock(m)} (est.)`);
+const numberOf = (k) => (k <= KEYCAPS.length ? KEYCAPS[k - 1] : `${k}.`);
 const driveWords = (m) => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${pad2(m % 60)} min`);
 
 // Waits ms, or less when the signal aborts (a newer click, Back, Close).
@@ -108,18 +121,73 @@ function pause(ms, signal) {
   });
 }
 
-// An ↑/↓ value: { version, stopId } or null.
+// A menu option's value: { version, index, target } or null.
 function parseMove(value) {
-  if (typeof value !== 'string' || value.length > MAX_VALUE) return null;
-  const at = value.indexOf(':');
-  if (at < 1) return null;
-  const version = value.slice(0, at);
-  const stopId = value.slice(at + 1);
-  if (!VERSION.test(version) || !stopId || stopId.length > MAX_STOP_ID) return null;
-  return { version: Number(version), stopId };
+  if (typeof value !== 'string' || value.length > MAX_MOVE_VALUE) return null;
+  const m = MOVE.exec(value);
+  return m ? { version: Number(m[1]), index: Number(m[2]), target: m[3] } : null;
+}
+
+// The moves the menu offers the stop at index i of n: no up or first on the
+// first stop, no down or last on the last, none on a one-stop day.
+function movesAt(i, n) {
+  if (n < 2) return [];
+  return [
+    ...(i > 0 ? ['up'] : []), ...(i < n - 1 ? ['down'] : []), ...(i > 0 ? ['first'] : []), ...(i < n - 1 ? ['last'] : []),
+  ];
+}
+
+// The order with the stop at index i moved to target, and the span of
+// indexes whose stops changed place.
+function moved(order, i, target) {
+  const j = { up: i - 1, down: i + 1, first: 0, last: order.length - 1 }[target];
+  const next = order.slice();
+  const [id] = next.splice(i, 1);
+  next.splice(j, 0, id);
+  return { next, from: Math.min(i, j), to: Math.max(i, j) };
 }
 
 const sameOrder = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+// Each stop node's client and area for its row, escaped; a stop with no
+// client name is "a stop", one with no area has none.
+function placesOf(labels, nodes) {
+  const text = (v) => (typeof v === 'string' && v ? escapeText(v) : null);
+  return new Map(nodes.map((node) => {
+    const l = labels.get(node) || {};
+    return [node, { client: text(l.clientName) || 'a stop', area: text(l.city) }];
+  }));
+}
+
+// A rule break, shortened for a stop row (AD-R29); st is the stop as
+// evaluateOrder timed it, limits the day's. A rule this list does not know
+// shows its label.
+function shortBreak(b, st, limits) {
+  // Inside brackets, a time past 24:00 reads "hh:mm next day".
+  const at = (m) => (Number.isInteger(m) && m >= DAY_MINUTES ? `${clock(m % DAY_MINUTES)} next day` : clock(m));
+  switch (b.ruleId) {
+    case 'aim-finish': return ROUTE_WORDS.pastAim(clock(limits.aimFinish), driveWords(Math.max(0, st.finish - limits.aimFinish)));
+    case 'crew-day-limits': return st.start < limits.earliestStart ? ROUTE_WORDS.beforeDay(at(st.start)) : ROUTE_WORDS.overDay(at(st.finish));
+    case 'locked-start': return ROUTE_WORDS.lockedLate(at(st.start));
+    case 'time-of-day': return ROUTE_WORDS.outsideHours(at(st.start));
+    case 'day-of-week': return ROUTE_WORDS.wrongDay();
+    case 'preferred-crew': return ROUTE_WORDS.notPreferred();
+    default: return escapeText(cut(b.label, 40));
+  }
+}
+
+// A stop row's second line: the drive, the hardest break (hard before
+// soft, then the engine's order), then how many others.
+function detailLine(st, limits) {
+  const parts = [`${DRIVE_MARK} ${st.travelMinutesFromPrevious} min`];
+  const ranked = [...st.breaks.filter((b) => b.strength === 'hard'), ...st.breaks.filter((b) => b.strength !== 'hard')];
+  if (ranked.length) {
+    const top = ranked[0];
+    parts.push(`${STRENGTH_MARK[top.strength] || STRENGTH_MARK.soft} ${shortBreak(top, st, limits)}`);
+    if (ranked.length > 1) parts.push(ROUTE_WORDS.more(ranked.length - 1));
+  }
+  return parts.join(SEP);
+}
 
 // adapter.route's answer: { input, travel, distance }.
 function checkRoute(got) {
@@ -349,6 +417,7 @@ function createEditor({
         flagged: new Set(),
         out: crew.available === false,
         names: n,
+        places: placesOf(labels, stopNodes),
         color,
         points,
         mosaic: (read && read.mosaic) || null,
@@ -384,6 +453,18 @@ function createEditor({
     type: 'button', action_id: `routing-map:${which}`, text: plainText(text), value, accessibility_label: label,
   });
 
+  // A stop's ⋯ menu, or null when it offers nothing (AD-R29). Overflow
+  // options carry no accessibility_label: the text names the stop.
+  const menu = (v, i, n) => {
+    const moves = movesAt(i, n);
+    if (!moves.length) return null;
+    return {
+      type: 'overflow',
+      action_id: 'routing-map:move',
+      options: moves.map((target) => ({ text: plainText(ROUTE_WORDS.move(i + 1, target)), value: `${v}:${i}:${target}` })),
+    };
+  };
+
   // { head, blocks }: the list message, split around the place the image
   // goes. status: a line under the image ("Map updating…", ...), or null.
   function listParts(s, { ev, km }, status) {
@@ -415,18 +496,19 @@ function createEditor({
       { type: 'actions', block_id: id('actions'), elements: top },
       { type: 'section', block_id: id('leave'), text: { type: 'mrkdwn', text: `${office()}${SEP}leave ${clockDay(ev.leaveAt)}` } },
     );
-    const last = ev.stops.length - 1;
+    const { limits } = p.input;
     ev.stops.forEach((st, i) => {
       const k = i + 1;
-      const lines = [`${k}. ${[estimated(st.start), n.place(p.nodeOf.get(st.stopId)), `${st.travelMinutesFromPrevious} min drive`].join(SEP)}`];
-      for (const b of st.breaks) lines.push(`${WARN} ${escapeText(b.label)}: ${escapeText(b.reason)}`);
+      const place = p.places.get(p.nodeOf.get(st.stopId)) || { client: 'a stop', area: null };
+      const lines = [
+        `${numberOf(k)} *${clockDay(st.start)} ${place.client}*${place.area ? `${SEP}${place.area}` : ''}`,
+        detailLine(st, limits),
+      ];
       if (p.flagged.has(st.stopId)) lines.push(`${WARN} ${ROUTE_WORDS.unplaced()}`);
-      blocks.push({ type: 'section', block_id: `routing-map:stop:${k}:${v}`, text: { type: 'mrkdwn', text: lines.join('\n') } });
-      if (p.out) return;
-      const moves = [];
-      if (i > 0) moves.push(button('up', '↑', `${v}:${st.stopId}`, `Move stop ${k} up`));
-      if (i < last) moves.push(button('down', '↓', `${v}:${st.stopId}`, `Move stop ${k} down`));
-      if (moves.length) blocks.push({ type: 'actions', block_id: `routing-map:move:${k}:${v}`, elements: moves });
+      const accessory = p.out ? null : menu(v, i, ev.stops.length);
+      blocks.push({
+        type: 'section', block_id: `routing-map:stop:${k}:${v}`, text: { type: 'mrkdwn', text: lines.join('\n') }, ...(accessory ? { accessory } : {}),
+      });
     });
     const back = [`${office()}${SEP}back ${clockDay(ev.backAt)}`];
     if (ev.lateBack) back.push(`${WARN} crew day limits: back after ${clock(p.input.limits.latestFinish)}`);
@@ -634,19 +716,19 @@ function createEditor({
     const p = s.plan;
     if (!p) return refuse(which, 'no list');
     if (p.out) return refuse(which, 'read only');
-    if (which === 'up' || which === 'down') {
-      const move = parseMove(value);
+    if (which === 'move') {
+      // An overflow click carries the chosen option, never a value of its own.
+      const option = action && action.selected_option;
+      const move = parseMove(option && typeof option.value === 'string' ? option.value : null);
       if (!move) return refuse(which, 'malformed');
       if (move.version !== p.version) return refuse(which, 'stale version');
-      const i = p.order.indexOf(move.stopId);
-      if (i < 0) return refuse(which, 'unknown stop');
-      const j = which === 'up' ? i - 1 : i + 1;
-      if (j < 0 || j >= p.order.length) return refuse(which, 'edge');
-      [p.order[i], p.order[j]] = [p.order[j], p.order[i]];
+      if (move.index >= p.order.length) return refuse(which, 'out of range');
+      if (!movesAt(move.index, p.order.length).includes(move.target)) return refuse(which, 'not offered');
+      const { next, from, to } = moved(p.order, move.index, move.target);
+      p.order = next;
       // Optimize's "kept at the end" flag holds only while the stop stays
-      // where Optimize put it: both stops a move swaps lose it.
-      p.flagged.delete(p.order[i]);
-      p.flagged.delete(p.order[j]);
+      // where Optimize put it: every stop the move shifts loses it.
+      for (let k = from; k <= to; k += 1) p.flagged.delete(p.order[k]);
       p.version += 1;
       log.info('routing map click', { module: mod.id, action: which, view: 'route' });
       return changed(go);
@@ -684,5 +766,5 @@ function createEditor({
 }
 
 module.exports = {
-  createEditor, parseMove, SCREEN, ACTIONS, MAX_STOPS, MAP_DELAY_MS,
+  createEditor, parseMove, movesAt, SCREEN, ACTIONS, MAX_STOPS, MAP_DELAY_MS,
 };

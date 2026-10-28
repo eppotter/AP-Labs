@@ -544,18 +544,20 @@ test('through the hub: a dispatcher opens Plan a route, picks crew 4 on S1\'s da
   assert.match(texts[1], /^Office · leave \d\d:\d\d$/);
   assert.match(texts.at(-1), /^Office · back \d\d:\d\d/);
   const stops = (await crewsWithStops(day)).find(([id]) => id === '4')[1];
-  assert.equal(texts.filter((t) => /^\d+\. /.test(t)).length, stops);
+  const isStop = (t) => /^\S+ \*\d\d:\d\d /.test(t);
+  const client = (t) => t.split('*')[1];
+  assert.equal(texts.filter(isStop).length, stops);
   const image = view.blocks.find((b) => b.type === 'image');
   assert.ok(image, 'the map is shown');
   assert.match(image.alt_text, /^Route map: Planned route, .+, \d+ stops$/);
 
-  // ↓ on the first stop: the order changes, the list stays whole.
-  const first = view.blocks.find((b) => b.type === 'actions' && /^routing-map:move:/.test(b.block_id)).elements.find((e) => e.action_id === 'routing-map:down');
-  await act(ctx, 'down', { value: first.value }, user);
+  // ⋯ Move stop 1 down: the order changes, the list stays whole.
+  const first = view.blocks.find((b) => b.type === 'section' && /^routing-map:stop:1:/.test(b.block_id)).accessory.options.find((o) => o.value.endsWith(':down'));
+  await act(ctx, 'move', { option: first }, user);
   await settle();
-  const moved = sectionTexts(viewOf(ctx.app)).filter((t) => /^\d+\. /.test(t));
+  const moved = sectionTexts(viewOf(ctx.app)).filter(isStop);
   assert.equal(moved.length, stops);
-  assert.notDeepEqual(moved.map((t) => t.split(' · ')[1]), texts.filter((t) => /^\d+\. /.test(t)).map((t) => t.split(' · ')[1]));
+  assert.notDeepEqual(moved.map(client), texts.filter(isStop).map(client));
 
   // No coordinate (the Office's too), address or postal code in Slack or the logs.
   const out = JSON.stringify(ctx.app.views) + JSON.stringify(ctx.log.lines);
@@ -576,5 +578,7 @@ test('through the hub: a crew lead gets their own crew\'s day from the Office', 
   const texts = sectionTexts(viewOf(ctx.app));
   const stops = (await crewsWithStops(day)).find(([id]) => id === lead)[1];
   assert.match(texts[1], /^Office · leave /);
-  assert.equal(texts.filter((t) => /^\d+\. /.test(t)).length, stops);
+  const isStop = (t) => /^\S+ \*\d\d:\d\d /.test(t);
+  const client = (t) => t.split('*')[1];
+  assert.equal(texts.filter(isStop).length, stops);
 });

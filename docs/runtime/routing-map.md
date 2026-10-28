@@ -97,10 +97,10 @@ Production waits for Dana's sign-off of GRD-002's reworded map image rule (DEP-0
 **Plan a route** (`examples/brightside/app/modules/route-planner/`, dev only) reorders one crew's day from the Office (`routing.depot`, the one `depots` row). **Untested until you run it.** First `npm run fixture:build`: the local data must be generator v7 (it has the Office). Start the bot as above. Note each result in the Story 15.15 PR, one line each, with seconds where asked.
 
 1. **Open:** `/brightside`, **Open** on **Plan a route**, pick a crew and as_of+3 (**2026-10-03**), **Show stops**: the Office marker and the loop, the totals line at the top.
-2. **Fast taps:** tap ↓ three times fast on one stop: the list follows each tap without jumping, and the map lands on the final order. Note the seconds.
+2. **Fast moves:** pick **⋯ Move stop 1 down** three times fast: the list follows each move without jumping, and the map lands on the final order. Note the seconds.
 3. **Optimize,** then **Reset to booked**: the order changes, then returns to the booked one.
 4. **Rule break:** move a morning stop late: a warning shows under it and the count at the top rises.
 5. **Ways out:** **Change crew or day**, then **Back**; open again and close with the **X**: the terminal shows the files deleted both times (also 15.1's open Close item).
-6. **iOS,** once: the buttons can be tapped and the layout stays put.
+6. **iOS,** once: the buttons and the ⋯ menus (an action sheet) can be tapped and the layout stays put.
 
 The MotherDuck copy has no Office until Ely republishes v7 (DEP-033): until then, run this on the local fixture. Production waits for DEP-025 and DEP-032 (Story 15.6).

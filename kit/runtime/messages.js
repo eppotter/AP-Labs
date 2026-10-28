@@ -140,6 +140,18 @@ const ROUTE_WORDS = Object.freeze({
   pickCrew: () => 'Pick a crew first, then press *Show stops*.',
   // The map's ring colours (Story 15.18, AD-R29), under the image when a stop has one.
   legend: () => '🟠 ring: soft rule break · 🔴 ring: hard rule break',
+  // A stop's ⋯ menu (Story 15.16, AD-R29): each option names the stop.
+  move: (k, target) => `Move stop ${k} ${{ up: 'up', down: 'down', first: 'to first', last: 'to last' }[target]}`,
+  // A stop row's second line: the hardest rule break, shortened, then the
+  // others counted. Times are clock strings the caller builds.
+  more: (n) => `+${n} more`,
+  pastAim: (time, late) => `past ${time} (+${late})`,
+  overDay: (time) => `over crew day (ends ${time})`,
+  beforeDay: (time) => `before crew day (starts ${time})`,
+  lockedLate: (time) => `missed locked start (starts ${time})`,
+  outsideHours: (time) => `outside customer's hours (starts ${time})`,
+  wrongDay: () => "not one of the customer's days",
+  notPreferred: () => 'not the preferred crew',
 });
 
 const MESSAGES = [

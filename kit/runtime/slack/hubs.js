@@ -182,7 +182,7 @@ const {
 } = require('./image');
 const { textBlocks } = require('./format');
 const routingAudience = require('../archetypes/routing-map/audience');
-const { createRoutingMap, ACTION_PATTERN: ROUTING_MAP_ACTION } = require('../archetypes/routing-map');
+const { createRoutingMap, LISTEN_PATTERN: ROUTING_MAP_ACTION } = require('../archetypes/routing-map');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
