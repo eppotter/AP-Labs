@@ -14,9 +14,9 @@ inputDocuments:
 
 ## Overview
 
-The routing spec (`SPEC.md`, standing in for a PRD) and SQLsmith's `data-design.md`, broken into epics (phases) and stories (one PR each). Sequencing (Ely): the generic engine goes into the template first, on synthetic test fixtures; Brightside gets it only once the engine is built. Epics continue at 12. Stories cite `architecture-routing.md` (AD-R1 to AD-R28) and the runtime ADs they inherit. Epic 15 (the Slack map modal) was added 2026-10-26 on Ely's decisions; Story 14.5's CLI stays as the no-Slack test path. Stories 15.7 to 15.11 (a street map under the plot) were added later the same day (amendment routing-streetmap, below). Stories 15.12 to 15.15 (Plan a route) were added 2026-10-27 (amendment routing-editor, below).
+The routing spec (`SPEC.md`, standing in for a PRD) and SQLsmith's `data-design.md`, broken into epics (phases) and stories (one PR each). Sequencing (Ely): the generic engine goes into the template first, on synthetic test fixtures; Brightside gets it only once the engine is built. Epics continue at 12. Stories cite `architecture-routing.md` (AD-R1 to AD-R29) and the runtime ADs they inherit. Epic 15 (the Slack map modal) was added 2026-10-26 on Ely's decisions; Story 14.5's CLI stays as the no-Slack test path. Stories 15.7 to 15.11 (a street map under the plot) were added later the same day (amendment routing-streetmap, below). Stories 15.12 to 15.15 (Plan a route) were added 2026-10-27 (amendment routing-editor, below). Stories 15.16 to 15.18 (Plan a route's polished layout) were added 2026-10-28 (amendment routing-polish).
 
-Estimates: **S** about half a day, under ~300 lines; **M** about a day; **L** up to two days. 28 stories: 5 S, 19 M, 4 L.
+Estimates: **S** about half a day, under ~300 lines; **M** about a day; **L** up to two days. 31 stories: 5 S, 22 M, 4 L.
 
 Computed tiers (`APLABS_PROFILE=$PWD/profiles/brightside/profile.yml node kit/lib/tier <paths>`, 2026-10-26):
 
@@ -484,3 +484,45 @@ Result: AD-R15's primary path holds (no DM fallback). Story 15.4 may proceed; it
 
 **Untested until Ely runs it:** the MotherDuck republish of v7 (DEP-033).
 **Live check (Ely, dev Slack; untested until run; kept short):** (1) open Plan a route, pick a crew and as_of+3, Show stops: the Office marker and the loop, the totals; (2) tap ↓ three times fast on one stop: the list follows each tap without jumping, and the map lands on the final order (note the seconds); (3) Optimize, then Reset to booked; (4) move a morning stop late: a warning shows and the count rises; (5) Change crew or day, then Back; open again and Close with the X: the log shows deleted for both (also 15.1's open Close item); (6) once on iOS: buttons tappable, layout stable.
+
+### Story 15.16: Stop rows with a ⋯ menu
+**Implements:** FR8, FR9 · **Estimate:** M · **Tier:** T2 (computed) · **Architecture:** AD-R29, AD-R27, AD-R16 amended
+**Files:** `kit/runtime/archetypes/routing-map/{editor,index}.js`, `kit/runtime/messages.js`, `test/fixtures/fake-slack.js`, `test/unit/runtime-routing-map-editor.test.js`
+**Order:** in parallel with 15.18; 15.17 after both.
+
+**Given** step 2 with n stops **Then** each stop is one `section` with an `overflow` accessory, and there is no ↑/↓ `actions` row; 40 stops use fewer than 60 blocks
+**And** the first stop's menu has only Move down and Move to last; the last stop's only Move up and Move to first; a one-stop day has no menu; a crew that is out has no menus; each option's text names the stop ("Move stop 3 up"), at most 75 characters
+**And** the row shows the bold time and client, the area, and a second line with the drive minutes and the hardest break (🔴 hard before 🟠 soft, by `strength`), shortened, then "+N more" when it has others; an unplaced stop keeps its "kept at the end" line; stops 1 to 10 carry keycap emoji, 11 on "11."; "(est.)" appears nowhere in the rows
+**When** a menu option is chosen (the value read from `selected_option.value`; the Slack fake sends overflow clicks in that shape) **Then** the order changes as ↑/↓ did (same list-first, map-second update, same debounce); Move to first and Move to last move the stop to the ends
+**Given** a stale version, an index out of range, a target that does not match the option, or a value that does not parse **Then** the order is unchanged and the refusal is logged by reason only
+**And** `up` and `down` are gone from the action pattern; a `routing-map:up` click (a modal opened before the deploy) gives the expired message (one test)
+**And** the Slack fake rejects what Slack rejects for an overflow: fewer than 2 or more than 5 options, option text over 75 characters, an option value over 150 characters, a duplicate `action_id` within one block
+**Exits:** all of 15.14's exits still pass unchanged (one test each, already present; re-run). New: a menu click on an expired session gives the expired message; a menu click from another user is refused.
+**Untested until the live check:** the overflow as an action sheet on iOS.
+
+### Story 15.17: A summary header for Plan a route
+**Implements:** FR8, FR9 · **Estimate:** S · **Tier:** T2 (computed) · **Architecture:** AD-R29
+**Files:** `kit/runtime/archetypes/routing-map/editor.js`, `kit/runtime/messages.js`, `test/fixtures/fake-slack.js`, `test/unit/runtime-routing-map-editor.test.js`
+**Order:** after 15.16 and 15.18 merge (merge main first).
+
+**Given** step 2 **Then** a `header` block names the crew and day; a `section` has four `fields`: Drive, Distance (about N km), Back at Office (with "+1 day" past midnight), Rule breaks (count and hard count)
+**And** an `actions` row holds Optimize (`style: primary`), Reset to booked and Change crew or day (a button); one context caption reads "Estimates from the Office at 08:00 · suggestions only, nothing is saved"; the "Routing's other views" note is gone
+**And** the Office rows read "🏠 Leave Office HH:MM" and "🏠 Back at Office HH:MM", the second with 🔴 when it is past latest-finish; a context "After 18:00" line (the profile's aim-finish) sits before the first stop finishing past it, and nowhere if none do
+**When** Optimize changes the order **Then** a status line shows drive and back time before → after ("Optimized: drive 1 h 37 → 1 h 25 (−12 min), back 23:40 → 23:10"); when nothing changed, "Already the best order found."
+**And** the Slack fake rejects a `header` over 150 characters, more than 10 `fields`, a field over 2000 characters
+**And** a crew that is out, 0 stops, or more than 40 stops still show Change crew or day as a button
+**Exits:** all of 15.14's exits still pass, Change crew or day included.
+
+### Story 15.18: A sharper route map
+**Implements:** FR8 · **Estimate:** M · **Tier:** T2 (computed) · **Architecture:** AD-R29, AD-R28 amended, AD-R21
+**Files:** `kit/runtime/routing-map/{svg,png,glyphs,index}.js`, `kit/runtime/archetypes/routing-map/editor.js` (the flags and the caption legend only), `kit/runtime/messages.js` (the legend), `test/fixtures/routing-map/route.json`, `test/unit/runtime-routing-map-{svg,png}.test.js`
+**Order:** in parallel with 15.16; touches `editor.js` in one place only (merge main before reporting).
+
+**Given** `route.json` **Then** the SVG has the new pins (filled numerals, white ring, halo), the cased 6 px line, one chevron per leg pointing along travel, the Office square; no `<text>`; byte-identical twice; `unsafe_svg` holds
+**Given** stops flagged `soft` and `hard` **Then** they get orange and red outer rings; any other flag value is refused
+**And** the route view rasterizes at 2×: the PNG is twice the frame's width and height
+**And** the cap is the smaller of `MAX_PNG_BYTES` and the 1 MB upload check in `kit/runtime/slack/image.js` (not raised); a 2× PNG over it is re-drawn at 1.5×, then 1×; a 1× over it falls to the plain map (one test each); the builder reports the measured 2× size with realistic synthetic tiles
+**And** the four Routing views are byte-identical to today's (regression test)
+**And** the editor sets each stop's flag from `evaluateOrder` and the caption under the image adds "🟠 ring: soft rule break · 🔴 ring: hard rule break" when any stop is flagged
+**Live check (Ely, dev Slack, kept short, for 15.16 to 15.18 together):** open Plan a route for North crew A, 2026-10-03: the header and four fields; the map crisp on iPhone, pins readable, rings on late stops; a ⋯ Move to first on stop 8 moves it and redraws once; Optimize shows the before → after line; Change crew or day goes back; Close with the X.
+
