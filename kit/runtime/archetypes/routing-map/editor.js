@@ -546,6 +546,12 @@ function createEditor({
     return true;
   }
 
+  // A stop's ring on the map (Story 15.18, AD-R29): its hardest rule break.
+  const flagOf = (st) => {
+    if (st.breaks.some((b) => b.strength === 'hard')) return 'hard';
+    return st.breaks.length ? 'soft' : 'none';
+  };
+
   // Draws the current order and shows it; a failure keeps the list.
   async function drawMap({
     mod, s, number, evaluated, show, showMap, showList, recheck,
@@ -568,7 +574,7 @@ function createEditor({
       frame: { ...FRAME },
       points: p.points,
       crews: [{ crewId: p.crewId, color: p.color, baseNode: depot.node }],
-      route: { crewId: p.crewId, stops: p.order.map((id) => p.nodeOf.get(id)) },
+      route: { crewId: p.crewId, stops: evaluated.ev.stops.map((st) => ({ node: p.nodeOf.get(st.stopId), flag: flagOf(st) })) },
       depot: depot.node,
     };
     let png;
@@ -593,6 +599,7 @@ function createEditor({
       return;
     }
     const caption = streets === 'off' ? [] : [captionBlock(streetSource, streets)];
+    if (model.route.stops.some((st) => st.flag !== 'none')) caption.push({ type: 'context', elements: [{ type: 'mrkdwn', text: ROUTE_WORDS.legend() }] });
     const parts = listParts(s, evaluated, null);
     const status = await showMap(withModal(s, {
       head: parts.head, image: { png, alt }, caption, blocks: parts.blocks, fallback: keepList,

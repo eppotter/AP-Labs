@@ -37,16 +37,22 @@
 const {
   renderSvg, imageSize, panelCount, VIEWS,
 } = require('./svg');
-const { rasterize, MAX_PNG_BYTES } = require('./png');
+const { rasterize, MAX_PNG_BYTES, ROUTE_SCALES } = require('./png');
+
+// Plan a route's map is drawn at 2x, then 1.5x, then 1x, the first under the
+// cap (Story 15.18, AD-R29), its street tiles enlarged pixel for pixel
+// (png.js composeBasemap); Routing's four views at 1x, as always.
+const scalesOf = (view) => (view === 'route' ? { scales: ROUTE_SCALES } : undefined);
 
 function renderPng(view, model, { basemap = null } = {}) {
   if (basemap === null) {
     const svg = renderSvg(view, model);
-    return rasterize(svg, imageSize(view, model.frame));
+    return rasterize(svg, imageSize(view, model.frame), scalesOf(view));
   }
   const svg = renderSvg(view, model, { base: 'streets' });
   const layout = { frame: { width: model.frame.width, height: model.frame.height }, panels: panelCount(view) };
-  return rasterize.streets(svg, basemap, layout, imageSize(view, model.frame));
+  if (view === 'route') layout.pixelated = true;
+  return rasterize.streets(svg, basemap, layout, imageSize(view, model.frame), scalesOf(view));
 }
 
 module.exports = {

@@ -10,8 +10,10 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { renderSvg, imageSize, VIEWS } = require('../../kit/runtime/routing-map');
-const { PALETTE, MAX_COLOR } = require('../../kit/runtime/routing-map/svg');
-const { numberPath } = require('../../kit/runtime/routing-map/glyphs');
+const {
+  PALETTE, MAX_COLOR, FLAGS, FLAG_COLORS,
+} = require('../../kit/runtime/routing-map/svg');
+const { numberPath, boldNumberPath } = require('../../kit/runtime/routing-map/glyphs');
 const { RoutingFault, ROUTING_PROBLEMS } = require('../../kit/runtime/errors');
 
 const FIXTURES = path.join(__dirname, '..', 'fixtures', 'routing-map');
@@ -366,8 +368,9 @@ const PLAIN_SVG_SHA256 = Object.freeze({
   change: '4cea0276d478a01a29b4715c32b55ddce3db8b841fd4107fc03ebb47236fcda1',
   zone: '0cbf86c1f14bdae8012babba645d5ca62b71c9e00c8392158aea11cddeb0bc45',
   gap: '6fe1f9d8b5fbcdd40a8fb36ca61d9b4a09d2f986e0df6ad7ca8386b037118aa3',
-  // Story 15.13: the route view, pinned when it was added.
-  route: 'f375110119f489728796a68d256e9d923c94a2936f631adcfc5cc954da06b7bb',
+  // Story 15.13: the route view, pinned when it was added; re-pinned by
+  // Story 15.18 (its new look and the fixture's flagged stops).
+  route: '365aa1c6ce24fc8217f0219ef4b4eb087bad308eac6e41080892b1687ebdd3a3',
 });
 
 test('Story 15.10: with no base or base plain, every fixture\'s SVG is byte for byte what it was before street tiles', () => {
@@ -381,12 +384,14 @@ test('Story 15.10: with no base or base plain, every fixture\'s SVG is byte for 
 
 test('Story 15.10: base streets swaps the white background for a translucent white wash, set by attribute; nothing else changes', () => {
   for (const view of VIEWS) {
+    // Plan a route's map washes the streets more (Story 15.18).
+    const wash = view === 'route' ? '0.6' : '0.45';
     const plain = renderSvg(view, model(view));
     const streets = renderSvg(view, model(view), { base: 'streets' });
     const { width, height } = imageSize(view, model(view).frame);
     const [bg] = elements(streets);
     assert.deepEqual(bg, {
-      name: 'rect', attrs: { x: '0', y: '0', width: String(width), height: String(height), fill: '#FFFFFF', 'fill-opacity': '0.45' },
+      name: 'rect', attrs: { x: '0', y: '0', width: String(width), height: String(height), fill: '#FFFFFF', 'fill-opacity': wash },
     });
     assert.ok(!/url\(|style|href|<image/i.test(streets), `${view}: no url(, style or reference`);
     const rest = (svg) => svg.split('\n').slice(2).join('\n');
@@ -400,45 +405,154 @@ test('Story 15.10: an unknown option or base is refused with fixed words', () =>
   assert.deepEqual(faultOf(() => renderSvg('gap', model('gap'), 'streets')).problem, 'not_object');
 });
 
-// --- Story 15.13: the route view, Plan a route's map (AD-R28) -------------------------------
+// --- Story 15.13: the route view, Plan a route's map (AD-R28; its look Story 15.18, AD-R29) ---
 
-// The Office's marker: a house polygon and its door, at the Office's point.
+// A route stop is a node or { node, flag }.
+const nodeOf = (s) => (typeof s === 'string' ? s : s.node);
+const stopNodes = (m) => m.route.stops.map(nodeOf);
+
+// The Office's marker at its point: the dark navy rounded square with a white
+// ring, the white house and its navy door.
 function officeAt(svg, p) {
-  const house = find(svg, 'polygon', { fill: '#000000', stroke: '#FFFFFF' })
-    .filter((e) => e.attrs.points === `${p.x - 12},${p.y + 11} ${p.x + 12},${p.y + 11} ${p.x + 12},${p.y - 2} ${p.x},${p.y - 14} ${p.x - 12},${p.y - 2}`);
-  const door = find(svg, 'rect', { x: p.x - 4, y: p.y + 1, width: 8, height: 10, fill: '#FFFFFF' });
-  return { house: house.length, door: door.length };
+  const square = find(svg, 'rect', {
+    x: p.x - 15, y: p.y - 15, width: 30, height: 30, rx: 6, fill: '#1D3557', stroke: '#FFFFFF', 'stroke-width': 3,
+  });
+  const house = find(svg, 'polygon', { fill: '#FFFFFF' })
+    .filter((e) => e.attrs.points === `${p.x - 8},${p.y + 9} ${p.x + 8},${p.y + 9} ${p.x + 8},${p.y - 1} ${p.x},${p.y - 9} ${p.x - 8},${p.y - 1}`);
+  const door = find(svg, 'rect', {
+    x: p.x - 3, y: p.y + 2, width: 6, height: 7, fill: '#1D3557',
+  });
+  return { square: square.length, house: house.length, door: door.length };
 }
 
-test('route: one panel; the Office marker in its own shape, stops numbered in the order given, one closed line in the crew\'s color', () => {
+// A stop's pin at its point: the disc with its white ring, the bold filled
+// number, and the two halo discs a pixel below.
+function pinAt(svg, p, n, colors) {
+  return {
+    disc: find(svg, 'circle', {
+      cx: p.x, cy: p.y, r: 17, fill: colors.fill, stroke: '#FFFFFF', 'stroke-width': 3,
+    }).length,
+    number: find(svg, 'path', { d: boldNumberPath(n, p.x, p.y), fill: colors.ink }).length,
+    halo: find(svg, 'circle', { cx: p.x, cy: p.y + 1, fill: '#000000' }).length,
+  };
+}
+const ringsAt = (svg, p) => find(svg, 'circle', {
+  cx: p.x, cy: p.y, r: 21, fill: 'none', 'stroke-width': 5,
+}).map((e) => e.attrs.stroke);
+
+// Each chevron: a white stroked open V, as its three points.
+function chevrons(svg) {
+  return find(svg, 'path', { fill: 'none', stroke: '#FFFFFF' })
+    .map((e) => [...e.attrs.d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) })));
+}
+
+test('route: one panel; the Office square, pins numbered in the order given, the cased closed line in the crew\'s color', () => {
   const m = model('route');
   const svg = renderSvg('route', m);
   assert.deepEqual(imageSize('route', m.frame), { width: m.frame.width, height: m.frame.height }, 'one panel');
   assert.equal(find(svg, 'line').length, 0, 'no panel divider');
   const office = pointOf(m, m.depot);
-  assert.deepEqual(officeAt(svg, office), { house: 1, door: 1 }, 'the Office marker, once');
-  // Its own shape: no crew base square anywhere, and the house is the only polygon.
+  assert.deepEqual(officeAt(svg, office), { square: 1, house: 1, door: 1 }, 'the Office marker, once');
   assert.equal(find(svg, 'rect', { width: 16, height: 16 }).length, 0, 'no crew base square');
-  assert.equal(find(svg, 'polygon').length, 1);
-  // Stops numbered 1..n in the given order, in the crew's color.
-  const fill = fillOf(m, m.route.crewId);
-  assert.equal(fill, PALETTE[2].fill);
-  m.route.stops.forEach((node, i) => {
-    const p = pointOf(m, node);
-    assert.equal(find(svg, 'circle', { cx: p.x, cy: p.y, r: 11, fill }).length, 1, `stop ${i + 1}`);
-    assert.equal(find(svg, 'path', { d: numberPath(i + 1, p.x, p.y) }).length, 1, `number ${i + 1}`);
+  // Pins numbered 1..n in the given order, in the crew's color, with a halo.
+  const colors = PALETTE[crewOf(m, m.route.crewId).color];
+  assert.equal(colors.fill, PALETTE[2].fill);
+  stopNodes(m).forEach((node, i) => {
+    assert.deepEqual(pinAt(svg, pointOf(m, node), i + 1, colors), { disc: 1, number: 1, halo: 2 }, `stop ${i + 1}`);
   });
-  assert.equal(find(svg, 'circle').length, m.route.stops.length);
-  // One closed line: Office -> stops -> Office, in the crew's color.
-  const want = [m.depot, ...m.route.stops, m.depot].map((n) => `${pointOf(m, n).x},${pointOf(m, n).y}`).join(' ');
-  assert.deepEqual(find(svg, 'polyline').map((e) => e.attrs), [{
-    points: want, fill: 'none', stroke: fill, 'stroke-width': '4', 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
-  }]);
-  // The Office is drawn last, on top of the line's two ends.
-  const body = svg.split('\n');
-  assert.ok(body.findIndex((l) => l.startsWith('<polygon')) > body.findIndex((l) => l.startsWith('<polyline')));
-  assert.ok(body.findIndex((l) => l.startsWith('<polygon')) > body.map((l, i) => (l.startsWith('<circle') ? i : -1)).at(-1));
+  // Numerals are filled shapes, never strokes, and there is no <text>.
+  for (const p of find(svg, 'path').filter((e) => e.attrs.fill !== 'none')) assert.equal(p.attrs.stroke, undefined);
   assert.doesNotMatch(svg, /<text|font|href|url\(|<image/i);
+  // The line: a 10 px white casing, then the 6 px line in the crew's color,
+  // both Office -> stops -> Office with round joins.
+  const want = [m.depot, ...stopNodes(m), m.depot].map((n) => `${pointOf(m, n).x},${pointOf(m, n).y}`).join(' ');
+  assert.deepEqual(find(svg, 'polyline').map((e) => e.attrs), [
+    {
+      points: want, fill: 'none', stroke: '#FFFFFF', 'stroke-width': '10', 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+    },
+    {
+      points: want, fill: 'none', stroke: colors.fill, 'stroke-width': '6', 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+    },
+  ]);
+  // Drawing order: line, pins, then the Office on top of the line's two ends.
+  const body = svg.split('\n');
+  const lastCircle = body.map((l, i) => (l.startsWith('<circle') ? i : -1)).at(-1);
+  assert.ok(body.findIndex((l) => l.startsWith('<polyline')) < body.findIndex((l) => l.startsWith('<circle')));
+  assert.ok(body.findIndex((l) => l.includes('fill="#1D3557" stroke')) > lastCircle);
+});
+
+test('route: one chevron at the middle of each leg, pointing along travel; a leg too short for one gets none', () => {
+  const m = model('route');
+  const svg = renderSvg('route', m);
+  const loop = [m.depot, ...stopNodes(m), m.depot].map((n) => pointOf(m, n));
+  const got = chevrons(svg);
+  assert.equal(got.length, loop.length - 1, 'one per leg');
+  got.forEach(([armA, tip, armB], i) => {
+    const a = loop[i];
+    const b = loop[i + 1];
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const along = (p) => (p.x - mid.x) * (b.x - a.x) + (p.y - mid.y) * (b.y - a.y);
+    assert.ok(Math.hypot(tip.x - mid.x, tip.y - mid.y) <= 3, `leg ${i + 1}: at the middle`);
+    assert.ok(along(tip) > 0, `leg ${i + 1}: the tip points toward the next stop`);
+    assert.ok(along(armA) < 0 && along(armB) < 0, `leg ${i + 1}: the arms trail behind`);
+  });
+  for (const e of find(svg, 'path', { stroke: '#FFFFFF' })) {
+    assert.deepEqual([e.attrs['stroke-width'], e.attrs['stroke-linecap'], e.attrs['stroke-linejoin']], ['2', 'round', 'round']);
+    assert.match(e.attrs.d, /^M-?\d+(\.\d)?,-?\d+(\.\d)?(L-?\d+(\.\d)?,-?\d+(\.\d)?){2}$/, 'to a tenth of a pixel');
+  }
+  // Reversed, every chevron turns round.
+  const back = model('route');
+  back.route.stops.reverse();
+  const turned = chevrons(renderSvg('route', back));
+  assert.equal(turned.length, got.length);
+  // Two stops 30 px apart: their leg has no chevron, the others keep theirs.
+  const close = model('route');
+  close.points.push({ node: 'property:near', x: 210, y: 70 });
+  close.route.stops.splice(1, 0, 'property:near');
+  assert.equal(chevrons(renderSvg('route', close)).length, close.route.stops.length + 1 - 1);
+});
+
+test('route: a stop flagged soft gets an orange outer ring and one flagged hard a red one, under its pin; none or no flag, no ring', () => {
+  const m = model('route');
+  const svg = renderSvg('route', m);
+  const ring = (node) => ringsAt(svg, pointOf(m, node));
+  assert.deepEqual(m.route.stops.map((s) => (typeof s === 'string' ? 'plain' : s.flag)), ['plain', 'plain', 'soft', 'none', 'hard', 'plain'], 'the fixture');
+  assert.deepEqual(stopNodes(m).map(ring), [[], [], ['#F08C00'], [], ['#E03131'], []]);
+  assert.deepEqual(FLAG_COLORS, { soft: '#F08C00', hard: '#E03131' });
+  assert.deepEqual(FLAGS, ['none', 'soft', 'hard']);
+  // The ring is drawn before (under) its pin's disc.
+  const lines = svg.split('\n');
+  const p = pointOf(m, 'property:p5');
+  assert.ok(lines.findIndex((l) => l.includes(`cx="${p.x}" cy="${p.y}" r="21"`)) < lines.findIndex((l) => l.includes(`cx="${p.x}" cy="${p.y}" r="17"`)));
+  // { node } alone, and { node, flag: 'none' }, draw as the bare node does.
+  const bare = model('route');
+  bare.route.stops = stopNodes(bare);
+  const objects = model('route');
+  objects.route.stops = stopNodes(objects).map((node, i) => (i % 2 ? { node } : { node, flag: 'none' }));
+  assert.equal(renderSvg('route', objects), renderSvg('route', bare));
+  assert.doesNotMatch(svg, /soft|hard|flag/, 'no flag word is written');
+});
+
+test('route: any other flag value is refused, naming the field, never the value', () => {
+  const edits = [
+    [(m) => { m.route.stops[2].flag = 'late'; }, 'route.stops[2].flag', 'out_of_range'],
+    [(m) => { m.route.stops[2].flag = 'HARD'; }, 'route.stops[2].flag', 'out_of_range'],
+    [(m) => { m.route.stops[2].flag = ''; }, 'route.stops[2].flag', 'out_of_range'],
+    [(m) => { m.route.stops[2].flag = 2; }, 'route.stops[2].flag', 'not_text'],
+    [(m) => { m.route.stops[2].flag = null; }, 'route.stops[2].flag', 'not_text'],
+    [(m) => { m.route.stops[2].label = 'late'; }, 'route.stops[2]', 'unknown_key'],
+    [(m) => { delete m.route.stops[2].node; }, 'route.stops[2].node', 'missing'],
+    [(m) => { m.route.stops[2].node = 'property:zz'; }, 'route.stops[2].node', 'no_position'],
+    [(m) => { m.route.stops[2].node = 'place:p3'; }, 'route.stops[2].node', 'bad_node'],
+    [(m) => { m.route.stops[2] = { node: 'property:p1', flag: 'soft' }; }, 'route.stops[2]', 'duplicate'],
+    [(m) => { m.route.stops[2] = { node: m.depot }; }, 'route.stops[2]', 'duplicate'],
+    [(m) => { m.route.stops[2] = ['property:p3', 'soft']; }, 'route.stops[2]', 'not_text'],
+  ];
+  for (const [edit, field, problem] of edits) {
+    const m = model('route');
+    edit(m);
+    refuses('route', m, field, problem);
+  }
 });
 
 test('route: the order given is the order drawn; a reorder renumbers the stops and redraws the loop', () => {
@@ -448,10 +562,13 @@ test('route: the order given is the order drawn; a reorder renumbers the stops a
   const a = renderSvg('route', m);
   const b = renderSvg('route', reordered);
   assert.notEqual(a, b);
-  const last = pointOf(m, m.route.stops.at(-1));
-  assert.equal(find(b, 'path', { d: numberPath(1, last.x, last.y) }).length, 1, 'the last stop is now 1');
-  const want = [m.depot, ...reordered.route.stops, m.depot].map((n) => `${pointOf(m, n).x},${pointOf(m, n).y}`).join(' ');
-  assert.equal(find(b, 'polyline')[0].attrs.points, want);
+  const last = pointOf(m, stopNodes(m).at(-1));
+  assert.equal(find(b, 'path', { d: boldNumberPath(1, last.x, last.y) }).length, 1, 'the last stop is now 1');
+  const want = [m.depot, ...stopNodes(reordered), m.depot].map((n) => `${pointOf(m, n).x},${pointOf(m, n).y}`).join(' ');
+  assert.deepEqual(find(b, 'polyline').map((e) => e.attrs.points), [want, want]);
+  // The flags travel with their stops.
+  const p5 = pointOf(m, 'property:p5');
+  assert.deepEqual(ringsAt(b, p5), ['#E03131']);
   assert.equal(renderSvg('route', clone(reordered)), b, 'byte-identical twice');
 });
 
@@ -459,18 +576,19 @@ test('route: no stops draws only the Office; one stop draws an out-and-back loop
   const none = model('route');
   none.route.stops = [];
   const svg = renderSvg('route', none);
-  assert.deepEqual(officeAt(svg, pointOf(none, none.depot)), { house: 1, door: 1 });
+  assert.deepEqual(officeAt(svg, pointOf(none, none.depot)), { square: 1, house: 1, door: 1 });
   assert.equal(find(svg, 'polyline').length + find(svg, 'circle').length + find(svg, 'path').length, 0);
   const one = model('route');
   one.route.stops = ['property:p3'];
   const o = pointOf(one, one.depot);
   const p = pointOf(one, 'property:p3');
-  assert.equal(find(renderSvg('route', one), 'polyline')[0].attrs.points, `${o.x},${o.y} ${p.x},${p.y} ${o.x},${o.y}`);
+  assert.deepEqual(find(renderSvg('route', one), 'polyline').map((e) => e.attrs.points), [`${o.x},${o.y} ${p.x},${p.y} ${o.x},${o.y}`, `${o.x},${o.y} ${p.x},${p.y} ${o.x},${o.y}`]);
+  assert.equal(chevrons(renderSvg('route', one)).length, 2, 'out and back');
   const dashed = model('route');
   dashed.crews[1].color = PALETTE.length + 2;
-  const line = find(renderSvg('route', dashed), 'polyline')[0].attrs;
-  assert.equal(line.stroke, PALETTE[2].fill);
+  const line = find(renderSvg('route', dashed), 'polyline', { stroke: PALETTE[2].fill })[0].attrs;
   assert.equal(line['stroke-dasharray'], '12 6');
+  assert.equal(find(renderSvg('route', dashed), 'polyline', { stroke: '#FFFFFF' })[0].attrs['stroke-dasharray'], undefined, 'the casing is solid');
 });
 
 test('route: the model is checked, and every refusal names the field, never a value', () => {
@@ -512,13 +630,15 @@ test('route: the model is checked, and every refusal names the field, never a va
   many.route.stops = points.map((p) => p.node);
   refuses('route', many, 'route.stops', 'out_of_range');
   many.route.stops.pop();
-  assert.equal(find(renderSvg('route', many), 'circle').length, 99);
+  assert.equal(find(renderSvg('route', many), 'circle', { r: 17 }).length, 99);
 });
 
-test('route: over the street map the background is the wash and nothing else changes', () => {
+test('route: over the street map the background is a stronger wash (0.6) and nothing else changes', () => {
   const plain = renderSvg('route', model('route'));
   const streets = renderSvg('route', model('route'), { base: 'streets' });
-  assert.deepEqual(elements(streets)[0].attrs, { x: '0', y: '0', width: '600', height: '400', fill: '#FFFFFF', 'fill-opacity': '0.45' });
+  assert.deepEqual(elements(streets)[0].attrs, {
+    x: '0', y: '0', width: '600', height: '400', fill: '#FFFFFF', 'fill-opacity': '0.6',
+  });
   assert.equal(streets.split('\n').slice(2).join('\n'), plain.split('\n').slice(2).join('\n'));
 });
 
@@ -528,4 +648,48 @@ test('route: the alt text the Slack image takes is "Route map: Planned route, <c
   const alt = image.altText({ view: 'Planned route', crew: 'Crew 2', stops: m.route.stops.length });
   assert.equal(alt, 'Route map: Planned route, Crew 2, 6 stops');
   assert.equal(image.isAltText(alt), true);
+});
+
+// --- Story 15.18: Routing's four views are untouched ------------------------------------------
+
+// sha256 of each of Routing's four views' SVG over street tiles (the wash),
+// computed with main's svg.js before Story 15.18: with PLAIN_SVG_SHA256
+// above, the four views have not moved a byte, plain or over streets.
+const STREETS_SVG_SHA256 = Object.freeze({
+  compare: 'a7a6baade72d1785171b2470e61d0d9e5664d84c9ffe9f3ad7668cda156f321c',
+  change: '261447d09a3cd24d3492ce41f370892b859f7767a37ff3a28505456ddd4d9a70',
+  zone: '52088863b6a79ea232512043323a811483087ba0fd9c0c8a672879ccacea9db5',
+  gap: 'ffe913c94358cd9762d2da607c55e0717a0b01c948522c6ae92090c0c10b24d1',
+});
+
+test('Story 15.18: Routing\'s four views are byte-identical to before, plain and over streets', () => {
+  const sha = (s) => require('node:crypto').createHash('sha256').update(s).digest('hex');
+  for (const view of ['compare', 'change', 'zone', 'gap']) {
+    assert.equal(sha(renderSvg(view, model(view))), PLAIN_SVG_SHA256[view], `${view} plain`);
+    assert.equal(sha(renderSvg(view, model(view), { base: 'streets' })), STREETS_SVG_SHA256[view], `${view} over streets`);
+  }
+});
+
+// --- Story 15.18: the bold filled numerals ----------------------------------------------------
+
+test('bold numbers 1 to 99 are distinct filled paths of whole-pixel boxes, centred; anything else is a programming error', () => {
+  const seen = new Set();
+  for (let n = 1; n <= 99; n += 1) {
+    const d = boldNumberPath(n, 100, 100);
+    assert.match(d, /^(M\d+ \d+H\d+V\d+H\d+Z)+$/, String(n));
+    assert.ok(!seen.has(d), `${n} is distinct`);
+    seen.add(d);
+  }
+  for (const bad of [0, 100, 1.5, '7', -1]) assert.throws(() => boldNumberPath(bad, 0, 0), RangeError);
+  // A one-digit number spans x-4..x+5, a two-digit one x-10..x+10; both y-7..y+8.
+  const box = (d) => {
+    const xs = [...d.matchAll(/M(\d+) |H(\d+)/g)].map((m) => Number(m[1] || m[2]));
+    const ys = [...d.matchAll(/M\d+ (\d+)|V(\d+)/g)].map((m) => Number(m[1] || m[2]));
+    return [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  };
+  assert.deepEqual(box(boldNumberPath(8, 100, 100)), [96, 105, 93, 108]);
+  assert.deepEqual(box(boldNumberPath(88, 100, 100)), [90, 110, 93, 108]);
+  // Inside the pin: every corner of a two-digit number is within the disc's inner edge (17 - 1.5).
+  const corners = (d) => [...d.matchAll(/M(\d+) (\d+)H(\d+)V(\d+)/g)].flatMap((m) => [[+m[1], +m[2]], [+m[3], +m[4]]]);
+  for (const [x, y] of corners(boldNumberPath(88, 100, 100))) assert.ok(Math.hypot(x - 100, y - 100) < 15.5, `${x},${y}`);
 });

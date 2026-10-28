@@ -48,6 +48,20 @@
 // (kit/runtime/slack/image.js). The PNG test re-measures the views and fails
 // if any grows more than a tenth past the measurement.
 //
+// Scale (Story 15.18, AD-R29). rasterize and rasterize.streets take an
+// optional { scales }: the zooms to try in turn, largest first, each one of
+// SCALES (2, 1.5, 1). The PNG is drawn at the first scale whose PNG is at
+// most the cap; its size is the image size times the scale, rounded up (as
+// resvg sizes it). Over the cap at every scale is image_too_large, and the
+// archetype draws the plain map. Plan a route's map passes ROUTE_SCALES
+// (2, 1.5, 1); with no scales the PNG is drawn at 1x with the options it
+// always had, so Routing's four views are byte for byte what they were.
+//
+// The cap (PNG_CAP) is the smaller of MAX_PNG_BYTES and SLACK_UPLOAD_BYTES,
+// the 1 MB check the Slack upload makes (kit/runtime/slack/image.js
+// MAX_PNG_BYTES, unchanged; this directory may not require it, so the PNG
+// test asserts the two numbers agree).
+//
 // Never log the SVG, the PNG or a tile: all are as sensitive as the places
 // they show (AD-R12).
 
@@ -56,6 +70,10 @@ const { RoutingFault } = require('../errors');
 const MEASURED_PNG_BYTES = 510077;
 const MAX_PNG_CEILING = 4 * 1024 * 1024;
 const MAX_PNG_BYTES = Math.min(2 * MEASURED_PNG_BYTES, MAX_PNG_CEILING);
+const SLACK_UPLOAD_BYTES = 1024 * 1024;
+const PNG_CAP = Math.min(MAX_PNG_BYTES, SLACK_UPLOAD_BYTES);
+const SCALES = Object.freeze([2, 1.5, 1]);
+const ROUTE_SCALES = SCALES;
 const TILE_PX = 256;
 const MAX_TILE_BYTES = 256 * 1024;
 const MAX_TILES = 64;
@@ -66,6 +84,20 @@ const OPTIONS = Object.freeze({
   font: { loadSystemFonts: false },
   logLevel: 'off',
 });
+// The options for a scale: 1 is OPTIONS itself; else resvg's zoom.
+const optionsAt = (scale) => (scale === 1 ? OPTIONS : { ...OPTIONS, fitTo: { mode: 'zoom', value: scale } });
+const sizeAt = (size, scale) => (size ? { width: Math.ceil(size.width * scale), height: Math.ceil(size.height * scale) } : size);
+
+// The scales asked for: none means [1]; else a non-empty list of SCALES,
+// largest first, each once.
+function checkScales(options) {
+  if (options === undefined) return [1];
+  if (!isPlainObject(options) || !sameKeys(options, ['scales'])) throw fault('out_of_range', 'scales');
+  const { scales } = options;
+  const sound = Array.isArray(scales) && scales.length >= 1 && scales.every((v, i) => SCALES.includes(v) && (i === 0 || v < scales[i - 1]));
+  if (!sound) throw fault('out_of_range', 'scales');
+  return scales;
+}
 
 const UNSAFE = /<image|href|xlink|url\(|<use|<style|@import|foreignObject|<script/i;
 
@@ -136,21 +168,27 @@ function checkBasemap(basemap, frame) {
 // The opening tag renderSvg writes, on its own first line.
 const SVG_OPEN = /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="(\d+)" height="(\d+)" viewBox="0 0 \1 \2">\n/;
 // Exactly the element composeBasemap writes for a tile, and nothing else.
-const TILE_ELEMENT = /<image x="-?\d+" y="-?\d+" width="256" height="256" href="data:image\/png;base64,[A-Za-z0-9+/]*={0,2}"\/>/g;
+const TILE_ELEMENT = /<image x="-?\d+" y="-?\d+" width="256" height="256"(?: image-rendering="optimizeSpeed")? href="data:image\/png;base64,[A-Za-z0-9+/]*={0,2}"\/>/g;
+// layout.pixelated (Story 15.18): the tiles are enlarged pixel for pixel
+// when the map is drawn at 2x or 1.5x, not smoothed: the PNG is about a
+// third the size (measured: dense synthetic tiles, the route view at 2x,
+// about 1.6 MB smoothed, about 0.6 MB pixel for pixel), and under the 0.6
+// wash the streets look much the same.
+const PIXELATED = ' image-rendering="optimizeSpeed"';
 
-const tileElement = (t) => `<image x="${t.x}" y="${t.y}" width="${TILE_PX}" height="${TILE_PX}" href="${DATA_PNG}${t.b64}"/>`;
+const tileElement = (t, pixelated) => `<image x="${t.x}" y="${t.y}" width="${TILE_PX}" height="${TILE_PX}"${pixelated ? PIXELATED : ''} href="${DATA_PNG}${t.b64}"/>`;
 const count = (text, pattern) => (text.match(pattern) || []).length;
 
-// composeBasemap(svg, basemap, { frame, panels }) -> the SVG with the street
+// composeBasemap(svg, basemap, { frame, panels, pixelated? }) -> the SVG with the street
 // tiles under the plot: right after the opening tag (so under the wash and
 // every mark), one clipped layer per panel, the same tiles in each. svg must
 // be renderSvg's output for that frame and number of panels (1 or 2).
 function composeBasemap(svg, basemap, layout) {
   if (typeof svg !== 'string') throw fault('not_text');
   if (UNSAFE.test(svg)) throw fault('unsafe_svg');
-  const { frame, panels } = isPlainObject(layout) ? layout : {};
+  const { frame, panels, pixelated = false } = isPlainObject(layout) ? layout : {};
   const whole = (v) => Number.isSafeInteger(v) && v >= 1;
-  if (!isPlainObject(frame) || !whole(frame.width) || !whole(frame.height) || (panels !== 1 && panels !== 2)) {
+  if (!isPlainObject(frame) || !whole(frame.width) || !whole(frame.height) || (panels !== 1 && panels !== 2) || typeof pixelated !== 'boolean') {
     throw fault('out_of_range', 'layout');
   }
   const open = SVG_OPEN.exec(svg);
@@ -159,7 +197,7 @@ function composeBasemap(svg, basemap, layout) {
   const layers = [];
   for (let p = 0; p < panels; p += 1) {
     layers.push(`<svg x="${p * frame.width}" y="0" width="${frame.width}" height="${frame.height}">`);
-    for (const t of tiles) layers.push(tileElement(t));
+    for (const t of tiles) layers.push(tileElement(t, pixelated));
     layers.push('</svg>');
   }
   const composed = `${open[0]}${layers.join('\n')}\n${svg.slice(open[0].length)}`;
@@ -179,7 +217,7 @@ function composeBasemap(svg, basemap, layout) {
 // A rasterizer. load() returns the @resvg/resvg-js module; it runs once, on
 // the first call, and its failure is remembered (tests pass their own load,
 // and may pass a smaller maxBytes).
-function createRasterizer({ load = loadResvg, maxBytes = MAX_PNG_BYTES } = {}) {
+function createRasterizer({ load = loadResvg, maxBytes = PNG_CAP } = {}) {
   let Resvg = null;
   let failed = false;
   const resvg = () => {
@@ -196,13 +234,13 @@ function createRasterizer({ load = loadResvg, maxBytes = MAX_PNG_BYTES } = {}) {
     }
   };
 
-  // Draws an SVG that has passed its checks: PNG bytes of exactly size, at
-  // most maxBytes.
-  const draw = (svg, size) => {
+  // Draws an SVG that has passed its checks at one scale: PNG bytes of
+  // exactly size x scale, at most maxBytes.
+  const drawAt = (svg, size, scale) => {
     const Ctor = resvg();
     let png;
     try {
-      png = new Ctor(svg, OPTIONS).render().asPng();
+      png = new Ctor(svg, optionsAt(scale)).render().asPng();
     } catch {
       throw fault('renderer_failed');
     }
@@ -210,22 +248,42 @@ function createRasterizer({ load = loadResvg, maxBytes = MAX_PNG_BYTES } = {}) {
     const bytes = Buffer.from(png);
     if (bytes.length > maxBytes) throw fault('image_too_large');
     const dims = pngSize(bytes);
-    if (!dims || (size && (dims.width !== size.width || dims.height !== size.height))) throw fault('renderer_failed');
+    const want = sizeAt(size, scale);
+    if (!dims || (want && (dims.width !== want.width || dims.height !== want.height))) throw fault('renderer_failed');
     return bytes;
   };
 
-  // rasterize(svg, { width, height }) -> PNG bytes (a Buffer) of exactly that
-  // size, at most maxBytes.
-  function rasterize(svg, size) {
+  // The first scale whose PNG fits; image_too_large only after the last.
+  const tooLarge = (err) => err instanceof RoutingFault && err.details.problem === 'image_too_large';
+  const draw = (svg, size, scales) => {
+    const last = scales.length - 1;
+    for (let i = 0; i < last; i += 1) {
+      try {
+        return drawAt(svg, size, scales[i]);
+      } catch (err) {
+        if (!tooLarge(err)) throw err;
+      }
+    }
+    return drawAt(svg, size, scales[last]);
+  };
+
+  // rasterize(svg, { width, height }, { scales }?) -> PNG bytes (a Buffer) of
+  // that size times the scale drawn at, at most maxBytes.
+  function rasterize(svg, size, options) {
+    const scales = checkScales(options);
     if (typeof svg !== 'string') throw fault('not_text');
     if (UNSAFE.test(svg)) throw fault('unsafe_svg');
-    return draw(svg, size);
+    return draw(svg, size, scales);
   }
 
-  // rasterize.streets(svg, basemap, { frame, panels }, size): the plot SVG
-  // (drawn with base 'streets') over the street tiles, through every check
-  // composeBasemap makes; the same size and byte checks as rasterize.
-  rasterize.streets = (svg, basemap, layout, size) => draw(composeBasemap(svg, basemap, layout), size);
+  // rasterize.streets(svg, basemap, { frame, panels }, size, { scales }?):
+  // the plot SVG (drawn with base 'streets') over the street tiles, through
+  // every check composeBasemap makes; the same size and byte checks as
+  // rasterize.
+  rasterize.streets = (svg, basemap, layout, size, options) => {
+    const scales = checkScales(options);
+    return draw(composeBasemap(svg, basemap, layout), size, scales);
+  };
 
   return rasterize;
 }
@@ -235,4 +293,5 @@ const rasterize = createRasterizer();
 module.exports = {
   rasterize, createRasterizer, composeBasemap, isTile, pngSize,
   MAX_PNG_BYTES, MAX_PNG_CEILING, MEASURED_PNG_BYTES, MAX_TILE_BYTES, TILE_PX, DATA_PNG,
+  SLACK_UPLOAD_BYTES, PNG_CAP, SCALES, ROUTE_SCALES,
 };

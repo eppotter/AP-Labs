@@ -305,7 +305,7 @@ test('Show stops: the header totals, the image, the fixed note, the actions row,
   assert.equal(kind, 'route');
   assert.equal(model.depot, OFFICE);
   assert.deepEqual(model.crews, [{ crewId: 'v1', color: 0, baseNode: OFFICE }]);
-  assert.deepEqual(model.route, { crewId: 'v1', stops: V1_NODES });
+  assert.deepEqual(model.route, { crewId: 'v1', stops: V1_NODES.map((node) => ({ node, flag: 'none' })) });
   assert.equal(ctx.app.uploads.length, 1);
 });
 
@@ -388,7 +388,7 @@ test('↓: the list updates first under the same file with "Map updating…", th
   assert.deepEqual(contexts(view), [NOTE], '"Map updating…" gone');
   assert.deepEqual(ctx.app.deleted, ['F1']);
   assert.deepEqual(ctx.store.mapFilesOf('UDISPATCH:V1'), ['F2']);
-  assert.deepEqual(ctx.models.at(-1).model.route.stops, ['property:s2', 'property:s1', 'property:s3', 'property:s4']);
+  assert.deepEqual(ctx.models.at(-1).model.route.stops.map((s) => s.node), ['property:s2', 'property:s1', 'property:s3', 'property:s4']);
 });
 
 test('three taps within 1 s give one upload, for the final order; each list shows at once (every clock frozen)', async (t) => {
@@ -414,7 +414,7 @@ test('three taps within 1 s give one upload, for the final order; each list show
   const view = lastView(ctx.app);
   assert.equal(imageOf(view).slack_file.id, 'F2');
   assert.deepEqual(orderOf(view), ['Ben Ode, Riverton', 'Cara Lind, Lakeside', 'Dev Patel, Lakeside', 'Ana Ruiz, Riverton']);
-  assert.deepEqual(ctx.models.at(-1).model.route.stops, ['property:s2', 'property:s3', 'property:s4', 'property:s1']);
+  assert.deepEqual(ctx.models.at(-1).model.route.stops.map((s) => s.node), ['property:s2', 'property:s3', 'property:s4', 'property:s1']);
   assert.equal(versionOf(view), 4);
   assert.equal(ctx.log.lines.filter((l) => l.msg === 'map superseded').length, 2);
 });
@@ -516,7 +516,7 @@ test('Optimize: the order is optimizeDay\'s from the Office; tapped again, "Alre
   };
   const expected = routing.optimizeDay(input, { travel: routing.travel.fromMatrix(DAY.matrix), returnToBase: true }).plans[0].stops.map((s) => s.stopId);
   assert.deepEqual(expected, ['s1', 's3', 's2', 's4']);
-  assert.deepEqual(ctx.models.at(-1).model.route.stops, expected.map((s) => `property:${s}`));
+  assert.deepEqual(ctx.models.at(-1).model.route.stops.map((s) => s.node), expected.map((s) => `property:${s}`));
   assert.deepEqual(orderOf(opt), ['Ana Ruiz, Riverton', 'Cara Lind, Lakeside', 'Ben Ode, Riverton', 'Dev Patel, Lakeside']);
   assert.equal(header(opt), '*Maple crew, Monday 2026-11-02*\nDrive 26 min · about 12 km · last stop done 14:15 · back at Office 14:21 · no rule breaks');
   const uploads = ctx.app.uploads.length;
@@ -563,7 +563,7 @@ test('Reset to booked: the booked order, with times estimated again from the Off
   const view = lastView(ctx.app);
   assert.deepEqual(texts(view).slice(1), texts(booked).slice(1));
   assert.equal(header(view), header(booked));
-  assert.deepEqual(ctx.models.at(-1).model.route.stops, V1_NODES);
+  assert.deepEqual(ctx.models.at(-1).model.route.stops.map((s) => s.node), V1_NODES);
 });
 
 // --- scope (AD-R17) -------------------------------------------------------------------
@@ -777,7 +777,7 @@ test('40 stops fit one view in fewer than 60 blocks: every block within Slack\'s
   const view = await shown(ctx);
   assert.equal(rows(view).length, 40);
   assert.ok(view.blocks.length < 60, `${view.blocks.length} blocks`);
-  assert.equal(view.blocks.length, 46, 'header, image, note, actions, two Office rows, 40 stop rows');
+  assert.equal(view.blocks.length, 47, 'header, image, the ring legend, note, actions, two Office rows, 40 stop rows');
   const ids = view.blocks.map((b) => b.block_id).filter(Boolean);
   assert.equal(new Set(ids).size, ids.length);
   assert.equal(rows(view)[0].text.split(' ')[0], '1️⃣');
@@ -862,7 +862,7 @@ test('⋯ Move to first and Move to last move the stop to the ends; up and down 
   await menu(ctx, moveOf(view, 3, 'first'));
   view = lastView(ctx.app);
   assert.deepEqual(orderOf(view), ['Cara Lind, Lakeside', 'Ana Ruiz, Riverton', 'Ben Ode, Riverton', 'Dev Patel, Lakeside']);
-  assert.deepEqual(ctx.models.at(-1).model.route.stops, ['property:s3', 'property:s1', 'property:s2', 'property:s4']);
+  assert.deepEqual(ctx.models.at(-1).model.route.stops.map((s) => s.node), ['property:s3', 'property:s1', 'property:s2', 'property:s4']);
   assert.equal(ctx.app.uploads.length, uploads + 1, 'one map');
   const [list] = calls(ctx.app, 'update').slice(-2).map((u) => u.view);
   assert.equal(contexts(list)[0], UPDATING, 'the list first, with "Map updating…"');
@@ -1314,4 +1314,28 @@ test('a click from outside a modal is told to open it in its window', async () =
   const ctx = setup();
   await ctx.app.dispatchAction('routing-map:show', { user: U.dispatch, value: 'show' });
   assert.deepEqual(ctx.app.responded.map((r) => r.text), [MAP_NEEDS_WINDOW]);
+});
+
+// --- Story 15.18: the map's rings and their legend (AD-R29) ---------------------------------
+
+test('Story 15.18: each stop\'s map flag is its hardest rule break from evaluateOrder; the ring legend sits under the image only when a stop has one', async () => {
+  const day = JSON.parse(JSON.stringify(DAY));
+  // s3 locked at 16:40 ends past the 17:00 aim (soft); s4 then ends past 19:00 (hard as well).
+  Object.assign(day.stops.find((s) => s.stopId === 's3'), { locked: true, start: 1000 });
+  const ctx = setup({ data: fx.fakeData({ day }) });
+  const view = await shown(ctx);
+  const { model } = ctx.models.at(-1);
+  assert.deepEqual(model.route.stops, [
+    { node: 'property:s1', flag: 'none' }, { node: 'property:s2', flag: 'none' },
+    { node: 'property:s3', flag: 'soft' }, { node: 'property:s4', flag: 'hard' },
+  ]);
+  assert.equal(ROUTE_WORDS.legend(), '🟠 ring: soft rule break · 🔴 ring: hard rule break');
+  const at = view.blocks.indexOf(imageOf(view));
+  assert.deepEqual(view.blocks[at + 1].elements.map((e) => e.text), [ROUTE_WORDS.legend()], 'straight under the image');
+  assert.equal(contexts(view).filter((t) => t === ROUTE_WORDS.legend()).length, 1, 'once');
+  // No stop flagged: no legend.
+  const calm = setup();
+  const plain = await shown(calm);
+  assert.ok(calm.models.at(-1).model.route.stops.every((s) => s.flag === 'none'));
+  assert.ok(!contexts(plain).includes(ROUTE_WORDS.legend()));
 });

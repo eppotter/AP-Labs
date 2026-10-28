@@ -138,6 +138,8 @@ const ROUTE_WORDS = Object.freeze({
   best: () => 'Already the best order found.',
   unplaced: () => 'Optimize could not place this stop, so it is kept at the end.',
   pickCrew: () => 'Pick a crew first, then press *Show stops*.',
+  // The map's ring colours (Story 15.18, AD-R29), under the image when a stop has one.
+  legend: () => '🟠 ring: soft rule break · 🔴 ring: hard rule break',
   // A stop's ⋯ menu (Story 15.16, AD-R29): each option names the stop.
   move: (k, target) => `Move stop ${k} ${{ up: 'up', down: 'down', first: 'to first', last: 'to last' }[target]}`,
   // A stop row's second line: the hardest rule break, shortened, then the
