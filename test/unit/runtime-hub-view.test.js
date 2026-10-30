@@ -122,9 +122,15 @@ test('boot refuses a hub file without sees, naming it', async (t) => {
   assert.ok(cfg.problems.includes('app: hubs/beta.json: add "sees" to beta (what the hub sees: any of context, data, rules, or [] for none)'), cfg.problems.join('\n'));
 });
 
-test('every hub file in the repo writes sees out; the Brightside hub sees context, data and rules', () => {
+// The example client (examples/brightside) is removed by clean-bones and in
+// a client fork; tests about it run only where it exists.
+const BRIGHTSIDE_HUB = path.join(ROOT, 'examples/brightside/app/hubs/brightside.json');
+const NO_EXAMPLE = fs.existsSync(path.join(ROOT, 'examples/brightside')) ? false : 'no example client in this tree (clean bones or a fork)';
+
+test('every hub file in the repo writes sees out', () => {
   const files = [];
   const walk = (dir) => {
+    if (!fs.existsSync(dir)) return;
     for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
       if (d.name === 'node_modules' || d.name === '.git' || d.name === '.claude') continue;
       const abs = path.join(dir, d.name);
@@ -134,14 +140,19 @@ test('every hub file in the repo writes sees out; the Brightside hub sees contex
   };
   walk(path.join(ROOT, 'examples'));
   walk(path.join(ROOT, 'test/fixtures'));
-  assert.ok(files.length >= 6, files.join('\n'));
+  // The fixture hubs alone are five; the example adds its own when present.
+  assert.ok(files.length >= 5, files.join('\n'));
   for (const f of files) {
     const hub = JSON.parse(fs.readFileSync(f, 'utf8'));
     assert.ok(Array.isArray(hub.sees), `${path.relative(ROOT, f)} has no sees`);
   }
-  const brightside = JSON.parse(fs.readFileSync(path.join(ROOT, 'examples/brightside/app/hubs/brightside.json'), 'utf8'));
-  assert.deepEqual(brightside.sees, FULL);
+  assert.equal(files.includes(BRIGHTSIDE_HUB), !NO_EXAMPLE);
   assert.deepEqual(base.hubs.map((h) => [h.id, h.sees]), [['alpha', FULL], ['beta', []]]);
+});
+
+test('the Brightside hub sees context, data and rules', { skip: NO_EXAMPLE }, () => {
+  const brightside = JSON.parse(fs.readFileSync(BRIGHTSIDE_HUB, 'utf8'));
+  assert.deepEqual(brightside.sees, FULL);
 });
 
 test('the list of what a hub may see is the same in the registry, the AI service and the schema', () => {
