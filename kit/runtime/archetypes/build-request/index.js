@@ -9,7 +9,9 @@
 //             the ack: empty, or over the limit.
 //   Thinking  the ack swaps the view to "Thinking…" at once (Slack's
 //             3-second deadline); then one structured call (summarize_request,
-//             effects "none") returns a title (80 characters at most) and a
+//             effects "none", withContext false: no profile context and no
+//             added context in its prompt, so none can be repeated into the
+//             channel) returns a title (80 characters at most) and a
 //             summary (600), and the preview replaces it by views.update.
 //             With the AI off, over a limit, refused or failing, the preview
 //             shows the person's own words, labelled not summarised.
@@ -26,6 +28,9 @@
 // and after it went "already posted". If Slack refuses the post (for example
 // not_in_channel), the entry is put back for the rest of its 30 minutes, so
 // Try again finds it; the refusal is logged with Slack's error code only.
+// Only Slack's refusal is retryable: channel.js refusing the fields (a hub
+// name over its limit) finishes the entry and shows the plain error. Every
+// message a click shows replaces the view even on a hash conflict (force).
 // Edit and Cancel consume it too: Edit shows the form with the text kept.
 //
 // Only a hub that sees neither context nor data may post (D11, until v1
@@ -44,8 +49,9 @@ const { BUILD_REQUEST_WORDS: WORDS, messageFor } = require('../../messages');
 const { textBlocks } = require('../../slack/format');
 const { failureReason } = require('../../slack/modal');
 const {
-  postToChannel, buildRequestText, mayPostBuildRequest, BUILD_REQUEST_LIMITS,
+  postToChannel, buildRequestText, mayPostBuildRequest, BUILD_REQUEST_LIMITS, ChannelPostRefused,
 } = require('../../slack/channel');
+const { PLAIN_ERROR } = require('../../slack/handle');
 const { NAMESPACES } = require('../../store');
 
 const NS = 'session';
@@ -198,7 +204,7 @@ function createBuildRequest({
     if (!llm || typeof llm.structured !== 'function') return own;
     try {
       const res = await llm.structured({
-        person, resource: mod.resource, request: need, tool: SUMMARY_TOOL, instructions: INSTRUCTIONS,
+        person, resource: mod.resource, request: need, tool: SUMMARY_TOOL, instructions: INSTRUCTIONS, withContext: false,
       });
       const got = summaryOf(res && res.toolInput);
       if (!got) {
@@ -295,13 +301,13 @@ function createBuildRequest({
   }) {
     const found = lookup(id, person);
     if (found.message) {
-      await show(found.message);
+      await show(found.message, { force: true });
       return;
     }
     const { entry } = found;
     const access = resolve(entry.module);
     if (access.refusal) {
-      await show(access.refusal);
+      await show(access.refusal, { force: true });
       return;
     }
     if (verb === 'cancel' || verb === 'edit') {
@@ -315,7 +321,7 @@ function createBuildRequest({
     const hub = hubOf(entry.hub);
     const blocked = blockedOn(hub);
     if (blocked) {
-      await show(blocked);
+      await show(blocked, { force: true });
       return;
     }
     // Consumed in the same synchronous step as the lookup and the checks.
@@ -336,7 +342,15 @@ function createBuildRequest({
         },
       });
     } catch (err) {
-      const reason = err && err.name === 'ChannelPostRefused' ? 'refused' : failureReason(err);
+      // channel.js's own checks refused it: trying again can't help, so the
+      // entry is finished and the person gets the plain error, no Try again.
+      if (err instanceof ChannelPostRefused) {
+        log.error('build request not posted', { module: entry.module, reason: 'refused by channel.js' });
+        store.finish(NS, id, { failed: true });
+        await show(PLAIN_ERROR, { force: true });
+        return;
+      }
+      const reason = failureReason(err);
       log.warn('build request not posted', { module: entry.module, reason });
       // Put the preview back for the rest of its life, so Try again finds it.
       const left = entry.at + PREVIEW_MS - now();

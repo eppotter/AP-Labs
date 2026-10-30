@@ -10,6 +10,7 @@
 //   const hub = llm.forHub({ id, sees });  // { ask, structured }, bound to a hub
 //   await hub.ask({ person, resource, request, tool });
 //   await hub.structured({ person, resource, request, tool, instructions });
+//   await hub.structured({ ..., withContext: false }); // no business context
 //
 // Per hub (plan brightside-v0, D2, Story 16.1): forHub({ id, sees }) returns
 // { ask, structured } bound to one hub, built once at boot by
@@ -343,10 +344,19 @@ function createLlm({
     // data. The same refusals, limits, token cap, time limit and breaker as
     // ask(). Returns { toolInput, stopReason, costUsd }; toolInput is null when
     // the reply did not call the tool.
-    async function structured({ person, resource, request, tool, instructions = '' } = {}) {
+    // withContext: false (Story 16.6, PR #272 review) sends no business
+    // context at all: neither the profile's context files nor the hub's added
+    // context, only the fixed instructions and the client name. For a call
+    // whose reply leaves the person's view (a build request's summary, posted
+    // to a channel). Anything but false keeps the hub's usual prompt.
+    async function structured({
+      person, resource, request, tool, instructions = '', withContext = true,
+    } = {}) {
       precheck('structured', person, resource, request);
       const def = toolDef(tool);
-      const base = knowledge ? await promptWithAdded(hub) : promptFor(hub);
+      let base;
+      if (withContext === false) base = blankPrompt;
+      else base = knowledge ? await promptWithAdded(hub) : promptFor(hub);
       const system = [base, REQUEST_RULE, String(instructions || '')].filter(Boolean).join('\n\n');
       // The final prompt, with the rule and the caller's instructions, is
       // checked too: over the limit refuses this call only (PR #264 review).

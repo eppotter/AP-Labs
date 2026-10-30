@@ -71,7 +71,7 @@ function fakeModel({ input = { title: 'A weekly cleaning report', summary: 'The 
 // The hubs, wired with one clock. llm: 'real' (createLlm with model), null
 // (no AI service) or a stand-in service ({ forHub }).
 function setup({
-  prof = profile, model = fakeModel(), llm = 'real', channels = [CHANNEL], env = {},
+  prof = profile, model = fakeModel(), llm = 'real', channels = [CHANNEL], env = {}, knowledge = null,
 } = {}) {
   const clock = { t: T0 };
   const now = () => clock.t;
@@ -79,11 +79,11 @@ function setup({
   const log = quietLog();
   const service = llm === 'real'
     ? createLlm({
-      apiKey: KEY, profile: prof, profilePath: PROFILE_PATH, store, log, env, now, deps: { createClient: () => model },
+      apiKey: KEY, profile: prof, profilePath: PROFILE_PATH, store, log, env, now, deps: { createClient: () => model }, knowledge,
     })
     : llm;
   const app = new FakeSlackApp({ views: true, channels });
-  const hubViews = createHubViews({ hubs: registry.hubs, llm: service });
+  const hubViews = createHubViews({ hubs: registry.hubs, llm: service, knowledge });
   registerHubs(app, {
     registry, profile: prof, env: 'dev', log, store, forHub: hubViews.forHub, buildRequest: { now },
   });
@@ -652,4 +652,111 @@ test('way out, an error on a Post click: the plain error in the view, with Back;
   assert.deepEqual(texts(shown.blocks), [PLAIN_ERROR]);
   assert.equal(shown.close.text, 'Back');
   assert.deepEqual(ctx.app.posted, []);
+});
+
+// --- PR #272 review ------------------------------------------------------------------
+
+test('the summary call sends no business context: with added context in the hub\'s store, the prompt sent holds none of it', async (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const { createKnowledgeStore } = require('../../kit/runtime/knowledge/store');
+  const varDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-br-know-')));
+  t.after(() => fs.rmSync(varDir, { recursive: true, force: true }));
+  const knowledge = createKnowledgeStore({
+    clientId: 'tiny', varDir, log: quietLog(), now: () => T0,
+  });
+  await knowledge.add({
+    hub: 'blank', kind: 'text', title: 'SECRET_TITLE_NEVER_SENT', text: 'SECRET_PRICE_LIST_NEVER_SENT', addedBy: 'UADA',
+  });
+  assert.match(await knowledge.forPrompt('blank'), /SECRET_PRICE_LIST_NEVER_SENT/, 'the entry is in the hub\'s prompt for other calls');
+  const ctx = setup({ knowledge });
+  const { id } = await toPreview(ctx, 'A weekly report.');
+  assert.equal(ctx.model.calls.length, 1);
+  const sent = JSON.stringify(ctx.model.calls[0]);
+  assert.ok(!sent.includes('SECRET_'), 'no added context in the summary call');
+  assert.ok(!sent.includes('added_context'));
+  await click(ctx, br.ACTIONS.post, id);
+  assert.ok(!ctx.app.posted[0].text.includes('SECRET_'));
+});
+
+test('structured({ withContext: false }) sends neither the profile\'s context files nor added context, even on a hub that sees context', async () => {
+  const model = fakeModel();
+  const knowledge = { forHub: () => null, forPrompt: async () => '<added_context>ADDED_NEVER_SENT</added_context>' };
+  const llm = createLlm({
+    apiKey: KEY,
+    profile,
+    profilePath: PROFILE_PATH,
+    store: createStore({ now: () => T0 }),
+    log: quietLog(),
+    env: {},
+    now: () => T0,
+    knowledge,
+    deps: { createClient: () => model, readFile: (p) => (p.endsWith('org.md') ? 'ORG_CONTEXT_NEVER_SENT' : (() => { throw Object.assign(new Error('x'), { code: 'ENOENT' }); })()) },
+  });
+  const hub = llm.forHub({ id: 'ctx', sees: ['context'] });
+  const args = {
+    person: 'UADA', resource: 'BUILD_REQUEST', request: 'hello', tool: br.SUMMARY_TOOL,
+  };
+  await hub.structured(args);
+  assert.match(model.calls[0].system, /ORG_CONTEXT_NEVER_SENT/);
+  assert.match(model.calls[0].system, /ADDED_NEVER_SENT/);
+  await hub.structured({ ...args, withContext: false });
+  assert.doesNotMatch(model.calls[1].system, /ORG_CONTEXT_NEVER_SENT|ADDED_NEVER_SENT/);
+  assert.match(model.calls[1].system, /Tiny/, 'the client name and fixed instructions stay');
+});
+
+test('channel.js refusing the fields (a hub name over 80 characters) is not retryable: the plain error, no Try again, the entry finished', async () => {
+  const store = createStore({ now: () => T0 });
+  const log = quietLog();
+  const app = new FakeSlackApp({ views: true, channels: [CHANNEL] });
+  const requests = br.createBuildRequest({
+    store, log, admin: '<@UADA>', channel: CHANNEL, now: () => T0,
+  });
+  const mod = registry.module('blank-request');
+  const hubOf = () => ({ id: 'blank', name: 'N'.repeat(81), sees: [], llm: null });
+  const shown = [];
+  const show = async (m, opts) => { shown.push({ m, opts }); };
+  const res = requests.submit({
+    view: submitted({ private_metadata: 'blank:blank-request' }, 'A need'), person: 'UADA', resolve: () => ({ mod }), hubOf: () => ({ ...hubOf(), name: 'Blank tools' }), show,
+  });
+  await res.later();
+  const id = buttonsOf(shown.at(-1).m).find((b) => b.action_id === br.ACTIONS.post).value;
+  await requests.click({
+    verb: 'post', id, person: 'UADA', resolve: () => ({ mod }), hubOf, show, client: app.client,
+  });
+  assert.deepEqual(app.posted, []);
+  assert.deepEqual(app.refusedPosts, []);
+  assert.deepEqual(shown.at(-1), { m: PLAIN_ERROR, opts: { force: true } });
+  assert.equal(store.get('session', id), undefined, 'not restored');
+  assert.deepEqual(store.done('session', id).result, { failed: true });
+  assert.ok(log.lines.some((l) => l.msg === 'build request not posted' && l.fields.reason === 'refused by channel.js'));
+  // A second click finds no preview to post.
+  await requests.click({
+    verb: 'post', id, person: 'UADA', resolve: () => ({ mod }), hubOf, show, client: app.client,
+  });
+  assert.deepEqual(app.posted, []);
+});
+
+test('a hash conflict never hides what a click is told: expired, not yours and being posted replace the stale view (force)', async () => {
+  const ctx = setup();
+  const { id } = await toPreview(ctx);
+  ctx.app.checkHashes = true;
+  ctx.app.hashes.set('VFORM', 'hnewer');
+  const shownAfter = async (opts, want) => {
+    await click(ctx, br.ACTIONS.post, opts.id, { user: opts.user || ADMIN, hash: 'hstale' });
+    assert.deepEqual(texts(lastUpdate(ctx.app).blocks), [want]);
+    assert.equal(lastUpdate(ctx.app).hash, undefined, 'retried without the stale hash');
+  };
+  await shownAfter({ id: 'f'.repeat(32) }, WORDS.expired(30));
+  await shownAfter({ id, user: { id: 'UOTHER', name: 'x' } }, WORDS.notYours());
+  let release;
+  ctx.app.postGate = new Promise((r) => { release = r; });
+  const first = click(ctx, br.ACTIONS.post, id);
+  await settle();
+  ctx.app.hashes.set('VFORM', 'hnewest');
+  await shownAfter({ id }, WORDS.posting());
+  release();
+  await first;
+  assert.equal(ctx.app.posted.length, 1);
+  assert.ok(ctx.log.lines.some((l) => l.msg === 'stale view replaced by a confirmed result'));
 });
