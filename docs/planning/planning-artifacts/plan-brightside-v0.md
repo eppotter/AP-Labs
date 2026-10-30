@@ -30,7 +30,7 @@ Status: **draft, awaiting `approve plan brightside-v0`.** Tier **T3** (computed 
 
 ### D1. Each hub says what it sees: a `sees` list in the hub file
 
-`examples/brightside/app/hubs/<id>.json` gains an optional `sees` list. Its values are `context`, `data` and `rules`. The schema rejects any other value and any duplicate (`hub.schema.json`, `additionalProperties: false` stays).
+`examples/brightside/app/hubs/<id>.json` gains a required `sees` list. Its values are `context`, `data` and `rules`. The schema rejects any other value and any duplicate (`hub.schema.json`, `additionalProperties: false` stays).
 
 | Value | What the hub gets when it is listed | What it gets when it is not |
 |---|---|---|
