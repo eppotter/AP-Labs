@@ -1,0 +1,14 @@
+# Data sources test profile (Story 16.3, plan brightside-v0 D8, D9): the
+# DATA_SOURCES key the admin role confers, an admin and a member with Slack
+# ids, and two forbidden columns. Its client files are in context/.
+schema_version: 1
+client: { id: tiny, name: Tiny }
+resources:
+  - { key: DATA_SOURCES, label: Data sources }
+users:
+  - { id: ada, name: Ada, role: admin, identities: { slack: UADA } }
+  - { id: bo, name: Bo, role: member, identities: { slack: UBO } }
+sql:
+  forbidden_columns:
+    - people.phone
+    - people.street

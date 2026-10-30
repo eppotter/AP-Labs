@@ -197,6 +197,8 @@ const {
 const { textBlocks } = require('./format');
 const routingAudience = require('../archetypes/routing-map/audience');
 const { createRoutingMap, LISTEN_PATTERN: ROUTING_MAP_ACTION } = require('../archetypes/routing-map');
+const dataSources = require('../archetypes/data-sources');
+const { readiness } = require('../knowledge/readiness');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
@@ -282,7 +284,7 @@ function moduleData(data, mod) {
 
 function registerHubs(app, {
   registry, profile, env, log, store, forHub = null, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),
-  mapFiles = null, routingMap: routingMapOptions = {},
+  mapFiles = null, routingMap: routingMapOptions = {}, rules = null,
 }) {
   if (forHub && (data || llm)) throw new TypeError('registerHubs takes forHub, or (a test seam) data and llm, never both');
   const viewFor = forHub || everyHubSeesAll({ data, llm }).forHub;
@@ -779,6 +781,12 @@ function registerHubs(app, {
       const refused = refusalFor(person, mod, actionId);
       if (refused) {
         await target.reply(refused);
+        return;
+      }
+      if (mod.archetype === 'data-sources') {
+        log.info('module dispatched', { module: mod.id, hub: mod.hub });
+        // Added context is listed once the hub's knowledge store is handed in (Story 16.5).
+        await target.reply(dataSources.render({ ready: readiness(viewOf(mod.hub), { rules }), entries: [], admin }));
         return;
       }
       if (QUERY_ARCHETYPES.has(mod.archetype)) {
