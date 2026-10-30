@@ -3,6 +3,7 @@
   "command": "/alpha",
   "name": "Alpha tools",
   "description": "Open the Alpha menu",
+  "sees": ["context", "data", "rules"],
   "usage_hint": "no arguments",
   "welcome": "Hi & welcome to <Alpha>.",
   "feedback": "Post in the alpha feedback thread."

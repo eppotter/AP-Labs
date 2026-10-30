@@ -131,7 +131,7 @@ It writes `.aplabs/template-version` (the version and a fingerprint of `kit/` an
 The runtime bot is its own Slack app. It is separate from any app you use for an incoming webhook (such as the one `npm run notify` posts through): never add bot scopes to that one.
 
 1. Write `app/slack-manifest.json` with what a person sets once: `display_information` (the app's name and description), `features.bot_user` and `features.app_home`. Copy the shape from the example's `examples/brightside/app/slack-manifest.json` before you delete it, and change the names.
-2. Add the first hub, `app/hubs/acme.json` (an `id`, its slash `command`, a `name`, a `description` and a `welcome`), as in the example's `examples/brightside/app/hubs/`.
+2. Add the first hub, `app/hubs/acme.json` (an `id`, its slash `command`, a `name`, a `description`, a `welcome` and `sees`), as in the example's `examples/brightside/app/hubs/`. `sees` is required: it lists what the hub may see, any of `"context"` (the profile's context files in the AI's prompt), `"data"` (the query runner) and `"rules"` (the truths and guardrails), or `[]` for none. A hub file without it stops boot. A fork taking the template update that brings `sees` adds it to every hub file; `["context", "data", "rules"]` keeps a hub as it was.
 3. Generate the rest of the manifest (one slash command per hub, the bot scopes, Socket Mode):
 
    ```bash

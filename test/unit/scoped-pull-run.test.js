@@ -398,12 +398,17 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
   const hubs = fs.readFileSync(path.join(ROOT, 'kit/runtime/slack/hubs.js'), 'utf8');
   assert.ok(!/require\([^)]*llm[^)]*\)/.test(hubs));
   const uses = hubs.replace(/\/\/[^\n]*/g, '').split('\n').filter((l) => /\bllm\b/.test(l)).map((l) => l.trim());
+  // Story 16.1: the hubs get each hub's view (forHub); a view's bound AI
+  // service goes only to that hub's reader. data and llm remain only as the
+  // test seam (hub-view everyHubSeesAll), which boot never uses.
   assert.deepEqual(uses, [
-    'registry, profile, env, log, store, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),',
-    'store, log, run: createRunner({ data, log, admin, store, hooks }), read: llm ? createReader({ llm, log }) : null,',
+    'registry, profile, env, log, store, forHub = null, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),',
+    "if (forHub && (data || llm)) throw new TypeError('registerHubs takes forHub, or (a test seam) data and llm, never both');",
+    'const viewFor = forHub || everyHubSeesAll({ data, llm }).forHub;',
+    'store, log, run: createRunner({ data: view.data, log, admin, store, hooks }), read: view.llm ? createReader({ llm: view.llm, log }) : null,',
   ]);
   const app = fs.readFileSync(path.join(ROOT, 'kit/runtime/app/index.js'), 'utf8');
-  assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, data, llm, connectors, mapFiles \}\)/);
+  assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, forHub, connectors, mapFiles \}\)/);
   // The approval-write archetype (Story 10.2) shows rows too: none of its files reaches or names the AI.
   const writeDir = path.join(ROOT, 'kit/runtime/archetypes/approval-write');
   for (const f of fs.readdirSync(writeDir)) {

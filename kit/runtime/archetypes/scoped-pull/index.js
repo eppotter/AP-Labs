@@ -53,6 +53,11 @@
 //
 // The engine never logs the values a person typed: only the module and the
 // action.
+//
+// One per hub (plan brightside-v0, Story 16.1): the hubs make a scoped pull
+// for each hub from that hub's view (kit/runtime/slack/hub-view), so its
+// runner and reader are that hub's. moduleOfSession and moduleOfRun tell the
+// hubs which hub's pull a submit or click belongs to.
 
 const {
   SessionExpired, SessionNotYours, AlreadyConfirmed, LlmUnavailable,
@@ -285,7 +290,21 @@ function createScopedPull({
   };
 }
 
+// The module a form session or a run record names, for this person, or null
+// (plan brightside-v0, Story 16.1): the hubs pick that module's hub's scoped
+// pull by it. Reading changes nothing.
+function moduleOfSession(store, sessionId, person) {
+  const found = session.lookup(store, sessionId, person);
+  return found.status === session.STATUS.OK ? found.session.module : null;
+}
+function moduleOfRun(store, runId, person) {
+  const found = provenance.lookup(store, runId, person);
+  return found.status === provenance.STATUS.OK ? found.record.module : null;
+}
+
 module.exports = {
+  moduleOfSession,
+  moduleOfRun,
   PROVENANCE_ACTION: provenance.ACTION,
   PROVENANCE_BACK_ACTION: provenance.BACK_ACTION,
   PROVENANCE_PATTERN: provenance.ACTION_PATTERN,

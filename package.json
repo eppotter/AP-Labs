@@ -16,7 +16,7 @@
   },
   "scripts": {
     "start": "node kit/runtime/app",
-    "check": "bash scripts/check-syntax.sh && node scripts/check-conflict-markers.js && node scripts/check-write-path.js && node scripts/check-job-imports.js",
+    "check": "bash scripts/check-syntax.sh && node scripts/check-conflict-markers.js && node scripts/check-write-path.js && node scripts/check-job-imports.js && node scripts/check-hub-imports.js",
     "test": "node --test",
     "test:slow": "node scripts/run-slow-tests.js",
     "review": "node kit/review/cli.js",

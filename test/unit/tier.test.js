@@ -86,6 +86,12 @@ const GUARDED = {
   'kit/runtime/slack/image.js': 'kit/runtime/slack/image.js',
   // Story 15.9 (AD-R19): the street-map tile fetcher.
   'kit/runtime/basemap/**': 'kit/runtime/basemap/cache.js',
+  // Story 16.1 (plan brightside-v0, A1, A10): what each hub sees, the
+  // added-context store and the Slack file download.
+  'kit/runtime/slack/hub-view.js': 'kit/runtime/slack/hub-view.js',
+  'kit/runtime/schema/hub.schema.json': 'kit/runtime/schema/hub.schema.json',
+  'kit/runtime/knowledge/**': 'kit/runtime/knowledge/store.js',
+  'kit/runtime/slack/files.js': 'kit/runtime/slack/files.js',
 };
 
 test('ENGINE_T3 lists exactly the guarded paths, and is frozen', () => {
@@ -124,6 +130,26 @@ test('Story 15.9 (AD-R19): the street-map tile fetcher is T3 under any profile',
     assert.equal(isEngineFloor(p), true, p);
   }
   for (const p of ['kit/runtime/basemap.js', 'kit/runtime/basemaps/x.js', 'docs/kit/runtime/basemap/x.md']) {
+    assert.notEqual(tierOf(minimal, p), 'T3', p);
+    assert.equal(isEngineFloor(p), false, p);
+  }
+});
+
+test('Story 16.1 (plan brightside-v0): the hub view, the hub schema, the knowledge store and the Slack file download are T3 under any profile', () => {
+  const minimal = validateProfile({ schema_version: 1, client: { id: 'm', name: 'M' }, users: [{ id: 'a', name: 'A', role: 'admin' }] });
+  for (const glob of ['kit/runtime/slack/hub-view.js', 'kit/runtime/schema/hub.schema.json', 'kit/runtime/knowledge/**', 'kit/runtime/slack/files.js']) {
+    assert.ok(ENGINE_T3.includes(glob), glob);
+  }
+  for (const p of [
+    'kit/runtime/slack/hub-view.js', 'KIT/Runtime/Slack/Hub-View.js', './kit/runtime/slack/hub-view.js',
+    'kit/runtime/schema/hub.schema.json',
+    'kit/runtime/knowledge/store.js', 'kit/runtime/knowledge/readiness.js', 'kit/runtime/knowledge/deep/x.js',
+    'kit/runtime/slack/files.js',
+  ]) {
+    for (const prof of [minimal, profile, lowered]) assert.equal(tierOf(prof, p), 'T3', p);
+    assert.equal(isEngineFloor(p), true, p);
+  }
+  for (const p of ['kit/runtime/slack/hub-views.js', 'kit/runtime/knowledge.js', 'kit/runtime/knowledgebase/x.js', 'kit/runtime/slack/file.js', 'kit/runtime/schema/hubs.schema.json']) {
     assert.notEqual(tierOf(minimal, p), 'T3', p);
     assert.equal(isEngineFloor(p), false, p);
   }

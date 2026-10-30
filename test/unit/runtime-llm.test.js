@@ -281,18 +281,34 @@ test('stripContext drops headers, truth fences (nested, tilde, unclosed) and com
   assert.equal(stripContext('a\n<!-- never closed\nsecret'), 'a');
 });
 
-test('context over 40,000 characters is a configuration fault: the AI stays off', async () => {
+// Story 16.1 (plan brightside-v0, D2): an over-long context no longer
+// switches the AI off for every hub. Each call that would use it is refused
+// with the configuration fault, before anything is counted or sent, and a
+// hub that does not see context keeps working.
+test('context over 40,000 characters is a configuration fault for each call that uses it; other hubs keep working', async () => {
   assert.equal(MAX_CONTEXT_CHARS, 40000);
   const big = 'word '.repeat(9000);
-  const { llm, client } = make({ deps: { readFile: (p) => (p.endsWith('data.md') ? big : '') } });
-  assert.equal(llm.status().on, false);
-  assert.equal(llm.status().reason, 'config');
-  assert.match(llm.status().problem, /over the 40000 limit/);
-  assert.equal(client.options, null);
+  const { llm, client, store, lines } = make({ deps: { readFile: (p) => (p.endsWith('data.md') ? big : '') } });
+  assert.equal(llm.status().on, true);
+  assert.match(llm.status().contextProblem, /over the 40000 limit/);
   await assert.rejects(llm.ask({ person: MEMBER, resource: 'ASK', request: 'x' }), refusal('config'));
+  const full = llm.forHub({ id: 'full', sees: ['context', 'data', 'rules'] });
+  await assert.rejects(full.ask({ person: MEMBER, resource: 'ASK', request: 'x' }), refusal('config'));
+  await assert.rejects(full.structured({
+    person: MEMBER, resource: 'ASK', request: 'x', tool: { name: 't', input_schema: { type: 'object' }, effects: 'none' },
+  }), refusal('config'));
+  assert.equal(client.calls.length, 0);
+  assert.equal(store.get('ratelimit', MEMBER), undefined, 'a refused call is not counted');
+  assert.ok(lines.some((l) => l.includes('ai request refused') && l.includes('"hub":"full"')));
+  await llm.forHub({ id: 'blank', sees: [] }).ask({ person: MEMBER, resource: 'ASK', request: 'x' });
+  assert.equal(client.calls.length, 1);
+  assert.ok(!client.calls[0].params.system.includes('word word'));
   // Just under the limit is fine.
   const ok = make({ deps: { readFile: (p) => (p.endsWith('data.md') ? 'w'.repeat(MAX_CONTEXT_CHARS - 500) : '') } });
   assert.equal(ok.llm.status().on, true);
+  assert.equal(ok.llm.status().contextProblem, null);
+  await ok.llm.forHub({ id: 'full', sees: ['context'] }).ask({ person: MEMBER, resource: 'ASK', request: 'x' });
+  assert.equal(ok.client.calls.length, 1);
 });
 
 test('the request is capped at 500 characters, before anything is sent or counted', async () => {

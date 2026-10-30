@@ -2,5 +2,6 @@
   "id": "beta",
   "command": "/beta",
   "name": "Beta tools",
-  "description": "Open the Beta menu"
+  "description": "Open the Beta menu",
+  "sees": []
 }

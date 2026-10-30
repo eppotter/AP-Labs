@@ -9,14 +9,28 @@
 //   llm.registerTool({ name, description, input_schema, effects: 'none' });
 //   await llm.ask({ person, resource, request, tool });
 //   await llm.structured({ person, resource, request, tool, instructions });
+//   const hub = llm.forHub({ id, sees });  // { ask, structured }, bound to a hub
+//
+// Per hub (plan brightside-v0, D2, Story 16.1): forHub({ id, sees }) returns
+// { ask, structured } bound to one hub, built once at boot by
+// kit/runtime/slack/hub-view. Its prompt holds the fixed instructions and the
+// client name, plus the profile's context files only when sees lists
+// "context". The hubs only ever get a bound service: the unbound ask and
+// structured above stay for the engine's own tests and equal a hub that sees
+// context. Each call runs every check below, the same as unbound.
 //
 // Setup, fixed at startup (a change takes a restart):
 //   - the key, read once by readKey() through kit/lib/secrets (env
 //     ANTHROPIC_API_KEY, else Keychain aplabs-anthropic-key) and registered
 //     with the log redactor. Missing: the AI is off and the app still boots.
 //   - the off switch: any non-empty APLABS_LLM_OFF other than "0".
-//   - the context (./context.js): over 40,000 characters, an unreadable file
-//     or an unpriced model is a configuration fault, and the AI stays off.
+//   - an unpriced model is a configuration fault, and the AI stays off.
+//   - the context (./context.js): over 40,000 characters or an unreadable
+//     file can't be used (status().contextProblem). The AI stays on: each
+//     call that would use the context (a hub that sees it, or the unbound
+//     service) is refused with the configuration-fault message, and a hub
+//     that does not see context keeps working. A prompt over 40,000
+//     characters is refused the same way, per call.
 //   - the SDK client: maxRetries 0, a 20 s timeout, the API's own base URL
 //     and no OpenTelemetry (so no env var can redirect the key or put a
 //     request into a trace).
@@ -48,7 +62,9 @@
 const { readSecret } = require('../../lib/secrets');
 const access = require('../access');
 const { LlmUnavailable, AccessDenied, ConfigFault } = require('../errors');
-const { loadContext, escapeData } = require('./context');
+const {
+  loadContext, escapeData, systemPrompt, MAX_CONTEXT_CHARS,
+} = require('./context');
 const { priceOf, costUsd } = require('./prices');
 
 const KEY_ENV = 'ANTHROPIC_API_KEY';
@@ -64,6 +80,8 @@ const CHARS_PER_TOKEN = 3;
 const TOOL_OVERHEAD_TOKENS = 1000;
 const HOUR = 60 * 60 * 1000;
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+// What a hub may see (hub.schema.json sees; the registry's HUB_SEES).
+const HUB_SEES = Object.freeze(['context', 'data', 'rules']);
 
 // Any non-empty value other than "0" turns the AI off. Not trimmed: " 0" is off.
 function isSwitchedOff(env) {
@@ -165,6 +183,11 @@ function createLlm({
 
   let off = null; // { reason, problem? }
   let context = { prompt: null, files: [] };
+  // Why the profile's context can't be used, or null (D2: only calls that
+  // would use it are refused).
+  let contextProblem = null;
+  // A hub that does not see context: the fixed instructions and the name only.
+  const blankPrompt = systemPrompt(profile.client.name, []);
   if (isSwitchedOff(env)) {
     off = { reason: 'off' };
   } else if (!apiKey) {
@@ -175,7 +198,7 @@ function createLlm({
       off = { reason: 'config', problem: problems.join('; ') };
     } else {
       const loaded = loadContext({ clientName: profile.client.name, profilePath, readFile: deps.readFile });
-      if (loaded.problem) off = { reason: 'config', problem: loaded.problem };
+      if (loaded.problem) contextProblem = loaded.problem;
       else context = loaded;
     }
   }
@@ -215,6 +238,8 @@ function createLlm({
       model: settings.model,
       extractionModel: settings.extraction_model,
       contextFiles: [...context.files],
+      // Why calls that would use the profile's context are refused, or null.
+      contextProblem,
       // Estimated spend in the last hour, worst case for calls not yet settled.
       spentUsd: spentLastHour(now()),
       hourlyUsdLimit: settings.hourly_usd_limit,
@@ -263,30 +288,59 @@ function createLlm({
     if (request.length > MAX_REQUEST_CHARS) throw new LlmUnavailable('too_long', { maxChars: MAX_REQUEST_CHARS });
   }
 
-  async function ask({ person, resource, request, tool } = {}) {
-    precheck('ask', person, resource, request);
-    let def = null;
-    if (tool !== undefined) {
-      def = tools.get(tool);
-      if (!def) throw new TypeError(`tool "${tool}" is not registered`);
+  // The prompt for a hub: the profile's context only when it sees it (D2).
+  // A context that can't be used, or a prompt over the limit, refuses this
+  // call only, with the configuration-fault message.
+  function promptFor(hub) {
+    const prompt = hub.context ? (contextProblem ? null : context.prompt) : blankPrompt;
+    if (typeof prompt !== 'string' || prompt.length > MAX_CONTEXT_CHARS) {
+      log.error('ai request refused', { reason: 'config', hub: hub.id });
+      throw new LlmUnavailable('config');
     }
-    return call({ person, def, system: context.prompt, content: request });
+    return prompt;
   }
 
-  // One structured call (Story 9.4): one tool, no tool loop. tool: a
-  // tool declaring effects: "none", built for this call (not registered).
-  // instructions: fixed engine text, added to the system prompt after the
-  // context and the request rule. The request is sent as marked, escaped
-  // data. The same refusals, limits, token cap, time limit and breaker as
-  // ask(). Returns { toolInput, stopReason, costUsd }; toolInput is null when
-  // the reply did not call the tool.
-  async function structured({ person, resource, request, tool, instructions = '' } = {}) {
-    precheck('structured', person, resource, request);
-    const def = toolDef(tool);
-    const system = [context.prompt, REQUEST_RULE, String(instructions || '')].filter(Boolean).join('\n\n');
-    const res = await call({ person, def, system, content: requestTurn(request) });
-    return { toolInput: res.toolInput, stopReason: res.stopReason, costUsd: res.costUsd };
+  // ask() and structured() bound to one hub: { id, context }.
+  function bindTo(hub) {
+    async function ask({ person, resource, request, tool } = {}) {
+      precheck('ask', person, resource, request);
+      let def = null;
+      if (tool !== undefined) {
+        def = tools.get(tool);
+        if (!def) throw new TypeError(`tool "${tool}" is not registered`);
+      }
+      return call({ person, def, system: promptFor(hub), content: request });
+    }
+
+    // One structured call (Story 9.4): one tool, no tool loop. tool: a
+    // tool declaring effects: "none", built for this call (not registered).
+    // instructions: fixed engine text, added to the system prompt after the
+    // context and the request rule. The request is sent as marked, escaped
+    // data. The same refusals, limits, token cap, time limit and breaker as
+    // ask(). Returns { toolInput, stopReason, costUsd }; toolInput is null when
+    // the reply did not call the tool.
+    async function structured({ person, resource, request, tool, instructions = '' } = {}) {
+      precheck('structured', person, resource, request);
+      const def = toolDef(tool);
+      const system = [promptFor(hub), REQUEST_RULE, String(instructions || '')].filter(Boolean).join('\n\n');
+      const res = await call({ person, def, system, content: requestTurn(request) });
+      return { toolInput: res.toolInput, stopReason: res.stopReason, costUsd: res.costUsd };
+    }
+    return Object.freeze({ ask, structured });
   }
+
+  // The service bound to one hub (D2). sees: the hub file's list, checked
+  // again here so a caller can't widen it.
+  function forHub({ id, sees } = {}) {
+    if (typeof id !== 'string' || !id) throw new TypeError('forHub() needs the hub id');
+    if (!Array.isArray(sees) || sees.some((s) => !HUB_SEES.includes(s))) {
+      throw new TypeError(`forHub() needs the hub's sees, a list of ${HUB_SEES.join(', ')}`);
+    }
+    return bindTo({ id, context: sees.includes('context') });
+  }
+
+  // The unbound service: a hub that sees context (as before Story 16.1).
+  const { ask, structured } = bindTo({ id: null, context: true });
 
   // Steps 4 and 5, then the call. def: the one tool to send, or null.
   // The tool is offered, not forced: tool_choice is "auto" with no parallel
@@ -347,7 +401,9 @@ function createLlm({
     return { text, toolInput: used ? used.input : null, stopReason: reply ? reply.stop_reason : null, costUsd: entry.cost };
   }
 
-  return { ask, structured, registerTool, status };
+  return {
+    ask, structured, forHub, registerTool, status,
+  };
 }
 
 module.exports = {

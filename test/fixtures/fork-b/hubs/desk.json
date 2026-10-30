@@ -2,5 +2,6 @@
   "id": "desk",
   "command": "/desk",
   "name": "Desk",
-  "description": "Open the Desk menu"
+  "description": "Open the Desk menu",
+  "sees": ["context", "data", "rules"]
 }

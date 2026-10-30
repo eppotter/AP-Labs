@@ -27,7 +27,7 @@ The manifest is JSON, checked against `kit/runtime/schema/module.schema.json`. U
 | Field | Required | What it is |
 |---|---|---|
 | `id` | yes | Lower-case slug (`weekly-report`). Must equal the folder name, so two modules can never share an id. |
-| `hub` | yes | The id of the hub whose menu lists it: a file `app/hubs/<hub>.json` must exist. |
+| `hub` | yes | The id of the hub whose menu lists it: a file `app/hubs/<hub>.json` must exist. What the module can reach is what that hub's `sees` lists: on a hub without `"data"`, `ctx.data.run` refuses ("no data source"), a `scoped-pull`, `approval-write` or `routing-map` module stops startup, and `npm run check` fails a module file there that imports `kit/runtime/data`, `kit/runtime/llm` or `kit/runtime/knowledge`, or names a `.aplabs` or `context/` path. |
 | `label` | yes | The menu button's text, up to 60 characters. |
 | `description` | yes | One line under the button, up to 200 characters. Say what it does for the person. |
 | `resource` | yes | The profile resource key that grants it (`WEEKLY_REPORT`). It must be declared in the profile, or startup fails: a missing key is a setup fault, never shown to a person as a denial. |

@@ -50,6 +50,13 @@
 // all_crews key: who may open it is decided by the audience (all_crews, or
 // own_crew with a crew_leads row), never by the resource alone.
 //
+// Plan brightside-v0 (Story 16.1): every hub file must say what it sees
+// (sees: any of context, data, rules, or [] for none). A hub without it is
+// refused with "add "sees" to <hub>"; an unknown or repeated value is
+// refused naming the value. Which archetypes and engine jobs a hub that does
+// not see data may hold is decided at boot by kit/runtime/slack/hub-view
+// (bootProblems).
+//
 // Story 15.14: a routing-map module may name its screen: "views" (the
 // default) or "route-editor" (Plan a route, AD-R26). Whether the profile has
 // routing.depot and the adapter a route() is checked when it opens (the hub
@@ -70,6 +77,8 @@ const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write', 'r
 // The archetypes the engine runs from a fixed SQL file and a typed form.
 const QUERY_ARCHETYPES = new Set(['scoped-pull', 'approval-write']);
 const ENV_PATTERN = /^[a-z][a-z0-9-]*$/;
+// What a hub may see (hub.schema.json sees, plan brightside-v0 D1).
+const HUB_SEES = Object.freeze(['context', 'data', 'rules']);
 
 let _validators = null;
 function validators() {
@@ -98,11 +107,30 @@ function inputNote(instancePath, data) {
   return p && typeof p.name === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(p.name) ? ` (input "${p.name}")` : '';
 }
 
+// A hub's sees (plan brightside-v0, D1): missing, a value not in the list,
+// or a value twice. Each names the hub file and the value. Else null.
+function seesProblem(e, data, file) {
+  const stem = file.replace(/^hubs\//, '').replace(/\.json$/, '');
+  if (e.keyword === 'required' && e.instancePath === '' && e.params.missingProperty === 'sees') {
+    return `${file}: add "sees" to ${stem} (what the hub sees: any of ${HUB_SEES.join(', ')}, or [] for none)`;
+  }
+  const m = /^\/sees\/(\d+)$/.exec(e.instancePath);
+  if (m && Array.isArray(data.sees)) {
+    return `${file}: field "sees[${m[1]}]" ${JSON.stringify(data.sees[Number(m[1])])} is not one of ${HUB_SEES.join(', ')}`;
+  }
+  if (e.keyword === 'uniqueItems' && e.instancePath === '/sees') {
+    return `${file}: field "sees" lists ${JSON.stringify(data.sees[e.params.j])} twice`;
+  }
+  return null;
+}
+
 function schemaProblems(validate, data, file) {
   if (validate(data)) return [];
   return validate.errors
     .filter((e) => e.keyword !== 'if')
     .map((e) => {
+      const sees = file.startsWith('hubs/') ? seesProblem(e, data, file) : null;
+      if (sees) return sees;
       const note = inputNote(e.instancePath, data);
       if (e.keyword === 'additionalProperties') return `${file}: unknown field "${fieldName(e.instancePath, e.params.additionalProperty)}"${note}`;
       if (e.keyword === 'required') return `${file}: field "${fieldName(e.instancePath, e.params.missingProperty)}" is required${note}`;
@@ -174,7 +202,7 @@ function loadHub(appDir, file, name, commands, problems) {
     return undefined;
   }
   commands.set(hub.command, file);
-  return Object.freeze({ ...hub, file });
+  return Object.freeze({ ...hub, sees: Object.freeze([...hub.sees]), file });
 }
 
 function loadHandler(abs, file, problems) {
@@ -344,5 +372,5 @@ function isVisible(entry, env) {
 }
 
 module.exports = {
-  loadRegistry, loadHubs, loadModules, createRegistry, isVisible, ENV_PATTERN, QUERY_ARCHETYPES,
+  loadRegistry, loadHubs, loadModules, createRegistry, isVisible, ENV_PATTERN, QUERY_ARCHETYPES, HUB_SEES,
 };

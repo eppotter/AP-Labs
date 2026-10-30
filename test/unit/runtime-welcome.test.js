@@ -257,7 +257,7 @@ test('hub files may set welcome and feedback; a multi-line welcome or an unknown
   try {
     fs.mkdirSync(path.join(dir, 'hubs'));
     const write = (id, extra) => fs.writeFileSync(path.join(dir, 'hubs', `${id}.json`),
-      JSON.stringify({ id, command: `/${id}`, name: id, description: id, ...extra }));
+      JSON.stringify({ id, command: `/${id}`, name: id, description: id, sees: [], ...extra }));
     write('ok', { welcome: 'One paragraph.', feedback: 'Tell us.' });
     write('multi', { welcome: 'Two\nparagraphs.' });
     write('blank', { feedback: '  ' });
