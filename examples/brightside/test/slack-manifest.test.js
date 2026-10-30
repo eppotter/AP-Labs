@@ -7,6 +7,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { BOT_SCOPES, BOT_EVENTS } = require('../../../kit/runtime/slack/scopes');
 const { run } = require('../../../kit/runtime/slack/manifest');
@@ -19,12 +20,26 @@ test('the committed manifest is what npm run slack:manifest generates from the h
   assert.equal(r.code, 0, `${r.out}\nRun: APLABS_APP_DIR=$PWD/examples/brightside/app npm run slack:manifest`);
 });
 
-test('the slash commands are the hub commands', () => {
-  assert.deepEqual(manifest.features.slash_commands.map((c) => c.command), ['/brightside']);
+test('the slash commands are the hub commands: /brightside and the blank /brightside-v0 (Story 16.2)', () => {
+  assert.deepEqual(manifest.features.slash_commands.map((c) => c.command), ['/brightside-v0', '/brightside']);
+  const v0 = manifest.features.slash_commands.find((c) => c.command === '/brightside-v0');
+  assert.deepEqual(v0, { command: '/brightside-v0', description: 'Open the Brightside v0 (blank) menu', should_escape: false });
 });
 
-test('bot scopes are exactly the runtime\'s allowed set', () => {
+test('the v0 hub sees nothing, has no usage hint, and its welcome says it is a blank bot', () => {
+  const hub = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'hubs/brightside-v0.json'), 'utf8'));
+  assert.equal(hub.command, '/brightside-v0');
+  assert.deepEqual(hub.sees, []);
+  assert.equal(hub.usage_hint, undefined);
+  assert.match(hub.welcome, /no business context and no data yet/);
+  assert.match(hub.welcome, /An admin can add context/);
+});
+
+test('bot scopes are exactly the runtime\'s allowed set: the seven Slack shows, files:read included', () => {
   assert.deepEqual([...manifest.oauth_config.scopes.bot].sort(), [...BOT_SCOPES].sort());
+  assert.deepEqual([...manifest.oauth_config.scopes.bot].sort(), [
+    'chat:write', 'commands', 'files:read', 'files:write', 'im:history', 'im:write', 'users:read',
+  ]);
 });
 
 test('bot events are exactly the runtime\'s', () => {

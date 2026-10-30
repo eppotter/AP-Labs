@@ -15,6 +15,11 @@
     },
     "slash_commands": [
       {
+        "command": "/brightside-v0",
+        "description": "Open the Brightside v0 (blank) menu",
+        "should_escape": false
+      },
+      {
         "command": "/brightside",
         "description": "Open the Brightside menu",
         "should_escape": false
@@ -28,6 +33,7 @@
         "chat:write",
         "im:write",
         "im:history",
+        "files:read",
         "files:write",
         "users:read"
       ]
