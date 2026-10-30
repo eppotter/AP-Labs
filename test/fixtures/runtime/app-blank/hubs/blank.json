@@ -1,0 +1,8 @@
+{
+  "id": "blank",
+  "command": "/blank",
+  "name": "Blank tools",
+  "description": "Open the Blank (blank) menu",
+  "sees": [],
+  "welcome": "Welcome to Blank, a blank bot. It has no business context and no data yet. An admin can add context to teach it."
+}
