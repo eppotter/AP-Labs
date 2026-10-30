@@ -18,6 +18,14 @@
 // "context". There is no unbound ask or structured: every call goes through
 // a hub's bound service (PR #262 review), and runs every check below.
 //
+// Added context (D2, D4, Story 16.4): with a knowledge store
+// (kit/runtime/knowledge/store), each call on a hub reads that hub's entries
+// (store.forPrompt) and adds them after the rest of the prompt, inside
+// <added_context> tags behind a fixed sentence saying they are data. A hub's
+// entries reach its own prompt only, whatever sees says. Read on every call,
+// so an entry is used as soon as it is added. A store that throws refuses the
+// call with the configuration-fault message.
+//
 // Setup, fixed at startup (a change takes a restart):
 //   - the key, read once by readKey() through kit/lib/secrets (env
 //     ANTHROPIC_API_KEY, else Keychain aplabs-anthropic-key) and registered
@@ -173,7 +181,7 @@ class LlmTimeout extends Error {
 }
 
 function createLlm({
-  apiKey = null, profile, profilePath = null, store, log, env = process.env, now = () => Date.now(), deps = {},
+  apiKey = null, profile, profilePath = null, store, log, env = process.env, now = () => Date.now(), deps = {}, knowledge = null,
 }) {
   const settings = profile.llm;
   // Tests may shorten the time limit, never lengthen it.
@@ -290,13 +298,30 @@ function createLlm({
   // The prompt for a hub: the profile's context only when it sees it (D2).
   // A context that can't be used, or a prompt over the limit, refuses this
   // call only, with the configuration-fault message.
+  function refuseConfig(hub) {
+    log.error('ai request refused', { reason: 'config', hub: hub.id });
+    return new LlmUnavailable('config');
+  }
   function promptFor(hub) {
     const prompt = hub.context ? (contextProblem ? null : context.prompt) : blankPrompt;
-    if (typeof prompt !== 'string' || prompt.length > MAX_CONTEXT_CHARS) {
-      log.error('ai request refused', { reason: 'config', hub: hub.id });
-      throw new LlmUnavailable('config');
-    }
+    if (typeof prompt !== 'string' || prompt.length > MAX_CONTEXT_CHARS) throw refuseConfig(hub);
     return prompt;
+  }
+
+  // The hub's prompt with its added context (Story 16.4), checked against the
+  // same limit. Without a knowledge store, promptFor as it is (no await).
+  async function promptWithAdded(hub) {
+    const prompt = promptFor(hub);
+    let added;
+    try {
+      added = await knowledge.forPrompt(hub.id);
+    } catch {
+      throw refuseConfig(hub);
+    }
+    if (typeof added !== 'string') throw refuseConfig(hub);
+    const full = added ? `${prompt}\n\n${added}` : prompt;
+    if (full.length > MAX_CONTEXT_CHARS) throw refuseConfig(hub);
+    return full;
   }
 
   // ask() and structured() bound to one hub: { id, context }.
@@ -308,7 +333,7 @@ function createLlm({
         def = tools.get(tool);
         if (!def) throw new TypeError(`tool "${tool}" is not registered`);
       }
-      return call({ person, def, system: promptFor(hub), content: request });
+      return call({ person, def, system: knowledge ? await promptWithAdded(hub) : promptFor(hub), content: request });
     }
 
     // One structured call (Story 9.4): one tool, no tool loop. tool: a
@@ -321,7 +346,11 @@ function createLlm({
     async function structured({ person, resource, request, tool, instructions = '' } = {}) {
       precheck('structured', person, resource, request);
       const def = toolDef(tool);
-      const system = [promptFor(hub), REQUEST_RULE, String(instructions || '')].filter(Boolean).join('\n\n');
+      const base = knowledge ? await promptWithAdded(hub) : promptFor(hub);
+      const system = [base, REQUEST_RULE, String(instructions || '')].filter(Boolean).join('\n\n');
+      // The final prompt, with the rule and the caller's instructions, is
+      // checked too: over the limit refuses this call only (PR #264 review).
+      if (system.length > MAX_CONTEXT_CHARS) throw refuseConfig(hub);
       const res = await call({ person, def, system, content: requestTurn(request) });
       return { toolInput: res.toolInput, stopReason: res.stopReason, costUsd: res.costUsd };
     }
