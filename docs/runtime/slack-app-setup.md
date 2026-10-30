@@ -9,7 +9,7 @@ The runtime is its **own** Slack app (architecture AD-5). It is not the "AP Labs
 ## 1. Create the app from the manifest
 
 1. Go to <https://api.slack.com/apps>, choose **Create New App → From a manifest**, and pick the `aplabs-demo` workspace.
-2. Paste `examples/brightside/app/slack-manifest.json`. It creates **Brightside Bot (dev)** with Socket Mode on, the six bot scopes the runtime is allowed (`commands`, `chat:write`, `im:write`, `im:history`, `files:write`, `users:read`) and the `message.im` event. Don't add scopes by hand: a new scope needs an Architect review.
+2. Paste `examples/brightside/app/slack-manifest.json`. It creates **Brightside Bot (dev)** with Socket Mode on, the seven bot scopes the runtime is allowed (`commands`, `chat:write`, `im:write`, `im:history`, `files:read`, `files:write`, `users:read`), one slash command per hub (`/brightside` and `/brightside-v0`) and the `message.im` event. Don't add scopes by hand: a new scope needs an Architect review.
 3. **Install to Workspace** and approve.
 
 ## 2. Store the two tokens
