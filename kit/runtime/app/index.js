@@ -78,6 +78,13 @@
 // that can't be used no longer switches the AI off: only hubs that see
 // context refuse their calls, and boot logs why.
 //
+// Story 16.4: boot builds the added-context store (kit/runtime/knowledge/
+// store) for the profile's client under the var dir (APLABS_VAR_DIR, else
+// <repo>/var). It touches no file at boot: the hub folder is made on the
+// first add. The AI service reads each hub's entries into that hub's prompt,
+// and each hub's view gets the store bound to it. The job scheduler gets
+// neither.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
@@ -96,6 +103,7 @@ const { createStore } = require('../store');
 const { createData, dataPathFor, sourceOf } = require('../data');
 const md = require('../data/motherduck');
 const llm = require('../llm');
+const { createKnowledgeStore, varDirFor } = require('../knowledge/store');
 const jobs = require('../jobs');
 const health = require('./health');
 const { createConnectors } = require('../archetypes/approval-write');
@@ -304,7 +312,9 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     if (healthCheck) await healthCheck.close();
     throw err;
   }
-  const { remote, data, connecting, store, ai, aiStatus } = setup;
+  const {
+    remote, data, connecting, store, ai, aiStatus, knowledge,
+  } = setup;
 
   // createApp inside the try: a throw while building the app (it may carry a
   // token) still goes through the redacting logger.
@@ -312,7 +322,9 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   let engineJobs = null;
   try {
     // Each hub's view, once (plan brightside-v0, D1): the hubs get only these.
-    const views = createHubViews({ hubs: cfg.registry.hubs, data, llm: ai });
+    const views = createHubViews({
+      hubs: cfg.registry.hubs, data, llm: ai, knowledge,
+    });
     app = createApp({
       ...cfg, store, forHub: views.forHub, log, App: deps.App, connectors, sweeping: (name) => Boolean(engineJobs && engineJobs.running(name)),
     });
@@ -356,7 +368,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   scheduler.start();
   engineJobs.start();
   return {
-    code: 0, app, log, data, connecting, llm: ai, jobs: scheduler, engineJobs, health: healthCheck, connectors,
+    code: 0, app, log, data, connecting, llm: ai, knowledge, jobs: scheduler, engineJobs, health: healthCheck, connectors,
   };
 }
 
@@ -391,6 +403,10 @@ async function setUp({ cfg, deps, log, env }) {
   }
 
   const store = deps.store || createStore({ now: deps.now });
+  // Added context (Story 16.4): no file is touched until the first add.
+  const knowledge = createKnowledgeStore({
+    clientId: cfg.profile.client.id, varDir: varDirFor(env), log, ...(deps.now ? { now: deps.now } : {}),
+  });
   const ai = llm.createLlm({
     apiKey: cfg.tokens[llm.KEY_ENV] || null,
     profile: cfg.profile,
@@ -400,11 +416,14 @@ async function setUp({ cfg, deps, log, env }) {
     env,
     ...(deps.now ? { now: deps.now } : {}),
     deps: deps.llm || {},
+    knowledge,
   });
   const aiStatus = ai.status();
   if (aiStatus.reason === 'config') log.error('AI helper off: configuration fault', { problem: aiStatus.problem });
   if (aiStatus.contextProblem) log.error('AI context unusable: hubs that see context refuse AI calls', { problem: aiStatus.contextProblem });
-  return { remote, data, connecting, store, ai, aiStatus };
+  return {
+    remote, data, connecting, store, ai, aiStatus, knowledge,
+  };
 }
 
 // Anything that escapes main() is logged through the same redacting logger

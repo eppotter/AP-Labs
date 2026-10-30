@@ -4,7 +4,7 @@
 // hub may reach, built once at boot from the hub file's sees. This file is
 // the one seam: no module, archetype or button decides what a hub sees.
 //
-//   const views = createHubViews({ hubs, data, llm });
+//   const views = createHubViews({ hubs, data, llm, knowledge });
 //   const view = views.forHub('brightside');
 //   // { id, sees, data, llm, rules, knowledge }
 //
@@ -15,7 +15,10 @@
 //              context reaches its prompt only when sees lists "context".
 //              The service has no unbound call. null when there is no AI service.
 //   rules      true when sees lists "rules" (readiness, Story 16.3).
-//   knowledge  the hub's added-context store: null until Story 16.4.
+//   knowledge  the added-context store bound to this hub (Story 16.4,
+//              kit/runtime/knowledge/store forHub): add, list, remove and
+//              forPrompt, for this hub's entries only. Every hub gets its
+//              own, whatever sees says (D1, D4). null when there is no store.
 //
 // kit/runtime/app hands registerHubs (kit/runtime/slack/hubs) only forHub,
 // never the app-wide runner or AI service. The hubs give each handler,
@@ -59,14 +62,16 @@ function seesOf(hub) {
   return Object.freeze([...new Set(sees)]);
 }
 
-function viewOf({ id, sees, data, llm }) {
+function viewOf({
+  id, sees, data, llm, knowledge = null,
+}) {
   return Object.freeze({
     id,
     sees,
     data: sees.includes('data') ? data || null : null,
     llm,
     rules: sees.includes('rules'),
-    knowledge: null,
+    knowledge,
   });
 }
 
@@ -75,13 +80,21 @@ function viewOf({ id, sees, data, llm }) {
 const BLANK_VIEW = viewOf({ id: null, sees: Object.freeze([]), data: null, llm: null });
 
 // hubs: the registry's hubs. data: the app's query runner, or null. llm: the
-// AI service (kit/runtime/llm createLlm), or null. Each view is built once.
-function createHubViews({ hubs, data = null, llm = null }) {
+// AI service (kit/runtime/llm createLlm), or null. knowledge: the
+// added-context store (kit/runtime/knowledge/store), or null. Each view is
+// built once.
+function createHubViews({
+  hubs, data = null, llm = null, knowledge = null,
+}) {
   const views = new Map();
   for (const hub of hubs || []) {
     const sees = seesOf(hub);
     views.set(hub.id, viewOf({
-      id: hub.id, sees, data, llm: llm ? llm.forHub({ id: hub.id, sees: [...sees] }) : null,
+      id: hub.id,
+      sees,
+      data,
+      llm: llm ? llm.forHub({ id: hub.id, sees: [...sees] }) : null,
+      knowledge: knowledge ? knowledge.forHub(hub.id) : null,
     }));
   }
   return Object.freeze({
