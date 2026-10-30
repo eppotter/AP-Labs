@@ -42,10 +42,14 @@ function setup({ env = 'dev', canUse, views = false, reg = registry } = {}) {
 // The Open buttons, in menu order (the Help button is checked on its own).
 const buttons = (msg) => msg.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
 
-test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" (and Back), push and routing-map clicks', () => {
+test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" (and Back), push, routing-map and build-request clicks', () => {
   const { app } = setup();
   assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
-  assert.equal(app.actionListeners.length, 6);
+  assert.equal(app.actionListeners.length, 7);
+  // Post, Edit and Cancel on a build request's preview (Story 16.6), last.
+  for (const id of ['build-request:post', 'build-request:edit', 'build-request:cancel']) assert.ok(app.actionListeners[6].pattern.test(id), id);
+  assert.ok(!app.actionListeners[6].pattern.test('build-request:open'));
+  app.actionListeners.pop();
   // A routing map's view, day, crew and zone selects (Story 15.4).
   for (const id of ['routing-map:view', 'routing-map:day', 'routing-map:crew', 'routing-map:zone']) assert.ok(app.actionListeners[2].pattern.test(id), id);
   assert.ok(!app.actionListeners[2].pattern.test('routing-map:open'));
@@ -61,7 +65,7 @@ test('each hub file registers its slash command; one listener each handles Open,
   // A map view's view_closed (Story 15.1), then two submits: the form's
   // "Check values" and a follow-up question's answer (Story 9.4).
   assert.deepEqual(app.viewListeners.map((v) => v.callbackId), [
-    { callback_id: 'hub:map', type: 'view_closed' }, 'scoped-pull:form', 'scoped-pull:answer',
+    { callback_id: 'hub:map', type: 'view_closed' }, 'scoped-pull:form', 'scoped-pull:answer', 'build-request:form',
   ]);
   assert.deepEqual([...app.eventListeners.keys()], ['team_join']);
 });

@@ -27,9 +27,12 @@ test('WIN_BACK is admin_grantable: false and granted to Dana by name', () => {
 // Story 10.3: slack.ops_channel stays unset until Ely creates #brightside-ops
 // in aplabs-demo and gives its id (DEP ledger), so a failed push is logged
 // only. Setting it is a reviewed profile change: update this test with it.
-test('slack.ops_channel is not set yet: a failed push is logged only', () => {
+// Story 16.6 sets slack.build_requests_channel (a channel id) beside it.
+test('slack.ops_channel is not set yet: a failed push is logged only; build requests have a channel id', () => {
   const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
-  assert.equal(p.slack, undefined);
+  assert.equal(p.slack.ops_channel, undefined);
+  assert.deepEqual(Object.keys(p.slack), ['build_requests_channel']);
+  assert.match(p.slack.build_requests_channel, /^[CG][A-Z0-9]{8,}$/);
 });
 
 // Story 13.3 (AD-R9, AD-R10): the four coordinate columns are forbidden to

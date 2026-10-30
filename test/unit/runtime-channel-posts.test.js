@@ -2,7 +2,8 @@
 
 // N9 (plan epic-10, decision 4): nothing in the engine posts to a channel
 // that isn't a DM, except through kit/runtime/slack/channel.js, the one
-// channel-post function (Story 10.3 adds it, for the ops escalation, AD-14).
+// channel-post function (Story 10.3 adds it, for the ops escalation, AD-14;
+// Story 16.6 adds the build request, the AD-14 amendment).
 // Every other place that sends a message or a file is listed here with why it
 // only ever reaches one person privately; a new one fails this test until it
 // is reviewed (and goes through channel.js if it posts to a channel).
@@ -80,6 +81,20 @@ test('kit/runtime/slack/channel.js has exactly one send, guarded by its declared
   assert.match(guards, /if \(typeof channel !== 'string' \|\| !CHANNEL_ID\.test\(channel\)\) throw/);
   assert.match(guards, /const text = EXCEPTIONS\[exception\]\(fields\);/, 'the text is built by the exception, never passed in');
   assert.match(src, /const CHANNEL_ID = \/\^\[CG\]\[A-Z0-9\]\{8,\}\$\/;/, 'the profile schema\'s pattern: never a DM (D…) or a person (U…)');
+});
+
+// Story 16.6 (plan brightside-v0, D11, the AD-14 amendment): the declared
+// exceptions are exactly the write escalation and the build request, and the
+// build request's text refuses a hub that sees context or data before
+// anything else is read.
+test('kit/runtime/slack/channel.js declares exactly two exceptions; build-request is refused from a hub that sees context or data', () => {
+  const channel = require(path.join(ROOT, CHANNEL));
+  assert.deepEqual(Object.keys(channel.EXCEPTIONS), ['write-escalation', 'build-request']);
+  const src = fs.readFileSync(path.join(ROOT, CHANNEL), 'utf8');
+  const body = src.slice(src.indexOf('function buildRequestText('), src.indexOf('// Exception name'));
+  assert.match(body, /if \(!mayPostBuildRequest\(hub\.sees\)\) throw new ChannelPostRefused/);
+  assert.match(body, /From <@\$\{requester\}>/, 'the one mention is the requester');
+  assert.match(src, /const BUILD_REQUEST_BLOCKED_SEES = Object\.freeze\(\['context', 'data'\]\);/);
 });
 
 // Story 15.1: the image row's guard fails on any way of naming a channel.

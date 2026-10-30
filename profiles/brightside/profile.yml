@@ -91,6 +91,11 @@ resources:
   # it lists the known truths and who signed them off. The admin role confers it.
   - key: DATA_SOURCES
     label: Data sources
+  # Runtime: Build request on /brightside-v0 (plan brightside-v0, Story 16.6, D11): a person's
+  # own words and the AI's summary of them, previewed, then posted to
+  # slack.build_requests_channel below naming them. The admin role confers it.
+  - key: BUILD_REQUEST
+    label: Build request
 
 users:
   - id: dana
@@ -106,6 +111,14 @@ users:
     role: member
     identities: { github: mlee-bright }
     grants: [VERIFY_SKIP]
+
+# Slack settings (kit/runtime).
+slack:
+  # #ai-build-requests in the aplabs-demo workspace (the bot is a member). Its audience: the
+  # AP Labs build team and the client's admins. Build requests post here (plan brightside-v0,
+  # D11, the AD-14 amendment): the requester's own previewed words and the AI's summary, from
+  # a hub that sees neither context nor data (/brightside-v0) only. A channel id, not a secret.
+  build_requests_channel: C0CDEPKQDRT
 
 # Columns no query may name (kit/runtime/sql). While any is set, SELECT * and
 # whole-row references are refused too.

@@ -74,7 +74,8 @@ function setup(prof = OPS) {
   mail.reset();
   const clock = { t: PINNED };
   const store = createStore({ now: () => clock.t });
-  const app = new FakeSlackApp({ views: true });
+  // The bot is a member of the ops channel (the fake refuses any other, Story 16.6).
+  const app = new FakeSlackApp({ views: true, channels: [OPS_CHANNEL] });
   const log = quietLog();
   const connectorEnv = {};
   const connectors = createConnectors({ appDir: APP, modules: registry.modules, log: testLog(), env: connectorEnv });
@@ -169,12 +170,12 @@ test('with no ops_channel set the escalation is logged only, and the person\'s r
 
 test('Slack refusing the post (the bot is not in the channel) is logged only; the person\'s reply is unaffected', async () => {
   const ctx = setup();
-  const tries = [];
-  ctx.app.client.chat.postMessage = async (args) => {
-    tries.push(args);
-    throw Object.assign(new Error('An API error occurred: not_in_channel'), { data: { ok: false, error: 'not_in_channel' } });
-  };
+  // The fake answers not_in_channel, as Slack does, for a channel the bot left.
+  ctx.app.memberOf.delete(OPS_CHANNEL);
   const view = await partlyFail(ctx);
+  const tries = ctx.app.refusedPosts.map((r) => r.args);
+  assert.deepEqual(ctx.app.refusedPosts.map((r) => r.error), ['not_in_channel']);
+  assert.deepEqual(ctx.app.posted, []);
   assert.match(head(view), /^Sent 2 of 3 to Fixture mail tool; 1 failed\./);
   assert.ok(buttons(view).some((b) => b.action_id === approvalWrite.ACTIONS.retry));
   assert.equal(tries.length, 1);
@@ -231,7 +232,7 @@ test('channel.js posts only declared exceptions, to a channel id, with text it b
   const fields = { module: 'leads', reason: 'PartialFailure', counts: { total: 3, failed: 1 } };
   await channel.postToChannel({ client, exception: 'write-escalation', channel: 'C0OPS12345', fields });
   assert.equal(posted[0].text, 'Push needs a look: module leads, some contacts failed. Counts: 3 rows approved, 1 failed or not sent. No client data is in this message; the bot\'s log has the details.');
-  assert.deepEqual(Object.keys(channel.EXCEPTIONS), ['write-escalation'], 'V1 has one declared exception (AD-14)');
+  assert.deepEqual(Object.keys(channel.EXCEPTIONS), ['write-escalation', 'build-request'], 'two declared exceptions (AD-14, amended for build requests in Story 16.6)');
   const refused = [
     { exception: 'anything', channel: 'C0OPS12345', fields },
     { exception: 'write-escalation', channel: 'D0DMCHAN12', fields },

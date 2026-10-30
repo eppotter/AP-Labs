@@ -23,6 +23,16 @@
 // Replies land in this.said (say and postEphemeral), this.responded
 // (respond) and this.posted (chat.postMessage); this.acks counts acks. users.info answers from this.users.
 //
+// chat.postMessage (Story 16.6), refused as Slack refuses it: a channel id
+// (C… or G…) the bot isn't a member of answers not_in_channel, and text over
+// 40,000 characters msg_too_long; a refused post is not recorded in
+// this.posted (it lands in this.refusedPosts). The bot is a member of the
+// channels named in new FakeSlackApp({ channels: [...] }) and of any added to
+// this.memberOf later. A DM (D…) or a person (U…, which opens their DM) is
+// always accepted. Each post's args are recorded whole, unfurl_links and
+// unfurl_media included. Set this.postGate to a promise and every post waits
+// for it first (a slow Slack, for double clicks).
+//
 // Files (Story 9.5): conversations.open({ users }) opens the bot's DM with one
 // person, recorded in this.dms as { user, channel } (channel "D" + the user
 // id without its "U"). files.uploadV2(args) records args in this.uploads and
@@ -126,6 +136,9 @@ class FakeSlackApp {
     this.said = [];
     this.responded = [];
     this.posted = [];
+    this.refusedPosts = [];
+    this.memberOf = new Set((options && options.channels) || []);
+    this.postGate = null;
     this.acks = 0;
     this.users = {};
     this.views = [];
@@ -181,7 +194,16 @@ class FakeSlackApp {
       },
       chat: {
         postEphemeral: async (args) => { this.said.push({ ephemeral: true, ...args }); return { ok: true }; },
-        postMessage: async (args) => { this.posted.push(args); return { ok: true }; },
+        postMessage: async (args = {}) => {
+          if (this.postGate) await this.postGate;
+          const why = this.refusedPost(args);
+          if (why) {
+            this.refusedPosts.push({ args, error: why[0] });
+            throw slackError(why[0], why[1]);
+          }
+          this.posted.push(args);
+          return { ok: true, channel: args.channel, ts: `${Date.now() / 1000}` };
+        },
       },
       users: {
         info: async ({ user }) => {
@@ -217,6 +239,17 @@ class FakeSlackApp {
       };
       this.client.views = { open: call('open'), push: call('push'), update: call('update') };
     }
+  }
+
+  // [Slack's error code, why] for a chat.postMessage Slack would refuse, or
+  // null (see the top).
+  refusedPost(args) {
+    const { channel, text } = args;
+    if (typeof channel !== 'string' || !channel) return ['channel_not_found', 'channel is required'];
+    if (/^[CG]/.test(channel) && !this.memberOf.has(channel)) return ['not_in_channel', 'the bot is not a member of that channel'];
+    if (typeof text === 'string' && text.length > MAX_POST_TEXT) return ['msg_too_long', `text is over ${MAX_POST_TEXT} characters`];
+    if ((typeof text !== 'string' || !text) && !Array.isArray(args.blocks)) return ['no_text', 'text or blocks is required'];
+    return null;
   }
 
   // The index of the first image block whose file is not ready yet (and
@@ -367,6 +400,7 @@ class FakeSlackApp {
 }
 
 const TRIGGER_MS = 3000;
+const MAX_POST_TEXT = 40000;
 const MAX_ALT = 2000;
 const MAX_TITLE = 24;
 const MAX_VIEW_BLOCKS = 100;

@@ -153,11 +153,12 @@
     },
 
     "slack": {
-      "description": "Slack settings (kit/runtime). ops_channel: the channel id a failed push is escalated to (module, reason and counts only, never client data; AD-14). Optional, no default: unset, an escalation is only logged. Invite the bot to the channel; chat:write covers it. A channel id, never a secret.",
+      "description": "Slack settings (kit/runtime). ops_channel: the channel id a failed push is escalated to (module, reason and counts only, never client data; AD-14). Optional, no default: unset, an escalation is only logged. build_requests_channel: the channel id build requests post to (plan brightside-v0, D11; AD-14 as amended): the person's own previewed words, the AI's title and summary and their Slack mention, from a hub that sees neither context nor data. Optional, no default: unset, the Build request tool says it is not set up. Name the channel's audience in a comment beside it. Invite the bot to each channel; chat:write covers it. Channel ids, never secrets.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "ops_channel": { "type": "string", "pattern": "^[CG][A-Z0-9]{8,}$" }
+        "ops_channel": { "type": "string", "pattern": "^[CG][A-Z0-9]{8,}$" },
+        "build_requests_channel": { "type": "string", "pattern": "^[CG][A-Z0-9]{8,}$" }
       }
     },
 

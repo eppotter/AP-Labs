@@ -81,11 +81,32 @@ function handle(name, work, { log, store }) {
 // throws, the error is logged and the ack carries onError(args) (for example
 // a view with the plain error), so the person never sees a silent failure.
 // Every other listener keeps handle() and its empty ack.
+//
+// Slow work after the ack (plan brightside-v0, D13, Story 16.6): work may
+// return afterAck(payload, later). The ack carries payload (for example
+// "Thinking…" in the view) and later() runs only once Slack has it, so the
+// ack is never held up by the slow part; later() updates the view itself. An
+// error in later() is logged, never thrown. (Not named then: an object with
+// a then method is awaited as a promise.)
+class AfterAck {
+  constructor(payload, later) {
+    if (typeof later !== 'function') throw new TypeError('afterAck needs the work to run after the ack');
+    this.payload = payload;
+    this.later = later;
+  }
+}
+const afterAck = (payload, later) => new AfterAck(payload, later);
+
 function handleView(name, work, { log, onError }) {
   return async (args) => {
     let payload;
+    let later = null;
     try {
       payload = await work(args);
+      if (payload instanceof AfterAck) {
+        later = payload.later;
+        payload = payload.payload;
+      }
     } catch (err) {
       log.error('handler failed', { handler: name, err });
       try {
@@ -99,8 +120,17 @@ function handleView(name, work, { log, onError }) {
       await args.ack(payload);
     } catch (ackErr) {
       log.error('ack failed', { handler: name, err: ackErr });
+      return;
+    }
+    if (!later) return;
+    try {
+      await later();
+    } catch (err) {
+      log.error('handler failed', { handler: name, err });
     }
   };
 }
 
-module.exports = { handle, handleView, replyPrivately, isDuplicateEvent, PLAIN_ERROR };
+module.exports = {
+  handle, handleView, afterAck, AfterAck, replyPrivately, isDuplicateEvent, PLAIN_ERROR,
+};

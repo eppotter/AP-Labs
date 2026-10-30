@@ -12,7 +12,7 @@
     "label": { "description": "The menu button's text.", "type": "string", "$ref": "#/$defs/text", "maxLength": 60 },
     "description": { "description": "One line under the button.", "type": "string", "$ref": "#/$defs/text", "maxLength": 200 },
     "resource": { "description": "The profile resource key that grants it.", "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
-    "archetype": { "enum": ["handler", "scoped-pull", "approval-write", "routing-map", "data-sources"] },
+    "archetype": { "enum": ["handler", "scoped-pull", "approval-write", "routing-map", "data-sources", "build-request"] },
     "environments": {
       "description": "Where it shows (APLABS_ENV). Left off the menu, and refused at dispatch, everywhere else.",
       "type": "array",

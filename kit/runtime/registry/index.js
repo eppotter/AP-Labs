@@ -61,6 +61,11 @@
 // (kit/runtime/archetypes/data-sources). The engine shows it, so its manifest
 // has no handler, query, parameters, scoring or row_id.
 //
+// Plan brightside-v0 (Story 16.6): build-request is accepted
+// (kit/runtime/archetypes/build-request). The engine runs its form, preview
+// and post, so its manifest has no handler, query, parameters, scoring or
+// row_id either.
+//
 // Story 15.14: a routing-map module may name its screen: "views" (the
 // default) or "route-editor" (Plan a route, AD-R26). Whether the profile has
 // routing.depot and the adapter a route() is checked when it opens (the hub
@@ -77,7 +82,7 @@ const { forbiddenColumnsOf } = require('../sql');
 
 const SCHEMA_DIR = path.join(__dirname, '../schema');
 // Archetypes whose engine code exists (every archetype the schema names).
-const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write', 'routing-map', 'data-sources']);
+const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write', 'routing-map', 'data-sources', 'build-request']);
 // The archetypes the engine runs from a fixed SQL file and a typed form.
 const QUERY_ARCHETYPES = new Set(['scoped-pull', 'approval-write']);
 const ENV_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -269,6 +274,10 @@ const NOT_DATA_SOURCES = Object.freeze(['handler', 'query', 'parameters', 'scori
 const dataSourcesProblems = (m, file) => NOT_DATA_SOURCES
   .filter((key) => m[key] !== undefined)
   .map((key) => `${file}: field "${key}" is not used by a data-sources module (the engine shows it)`);
+// The same for a build-request manifest: the engine runs it (Story 16.6).
+const buildRequestProblems = (m, file) => NOT_DATA_SOURCES
+  .filter((key) => m[key] !== undefined)
+  .map((key) => `${file}: field "${key}" is not used by a build-request module (the engine runs it)`);
 
 // A scoped-pull's SQL template, read once, then checked (checkQuery).
 function loadQuery(abs, file, problems) {
@@ -322,8 +331,9 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
     }
     if (m.archetype === 'routing-map') problems.push(...routingMapProblems(m, file, profile));
     if (m.archetype === 'data-sources') problems.push(...dataSourcesProblems(m, file));
+    if (m.archetype === 'build-request') problems.push(...buildRequestProblems(m, file));
     if (problems.length > before) continue;
-    if (m.archetype === 'data-sources') {
+    if (m.archetype === 'data-sources' || m.archetype === 'build-request') {
       modules.push(Object.freeze({ ...m, file }));
       continue;
     }
