@@ -40,7 +40,8 @@
 //     text (PR #264 review).
 // The title (at most 80 characters, one line) counts toward the hub's total,
 // not the entry's own cap, so a typed entry can always hold Slack's 3,000.
-// A new entry over a cap is refused with ContextRefused, whose words say why.
+// A new entry over a cap is refused with ContextRefused (kit/runtime/errors),
+// whose words (kit/runtime/messages) say why.
 // Nothing is cut.
 //
 // Reads never stop boot or a call: a missing folder is no entries; an entry
@@ -61,7 +62,8 @@ const nodeFs = require('node:fs/promises');
 const { constants: FS } = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { RuntimeRefusal } = require('../errors');
+const { ContextRefused, CONTEXT_REFUSALS } = require('../errors');
+const { messageFor } = require('../messages');
 const { escapeData, addedContextPrompt } = require('../llm/context');
 
 const REPO = path.resolve(__dirname, '../../..');
@@ -94,23 +96,14 @@ function clientDirName(clientId) {
   return `${clientId.slice(0, 47)}-${crypto.createHash('sha256').update(clientId).digest('hex').slice(0, 16)}`;
 }
 
-// A new entry refused by a cap, or one with no text. reason is one of
-// CONTEXT_REFUSALS; details: { reason, max }. words: what to tell the admin.
-const CONTEXT_REFUSALS = Object.freeze(['empty', 'too_long', 'hub_full', 'too_many']);
-const WORDS = Object.freeze({
-  empty: () => 'There is nothing to add: the text is empty.',
-  too_long: (max) => `That is too long to add. At most ${max.toLocaleString('en-US')} characters fit, and each <, > or & counts as 4 or 5. Shorten it and try again.`,
-  hub_full: (max) => `This hub's added context is full (${max.toLocaleString('en-US')} characters in all). Remove an entry to make room, then try again.`,
-  too_many: (max) => `This hub already holds ${max} entries, the most it can. Remove one to make room, then try again.`,
-});
-class ContextRefused extends RuntimeRefusal {
-  constructor(reason, max = null) {
-    if (!CONTEXT_REFUSALS.includes(reason)) throw new TypeError(`unknown ContextRefused reason "${reason}"`);
-    super(`added context refused: ${reason}`, { reason, max });
-    this.code = 'CONTEXT_REFUSED';
-    this.reason = reason;
-    this.words = WORDS[reason](max);
-  }
+// A new entry refused by a cap, or one with no text: ContextRefused
+// (kit/runtime/errors), reason one of CONTEXT_REFUSALS, details { reason,
+// max }. words: what to tell the admin, from kit/runtime/messages (the one
+// place refusals are worded, AD-17).
+function refused(reason, max = null) {
+  const err = new ContextRefused(reason, max);
+  err.words = messageFor(err);
+  return err;
 }
 
 // One line: control and format characters become spaces, runs collapse.
@@ -281,20 +274,20 @@ function createKnowledgeStore({
     const cleanTitle = checkTitle(title);
     const fileMeta = checkFileMeta(kind, file);
     if (typeof text !== 'string') throw new TypeError('an entry needs its text');
-    if (!text.trim()) throw new ContextRefused('empty');
+    if (!text.trim()) throw refused('empty');
     const chars = promptChars(text);
-    if (chars > CAPS[kind]) throw new ContextRefused('too_long', CAPS[kind]);
+    if (chars > CAPS[kind]) throw refused('too_long', CAPS[kind]);
     const id = newId();
     entryPath(hub, id);
 
     return serial(hub, async () => {
       const held = await read(hub);
-      if (held.length >= CAPS.hubEntries) throw new ContextRefused('too_many', CAPS.hubEntries);
+      if (held.length >= CAPS.hubEntries) throw refused('too_many', CAPS.hubEntries);
       const entry = Object.freeze({
         id, hub, kind, title: cleanTitle, text, added_by: addedBy, added_at: new Date(now()).toISOString(), file: fileMeta,
       });
       // What forPrompt would then give the AI, wrappers and sentence included.
-      if (addedContextPrompt([...held, entry]).length > CAPS.hubChars) throw new ContextRefused('hub_full', CAPS.hubChars);
+      if (addedContextPrompt([...held, entry]).length > CAPS.hubChars) throw refused('hub_full', CAPS.hubChars);
       await writeEntry(hub, entry);
       log.info('added context stored', {
         id, hub, kind, chars, added_by: addedBy,

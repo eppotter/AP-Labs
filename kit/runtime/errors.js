@@ -256,10 +256,25 @@ class LlmUnavailable extends RuntimeRefusal {
   }
 }
 
+// A new added-context entry refused (plan brightside-v0, D4, Story 16.4):
+// no text ('empty'), over its own cap ('too_long'), over the hub's total
+// ('hub_full') or its entry count ('too_many'). details: { reason, max },
+// max the cap in characters or entries (null for 'empty'). Worded by
+// kit/runtime/messages (Story 16.5). Nothing is stored or cut.
+const CONTEXT_REFUSALS = Object.freeze(['empty', 'too_long', 'hub_full', 'too_many']);
+class ContextRefused extends RuntimeRefusal {
+  constructor(reason, max = null) {
+    if (!CONTEXT_REFUSALS.includes(reason)) throw new TypeError(`unknown ContextRefused reason "${reason}"`);
+    super(`added context refused: ${reason}`, { reason, max });
+    this.code = 'CONTEXT_REFUSED';
+    this.reason = reason;
+  }
+}
+
 module.exports = {
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, LLM_REASONS,
   KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
   SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
   ProvenanceGone, ProvenanceNotYours, ScoringFault, SCORING_PROBLEMS, PreviewInvalid, PushRefused, PUSH_REFUSALS, AlreadyPushed,
-  RoutingFault, ROUTING_PROBLEMS,
+  RoutingFault, ROUTING_PROBLEMS, ContextRefused, CONTEXT_REFUSALS,
 };

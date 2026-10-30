@@ -151,7 +151,7 @@ test('the fixture app loads: build-request is a built archetype, on a blank hub 
   ]);
 });
 
-test('a build-request manifest may not name a handler, query, parameters or row_id: the engine runs it', (t) => {
+test('a build-request manifest may not name a handler, query, parameters or row_id: the engine shows it', (t) => {
   const fs = require('node:fs');
   const os = require('node:os');
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-br-')));
@@ -165,10 +165,10 @@ test('a build-request manifest may not name a handler, query, parameters or row_
   const { hubs } = loadHubs(dir);
   const { problems } = loadModules(dir, { hubs, profile });
   assert.deepEqual(problems, [
-    'modules/blank-request/manifest.json: field "handler" is not used by a build-request module (the engine runs it)',
-    'modules/blank-request/manifest.json: field "query" is not used by a build-request module (the engine runs it)',
-    'modules/blank-request/manifest.json: field "parameters" is not used by a build-request module (the engine runs it)',
-    'modules/blank-request/manifest.json: field "row_id" is not used by a build-request module (the engine runs it)',
+    'modules/blank-request/manifest.json: field "handler" is not used by a build-request module (the engine shows it)',
+    'modules/blank-request/manifest.json: field "query" is not used by a build-request module (the engine shows it)',
+    'modules/blank-request/manifest.json: field "parameters" is not used by a build-request module (the engine shows it)',
+    'modules/blank-request/manifest.json: field "row_id" is not used by a build-request module (the engine shows it)',
   ]);
 });
 

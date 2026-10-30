@@ -16,7 +16,7 @@ const {
 const {
   ProvenanceGone, ProvenanceNotYours, ScoringFault, PreviewInvalid, PushRefused, AlreadyPushed,
 } = require('./errors');
-const { RoutingFault } = require('./errors');
+const { RoutingFault, ContextRefused } = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
 function escapeText(s) {
@@ -177,6 +177,17 @@ const ROUTE_WORDS = Object.freeze({
   notPreferred: () => 'not the preferred crew',
 });
 
+const num = (n) => Number(n).toLocaleString('en-US');
+
+// Why a new added-context entry was refused (Story 16.4, worded here since
+// Story 16.5). max: the cap, in characters or entries. Nothing was stored.
+const CONTEXT_WORDS = Object.freeze({
+  empty: () => 'There is nothing to add: the text is empty.',
+  too_long: (max) => `That is too long to add. At most ${num(max)} characters fit, and each <, > or & counts as 4 or 5. Shorten it and try again.`,
+  hub_full: (max) => `This hub's added context is full (${num(max)} characters in all). Remove an entry to make room, then try again.`,
+  too_many: (max) => `This hub already holds ${max} entries, the most it can. Remove one to make room, then try again.`,
+});
+
 const MESSAGES = [
   [NotSetUp, ({ client, admin }) => `You're not set up in ${escapeText(client)}'s bot yet, so you only see what's open to everyone. Ask ${admin} to add you.`],
   [AccessDenied, ({ label, admin }) => `You don't have access to ${escapeText(label)}; ask ${admin}.`],
@@ -225,6 +236,8 @@ const MESSAGES = [
   // A scored list (Story 10.1): a setup fault, so nothing partial is shown.
   [ScoringFault, ({ label, problem }, { admin }) => `This list's scores couldn't be worked out: ${escapeText(SCORING_WORDS[problem](label))}. So there are no results and nothing was sent. I've logged the problem; please tell ${admin}.`],
   // The routing engine's input (Story 12.1): a setup fault, so no plan is shown.
+  // Added context (Stories 16.4, 16.5).
+  [ContextRefused, ({ reason, max }) => CONTEXT_WORDS[reason](max)],
   [RoutingFault, (details, { admin }) => `The suggested plan couldn't be worked out: ${escapeText(ROUTING_WORDS[details.problem](details))}. Nothing was changed. I've logged the problem; please tell ${admin}.`],
   // "How was this made?" (Story 9.6). Neither says anything about the run.
   [ProvenanceGone, () => "The details of this run are no longer available (they're kept for 24 hours). Run the list again from the menu to see how a new one is made."],
@@ -239,7 +252,6 @@ const MESSAGES = [
     : `You already approved this push, so it ran once and I won't send it again. ${pushResultText(result, { admin })}`)],
 ];
 
-const num = (n) => Number(n).toLocaleString('en-US');
 
 // A push's outcome in words (Story 10.3): honest counts, nothing partial
 // called complete. result: { outcome, destination, listName, counts, retry }

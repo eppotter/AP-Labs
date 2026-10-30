@@ -91,6 +91,11 @@ resources:
   # it lists the known truths and who signed them off. The admin role confers it.
   - key: DATA_SOURCES
     label: Data sources
+  # Runtime: Add context on /brightside-v0 (plan brightside-v0, Story 16.5, D8): admins type
+  # what Ask should know about the business; it is live at once, and everyone who can use Ask
+  # on that hub can read it. The admin role confers it. Never open_access: boot refuses that.
+  - key: ADD_CONTEXT
+    label: Add context
   # Runtime: Build request on /brightside-v0 (plan brightside-v0, Story 16.6, D11): a person's
   # own words and the AI's summary of them, previewed, then posted to
   # slack.build_requests_channel below naming them. The admin role confers it.

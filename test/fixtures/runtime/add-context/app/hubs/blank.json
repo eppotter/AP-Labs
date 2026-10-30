@@ -1,0 +1,7 @@
+{
+  "id": "blank",
+  "command": "/blank",
+  "name": "Blank tools",
+  "description": "Open the Blank menu",
+  "sees": []
+}

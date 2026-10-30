@@ -61,6 +61,13 @@
 // (kit/runtime/archetypes/data-sources). The engine shows it, so its manifest
 // has no handler, query, parameters, scoring or row_id.
 //
+// Plan brightside-v0 (Story 16.5): add-context is accepted
+// (kit/runtime/archetypes/add-context). The engine shows its form, so its
+// manifest has no handler, query, parameters, scoring or row_id. Its
+// resource must not be open_access in the profile: adding context changes
+// what Ask tells everyone on the hub, so only people the profile names (the
+// admin role, D8) may hold it. The problem names the module file and the key.
+//
 // Plan brightside-v0 (Story 16.6): build-request is accepted
 // (kit/runtime/archetypes/build-request). The engine runs its form, preview
 // and post, so its manifest has no handler, query, parameters, scoring or
@@ -82,7 +89,9 @@ const { forbiddenColumnsOf } = require('../sql');
 
 const SCHEMA_DIR = path.join(__dirname, '../schema');
 // Archetypes whose engine code exists (every archetype the schema names).
-const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write', 'routing-map', 'data-sources', 'build-request']);
+const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write', 'routing-map', 'data-sources', 'add-context', 'build-request']);
+// The archetypes the engine shows itself: no handler, query or parameters.
+const ENGINE_SHOWN = new Set(['data-sources', 'add-context', 'build-request']);
 // The archetypes the engine runs from a fixed SQL file and a typed form.
 const QUERY_ARCHETYPES = new Set(['scoped-pull', 'approval-write']);
 const ENV_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -269,15 +278,19 @@ function routingMapProblems(m, file, profile) {
   return problems;
 }
 
-// What a data-sources manifest may not hold: the engine shows it (Story 16.3).
-const NOT_DATA_SOURCES = Object.freeze(['handler', 'query', 'parameters', 'scoring', 'row_id']);
-const dataSourcesProblems = (m, file) => NOT_DATA_SOURCES
+// What a data-sources, add-context or build-request manifest may not hold:
+// the engine shows it (Stories 16.3, 16.5, 16.6).
+const NOT_ENGINE_SHOWN = Object.freeze(['handler', 'query', 'parameters', 'scoring', 'row_id']);
+const engineShownProblems = (m, file) => NOT_ENGINE_SHOWN
   .filter((key) => m[key] !== undefined)
-  .map((key) => `${file}: field "${key}" is not used by a data-sources module (the engine shows it)`);
-// The same for a build-request manifest: the engine runs it (Story 16.6).
-const buildRequestProblems = (m, file) => NOT_DATA_SOURCES
-  .filter((key) => m[key] !== undefined)
-  .map((key) => `${file}: field "${key}" is not used by a build-request module (the engine runs it)`);
+  .map((key) => `${file}: field "${key}" is not used by a${m.archetype === 'add-context' ? 'n' : ''} ${m.archetype} module (the engine shows it)`);
+
+// An add-context module's key must not be open to everyone (Story 16.5, D8).
+function addContextProblems(m, file, profile) {
+  const resource = ((profile && profile.resources) || []).find((r) => r.key === m.resource);
+  if (!resource || resource.open_access !== true) return [];
+  return [`${file}: field "resource" ${m.resource} is open_access in the profile, but module ${m.id} adds context everyone on the hub's Ask reads; remove open_access so only the people the profile names (the admin role) hold it`];
+}
 
 // A scoped-pull's SQL template, read once, then checked (checkQuery).
 function loadQuery(abs, file, problems) {
@@ -330,10 +343,10 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
       problems.push(`${file}: field "handler" is not used by ${m.archetype === 'approval-write' ? 'an' : 'a'} ${m.archetype} module (the engine runs its form)`);
     }
     if (m.archetype === 'routing-map') problems.push(...routingMapProblems(m, file, profile));
-    if (m.archetype === 'data-sources') problems.push(...dataSourcesProblems(m, file));
-    if (m.archetype === 'build-request') problems.push(...buildRequestProblems(m, file));
+    if (ENGINE_SHOWN.has(m.archetype)) problems.push(...engineShownProblems(m, file));
+    if (m.archetype === 'add-context') problems.push(...addContextProblems(m, file, profile));
     if (problems.length > before) continue;
-    if (m.archetype === 'data-sources' || m.archetype === 'build-request') {
+    if (ENGINE_SHOWN.has(m.archetype)) {
       modules.push(Object.freeze({ ...m, file }));
       continue;
     }

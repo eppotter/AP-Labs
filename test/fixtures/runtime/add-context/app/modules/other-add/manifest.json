@@ -1,0 +1,9 @@
+{
+  "id": "other-add",
+  "hub": "other",
+  "label": "Add context",
+  "description": "Add what Ask should know about the business.",
+  "resource": "ADD_CONTEXT",
+  "archetype": "add-context",
+  "environments": ["dev", "prod"]
+}
