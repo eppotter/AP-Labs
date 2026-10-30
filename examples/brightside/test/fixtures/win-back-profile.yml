@@ -15,6 +15,7 @@ resources:
   - { key: LABOUR_COST, label: Labour cost }
   - { key: ROUTING_ALL_CREWS, label: Routing map for every crew, admin_grantable: false }
   - { key: ROUTING_OWN_CREW, label: Routing map for one's own crew, admin_grantable: false }
+  - { key: DATA_SOURCES, label: Data sources }
 users:
   - { id: ada, name: Ada Admin, role: admin, identities: { slack: U0FIXTUREADA }, grants: [WIN_BACK] }
   - { id: max, name: Max Member, role: member, identities: { slack: U0FIXTUREMAX } }
