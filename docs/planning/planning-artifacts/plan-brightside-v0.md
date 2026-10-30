@@ -1,11 +1,17 @@
 # Brightside v0, the blank slate: plan for Ely
 
-Status: **draft, awaiting `approve plan brightside-v0`.** Tier **T3** (computed per story below with `APLABS_PROFILE=$PWD/profiles/brightside/profile.yml node kit/lib/tier <paths>`, 2026-10-30). The architect design review and `bmad-review` on this plan run before the gate. Run mode after the gate: you let it run (your decision).
+Status: **draft, awaiting `approve plan brightside-v0`.** Tier **T3** (computed per story below with `APLABS_PROFILE=$PWD/profiles/brightside/profile.yml node kit/lib/tier <paths>`, 2026-10-30). The architect design review and `bmad-review` ran on 2026-10-30. Both are folded in below: every blocking finding is resolved, and none is left open (section "Review findings folded in"). Run mode after the gate: you let it run (your decision).
+
+**Gate items for you** (each has a recommended default; `approve plan brightside-v0` accepts all four):
+1. **`sees` is required.** Every hub file must say what it sees. A hub without it stops boot: "add `sees` to <hub>". `/brightside` lists all three. Recommended: yes (fail closed).
+2. **An AD-14 amendment.** Today no free text from a caller reaches a channel. Build requests would carry the person's own previewed words to `#ai-build-requests`. The scribe drafts the amendment in 16.6 for you to approve, and the profile names the channel's audience. Until v1 decides, only a hub that sees neither context nor data (v0) may post. Recommended: approve.
+3. **New shared infrastructure.** A new knowledge store on disk (`kit/runtime/knowledge/`), a new outbound path that downloads Slack files (`kit/runtime/slack/files.js`), and the `files:read` scope. All three become T3 engine floors in 16.1. Recommended: approve.
+4. **Who gets Ask (open question 2).** Recommended: the admin role, plus users named in the profile.
 
 **In short:**
 1. A second slash command, `/brightside-v0`, opens a Brightside bot that knows nothing about the business and has no data. It is stage 1 of the sales demo. `/brightside` keeps everything it has today.
 2. The v0 menu shows four tools, and only these: **Data sources**, **Add context**, **Ask** and **Build request**. They are template tools: every new client fork can switch them on, on day one, with one small file per tool.
-3. One bot process still runs both commands. Each hub file now says what that hub may see: business context, data, rules, or none. `/brightside-v0` sees none of them. The engine enforces it at one place, so no tool on that hub can reach the data or the context files by mistake.
+3. One bot process still runs both commands. Each hub file now must say what that hub may see: business context, data, rules, or none. `/brightside-v0` sees none of them. The engine enforces it at one place, so no tool on that hub can reach the data or the context files by mistake.
 4. Admins add context by typing or uploading a file (PDF, image, text). It goes live at once, as you decided, and an admin can remove it. Uploads are treated as data, never as instructions.
 5. Ask points people to a tool they can open, checks whether data questions can be answered safely (in v0 the answer is always "no data and no rules yet"), answers from the context it has, and offers a build request when nothing fits. Build requests are summarised, previewed, then posted to `#ai-build-requests` with the requester named.
 6. Nine stories, Epic 16. Seven are T3. One hands-on step from you before the build request story's live check: the channel id.
@@ -33,11 +39,14 @@ Status: **draft, awaiting `approve plan brightside-v0`.** Tier **T3** (computed 
 | `rules` | The truth blocks in `data.md`, the signed-off `guardrails.md` and `sql.forbidden_columns`, for readiness and the Data sources view | Nothing: readiness reports "no rules" |
 
 - `/brightside-v0` has `"sees": []`. `/brightside` gets `"sees": ["context", "data", "rules"]`, written out in full.
-- A hub with no `sees` behaves as today (all three). Reason: no fork's hub changes meaning on a template update. The template's hub how-to tells forks to write `sees` explicitly. (Open question 1.)
+- **`sees` is required** (gate item 1, review A3). A hub file without it stops boot, naming the hub: "add `sees` to <hub>". Reason: fail closed. A hub never gets data or context by default. A fork adds one line per hub when it takes this template update. The release notes and the fork guide say so.
 - Each hub's added context (D4) belongs to that hub, whatever `sees` says. So v0 can learn from what an admin adds there, while the profile's files stay out.
 - **Why a hub field, not a second profile or a second process.** One process loads one profile, and the profile is the access source. Two profiles would mean two bots, two Slack apps and two sets of users. A second hub file is already how a slash command is added (`kit/runtime/registry`, `npm run slack:manifest`). The missing piece is only "what may this hub see", and that is a property of the hub.
-- **Fail closed, in the engine, at one seam.** `registerHubs` builds a per-hub view once at boot: the hub's data runner (or the null runner), its AI service (D2) and its rules reader. Every handler, archetype and button on that hub is given only that view. No module chooses.
+- **Fail closed, in the engine, at one seam.** A new file, `kit/runtime/slack/hub-view.js`, builds each hub's view once at boot: the hub's data runner (or the null runner), its AI service (D2), its rules reader and its knowledge store. `registerHubs` gets only a `forHub` factory, never the app-wide runner or AI service (review A1, B10). Every handler, archetype and button on that hub is given only its hub's view. The scoped-pull archetype is created per hub (`createScopedPull` per view). No module chooses.
+- **Engine floors in 16.1** (review A1, A10). `ENGINE_T3` gains `kit/runtime/slack/hub-view.js`, `kit/runtime/schema/hub.schema.json`, `kit/runtime/knowledge/**` and `kit/runtime/slack/files.js`. So every later story is tiered against them from its first commit.
 - **Boot refuses** a `scoped-pull`, `approval-write` or `routing-map` module on a hub that does not see `data`, naming the module file and the hub. A `handler` module on such a hub gets the null runner.
+- **Jobs can't go around the view** (review A2). `kit/runtime/app/index.js` hands the app-wide runner to the job scheduler, and engine jobs come from modules (`jobs.engineJobsFor`). Boot refuses an engine job that a module brings when that module's hub lacks `data` or `context` in `sees`, naming the module, the job and the hub. Fork jobs in `jobs.json` belong to no hub. They get no AI service and no knowledge store (unchanged from Story 11.1).
+- **An import check** (review A8, small, so it is in 16.1). `npm run check` fails a module file, on a hub without `data`, that imports `kit/runtime/data`, `kit/runtime/llm` or `kit/runtime/knowledge`. It also fails one that names `.aplabs/context` or `context/` paths. The check is built the way `check-job-imports.js` is.
 
 ### D2. The AI service gives each hub its own prompt
 
@@ -72,8 +81,14 @@ New engine folder `kit/runtime/knowledge/`, a new T3 engine floor.
 - **Why not `kit/runtime/store`.** It is in memory with TTLs of at most 7 days. Context would vanish on every restart.
 - **Why not `.aplabs/**`.** Those are reviewed repo files, always T3. The runtime must never write them. Context added in Slack is runtime state, not a reviewed rule.
 - **Entry.** `{ id, hub, kind: "text" | "file", title, text, added_by (Slack id), added_at, file: { name, type, bytes } | null }`. Only text is kept. The original file is never stored.
-- **Writes.** One module writes. Each write goes to a temporary file, then a rename, with mode 0600. Ids are random, never taken from input. Paths are built from the client id, the hub id and the entry id only, and checked to stay inside the store folder.
-- **Caps.** At most 6,000 characters per entry, 15,000 per hub and 20 entries per hub. Today `/brightside`'s prompt is about 18,000 characters, so a full hub stays under 40,000. A new entry over a cap is refused with a plain message; nothing is silently cut.
+- **Writes.** One module writes. Each write goes to a temporary file, then a rename, with mode 0600. Ids are random, never taken from input. Paths are built from the client id, the hub id and the entry id only, and checked to stay inside the store folder. Writes to one hub run one at a time (a per-hub queue), so two admins adding at once can't both slip under a cap (review B6).
+- **Caps** (review B4, B5).
+  - A typed entry holds at most 3,000 characters, Slack's `plain_text_input` limit.
+  - An entry extracted from a file holds at most 6,000.
+  - A hub holds at most 15,000 characters and 20 entries.
+  - Every cap is measured on the text as it will sit in the prompt: after escaping (`<` becomes `&lt;`, four characters more). So an entry of all `<` fills the cap at a quarter of its length.
+  - Today `/brightside`'s prompt is about 18,000 characters, so a full hub stays under 40,000.
+  - A new entry over a cap is refused with a plain message. Nothing is silently cut.
 - **Logs.** Entry id, hub, kind, size and the admin's Slack id. Never the text, the file name or the title.
 - **Restarts.** Entries survive a restart only if the var dir does. In the container that needs a mounted volume (DEP row below).
 
@@ -84,9 +99,13 @@ New engine folder `kit/runtime/knowledge/`, a new T3 engine floor.
 - **Why not a PDF parser.** No new dependency, and Claude also reads scanned pages and images.
 - **Text files** (`.txt`, `.md`) are read as UTF-8 and stored as they are, within the cap. No AI call.
 - **Word files** (`.docx`) are refused with "save it as a PDF first". Support is a follow-up (DEP row below).
-- **Caps.** One file per submit, at most 5 MB. The file's first bytes must match its type (`%PDF-`, the PNG, JPEG, GIF and WebP signatures); the name and Slack's `mimetype` are not trusted. Over the cap, a wrong signature or a refused type each get a plain message beside the file field.
-- **Cost.** A document's worst-case cost counts as the model's full input window. The existing hourly breaker applies, so a few uploads an hour fit under the default $2. (Open question 4.)
-- **The extraction call** is a new `llm.forHub(hub).readFile(...)`, with the same access check, per-person limit and breaker as `ask`, its own `max_tokens` of 4,096, and the result checked against the 6,000-character cap.
+- **Caps.** One file per submit, at most 5 MB, and a PDF of at most 100 pages. The file's first bytes must match its type (`%PDF-`, the PNG, JPEG, GIF and WebP signatures); the name and Slack's `mimetype` are not trusted. The page count is read from the PDF's page tree without a new dependency. If it can't be read, the file is refused. Over a cap, a wrong signature or a refused type each get a plain message.
+- **Cost** (review B2, A6). `readFile` has its own explicit worst case, never base64 length ÷ 3:
+  - a PDF: pages × 3,000 tokens (text plus the page image), plus the fixed instructions, plus `max_tokens`;
+  - an image: 1,600 tokens, plus the instructions, plus `max_tokens`.
+  - A test proves a fixture at the maximum (100 pages) prices at no more than half the default hourly limit ($1 of $2). If the prices in `prices.js` make that false, the page cap goes down until it holds, and the PR says so.
+- **A separate spend cap for uploads** (B2, picked). Uploads also count against their own limit, `llm.upload_hourly_usd_limit` (optional, default $1, at most the hourly limit). Reason: an admin uploading files must never use up the breaker that `/brightside`'s Ask and scoped-pull reader depend on. Uploads still count in the main breaker too, so total spend never goes over it.
+- **The extraction call** is a new `llm.forHub(hub).readFile(...)`, with the same access check, per-person limit and breakers as `ask`, its own `max_tokens` of 4,096, and the result checked against the 6,000-character cap. Its request text is fixed engine wording, never the file name or anything the admin typed (review B7). The file goes as a separate `document` or `image` block, checked on its own (type, size, signature, pages), not through the 500-character request check.
 
 ### D6. Uploads are data, never instructions
 
@@ -99,7 +118,9 @@ New engine folder `kit/runtime/knowledge/`, a new T3 engine floor.
 
 - **Why the modal.** It keeps the hub's flow (Back, Cancel). The submit carries the admin's identity and intent. Access is checked at Open and again at submit.
 - **Why not a DM.** Any file sent to the bot would need a rule for whether it becomes context. The existing DM greeting would need to change. Intent is unclear.
-- At submit the bot calls `files.info` (needs `files:read`) and checks that the file's owner is the person submitting, its size and its type. It then downloads `url_private_download` with the bot token. The host must be `files.slack.com` over HTTPS, the download is cut off past 5 MB, and it has a 20-second limit. This download is new outbound code, in `kit/runtime/slack/files.js`, a new T3 engine floor.
+- At submit the bot calls `files.info` (needs `files:read`) and checks that the file's owner is the person submitting, its size and its type. It then downloads `url_private_download` with the bot token. The host must be `files.slack.com` over HTTPS, the download is cut off past 5 MB, and it has a 20-second limit. The fetch uses `redirect: 'error'`, so a redirect is refused, never followed. The `Authorization` header is sent only to `files.slack.com` (review A7). This download is new outbound code, in `kit/runtime/slack/files.js`, a T3 engine floor from 16.1.
+- **Who can read an upload** (review A5). The upload screen says: "Everyone who can use Ask here can read what this file says." The fork guide repeats it.
+- **Slack keeps the file.** A file sent through `file_input` stays in the admin's own Slack files after the bot reads it. The bot keeps no copy and does not delete it (no `files:write` delete on a person's file). The upload screen tells the admin they can delete it in Slack. DEP row below (review B12).
 
 ### D8. Who may use each tool: resource keys
 
@@ -136,27 +157,39 @@ New engine folder `kit/runtime/knowledge/`, a new T3 engine floor.
    - **Data connected** means the hub sees `data` and the runner reports `available`.
    - **Rules set up** means the hub sees `rules`, `data.md` and `guardrails.md` are signed off (`kit/lib/onboard`), and at least one truth block is valid and signed off (`kit/lib/truths`). (Open question 3.)
    - In v0 the hub sees neither, so every data question gets the first row.
-4. **`context` or `other`:** a plain `ask` call answers from the hub's prompt (D2). If the answer is that it does not know, or the sort said `other`, the reply ends with a Build request button.
+4. **`context` or `other`:** a plain `ask` call answers from the hub's prompt (D2). The reply **always** ends with "Not what you needed?" and a Build request button (review B8, picked). Reason: no `answered` flag for the AI to set or get wrong, and nothing to parse from its reply.
+
+- **The Build request button is hidden** when the person lacks `BUILD_REQUEST`, when no channel is set, or when the hub may not post (D11) (review B9). The readiness messages then end without it.
 
 ### D11. Build requests post to a channel id in the profile
 
 - **The profile** gains `slack.build_requests_channel` (optional, the same `^[CG][A-Z0-9]{8,}$` pattern as `ops_channel`). The bot has no `channels:read`, so it can't look the channel up by name. You supply the id (manual step 1).
 - **Unset:** the Build request tool shows "not set up yet, ask <admin>" and never opens the form.
 - **The flow.** The person types the need (at most 500 characters, the AI's request cap). A structured call (`summarize_request`, `effects: "none"`) returns a title (at most 80 characters) and a summary (at most 600). Preview shows both. **Post**, **Edit** or **Cancel**.
-- **The post** is a new declared exception in `kit/runtime/slack/channel.js`, `build-request`. Today that file only posts fixed words. This exception carries the person's own previewed text, so the file builds it under these rules:
-  - every field escaped (`escapeText`), so `<!channel>`, `@here` and links can't fire;
+- **AD-14 changes** (gate item 2, review A4). AD-14 and plan epic-10 N9 say no caller free text reaches a channel (`channel.js` lines 3 to 8). A build request breaks that on purpose. The scribe drafts the AD-14 amendment in 16.6, in `architecture-runtime.md`, for you to approve before 16.6 merges. The profile comment on `slack.build_requests_channel` names the channel's audience ("the AP Labs build team and the client's admins").
+- **Only blank hubs post, for now.** `channel.js` refuses a `build-request` post from any hub whose `sees` includes `context` or `data`. Reason: on such a hub, the AI's summary could repeat business context into a channel. v1's plan decides how that is allowed. So in this epic only `/brightside-v0` posts.
+- **The post** is a new declared exception in `kit/runtime/slack/channel.js`, `build-request`. Today that file only posts fixed words. This exception carries the person's own previewed text and the AI's summary. Both are treated as untrusted. The file builds the message under these rules:
+  - every field escaped (`escapeText`), and a bare `@here`, `@channel` or `@everyone` broken with a zero-width joiner, so `<!here>`, `<!channel>`, `@here`, user mentions and links can't fire;
   - the requester as `<@U…>`, built from the verified Slack id, never from text;
   - the hub's name and the time;
   - `unfurl_links` and `unfurl_media` false;
   - no data rows, ever (v0 has none, and the tool never reads data).
 - **Why the preview.** The person sees exactly what will be posted before it is posted.
 - **AI off.** The preview shows the person's own text as the summary, labelled "not summarised".
-- **Double click.** Post consumes a one-time preview entry in the store's `session` namespace, so a second click is told "already posted".
+- **Exactly once** (review B3). Post consumes the one-time preview entry in the store's `session` namespace before calling Slack. If Slack refuses the post, the entry is restored, so **Try again** works. A second click while the first is running, or after it succeeded, is told "already posted" or "posting…".
 
 ### D12. The Slack app config is mirrored in the repo
 
 - `kit/runtime/slack/scopes.js` adds `files:read` to `BOT_SCOPES` (the file says a new scope needs an architect review: this plan's review covers it).
-- `npm run slack:manifest` regenerates `examples/brightside/app/slack-manifest.json` from the hub files: `/brightside-v0` ("Open the Brightside v0 (blank) menu", no usage hint, `should_escape` false) and `files:read`. The manifest test then matches the live app's settings.
+- `npm run slack:manifest` regenerates `examples/brightside/app/slack-manifest.json` from the hub files: `/brightside-v0` ("Open the Brightside v0 (blank) menu", no usage hint, `should_escape` false) and `files:read`. `--check` proves the committed file matches the generator. That it matches the live app's settings is **untested until the live check** (review B11): Slack has no read of its config the tests can use.
+
+### D13. Slack's 3-second deadline: answer at once, then update
+
+Slack drops a view submission or click not acknowledged within 3 seconds (review B1).
+
+- **Field errors are only instant checks:** text present, length, file type by name. They come back in the ack (`response_action: "errors"`).
+- **Everything slow answers at once, then updates the view.** That covers the file download and extraction, the size and signature checks, Ask's calls and the build request summary. The ack swaps in "Reading…" or "Thinking…", then the result arrives through `views.update` with the view's hash. This is the existing "Running…" pattern in `hubs.js` (Story 9.5). Errors found late (a wrong signature, too many pages) show in the view with Back, not beside the field.
+- **A new way out on these screens: the person closes the screen while the work runs.** The work finishes. For Add context, the entry is stored and Data sources lists it. For Ask and Build request, nothing is posted, and the result is dropped. The failed `views.update` (`not_found`) is logged at info, with no person data. Each screen has a test for it.
 
 ## The stories
 
@@ -164,7 +197,7 @@ Epic 16. Stories are PRs. Estimates: **S** about half a day, **M** about a day, 
 
 | Story | Size | Tier | Extends | You will see |
 |---|---|---|---|---|
-| 16.1 Each hub says what it sees | M | **T3** | `hub.schema.json`, `registry`, `slack/hubs.js`, `llm/index.js`, `llm/context.js` | Nothing new in Slack. `/brightside` works as before. Tests show a hub with `"sees": []` gets no data and no context |
+| 16.1 Each hub says what it sees | L | **T3** | `hub.schema.json`, `registry`, `slack/hubs.js` (now fed by the new `slack/hub-view.js`), `llm/index.js`, `llm/context.js`, `app/index.js`, `kit/lib/tier`, `scripts/check-job-imports.js` as the model for the import check | Nothing new in Slack. `/brightside` works as before. Tests show a hub with `"sees": []` gets no data and no context |
 | 16.2 The v0 hub and the Slack mirror | S | T2 (computes T1; raised for the new scope) | `hubs/`, `slack/scopes.js`, `slack-manifest.json` | `/brightside-v0` opens a menu with only Help, and a welcome saying it is a blank bot |
 | 16.3 Data sources and readiness | M | **T3** | `data.describe()`, `kit/lib/onboard`, `kit/lib/truths`, `kit/lib/verify/last` | Data sources in v0: "No data connected yet. No known truths or rules yet." |
 | 16.4 The added-context store | M | **T3** | `llm/context.js` escaping and caps, the var dir convention | Nothing in Slack. Tests show added text reaching the right hub's prompt and no other |
@@ -176,14 +209,14 @@ Epic 16. Stories are PRs. Estimates: **S** about half a day, **M** about a day, 
 
 **Tiers** (computed 2026-10-30; the Orchestrator recomputes each story on its full file list before it starts, and a tier only goes up):
 
-- 16.1: `kit/runtime/llm/**` engine floor.
+- 16.1: `kit/runtime/llm/**` and `kit/lib/tier/**` engine floors. It adds the new floors (`slack/hub-view.js`, `schema/hub.schema.json`, `knowledge/**`, `slack/files.js`), so every later story computes against them.
 - 16.2: computes T1 (`examples/**`, `kit/runtime/slack/scopes.js`). Declared T2: a new bot scope.
-- 16.3: `profiles/**` (new resource keys).
-- 16.4: `kit/runtime/llm/**`, `kit/lib/tier/**` (the new floor).
+- 16.3: `profiles/**` (new resource keys) and the `knowledge/**` floor.
+- 16.4: `kit/runtime/llm/**` and the `knowledge/**` floor.
 - 16.5: `profiles/**`.
 - 16.6: `profiles/**`, `profiles/_schema/**`, `kit/lib/profile/**`, `kit/runtime/slack/channel.js` (engine floors).
 - 16.7: computes T1 for its own code; `profiles/**` (the `ASK` key) makes it T3.
-- 16.8: `kit/runtime/llm/**`, and the new `kit/runtime/slack/files.js` floor.
+- 16.8: `kit/runtime/llm/**`, the `kit/runtime/slack/files.js` floor and `profiles/_schema/**` (the upload spend cap).
 - 16.9: docs only.
 
 All T2 and T3 stories get an architect design review.
@@ -195,7 +228,8 @@ Every story, in addition to what is listed:
 - Tests read client specifics from fixtures (`test/fixtures/`), never from `profiles/brightside/`.
 - A test that fixes the time freezes every clock (`mock.timers`, or `now` passed to every path, including the knowledge store's `added_at` and the AI breaker).
 - The Slack and Anthropic fakes reject what the real APIs reject, for every field the story's code sets. Each story names the fields it added to the fakes.
-- Each new Slack screen lists every way out: Back, Cancel (the X), an error, and an expired trigger. Each has a test.
+- Each new Slack screen lists every way out: Back, Cancel (the X), an error, and an expired trigger. A screen that does slow work also lists the person closing it while the work runs (D13). Each has a test.
+- Every Slack ack on a new screen returns within the 3-second deadline: slow work follows the D13 pattern. A test with a slow fake proves the ack comes first.
 - Nothing is reworded to quiet a check. If a check flags safe code, the code moves or the check is fixed in its own change.
 - Steps only CI or the live app can run are named as untested in the builder's report and the PR body.
 - Each story updates the docs that describe what it changed (`architecture-runtime.md`, the file's header comment) in the same PR.
@@ -203,9 +237,11 @@ Every story, in addition to what is listed:
 
 ### Story 16.1: each hub says what it sees
 
-- `hub.schema.json` gains `sees`: an array of unique values from `context`, `data`, `rules`. Anything else stops boot, naming the hub file and the value.
-- A hub without `sees` sees all three. `examples/brightside/app/hubs/brightside.json` writes all three out.
-- `registerHubs` builds each hub's view once, at boot: the data runner or the null runner, the bound AI service (`llm.forHub`), and a `sees` flag for rules. Handlers, archetypes, the scoped-pull reader, the routing-map adapter and every button listener on that hub get only that view.
+- `hub.schema.json` gains a **required** `sees`: an array of unique values from `context`, `data`, `rules`. Anything else stops boot, naming the hub file and the value. A hub file without `sees` stops boot with "add `sees` to <hub>". Test for each. `examples/brightside/app/hubs/brightside.json`, every fixture hub and the hub how-to write it out.
+- New `kit/runtime/slack/hub-view.js` builds each hub's view once, at boot: the data runner or the null runner, the bound AI service (`llm.forHub`), the rules flag and (once 16.4 lands) the hub's knowledge store. `registerHubs` gets only the `forHub` factory, not the app-wide runner or AI service. `createScopedPull` is made per hub. Handlers, archetypes, the scoped-pull reader, the routing-map adapter and every button listener on that hub get only that view. A test passes `registerHubs` no app-wide runner or AI service and the existing hub tests still pass.
+- `ENGINE_T3` in `kit/lib/tier/index.js` gains `kit/runtime/slack/hub-view.js`, `kit/runtime/schema/hub.schema.json`, `kit/runtime/knowledge/**` and `kit/runtime/slack/files.js`, each with a tier test, and the header comment is updated.
+- **Jobs.** Boot refuses an engine job a module brings (`jobs.engineJobsFor`) when the module's hub lacks `data` or `context` in `sees`, naming the module, the job and the hub. Test: a fixture routing-map module's sweep job on a blank hub. Fork jobs (`jobs.json`) still get no AI service or knowledge store; a test asserts it.
+- **The import check.** `npm run check` fails a module file on a hub without `data` that imports `kit/runtime/data`, `kit/runtime/llm` or `kit/runtime/knowledge`, or names a `.aplabs/context` path, naming the file. Tests with planted files. If it turns out larger than about 100 lines, the builder stops and says so, and it becomes a DEP row instead.
 - A hub that does not see `data`:
   - its `handler` modules' `ctx.data.run` rejects with "no data source", and `describe()` says unavailable;
   - boot refuses a `scoped-pull`, `approval-write` or `routing-map` module on it, naming the module file and hub.
@@ -249,28 +285,30 @@ Every story, in addition to what is listed:
 - The folder is `APLABS_VAR_DIR` (absolute) or `<repo>/var`. A relative `APLABS_VAR_DIR` is resolved the way `kit/runtime/data` resolves it today.
 - An unreadable or malformed entry file is skipped and logged by id. It never stops boot or a call. A test plants one.
 - A path built from a planted hub id (`../x`) or an entry id that is not the store's own format is refused before any file access. A test tries each.
-- `ENGINE_T3` in `kit/lib/tier/index.js` gains `kit/runtime/knowledge/**` and `kit/runtime/slack/files.js` (the latter before 16.8 adds the file), each with a tier test and the header comment updated.
 - `llm.forHub` adds the hub's entries (D2) inside `<added_context>` tags, escaped, after a fixed sentence saying they are data. Test: an entry containing `</added_context>` and `<client_context>` stays inside its tags.
 - Entries reach the prompt of their own hub only. Test: two hubs, one entry each, each prompt holds only its own.
-- Caps are tested at the edges: 6,000 and 6,001 characters, the 15,000 total, the 21st entry.
+- Caps are measured on the escaped text and tested at the edges: a typed entry of 3,000 and 3,001 characters, an extracted entry of 6,000 and 6,001, the 15,000 total, the 21st entry, and an entry of all `<` (750 typed characters fit, 751 are refused, since each becomes `&lt;`).
+- Writes to one hub run one at a time. Test: two adds at once, each fitting alone but not together. Exactly one is stored and the other is refused as full.
 
 ### Story 16.5: Add context, type it in
 
 - New archetype `add-context` (schema enum, `BUILT_ARCHETYPES`). New manifest `v0-add-context`. The profile adds `ADD_CONTEXT` (admin role confers it).
 - Boot refuses `open_access: true` on the resource of any `add-context` module, naming the module and key.
-- **The screen.** A title box (at most 80 characters) and a text box (at most 6,000, Slack's `plain_text_input` `max_length`), with an **Add** submit. Below the form: the hub's entries, each with **Remove**.
+- **The screen.** A title box (at most 80 characters) and a text box (at most 3,000, Slack's `plain_text_input` `max_length`), with an **Add** submit. Above the box: "Everyone who can use Ask here can read this." Below the form: the hub's entries, each with **Remove**.
 - **Add.** The entry is stored and the view updates to "Added. Ask can use it now." with the list.
 - **Remove.** A confirm dialog, then the entry is deleted and the list updates.
 - Access is re-checked at Open, at submit and at each Remove click. A person who lost the key between Open and submit is refused.
 - Ways out, each tested:
   - Back and the X (nothing saved);
   - an empty submit (an error beside the field, `response_action: "errors"`);
-  - over a cap (an error beside the field, naming the limit);
+  - over the 3,000 box limit (an error beside the field);
+  - the hub's context full, checked after the ack (a message in the view, naming the limit, with Back);
+  - the person closing the screen while the entry is saved (it is stored; D13);
   - a store write failure (a plain message in the view, with Back);
   - an expired trigger (the existing fallback; the form is not shown in a message, and the person is told to open it from the menu);
   - Remove on an entry already removed ("already removed").
 - The Slack fake rejects:
-  - a `plain_text_input` `max_length` over 3,000 per Slack's limit. If 6,000 exceeds what Slack allows, the builder splits the box or lowers the cap and says so in the PR;
+  - a `plain_text_input` `max_length` over 3,000 (Slack's limit);
   - a modal title over 24 characters;
   - an input view without a submit.
 - Data sources (16.3) lists the entries.
@@ -280,6 +318,8 @@ Every story, in addition to what is listed:
 
 - `profiles/_schema/profile.schema.json` gains `slack.build_requests_channel` (optional, `^[CG][A-Z0-9]{8,}$`). `validateProfile` tests cover a bad id and an unknown key next to it.
 - `kit/runtime/slack/channel.js` gains the `build-request` exception with the rules in D11. `test/unit/runtime-channel-posts.test.js` allows only that post from this file.
+- **AD-14.** The scribe drafts the amendment in `architecture-runtime.md` (what may reach a channel, who reads it, the blank-hub-only rule). Ely approves it in the PR before merge. The profile comment on `slack.build_requests_channel` names the channel's audience.
+- `channel.js` refuses a `build-request` post from a hub whose `sees` includes `context` or `data`. Test for each, and the tool on such a hub says "not available on this hub yet".
 - New archetype `build-request`. New manifest `v0-build-request`. The profile adds `BUILD_REQUEST` (admin role confers it).
 - **Screens.**
   - Form: "What do you need?", at most 500 characters.
@@ -291,8 +331,10 @@ Every story, in addition to what is listed:
   - an empty or over-long need (an error beside the field);
   - the AI off, over its limit or failing (the preview shows the person's own text, labelled "not summarised");
   - the channel unset (the tool says it is not set up and names the admin; no form);
+  - the summary taking a while ("Thinking…", then the preview by `views.update`; D13);
+  - the person closing the screen while the summary runs (nothing posted);
   - Slack refusing the post, for example `not_in_channel` (a plain message with **Try again** and Back; logged with Slack's error code only);
-  - a second Post click ("already posted");
+  - a second Post click ("already posted" or "posting…");
   - the preview entry expired (30 minutes: "this preview expired, start again");
   - an expired trigger.
 - The Slack fake's `chat.postMessage`:
@@ -300,7 +342,8 @@ Every story, in addition to what is listed:
   - rejects text over 40,000 characters;
   - records `unfurl_links` and `unfurl_media`.
 - The Anthropic fake checks the tool schema the code sends.
-- Test: a need containing `<!channel>`, `@here`, `<https://x|y>` and `<@U123>` posts as plain text, and the only mention is the requester's.
+- **Mentions.** Test: a need, and separately an AI summary, containing a bare `@here`, `@channel`, `<!here>`, `<!channel>`, `<https://x|y>` and `<@U123>` posts as plain text, and the only mention is the requester's.
+- **Exactly once.** Tests: a refusal then **Try again** posts exactly once; a double click on Post posts once; a refusal restores the preview entry so Try again finds it.
 - Untested until the live check: the real channel id and the bot's membership.
 
 ### Story 16.7: Ask
@@ -313,24 +356,32 @@ Every story, in addition to what is listed:
   - the Open button uses the existing `OPEN_ACTION` and its re-check.
 - **The four readiness messages** live in `kit/runtime/messages.js`. One test per state, using fixture hubs that see `data` and/or `rules` with fixture readiness. In the "both" state, Ask never calls the runner. Test: the fake runner records no call.
 - **v0.** Every data question gets "no data and no rules yet". Test: the `/brightside-v0` fixture.
-- **Context answers** use `forHub(...).ask` and are shown through `toMrkdwn` (escaped). **Build request** opens 16.6's form with the question filled in.
-- Ways out, each tested: Back, the X, an empty or over-long question (an error beside the field), the AI off, rate-limited, over budget or failing (the existing `LlmUnavailable` messages, with Back), the tool not called (a plain "I couldn't sort that question" with Build request), and an expired trigger.
+- **Context answers** use `forHub(...).ask` and are shown through `toMrkdwn` (escaped). Every context answer ends with "Not what you needed?" and **Build request**, which opens 16.6's form with the question filled in.
+- **The Build request button is hidden** without the `BUILD_REQUEST` key, without a channel, or on a hub that may not post. One test each.
+- **The ack** shows "Thinking…" at once; the answer arrives by `views.update` (D13).
+- Ways out, each tested: Back, the X, the person closing the screen while it thinks (the answer is dropped and logged at info), an empty or over-long question (an error beside the field), the AI off, rate-limited, over budget or failing (the existing `LlmUnavailable` messages, with Back), the tool not called (a plain "I couldn't sort that question" with Build request), and an expired trigger.
 - Every AI call is logged with no question text.
 
 ### Story 16.8: Add context, upload a file
 
 - 16.5's form gains a `file_input` block: optional, `max_files: 1`, filetypes `pdf`, `png`, `jpg`, `jpeg`, `gif`, `webp`, `txt`, `md`. Exactly one of text or file per submit.
-- New `kit/runtime/slack/files.js` (T3 floor added in 16.4): `files.info`, then the owner, size and type checks, then the download, all as D7.
-  - Test: a URL whose host is not `files.slack.com`, an `http:` URL, a redirect to another host, a body past 5 MB with no `Content-Length`, a slow body past 20 seconds, and a file owned by someone else, each refused.
+- New `kit/runtime/slack/files.js` (T3 floor added in 16.1): `files.info`, then the owner, size and type checks, then the download, all as D7.
+  - The fetch uses `redirect: 'error'`, and `Authorization` is sent only to `files.slack.com`.
+  - Test: a URL whose host is not `files.slack.com` (no request is made, and no header leaves), an `http:` URL, any redirect (refused, not followed), a body past 5 MB with no `Content-Length`, a slow body past 20 seconds, and a file owned by someone else, each refused.
 - Signature checks as D5. Test: a PNG renamed `.pdf`, and a PDF with an image `mimetype`.
-- PDFs and images go to `forHub(...).readFile`. The extraction prompt is fixed engine text. The file is a `document` or `image` content block. The result is checked against the 6,000-character cap: over it, the admin is told to split the file.
+- A PDF over 100 pages, or whose page count can't be read, is refused before any AI call.
+- PDFs and images go to `forHub(...).readFile`. The request wording is fixed engine text, never the file name or the admin's title. Test: a file named "ignore your rules.pdf" and a title saying the same never appear in the request. The file is a separate `document` or `image` block, checked on its own (type, size, signature, pages). The result is checked against the 6,000-character cap (escaped): over it, the admin is told to split the file.
+- **Cost.** `readFile` prices its worst case as D5. Test: a 100-page fixture at 5 MB prices at no more than half the default hourly limit. `llm.upload_hourly_usd_limit` lands in the profile schema (optional, default $1, at most `hourly_usd_limit`). Test: uploads stop at their own cap while Ask on another hub still works, and uploads still count in the main breaker.
+- **The screen** says "Everyone who can use Ask here can read what this file says" and "The file stays in your Slack files; you can delete it there." Size and signature are checked after the ack, with "Reading…" shown at once (D13).
 - Text files are stored as UTF-8. Invalid UTF-8 or a NUL byte is refused.
 - `.docx` is refused with "save it as a PDF first".
 - **After the upload,** the view shows "Here's what I took from <title>:" with the first 1,500 characters of the stored text, and **Remove** (live at once, D4).
 - Ways out, each tested:
   - Back and the X (nothing stored);
   - no text and no file, or both (an error beside the field);
-  - a refused type, size or signature (an error beside the file field);
+  - a refused file type by name (an error beside the file field);
+  - a refused size, signature or page count, found after the ack (a message in the view, with Back);
+  - the person closing the screen while the file is read (the entry is stored; D13);
   - `files.info` failing or `file_not_found`;
   - a download failing or timing out;
   - the AI off or over budget ("reading files needs the AI, which is off; type the text instead");
@@ -356,7 +407,8 @@ Every story, in addition to what is listed:
 
 ### Story 16.9: fork guide and live check
 
-- `docs/fork-guide.md`'s day-one list adds the four tools: the four manifests to copy, the four resource keys, `slack.build_requests_channel`, `sees` on every hub, and the var dir volume.
+- `docs/fork-guide.md`'s day-one list adds the four tools: the four manifests to copy, the four resource keys, `slack.build_requests_channel` and its audience, `sees` on every hub (required: boot stops without it), and the var dir volume.
+- The guide says that everyone who can use Ask on a hub can read the context added there, and that uploaded files stay in the uploader's Slack files.
 - `kit/templates/module.md` describes the four archetypes and `sees`.
 - The structural test of the fork guide passes (it fails on a file or command that doesn't exist).
 - The live check list for Ely (below) is in the PR body, and the result is recorded as "live-checked" or not in the epic report.
@@ -367,9 +419,9 @@ Most stories edit the same engine files, so they run **one at a time**, in this 
 
 1. **16.1**. Everything else needs the per-hub view.
 2. **16.2**. Small. It can run alongside 16.4 (no shared files).
-3. **16.3** and **16.4** can run in parallel after 16.1. 16.3 edits `hubs.js`, `module.schema.json`, `registry/index.js` and the profile. 16.4 edits `llm/*`, `kit/lib/tier/index.js` and the new `knowledge/store.js`. They share no file. 16.3 creates `knowledge/readiness.js` and 16.4 `knowledge/store.js`, each in its own new file.
+3. **16.3** and **16.4** can run in parallel after 16.1. 16.3 edits `hubs.js`, `module.schema.json`, `registry/index.js` and the profile. 16.4 edits `llm/*` and the new `knowledge/store.js`. They share no file. 16.3 creates `knowledge/readiness.js` and 16.4 `knowledge/store.js`, each in its own new file.
 4. **16.5**, after 16.3 and 16.4.
-5. **16.6**, after 16.5.
+5. **16.6**, after 16.5. If 16.5 slips, 16.6 can run after 16.3 instead: it needs the hub view and the schema enum, not the knowledge store (review A10).
 6. **16.7**, after 16.3 and 16.6 (its Build request button opens 16.6's form).
 7. **16.8**, after 16.5 (and after 16.7 if they would run at the same time).
 8. **16.9**, last.
@@ -385,16 +437,19 @@ Shared files, and the stories that edit them:
 | `kit/runtime/llm/index.js`, `context.js` | 16.1, 16.4, 16.8 |
 | `test/fixtures/fake-slack.js` | 16.5, 16.6, 16.8 |
 | `test/fixtures/fake-anthropic.js` | 16.6, 16.7, 16.8 |
-| `kit/lib/tier/index.js` | 16.4 |
-| `profiles/_schema/profile.schema.json`, `kit/lib/profile/index.js` | 16.6 |
+| `kit/lib/tier/index.js` | 16.1 (all the new floors) |
+| `kit/runtime/app/index.js` (hands the hub view's parts to `registerHubs` and the jobs) | 16.1, 16.4 (the knowledge store at boot) |
+| `kit/runtime/slack/hub-view.js` | 16.1, 16.4, 16.8 |
+| `profiles/_schema/profile.schema.json`, `kit/lib/profile/index.js` | 16.6, 16.8 (`llm.upload_hourly_usd_limit`) |
 
 If a later builder finds `main` has moved, it merges `main` and resolves the conflicts before it reports.
 
 ## Steps only you can do
 
 1. **The channel id, before 16.6's live check.** In Slack, open `#ai-build-requests`, click its name, and copy the Channel ID at the bottom of the About tab (it starts with `C`). Paste it to the Orchestrator. It goes into `profiles/brightside/profile.yml` as `slack.build_requests_channel` in 16.6's PR. A channel id is not a secret. Make sure the bot is invited to the channel (you said you are doing this).
-2. **Nothing else before the build.** The command, the scope and the reinstall are done.
-3. **The live check, after 16.8 merges.** The Orchestrator gives you the list:
+2. **Approve the AD-14 amendment** in 16.6's PR (gate item 2). The scribe drafts it; 16.6 doesn't merge without your yes.
+3. **Nothing else before the build.** The command, the scope and the reinstall are done.
+4. **The live check, after 16.8 merges.** The Orchestrator gives you the list:
    - `/brightside-v0` shows four tools;
    - Data sources says no data and no rules;
    - Ask with a data question gets "no data and no rules yet";
@@ -402,8 +457,9 @@ If a later builder finds `main` has moved, it merges `main` and resolves the con
    - upload a PDF and a photo;
    - remove an entry;
    - post a build request and see it in the channel with your name;
-   - `/brightside` still works as before.
-4. **Restart check.** Restart the bot once during the live check and confirm the added context is still there (local `var/`).
+   - `/brightside` still works as before;
+   - the Slack app's settings match `slack-manifest.json` (untested until now, review B11).
+5. **Restart check.** Restart the bot once during the live check and confirm the added context is still there (local `var/`).
 
 ## New ledger items (proposed)
 
@@ -417,6 +473,39 @@ The Orchestrator assigns the next free DEP ids when the stories open them (DEP-0
 | DEP-(next+3) | Orchestrator | Word files (`.docx`) and other office formats as uploads. Needs a parser (a new dependency) or a conversion step. |
 | DEP-(next+4) | Orchestrator | The four tools on `/brightside` and on later snapshots: either one manifest per hub, or let a manifest name more than one hub. Decided in the v1 plan. |
 | DEP-(next+5) | Orchestrator | Shared added context across a fork's hubs (today each hub keeps its own). Decided when a fork has two real hubs. |
+| DEP-(next+6) | **Ely** | Knowledge store: retention and backup policy for admin-written business context (how long entries are kept, who may export them, how a client asks for deletion). Review A9. |
+| DEP-(next+7) | **Ely** | Files uploaded through Add context stay in the admin's own Slack files after the bot reads them (the bot keeps no copy and does not delete them). Decide whether the bot should delete them after reading, which needs a scope the bot doesn't have for a person's files. Review B12. |
+| DEP-(next+8) | Orchestrator | v1 decides whether a hub that sees context or data may post build requests, and how the AI summary is kept from repeating business context into the channel. Until then only blank hubs post (D11). |
+
+## Review findings folded in
+
+Architect design review and `bmad-review` (adversarial and edge-case lenses), 2026-10-30. Blocking findings, all resolved:
+
+- **A1** The hub view lives in a new `slack/hub-view.js`. It, `hub.schema.json`, `knowledge/**` and `slack/files.js` become T3 floors in 16.1. D1, 16.1.
+- **A2** Engine jobs a module brings are refused on a hub without `data` or `context`. D1, 16.1.
+- **A3** `sees` is required (fail closed). D1, 16.1, gate item 1.
+- **A4** Build requests vs AD-14/N9: a scribe-drafted amendment for your approval, the channel's audience in the profile, blank hubs only, the AI summary escaped as untrusted, a mention test. D11, 16.6, gate item 2.
+- **B1** The 3-second deadline: instant checks only as field errors; slow work shows "Reading…" or "Thinking…" and updates the view; closing mid-work is a tested way out. D13, 16.5 to 16.8.
+- **B2, A6** File cost: an explicit worst case per page, a 100-page cap, a test at half the hourly limit, and a separate upload cap (picked over a smaller size cap, because it also protects `/brightside`'s AI). D5, 16.8.
+- **B3** Try again consumes the preview, restores it on refusal, and posts exactly once. D11, 16.6.
+- **B4** Typed entries cap at 3,000; extracted at 6,000. D4, 16.4, 16.5.
+
+Non-blocking, fixed on this plan because they touch write safety, data exposure or a fail-open default:
+- **B5** caps measured on escaped text (D4, 16.4);
+- **B6** per-hub serialised writes (D4, 16.4);
+- **A7** `redirect: 'error'` and the token only to `files.slack.com` (D7, 16.8);
+- **A5** "everyone who can use Ask here can read this" (D7, 16.5, 16.8, 16.9);
+- **B9** Build request button hidden when unusable (D10, 16.7).
+
+Also folded in:
+- **B7** fixed `readFile` wording; the file block checked on its own (D5, 16.8);
+- **B8** always offer Build request after a context answer, picked over an `answered` flag (D10, 16.7);
+- **B10** `registerHubs` gets only a `forHub` factory; `createScopedPull` per hub (D1, 16.1);
+- **B11** manifest-matches-live listed as untested until the live check (D12, step 4);
+- **B12** `app/index.js` in the shared-files table; Slack keeping uploaded files is a DEP row;
+- **A8** the import check, small, so a 16.1 criterion (with a fallback to a DEP row if it grows);
+- **A9** the retention and backup DEP row;
+- **A10** floors in 16.1; 16.6 may follow 16.3 if 16.5 slips.
 
 ## Risks
 
@@ -428,13 +517,13 @@ The Orchestrator assigns the next free DEP ids when the stories open them (DEP-0
 
 ## Open questions, each with a recommended default
 
-1. **A hub without `sees`: everything, or nothing?** Default: **everything** (today's behaviour), so no fork's hub changes on update. The template's how-to writes `sees` explicitly, and `/brightside` writes it out. Strict "nothing" would be safer but would empty every existing fork hub on the next template update.
-2. **Who gets Ask and Build request?** Default: **the admin role**, and others by name in the profile. In the demo you drive Dana, an admin. If you want every profile user to have them, say so: the keys get granted to members, never `open_access` (that would include people not in the profile).
+1. **A hub without `sees`.** Settled by the review (A3): `sees` is required, and boot stops naming the hub. Gate item 1. A fork adds one line per hub on the update that brings it.
+2. **Who gets Ask and Build request?** Default: **the admin role, plus users named in the profile**. In the demo you drive Dana, an admin. If you want every profile user to have them, say so: the keys get granted to members, never `open_access` (that would include people not in the profile).
 3. **What counts as "rules set up"?** Default: `data.md` and `guardrails.md` signed off, plus at least one valid, signed-off truth block. It doesn't matter for v0 (always "no"). It matters for v1.
-4. **Upload size and cost.** Default: 5 MB per file and the existing $2-an-hour breaker. A few PDF uploads an hour fit. Raise `llm.hourly_usd_limit` in the profile if the demo needs more.
+4. **Upload size and cost.** Default: 5 MB and 100 pages per file, a $1-an-hour upload cap inside the $2 main breaker. A 100-page PDF prices at no more than $1 worst case, so at least one full-size upload an hour always fits, and uploads can never use up the AI for Ask. Raise both in the profile if the demo needs more.
 5. **Does v0 show the client's name?** Default: **yes**. The fixed prompt keeps "Brightside Home Cleaning" so the bot knows whose bot it is. Nothing else about the business.
 
-Only open question 2 really needs you. The others are safe as defaults.
+Only open question 2 really needs you (gate item 4). The others are safe as defaults.
 
 ## Not in this plan
 
@@ -446,4 +535,4 @@ Only open question 2 really needs you. The others are safe as defaults.
 
 ## Approval
 
-Write `approve plan brightside-v0` to start the build. Before the gate, the architect design review and `bmad-review` run on this plan, and their findings are folded in here.
+Write `approve plan brightside-v0` to start the build. It accepts the four gate items at the top with their recommended defaults. To change one, say so with the approval. The architect design review and `bmad-review` are folded in (section above). No blocking finding is left open.
