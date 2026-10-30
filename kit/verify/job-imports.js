@@ -124,4 +124,8 @@ function jobImportsCheck(root, env = process.env) {
   };
 }
 
-module.exports = { jobImportProblems, jobImportsCheck, CHECK_ID, FORBIDDEN, JOBS_DIR };
+module.exports = {
+  jobImportProblems, jobImportsCheck, CHECK_ID, FORBIDDEN, JOBS_DIR,
+  // Shared with the hub-imports check (./hub-imports, Story 16.1).
+  appDirs, jsFiles, isDir, IMPORT, CALL, LITERAL_ARG,
+};

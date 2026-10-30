@@ -151,6 +151,19 @@
 // current.", instead of the plain "map not shown". The hub remembers which
 // file each map view shows (shownFiles), forgotten when a plain message
 // replaces the map and on view_closed.
+//
+// What each hub sees (plan brightside-v0, D1, Story 16.1): registerHubs gets
+// forHub, the factory of hub views (./hub-view), never the app-wide runner
+// or AI service. Each hub's view is taken once, at setup. A handler's
+// ctx.data is its hub's runner (or the null runner: "no data source"); a
+// scoped pull (its runner and its reader) and a routing map (its adapter)
+// are made per hub from that hub's view. A form submit, form click or "How
+// was this made?" click goes to the scoped pull of the hub whose module its
+// session or run record names (none: a blank one, which only refuses), and
+// that pull acts only on its own hub's modules. A routing-map click goes to
+// the hub instance holding its session. The AI service reaches only the
+// scoped-pull reader, bound to its hub. data and llm, given instead of
+// forHub, are a test seam (hub-view everyHubSeesAll); boot never passes them.
 
 const access = require('../access');
 const {
@@ -167,8 +180,9 @@ const {
 } = require('./modal');
 const { messageParts } = require('./format');
 const {
-  createScopedPull, createRunner, verbOf, parseMetadata, ACTION_PATTERN: FORM_ACTION, FORM_CALLBACK, ANSWER_CALLBACK,
+  createScopedPull, createRunner, verbOf, parseMetadata, moduleOfSession, moduleOfRun, ACTION_PATTERN: FORM_ACTION, FORM_CALLBACK, ANSWER_CALLBACK,
 } = require('../archetypes/scoped-pull');
+const { everyHubSeesAll, BLANK_VIEW } = require('./hub-view');
 const { createReader } = require('../archetypes/scoped-pull/extract');
 const {
   PROVENANCE_ACTION, PROVENANCE_BACK_ACTION, PROVENANCE_PATTERN, keepingResult,
@@ -267,9 +281,16 @@ function moduleData(data, mod) {
 }
 
 function registerHubs(app, {
-  registry, profile, env, log, store, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),
+  registry, profile, env, log, store, forHub = null, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),
   mapFiles = null, routingMap: routingMapOptions = {},
 }) {
+  if (forHub && (data || llm)) throw new TypeError('registerHubs takes forHub, or (a test seam) data and llm, never both');
+  const viewFor = forHub || everyHubSeesAll({ data, llm }).forHub;
+  // Each hub's view, once, at setup: a hub with no view stops it here.
+  const views = new Map(registry.hubs.map((h) => [h.id, viewFor(h.id)]));
+  // A hub not in the registry (a hand-made payload) sees nothing.
+  const BLANK = BLANK_VIEW;
+  const viewOf = (hubId) => views.get(hubId) || BLANK;
   const admin = access.adminContact(profile);
   const personOf = (slackId) => ({ id: slackId, user: access.personFor(profile, slackId) });
   const decide = (person, mod) => {
@@ -291,10 +312,30 @@ function registerHubs(app, {
   // The runner keeps each result as shown, so "Back to the list" can put it
   // back; Back rebuilds the Push button with the same hook.
   const hooks = keepingResult(pushHooks, store, log);
-  const scopedPull = createScopedPull({
-    store, log, run: createRunner({ data, log, admin, store, hooks }), read: llm ? createReader({ llm, log }) : null,
+  // One scoped pull per hub, from its view: its runner and its reader are
+  // that hub's (Story 16.1). The blank one only refuses (no session found).
+  const pullFrom = (view) => createScopedPull({
+    store, log, run: createRunner({ data: view.data, log, admin, store, hooks }), read: view.llm ? createReader({ llm: view.llm, log }) : null,
     decorate: pushHooks.decorate,
   });
+  const pulls = new Map([...views].map(([id, view]) => [id, pullFrom(view)]));
+  const blankPull = pullFrom(BLANK);
+  const pullOfHub = (hubId) => pulls.get(hubId) || blankPull;
+  // The pull for the module a session or run record names (moduleOfSession
+  // or moduleOfRun), and a resolve that acts only on that pull's hub.
+  const pullFor = (moduleId, resolve) => {
+    const mod = registry.module(moduleId);
+    const hubId = mod ? mod.hub : null;
+    const onHub = (id) => {
+      const m = registry.module(id);
+      if (!m || m.hub !== hubId) {
+        log.warn('hub action refused', { reason: 'not on this hub', env });
+        return { refusal: NOT_AVAILABLE };
+      }
+      return resolve(id);
+    };
+    return { pull: pullOfHub(hubId), resolve: onHub };
+  };
   // A failed push is escalated to the profile's slack.ops_channel (Story
   // 10.3); with none set, it is logged only.
   const opsChannel = (profile.slack && profile.slack.ops_channel) || null;
@@ -307,9 +348,21 @@ function registerHubs(app, {
   const mapViews = new Map(); // routing map view id -> { hash, queue }
   // owner -> { id, alt, caption }: the map file a view shows now (Story 15.14).
   const shownFiles = new Map();
-  const routingMap = createRoutingMap({
-    ...routingMapOptions, profile, data, log, admin, viewModal: (sessionId) => ({ ...MAP_VIEW, privateMetadata: sessionId }),
+  // One routing map per hub, from its view (Story 16.1): its adapter gets
+  // that hub's runner. A click goes to the one holding its session.
+  const mapFrom = (view) => createRoutingMap({
+    ...routingMapOptions, profile, data: view.data, log, admin, viewModal: (sessionId) => ({ ...MAP_VIEW, privateMetadata: sessionId }),
   });
+  const routingMaps = new Map([...views].map(([id, view]) => [id, mapFrom(view)]));
+  const blankMap = mapFrom(BLANK);
+  const routingMapOf = (hubId) => routingMaps.get(hubId) || blankMap;
+  const routingMapHolding = (from, userId) => {
+    for (const rm of routingMaps.values()) {
+      const found = rm.sessions.lookup(from && from.private_metadata, { userId, viewId: from && from.id });
+      if (found.status !== 'expired' || found.screen !== undefined) return rm;
+    }
+    return blankMap;
+  };
 
   // Why this person may not open mod (a message), or null when they may.
   // The refusal is logged with the click's action id.
@@ -614,7 +667,7 @@ function registerHubs(app, {
     log.info('module dispatched', { module: mod.id, hub: mod.hub });
     const owner = `${person.id}:${viewId}`;
     const render = (m) => target.reply(m, { replace: true });
-    await routingMap.open({
+    await routingMapOf(mod.hub).open({
       mod,
       person,
       viewId,
@@ -701,7 +754,7 @@ function registerHubs(app, {
     // route only with an Office and an adapter route() (fail closed).
     const mapModule = Boolean(shown && uploadsMapImages(mod));
     const mapBlocked = mapModule && !(mapFiles && mapFiles.ready());
-    const editorBlocked = mapModule && !mapBlocked && mod.archetype === 'routing-map' && routingMap.unready(mod);
+    const editorBlocked = mapModule && !mapBlocked && mod.archetype === 'routing-map' && routingMapOf(mod.hub).unready(mod);
     const opens = shown && !mapBlocked && !editorBlocked;
     const target = replyTarget(args, {
       where: 'open', title: opens ? mod.label : 'Not available', hubId: opens ? mod.hub : null, viewOptions: opens && mapModule ? MAP_VIEW : undefined,
@@ -730,7 +783,7 @@ function registerHubs(app, {
       }
       if (QUERY_ARCHETYPES.has(mod.archetype)) {
         log.info('module dispatched', { module: mod.id, hub: mod.hub });
-        await target.reply(target.modal ? { ...scopedPull.open(mod, user.id), ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
+        await target.reply(target.modal ? { ...pullOfHub(mod.hub).open(mod, user.id), ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
         return;
       }
       if (mod.archetype === 'routing-map') {
@@ -746,7 +799,7 @@ function registerHubs(app, {
           person: { id: user.id, name },
           client: { id: profile.client.id, name: profile.client.name },
           module: { id: mod.id, label: mod.label },
-          data: moduleData(data, mod),
+          data: moduleData(viewOf(mod.hub).data, mod),
           reply: (message) => (hasImage(message) ? showImage(mod, target, user.id, message) : target.reply(message)),
         });
       } catch (err) {
@@ -767,7 +820,7 @@ function registerHubs(app, {
     const viewId = body && body.view && body.view.id;
     const userId = body && body.user && body.user.id;
     if (typeof viewId !== 'string' || !viewId || typeof userId !== 'string' || !userId) return;
-    routingMap.closed({ userId, viewId });
+    for (const rm of [...routingMaps.values(), blankMap]) rm.closed({ userId, viewId });
     mapViews.delete(viewId);
     shownFiles.delete(`${userId}:${viewId}`);
     if (!mapFiles) return;
@@ -861,7 +914,7 @@ function registerHubs(app, {
       }
     };
     try {
-      await routingMap.click({
+      await routingMapHolding(from, userId).click({
         actionId: action && action.action_id,
         action,
         from,
@@ -924,7 +977,8 @@ function registerHubs(app, {
       const view = body.view || {};
       const person = personOf((body.user || {}).id);
       const { sessionId } = parseMetadata(view.private_metadata);
-      const res = scopedPull[step]({ sessionId, person: person.id, state: view.state, resolve: resolveForm(person, callback) });
+      const { pull, resolve } = pullFor(moduleOfSession(store, sessionId, person.id), resolveForm(person, callback));
+      const res = pull[step]({ sessionId, person: person.id, state: view.state, resolve });
       if (res.errors) return { response_action: 'errors', errors: res.errors };
       return { response_action: 'update', view: submittedView(view, res.message, `form-${step}`) };
     }, { log, onError: ({ body }) => ({ response_action: 'update', view: submittedView(body && body.view, PLAIN_ERROR, `form-${step}`) }) }));
@@ -949,8 +1003,9 @@ function registerHubs(app, {
     };
     const person = personOf((body.user || {}).id);
     try {
-      await scopedPull.click({
-        verb, sessionId: action.value, person: person.id, resolve: resolveForm(person, action.action_id), show, client, state: from.state,
+      const { pull, resolve } = pullFor(moduleOfSession(store, action.value, person.id), resolveForm(person, action.action_id));
+      await pull.click({
+        verb, sessionId: action.value, person: person.id, resolve, show, client, state: from.state,
       });
     } catch (err) {
       log.error('handler failed', { handler: 'hub:form', err });
@@ -985,8 +1040,10 @@ function registerHubs(app, {
     const actionId = action && action.action_id === PROVENANCE_BACK_ACTION ? PROVENANCE_BACK_ACTION : PROVENANCE_ACTION;
     const step = actionId === PROVENANCE_BACK_ACTION ? 'back' : 'details';
     try {
-      await scopedPull[step]({
-        runId: action && action.value, person: person.id, resolve: resolveForm(person, actionId), show,
+      const runId = action && action.value;
+      const { pull, resolve } = pullFor(moduleOfRun(store, runId, person.id), resolveForm(person, actionId));
+      await pull[step]({
+        runId, person: person.id, resolve, show,
       });
     } catch (err) {
       log.error('handler failed', { handler: 'hub:provenance', err });

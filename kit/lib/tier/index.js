@@ -38,6 +38,11 @@
 //                                    its image leaves (a private Slack file)
 //         kit/runtime/basemap/**     the street-map tile fetcher: an outbound
 //                                    connection to the tile provider (DEP-029)
+//         kit/runtime/slack/hub-view.js, kit/runtime/schema/hub.schema.json
+//                                    what each hub may see (context, data, rules)
+//                                    and the one seam that enforces it
+//         kit/runtime/knowledge/**   the added-context store on disk
+//         kit/runtime/slack/files.js the download of a person's Slack file
 //       A path near these but outside them (kit/fixture/build.js,
 //       kit/runtime/slack/hubs.js, kit/lib/review/**) keeps its profile tier.
 //       Compute a change's tier with renames as both paths
@@ -130,6 +135,13 @@ const ENGINE_T3 = Object.freeze([
   // Epic 15 (plan routing-streetmap, Story 15.9, AD-R19): the street-map tile
   // fetcher, the bot's outbound connection to the tile provider (DEP-029).
   'kit/runtime/basemap/**',
+  // Epic 16 (plan brightside-v0, Story 16.1, review A1, A10): what each hub
+  // may see and its one seam, the added-context store, and the outbound
+  // download of Slack files.
+  'kit/runtime/slack/hub-view.js',
+  'kit/runtime/schema/hub.schema.json',
+  'kit/runtime/knowledge/**',
+  'kit/runtime/slack/files.js',
 ]);
 
 // Minimal glob: `**` = any depth (incl. none), `*` = within one segment, every

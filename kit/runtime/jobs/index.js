@@ -304,19 +304,30 @@ function createScheduler({ jobs, log, data = null, now = () => new Date(), timer
   };
 }
 
-// The kit's own jobs. needed({ modules, env }) says whether this app runs it.
+const shownIn = (m, env) => Array.isArray(m.environments) && m.environments.includes(env);
+
+// The kit's own jobs. brings(module, env) says whether that module brings it
+// here; needed({ modules, env }) whether this app runs it (any module brings it).
 const ENGINE_JOBS = Object.freeze([
   Object.freeze({
     name: sweepMapFiles.NAME,
     everyMs: sweepMapFiles.EVERY_MS,
     run: sweepMapFiles.run,
-    needed: ({ modules, env }) => (modules || []).some((m) => uploadsMapImages(m) && Array.isArray(m.environments) && m.environments.includes(env)),
+    brings: (m, env) => uploadsMapImages(m) && shownIn(m, env),
+    needed: ({ modules, env }) => (modules || []).some((m) => uploadsMapImages(m) && shownIn(m, env)),
   }),
 ]);
 
 // The names of the engine jobs this app needs. Never reads the jobs switch.
 function engineJobsFor({ modules, env }) {
   return ENGINE_JOBS.filter((j) => j.needed({ modules, env })).map((j) => j.name);
+}
+
+// The names of the engine jobs one module brings in this environment (plan
+// brightside-v0, Story 16.1: kit/runtime/slack/hub-view refuses one whose
+// hub does not see data and context).
+function engineJobsBroughtBy(mod, env) {
+  return ENGINE_JOBS.filter((j) => j.brings(mod, env)).map((j) => j.name);
 }
 
 // Runs the named engine jobs: once at start(), then every everyMs. ctx is
@@ -377,6 +388,6 @@ function createEngineJobs({
 }
 
 module.exports = {
-  loadJobs, jobsSwitch, jobsWords, createScheduler, jobContext, resolveRun, engineJobsFor, createEngineJobs,
+  loadJobs, jobsSwitch, jobsWords, createScheduler, jobContext, resolveRun, engineJobsFor, engineJobsBroughtBy, createEngineJobs,
   ENGINE_JOBS, OFF_ENV, JOBS_FILE, JOBS_DIR, MAX_TIMER_MS,
 };

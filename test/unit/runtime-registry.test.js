@@ -104,7 +104,7 @@ test('ids must match their file and folder names; hub commands must be unique', 
   const { problems } = loadEdited((d) => {
     editJson(d, 'modules/echo/manifest.json', (m) => { m.id = 'echo-two'; });
     editJson(d, 'hubs/beta.json', (h) => { h.command = '/alpha'; });
-    fs.writeFileSync(path.join(d, 'hubs/gamma.json'), JSON.stringify({ id: 'delta', command: '/gamma', name: 'G', description: 'g' }));
+    fs.writeFileSync(path.join(d, 'hubs/gamma.json'), JSON.stringify({ id: 'delta', command: '/gamma', name: 'G', description: 'g', sees: [] }));
   });
   assert.ok(problems.includes('hubs/beta.json: field "command" /alpha is already used by hubs/alpha.json'));
   assert.ok(problems.includes('hubs/gamma.json: field "id" must equal the file name ("gamma")'));
@@ -341,7 +341,7 @@ function loadRouting(edit = () => {}, { withProfile = ROUTING_PROFILE } = {}) {
   try {
     fs.mkdirSync(path.join(dir, 'hubs'));
     fs.mkdirSync(path.join(dir, 'modules/routing'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'hubs/ops.json'), JSON.stringify({ id: 'ops', command: '/ops', name: 'Ops', description: 'Ops tools' }));
+    fs.writeFileSync(path.join(dir, 'hubs/ops.json'), JSON.stringify({ id: 'ops', command: '/ops', name: 'Ops', description: 'Ops tools', sees: ['context', 'data', 'rules'] }));
     fs.writeFileSync(path.join(dir, ROUTING_FILE), JSON.stringify({
       id: 'routing', hub: 'ops', label: 'Routing', description: 'Routes on a map', resource: 'ROUTING_ALL_CREWS',
       archetype: 'routing-map', environments: ['dev'], adapter: 'adapter.js',

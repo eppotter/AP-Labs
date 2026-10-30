@@ -2,5 +2,6 @@
   "id": "ops",
   "command": "/ops",
   "name": "Ops",
-  "description": "Open the Ops menu"
+  "description": "Open the Ops menu",
+  "sees": ["context", "data", "rules"]
 }

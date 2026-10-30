@@ -37,7 +37,8 @@
 // or APLABS_LLM_OFF, leaves the AI off and the app starts anyway; the startup
 // line says which. A profile naming an unpriced model refuses to start. The AI
 // service (kit/runtime/llm) is built once here and is engine-internal: it is
-// handed to the hubs only for the scoped-pull reader (Story 9.4).
+// handed to the hubs only for the scoped-pull reader (Story 9.4), bound to
+// each hub through its view (Story 16.1).
 //
 // Story 11.1: boot reads <app dir>/jobs.json (kit/runtime/jobs) and refuses
 // on any broken entry, even with jobs off, naming the job and field. Jobs run
@@ -68,6 +69,15 @@
 // ready only while the sweep runs, so a map module fails closed without it.
 // The startup line names the engine jobs it runs.
 //
+// Plan brightside-v0 (Story 16.1): each hub file says what it sees. Boot
+// refuses a data archetype or a module's engine job on a hub that may not
+// have it (kit/runtime/slack/hub-view bootProblems), then builds each hub's
+// view once (createHubViews) and hands the hubs only its forHub factory,
+// never the app-wide runner or AI service. The runner still goes to the job
+// scheduler; fork jobs get no AI service and no knowledge store. A context
+// that can't be used no longer switches the AI off: only hubs that see
+// context refuse their calls, and boot logs why.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
@@ -80,6 +90,7 @@ const { loadProfile, findProfilePath, ProfileError, PROFILE_REL } = require('../
 const { createLog, slackLogger } = require('../log');
 const { registerGreeting } = require('../slack/greeting');
 const { registerHubs } = require('../slack/hubs');
+const { createHubViews, bootProblems } = require('../slack/hub-view');
 const { loadRegistry, ENV_PATTERN } = require('../registry');
 const { createStore } = require('../store');
 const { createData, dataPathFor, sourceOf } = require('../data');
@@ -95,6 +106,13 @@ const REPO = path.resolve(__dirname, '../../..');
 // The startup line's word for why the AI is off.
 const AI_OFF_WORDS = Object.freeze({ off: `switched off by ${llm.OFF_ENV}`, no_key: `${llm.KEY_ENV} not set`, config: 'configuration fault' });
 const DEFAULT_ENV = 'dev';
+// The startup line's word for the AI. A context that can't be used is never
+// plain "on" (Story 16.1, PR #262 review).
+const AI_CONTEXT_FAULT = 'on (context fault: hubs that see context are refused)';
+function aiWords(status) {
+  if (!status.on) return `off (${AI_OFF_WORDS[status.reason]})`;
+  return status.contextProblem ? AI_CONTEXT_FAULT : 'on';
+}
 
 // Secret env var names live here, never in the profile (AD-12).
 const SECRETS = Object.freeze([
@@ -183,6 +201,8 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
     const loaded = loadRegistry({ appDir, profile });
     problems.push(...loaded.problems.map((p) => `app: ${p}`));
     registry = loaded.registry;
+    // What each hub sees (Story 16.1): data archetypes and engine jobs.
+    if (registry) problems.push(...bootProblems({ hubs: registry.hubs, modules: registry.modules, env: runEnv }).map((p) => `app: ${p}`));
     const j = jobs.loadJobs({ appDir, profile, env, now: clockOf(deps)() });
     problems.push(...j.problems.map((p) => `app: ${p}`));
     jobList = j.jobs;
@@ -211,8 +231,10 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
 // Builds the Bolt app in Socket Mode with the redacting logger. App is
 // injectable so tests use a fake Slack client.
 // sweeping(name): true while that engine job runs (main's engine jobs).
+// forHub: each hub's view (kit/runtime/slack/hub-view); the hubs never get
+// the app-wide runner or AI service.
 function createApp({
-  tokens, profile, registry, env, store, data, log, App, llm = null, connectors = null, sweeping = () => false,
+  tokens, profile, registry, env, store, forHub, log, App, connectors = null, sweeping = () => false,
 }) {
   const AppClass = App || require('@slack/bolt').App;
   const app = new AppClass({
@@ -229,7 +251,7 @@ function createApp({
   const mapFiles = createMapFiles({
     store, client: app.client, log, sweeping: () => sweeping(SWEEP_MAP_FILES),
   });
-  registerHubs(app, { registry, profile, env, log, store, data, llm, connectors, mapFiles });
+  registerHubs(app, { registry, profile, env, log, store, forHub, connectors, mapFiles });
   return app;
 }
 
@@ -289,8 +311,10 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   let app;
   let engineJobs = null;
   try {
+    // Each hub's view, once (plan brightside-v0, D1): the hubs get only these.
+    const views = createHubViews({ hubs: cfg.registry.hubs, data, llm: ai });
     app = createApp({
-      ...cfg, store, data, log, App: deps.App, llm: ai, connectors, sweeping: (name) => Boolean(engineJobs && engineJobs.running(name)),
+      ...cfg, store, forHub: views.forHub, log, App: deps.App, connectors, sweeping: (name) => Boolean(engineJobs && engineJobs.running(name)),
     });
     // The kit's own jobs, whatever the jobs switch says (Story 15.1).
     engineJobs = jobs.createEngineJobs({
@@ -319,7 +343,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     hubs: cfg.registry.hubs.map((h) => h.command),
     modules: cfg.registry.modules.length,
     data: dataState(data, remote),
-    ai: aiStatus.on ? 'on' : `off (${AI_OFF_WORDS[aiStatus.reason]})`,
+    ai: aiWords(aiStatus),
     jobs: jobs.jobsWords(cfg.jobsState, cfg.jobs),
     engine_jobs: engineJobs.names,
     health: healthCheck ? `on (port ${healthCheck.port})` : 'off',
@@ -379,6 +403,7 @@ async function setUp({ cfg, deps, log, env }) {
   });
   const aiStatus = ai.status();
   if (aiStatus.reason === 'config') log.error('AI helper off: configuration fault', { problem: aiStatus.problem });
+  if (aiStatus.contextProblem) log.error('AI context unusable: hubs that see context refuse AI calls', { problem: aiStatus.contextProblem });
   return { remote, data, connecting, store, ai, aiStatus };
 }
 
@@ -415,7 +440,9 @@ function shutdown({
     });
 }
 
-module.exports = { main, checkConfig, checkMotherDuckKeys, createApp, installCrashHandlers, shutdown, SECRETS };
+module.exports = {
+  main, checkConfig, checkMotherDuckKeys, createApp, installCrashHandlers, shutdown, aiWords, SECRETS, AI_CONTEXT_FAULT,
+};
 
 if (require.main === module) {
   const log = createLog();

@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/eppotter/AP-Labs/kit/runtime/schema/hub.schema.json",
   "title": "AP Labs hub",
-  "description": "One hub: a slash command whose menu lists the modules that name it. Lives at <app>/hubs/<id>.json. Unknown keys are errors.",
+  "description": "One hub: a slash command whose menu lists the modules that name it. Lives at <app>/hubs/<id>.json. Unknown keys are errors. sees is required.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "command", "name", "description"],
+  "required": ["id", "command", "name", "description", "sees"],
   "properties": {
     "id": { "description": "Must equal the file name without .json.", "$ref": "#/$defs/slug" },
     "command": {
@@ -17,6 +17,12 @@
     "description": { "description": "The slash command's description in Slack.", "type": "string", "$ref": "#/$defs/text", "maxLength": 100 },
     "usage_hint": { "description": "Optional hint shown after the command in Slack.", "type": "string", "$ref": "#/$defs/text", "maxLength": 100 },
     "welcome": { "description": "Optional one-paragraph welcome shown above the menu the first time a person opens the hub. Default: a generic welcome naming the hub.", "type": "string", "$ref": "#/$defs/text", "maxLength": 600, "pattern": "^[^\\n]*$" },
+    "sees": {
+      "description": "Required (plan brightside-v0, D1): what this hub may see. context: the profile's context files in the AI's prompt; data: the query runner; rules: the truth blocks, guardrails and forbidden columns. [] sees none of them. Fail closed: nothing is seen by default.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "enum": ["context", "data", "rules"] }
+    },
     "feedback": { "description": "Optional line in the hub's Help saying how to give feedback. Default: tell the profile's admins.", "type": "string", "$ref": "#/$defs/text", "maxLength": 300 }
   },
   "$defs": {
