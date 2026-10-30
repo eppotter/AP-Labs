@@ -42,10 +42,12 @@ function setup({ env = 'dev', canUse, views = false, reg = registry } = {}) {
 // The Open buttons, in menu order (the Help button is checked on its own).
 const buttons = (msg) => msg.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
 
-test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" (and Back), push and routing-map clicks', () => {
+test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" (and Back), push, routing-map and Add context\'s Remove clicks', () => {
   const { app } = setup();
   assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
-  assert.equal(app.actionListeners.length, 6);
+  assert.equal(app.actionListeners.length, 7);
+  // Remove on an Add context entry (Story 16.5), registered last.
+  assert.equal(app.actionListeners[6].pattern, 'add-context:remove');
   // A routing map's view, day, crew and zone selects (Story 15.4).
   for (const id of ['routing-map:view', 'routing-map:day', 'routing-map:crew', 'routing-map:zone']) assert.ok(app.actionListeners[2].pattern.test(id), id);
   assert.ok(!app.actionListeners[2].pattern.test('routing-map:open'));
@@ -58,10 +60,11 @@ test('each hub file registers its slash command; one listener each handles Open,
   // Push, Approve and Cancel on an approval-write result (Story 10.2).
   for (const id of ['approval-write:push', 'approval-write:approve', 'approval-write:cancel']) assert.ok(app.actionListeners[4].pattern.test(id), id);
   assert.ok(!app.actionListeners[4].pattern.test('approval-write:open'));
-  // A map view's view_closed (Story 15.1), then two submits: the form's
-  // "Check values" and a follow-up question's answer (Story 9.4).
+  // A map view's view_closed (Story 15.1), then three submits: the form's
+  // "Check values", a follow-up question's answer (Story 9.4) and Add
+  // context's Add (Story 16.5).
   assert.deepEqual(app.viewListeners.map((v) => v.callbackId), [
-    { callback_id: 'hub:map', type: 'view_closed' }, 'scoped-pull:form', 'scoped-pull:answer',
+    { callback_id: 'hub:map', type: 'view_closed' }, 'scoped-pull:form', 'scoped-pull:answer', 'add-context:submit',
   ]);
   assert.deepEqual([...app.eventListeners.keys()], ['team_join']);
 });

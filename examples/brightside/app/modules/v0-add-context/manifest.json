@@ -1,0 +1,9 @@
+{
+  "id": "v0-add-context",
+  "hub": "brightside-v0",
+  "label": "Add context",
+  "description": "Type something about the business for Ask to use here.",
+  "resource": "ADD_CONTEXT",
+  "archetype": "add-context",
+  "environments": ["dev", "prod"]
+}

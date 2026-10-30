@@ -21,6 +21,7 @@ resources:
   - { key: ROUTING_ALL_CREWS, label: "Routing map, every crew (dispatchers)", admin_grantable: false }
   - { key: ROUTING_OWN_CREW, label: "Routing map, own crew only (crew leads)", admin_grantable: false }
   - { key: DATA_SOURCES, label: Data sources }
+  - { key: ADD_CONTEXT, label: Add context }
 
 users:
   - { id: dana, name: Dana Reyes, role: admin, identities: { github: dana-r, slack: U0FIXTUREDANA }, grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS] }

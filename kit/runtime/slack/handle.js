@@ -81,11 +81,29 @@ function handle(name, work, { log, store }) {
 // throws, the error is logged and the ack carries onError(args) (for example
 // a view with the plain error), so the person never sees a silent failure.
 // Every other listener keeps handle() and its empty ack.
+//
+// Slow work after the ack (plan brightside-v0, D13, Story 16.5): work may
+// return afterAck(payload, then). The ack carries payload (for example a
+// "Saving…" view), and then() runs only once Slack has the ack; it shows its
+// own result (views.update). A then() that throws is logged, never retried.
+// If the ack fails, then() is not run: the person saw Slack's own error, so
+// nothing is done behind it.
+const AFTER_ACK = Symbol('afterAck');
+function afterAck(payload, then) {
+  if (typeof then !== 'function') throw new TypeError('afterAck needs the work to run after the ack');
+  return Object.freeze({ [AFTER_ACK]: then, payload });
+}
+
 function handleView(name, work, { log, onError }) {
   return async (args) => {
     let payload;
+    let then = null;
     try {
       payload = await work(args);
+      if (payload && typeof payload === 'object' && payload[AFTER_ACK]) {
+        then = payload[AFTER_ACK];
+        payload = payload.payload;
+      }
     } catch (err) {
       log.error('handler failed', { handler: name, err });
       try {
@@ -99,8 +117,17 @@ function handleView(name, work, { log, onError }) {
       await args.ack(payload);
     } catch (ackErr) {
       log.error('ack failed', { handler: name, err: ackErr });
+      return;
+    }
+    if (!then) return;
+    try {
+      await then();
+    } catch (err) {
+      log.error('handler failed', { handler: name, err });
     }
   };
 }
 
-module.exports = { handle, handleView, replyPrivately, isDuplicateEvent, PLAIN_ERROR };
+module.exports = {
+  handle, handleView, afterAck, replyPrivately, isDuplicateEvent, PLAIN_ERROR,
+};

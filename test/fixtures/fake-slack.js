@@ -78,6 +78,24 @@
 // Slack does; it is off by default because older tests replay a click's
 // first hash.
 //
+// Story 16.5 (Add context) adds, each refused as Slack refuses it
+// (invalid_blocks; docs.slack.dev/reference/block-kit/block-elements/
+// plain-text-input-element, .../blocks/input-block, .../composition-objects/
+// confirmation-dialog-object): a plain_text_input outside an input block; its
+// max_length outside 1 to 3000, min_length outside 0 to 3000 or over
+// max_length, a placeholder not plain_text of 1 to 150 characters, an
+// initial_value longer than max_length; an input block with no element, a
+// label not plain_text of 1 to 2000 characters, or a hint over 2000; a
+// button style other than primary or danger; a confirm dialog whose title,
+// confirm or deny is not plain_text (title at most 100, confirm and deny at
+// most 30), whose text is over 300, or whose style is not primary or danger.
+// A view_submission ack (dispatchView) is checked like a views call: an
+// update's view as above, and an errors object whose keys are not block_ids
+// of input blocks in the submitted view, or whose messages are not
+// non-empty text, makes the ack throw (Slack shows the person its own
+// error). closeView(id) marks a view the person closed: a views.update on it
+// then answers not_found, as Slack does.
+//
 // new FakeSlackApp({ views: true }) adds client.views: open, push and update
 // record { method, args } in this.views and answer with a view id and a fresh
 // hash; set this.viewsFail[method] to an error to make that call throw.
@@ -143,6 +161,7 @@ class FakeSlackApp {
     this.checkHashes = false;
     this.notReady = new Map(); // file id -> views calls still refused
     this.triggers = new Map();
+    this.closed = new Set(); // view ids the person closed (closeView)
     this.dmChannel = (user) => `D${String(user).replace(/^U/, '')}`;
     this.client = {
       conversations: {
@@ -194,6 +213,7 @@ class FakeSlackApp {
       const call = (method) => async (args) => {
         this.views.push({ method, args });
         if (this.viewsFail[method]) throw this.viewsFail[method];
+        if (method === 'update' && this.closed.has(args.view_id)) throw slackError('not_found', 'the view is closed');
         if ((method === 'open' || method === 'push') && this.triggerExpired(args.trigger_id)) {
           throw slackError('expired_trigger_id', 'the trigger_id is more than 3 seconds old');
         }
@@ -256,6 +276,9 @@ class FakeSlackApp {
     return Date.now() - this.triggers.get(id) > TRIGGER_MS;
   }
 
+  // The person closed this view (Back or the X): later updates are not_found.
+  closeView(id) { this.closed.add(id); }
+
   expireTriggers() {
     for (const id of this.triggers.keys()) this.triggers.set(id, -Infinity);
   }
@@ -274,7 +297,12 @@ class FakeSlackApp {
     const body = { type: 'view_submission', user, view: full };
     const matching = this.viewListeners.filter(({ callbackId }) => matchesView(callbackId, callback_id, 'view_submission'));
     for (const { fn } of matching) {
-      const ack = async (payload) => { this.acks += 1; this.viewAcks.push(payload); };
+      const ack = async (payload) => {
+        this.acks += 1;
+        this.viewAcks.push(payload);
+        const bad = invalidViewAck(payload, full);
+        if (bad) throw slackError('invalid_response_action', bad);
+      };
       await fn({ body, view: full, ack, client: this.client });
     }
     return matching.length;
@@ -420,6 +448,12 @@ function invalidElements(view) {
       if (b.fields.some((f) => !f || typeof f.text !== 'string' || !f.text || f.text.length > MAX_FIELD_TEXT)) return `a field's text is 1 to ${MAX_FIELD_TEXT} characters`;
     }
     if (b.type === 'actions' && (!Array.isArray(b.elements) || b.elements.length > MAX_ACTIONS_ELEMENTS)) return `an actions block holds 1 to ${MAX_ACTIONS_ELEMENTS} elements`;
+    if (b.type === 'input') {
+      const bad = invalidInput(b);
+      if (bad) return bad;
+    } else if ([b.accessory, ...(Array.isArray(b.elements) ? b.elements : [])].some((e) => e && e.type === 'plain_text_input')) {
+      return 'a plain_text_input belongs in an input block';
+    }
     const elements = b.type === 'actions' ? b.elements : [b.accessory, b.element].filter(Boolean);
     const actionIds = new Set();
     for (const e of elements) {
@@ -455,6 +489,11 @@ function invalidElement(e) {
     const text = e.text && e.text.text;
     if (!e.text || e.text.type !== 'plain_text' || typeof text !== 'string' || !text || Array.from(text).length > MAX_BUTTON_TEXT) return `a button's text is plain_text of 1 to ${MAX_BUTTON_TEXT} characters`;
     if (e.value !== undefined && (typeof e.value !== 'string' || e.value.length > MAX_BUTTON_VALUE)) return `a button's value is at most ${MAX_BUTTON_VALUE} characters`;
+    if (e.style !== undefined && !BUTTON_STYLES.has(e.style)) return "a button's style is primary or danger";
+  }
+  if (e.confirm !== undefined) {
+    const bad = invalidConfirm(e.confirm);
+    if (bad) return bad;
   }
   if (e.accessibility_label !== undefined && (typeof e.accessibility_label !== 'string' || !e.accessibility_label || Array.from(e.accessibility_label).length > MAX_ACCESSIBILITY_LABEL)) {
     return `an accessibility_label is 1 to ${MAX_ACCESSIBILITY_LABEL} characters`;
@@ -473,6 +512,61 @@ function invalidElement(e) {
   if (e.type === 'datepicker' && e.initial_date !== undefined && (typeof e.initial_date !== 'string' || !ISO_DATE.test(e.initial_date))) {
     return 'initial_date must be written YYYY-MM-DD';
   }
+  return null;
+}
+
+// Why Slack would refuse a view_submission's ack payload, or null (Story 16.5).
+function invalidViewAck(payload, submitted) {
+  if (payload === undefined || payload === null) return null;
+  if (payload.response_action === 'errors') {
+    const inputs = new Set((submitted.blocks || []).filter((b) => b && b.type === 'input').map((b) => b.block_id));
+    const errors = payload.errors;
+    if (!errors || typeof errors !== 'object' || !Object.keys(errors).length) return 'errors needs at least one block_id';
+    for (const [key, text] of Object.entries(errors)) {
+      if (!inputs.has(key)) return `errors names "${key}", which is not an input block in the view`;
+      if (typeof text !== 'string' || !text) return 'an error message is non-empty text';
+    }
+    return null;
+  }
+  if (payload.response_action === 'update' || payload.response_action === 'push') {
+    const v = payload.view;
+    return invalidModal(v) || invalidView(v) || invalidImageBlocks(v) || invalidElements(v);
+  }
+  return null;
+}
+
+const MAX_INPUT_LENGTH = 3000;
+const MAX_PLACEHOLDER = 150;
+const MAX_LABEL = 2000;
+const MAX_HINT = 2000;
+const BUTTON_STYLES = new Set(['primary', 'danger']);
+const isPlain = (t, max) => Boolean(t && t.type === 'plain_text' && typeof t.text === 'string' && t.text && Array.from(t.text).length <= max);
+
+// Why Slack would refuse an input block or its plain_text_input, or null.
+function invalidInput(b) {
+  if (!b.element || typeof b.element !== 'object') return 'an input block needs an element';
+  if (!isPlain(b.label, MAX_LABEL)) return `an input block's label is plain_text of 1 to ${MAX_LABEL} characters`;
+  if (b.hint !== undefined && !isPlain(b.hint, MAX_HINT)) return `an input block's hint is plain_text of 1 to ${MAX_HINT} characters`;
+  const e = b.element;
+  if (e.type !== 'plain_text_input') return null;
+  const max = e.max_length;
+  if (max !== undefined && (!Number.isInteger(max) || max < 1 || max > MAX_INPUT_LENGTH)) return `a plain_text_input's max_length is 1 to ${MAX_INPUT_LENGTH}`;
+  const min = e.min_length;
+  if (min !== undefined && (!Number.isInteger(min) || min < 0 || min > MAX_INPUT_LENGTH || (max !== undefined && min > max))) return `a plain_text_input's min_length is 0 to ${MAX_INPUT_LENGTH}, and at most max_length`;
+  if (e.placeholder !== undefined && !isPlain(e.placeholder, MAX_PLACEHOLDER)) return `a placeholder is plain_text of 1 to ${MAX_PLACEHOLDER} characters`;
+  if (e.initial_value !== undefined && (typeof e.initial_value !== 'string' || (max !== undefined && e.initial_value.length > max))) return 'an initial_value is text no longer than max_length';
+  return null;
+}
+
+// Why Slack would refuse a confirmation dialog, or null.
+function invalidConfirm(c) {
+  if (!c || typeof c !== 'object') return 'a confirm is an object';
+  if (!isPlain(c.title, 100)) return "a confirm's title is plain_text of 1 to 100 characters";
+  const text = c.text && c.text.text;
+  if (!c.text || !['plain_text', 'mrkdwn'].includes(c.text.type) || typeof text !== 'string' || !text || Array.from(text).length > 300) return "a confirm's text is 1 to 300 characters";
+  if (!isPlain(c.confirm, 30)) return "a confirm's confirm is plain_text of 1 to 30 characters";
+  if (!isPlain(c.deny, 30)) return "a confirm's deny is plain_text of 1 to 30 characters";
+  if (c.style !== undefined && !BUTTON_STYLES.has(c.style)) return "a confirm's style is primary or danger";
   return null;
 }
 
@@ -552,5 +646,5 @@ function invalidModal(view) {
 }
 
 module.exports = {
-  FakeSlackApp, invalidModal, invalidUpload, invalidImageBlocks, invalidView, invalidElements, notReadyError, rateLimitedError, TRIGGER_MS,
+  FakeSlackApp, invalidModal, invalidUpload, invalidImageBlocks, invalidView, invalidElements, invalidViewAck, notReadyError, rateLimitedError, TRIGGER_MS,
 };
