@@ -7,17 +7,16 @@
 //   const llm = createLlm({ apiKey, profile, profilePath, store, log });
 //   llm.status();                         // { on, reason, model, ... }
 //   llm.registerTool({ name, description, input_schema, effects: 'none' });
-//   await llm.ask({ person, resource, request, tool });
-//   await llm.structured({ person, resource, request, tool, instructions });
 //   const hub = llm.forHub({ id, sees });  // { ask, structured }, bound to a hub
+//   await hub.ask({ person, resource, request, tool });
+//   await hub.structured({ person, resource, request, tool, instructions });
 //
 // Per hub (plan brightside-v0, D2, Story 16.1): forHub({ id, sees }) returns
 // { ask, structured } bound to one hub, built once at boot by
 // kit/runtime/slack/hub-view. Its prompt holds the fixed instructions and the
 // client name, plus the profile's context files only when sees lists
-// "context". The hubs only ever get a bound service: the unbound ask and
-// structured above stay for the engine's own tests and equal a hub that sees
-// context. Each call runs every check below, the same as unbound.
+// "context". There is no unbound ask or structured: every call goes through
+// a hub's bound service (PR #262 review), and runs every check below.
 //
 // Setup, fixed at startup (a change takes a restart):
 //   - the key, read once by readKey() through kit/lib/secrets (env
@@ -27,8 +26,8 @@
 //   - an unpriced model is a configuration fault, and the AI stays off.
 //   - the context (./context.js): over 40,000 characters or an unreadable
 //     file can't be used (status().contextProblem). The AI stays on: each
-//     call that would use the context (a hub that sees it, or the unbound
-//     service) is refused with the configuration-fault message, and a hub
+//     call that would use the context (on a hub that sees it) is refused
+//     with the configuration-fault message, and a hub
 //     that does not see context keeps working. A prompt over 40,000
 //     characters is refused the same way, per call.
 //   - the SDK client: maxRetries 0, a 20 s timeout, the API's own base URL
@@ -80,8 +79,8 @@ const CHARS_PER_TOKEN = 3;
 const TOOL_OVERHEAD_TOKENS = 1000;
 const HOUR = 60 * 60 * 1000;
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
-// What a hub may see (hub.schema.json sees; the registry's HUB_SEES).
-const HUB_SEES = Object.freeze(['context', 'data', 'rules']);
+// What a hub may see: the one list (kit/runtime/sees, from hub.schema.json).
+const { HUB_SEES } = require('../sees');
 
 // Any non-empty value other than "0" turns the AI off. Not trimmed: " 0" is off.
 function isSwitchedOff(env) {
@@ -339,9 +338,6 @@ function createLlm({
     return bindTo({ id, context: sees.includes('context') });
   }
 
-  // The unbound service: a hub that sees context (as before Story 16.1).
-  const { ask, structured } = bindTo({ id: null, context: true });
-
   // Steps 4 and 5, then the call. def: the one tool to send, or null.
   // The tool is offered, not forced: tool_choice is "auto" with no parallel
   // calls, because the models we use (Claude Sonnet 5.5, Opus 5.5, Fable 5.1)
@@ -402,7 +398,7 @@ function createLlm({
   }
 
   return {
-    ask, structured, forHub, registerTool, status,
+    forHub, registerTool, status,
   };
 }
 

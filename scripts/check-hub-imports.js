@@ -6,10 +6,10 @@
 //
 //   node scripts/check-hub-imports.js [--root <repo>]
 //
-// Fails any module file on a hub that does not see data that imports
-// kit/runtime/data, kit/runtime/llm or kit/runtime/knowledge, or names a
-// .aplabs or context/ path, naming the file and line. Exit codes: 0 pass,
-// 1 problems.
+// Fails a module file that imports kit/runtime/data on a hub that does not
+// see data, or kit/runtime/llm or kit/runtime/knowledge, or names the
+// profile's context files, on a hub that does not see context, naming the
+// file and line. Exit codes: 0 pass, 1 problems.
 
 const path = require('node:path');
 const { hubImportProblems } = require('../kit/verify/hub-imports');

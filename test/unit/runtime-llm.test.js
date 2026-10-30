@@ -81,11 +81,14 @@ function make({ p = profile, env = {}, apiKey = KEY, client = fakeClient(), t0 =
   const log = createLog({ write: (line) => lines.push(line) });
   log.registerSecret(apiKey);
   let options = null;
-  const llm = createLlm({
+  const service = createLlm({
     apiKey, profile: p, profilePath: PROFILE_PATH, store, log, env, now,
     deps: { createClient: (o) => { options = o; client.options = o; return client; }, ...deps },
   });
-  return { llm, client, store, lines, clock, log, options: () => options };
+  // The service has no unbound ask or structured (Story 16.1): these tests
+  // call them on a hub that sees everything, as /brightside does.
+  const llm = Object.freeze({ ...service, ...service.forHub({ id: 'test', sees: ['context', 'data', 'rules'] }) });
+  return { llm, service, client, store, lines, clock, log, options: () => options };
 }
 
 const refusal = (reason) => (err) => {

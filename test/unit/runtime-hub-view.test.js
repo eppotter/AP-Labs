@@ -258,11 +258,9 @@ test('a blank hub\'s prompt holds the fixed instructions and the client name onl
   const views = createHubViews({ hubs: base.hubs, llm });
   await views.forHub('beta').llm.ask({ person: MEM, resource: 'ASK', request: 'hi' });
   await views.forHub('alpha').llm.ask({ person: MEM, resource: 'ASK', request: 'hi' });
-  await llm.ask({ person: MEM, resource: 'ASK', request: 'hi' });
-  const [blank, full, unbound] = model.calls.map((c) => c.system);
+  const [blank, full] = model.calls.map((c) => c.system);
   const today = loadContext({ clientName: LLM_PROFILE.client.name, profilePath: LLM_PROFILE_PATH }).prompt;
   assert.equal(full, today);
-  assert.equal(unbound, today);
   assert.ok(blank.includes('<client_name>Acme Tidy</client_name>'));
   assert.equal(blank, systemPrompt(LLM_PROFILE.client.name, []));
   assert.ok(!blank.includes('<client_context file='));
@@ -418,6 +416,77 @@ test('end to end: the booted app gives a handler on the blank hub no data, and o
   const said = res.app.responded.map((r) => JSON.stringify(r)).join('\n');
   assert.match(said, /available=false/);
   assert.match(said, /available=true/);
+});
+
+// --- No unbound AI call (PR #262 review) ----------------------------------------
+
+test('the AI service has no unbound ask or structured: boot code can reach an AI call only through a hub\'s view', async (t) => {
+  const { llm } = makeLlm();
+  assert.deepEqual(Object.keys(llm).sort(), ['forHub', 'registerTool', 'status']);
+  // The booted app's service, with the AI on.
+  const dir = tmpDir(t, 'boot-unbound');
+  fs.cpSync(path.join(RT, 'app'), dir, { recursive: true });
+  const lines = [];
+  const res = await main({
+    env: { ...appEnv(dir), ANTHROPIC_API_KEY: KEY },
+    cwd: os.tmpdir(),
+    deps: {
+      App: FakeSlackApp, write: (l) => lines.push(l), data: { ...fakeData(), open: async () => {}, close: () => {} }, llm: { createClient: () => fakeModel() },
+    },
+  });
+  assert.equal(res.code, 0, lines.join('\n'));
+  assert.equal(res.llm.status().on, true);
+  assert.equal(res.llm.ask, undefined);
+  assert.equal(res.llm.structured, undefined);
+  // No engine file calls ask or structured on the service itself.
+  const offenders = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const abs = path.join(d, e.name);
+      if (e.isDirectory()) walk(abs);
+      else if (e.name.endsWith('.js') && /\b(llm|ai)\.(ask|structured)\s*\(/.test(fs.readFileSync(abs, 'utf8').replace(/\/\/[^\n]*/g, ''))) offenders.push(path.relative(ROOT, abs));
+    }
+  };
+  walk(path.join(ROOT, 'kit/runtime'));
+  // extract.js calls the bound service the hub hands it, named llm there.
+  assert.deepEqual(offenders, ['kit/runtime/archetypes/scoped-pull/extract.js']);
+});
+
+test('a context that can\'t be used: the startup line says the AI is on with a context fault, never plainly on', async (t) => {
+  const { aiWords, AI_CONTEXT_FAULT } = require('../../kit/runtime/app');
+  assert.equal(aiWords({ on: true, contextProblem: null }), 'on');
+  assert.equal(aiWords({ on: true, contextProblem: 'context is 45000 characters, over the 40000 limit' }), AI_CONTEXT_FAULT);
+  assert.equal(AI_CONTEXT_FAULT, 'on (context fault: hubs that see context are refused)');
+  assert.equal(aiWords({ on: false, reason: 'no_key' }), 'off (ANTHROPIC_API_KEY not set)');
+  const dir = tmpDir(t, 'boot-context-fault');
+  fs.cpSync(path.join(RT, 'app'), dir, { recursive: true });
+  // The AI profile declares none of the fixture modules' resources: hubs only.
+  fs.rmSync(path.join(dir, 'modules'), { recursive: true });
+  const lines = [];
+  const res = await main({
+    env: { ...appEnv(dir), ANTHROPIC_API_KEY: KEY, APLABS_PROFILE: LLM_PROFILE_PATH },
+    cwd: os.tmpdir(),
+    deps: {
+      App: FakeSlackApp,
+      write: (l) => lines.push(l),
+      data: { ...fakeData(), open: async () => {}, close: () => {} },
+      llm: { createClient: () => fakeModel(), readFile: (p) => (p.endsWith('data.md') ? 'word '.repeat(9000) : '') },
+    },
+  });
+  assert.equal(res.code, 0, lines.join('\n'));
+  const started = lines.map((l) => JSON.parse(l)).find((e) => /bot started/.test(e.msg));
+  assert.equal(started.ai, AI_CONTEXT_FAULT);
+  assert.ok(lines.some((l) => l.includes('AI context unusable')));
+});
+
+test('the list of what a hub may see comes from one module, read from the hub schema', () => {
+  const { HUB_SEES: shared } = require('../../kit/runtime/sees');
+  assert.equal(HUB_SEES, shared);
+  assert.ok(Object.isFrozen(shared));
+  for (const f of ['kit/runtime/registry/index.js', 'kit/runtime/llm/index.js', 'kit/runtime/slack/hub-view.js']) {
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    assert.ok(!/\[\s*'context',\s*'data',\s*'rules'\s*\]/.test(src), `${f} copies the list`);
+  }
 });
 
 // --- Fork jobs ------------------------------------------------------------------

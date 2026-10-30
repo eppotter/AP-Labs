@@ -13,7 +13,7 @@
 //              source" and describe() says unavailable (hubs.js moduleData).
 //   llm        the AI service bound to this hub (llm.forHub): the profile's
 //              context reaches its prompt only when sees lists "context".
-//              Never the unbound service. null when there is no AI service.
+//              The service has no unbound call. null when there is no AI service.
 //   rules      true when sees lists "rules" (readiness, Story 16.3).
 //   knowledge  the hub's added-context store: null until Story 16.4.
 //
@@ -39,7 +39,7 @@
 // called. Boot never uses it: app/index passes forHub only (a test pins it).
 
 const { engineJobsBroughtBy } = require('../jobs');
-const { HUB_SEES } = require('../registry');
+const { HUB_SEES } = require('../sees');
 
 // The archetypes that read data through the engine (a fixed SQL file, or the
 // routing map's adapter): refused on a hub that does not see data.

@@ -106,6 +106,13 @@ const REPO = path.resolve(__dirname, '../../..');
 // The startup line's word for why the AI is off.
 const AI_OFF_WORDS = Object.freeze({ off: `switched off by ${llm.OFF_ENV}`, no_key: `${llm.KEY_ENV} not set`, config: 'configuration fault' });
 const DEFAULT_ENV = 'dev';
+// The startup line's word for the AI. A context that can't be used is never
+// plain "on" (Story 16.1, PR #262 review).
+const AI_CONTEXT_FAULT = 'on (context fault: hubs that see context are refused)';
+function aiWords(status) {
+  if (!status.on) return `off (${AI_OFF_WORDS[status.reason]})`;
+  return status.contextProblem ? AI_CONTEXT_FAULT : 'on';
+}
 
 // Secret env var names live here, never in the profile (AD-12).
 const SECRETS = Object.freeze([
@@ -336,7 +343,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     hubs: cfg.registry.hubs.map((h) => h.command),
     modules: cfg.registry.modules.length,
     data: dataState(data, remote),
-    ai: aiStatus.on ? 'on' : `off (${AI_OFF_WORDS[aiStatus.reason]})`,
+    ai: aiWords(aiStatus),
     jobs: jobs.jobsWords(cfg.jobsState, cfg.jobs),
     engine_jobs: engineJobs.names,
     health: healthCheck ? `on (port ${healthCheck.port})` : 'off',
@@ -433,7 +440,9 @@ function shutdown({
     });
 }
 
-module.exports = { main, checkConfig, checkMotherDuckKeys, createApp, installCrashHandlers, shutdown, SECRETS };
+module.exports = {
+  main, checkConfig, checkMotherDuckKeys, createApp, installCrashHandlers, shutdown, aiWords, SECRETS, AI_CONTEXT_FAULT,
+};
 
 if (require.main === module) {
   const log = createLog();

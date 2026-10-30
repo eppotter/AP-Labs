@@ -78,7 +78,7 @@ const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write', 'r
 const QUERY_ARCHETYPES = new Set(['scoped-pull', 'approval-write']);
 const ENV_PATTERN = /^[a-z][a-z0-9-]*$/;
 // What a hub may see (hub.schema.json sees, plan brightside-v0 D1).
-const HUB_SEES = Object.freeze(['context', 'data', 'rules']);
+const { HUB_SEES } = require('../sees');
 
 let _validators = null;
 function validators() {

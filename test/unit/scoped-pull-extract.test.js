@@ -255,8 +255,8 @@ test('the AI service refuses a structured call whose tool does not declare effec
   const ctx = setup();
   const tool = { ...fillTool(PULL) };
   delete tool.effects;
-  await assert.rejects(ctx.llm.structured({ person: MEM, resource: 'ASK', request: 'north', tool }), /effects: "none"/);
-  await assert.rejects(ctx.llm.structured({ person: MEM, resource: 'ASK', request: 'north', tool: { ...tool, effects: 'read' } }), /effects: "none"/);
+  await assert.rejects(ctx.llm.forHub({ id: 'alpha', sees: ['context', 'data', 'rules'] }).structured({ person: MEM, resource: 'ASK', request: 'north', tool }), /effects: "none"/);
+  await assert.rejects(ctx.llm.forHub({ id: 'alpha', sees: ['context', 'data', 'rules'] }).structured({ person: MEM, resource: 'ASK', request: 'north', tool: { ...tool, effects: 'read' } }), /effects: "none"/);
   assert.equal(ctx.model.calls.length, 0);
 });
 
