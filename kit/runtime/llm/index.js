@@ -348,6 +348,9 @@ function createLlm({
       const def = toolDef(tool);
       const base = knowledge ? await promptWithAdded(hub) : promptFor(hub);
       const system = [base, REQUEST_RULE, String(instructions || '')].filter(Boolean).join('\n\n');
+      // The final prompt, with the rule and the caller's instructions, is
+      // checked too: over the limit refuses this call only (PR #264 review).
+      if (system.length > MAX_CONTEXT_CHARS) throw refuseConfig(hub);
       const res = await call({ person, def, system, content: requestTurn(request) });
       return { toolInput: res.toolInput, stopReason: res.stopReason, costUsd: res.costUsd };
     }

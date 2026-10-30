@@ -34,8 +34,10 @@
 // after escaping (kit/runtime/llm/context escapeData: < becomes &lt;):
 //   - a typed entry ("text"): at most 3,000 characters;
 //   - an entry taken from a file ("file"): at most 6,000;
-//   - a hub: at most 15,000 characters in all (each entry's text and its
-//     title, escaped), and 20 entries.
+//   - a hub: at most 15,000 characters in all, and 20 entries. The total is
+//     the length of what forPrompt gives the AI: the fixed sentence, each
+//     entry's <added_context> wrapper, its escaped title and its escaped
+//     text (PR #264 review).
 // The title (at most 80 characters, one line) counts toward the hub's total,
 // not the entry's own cap, so a typed entry can always hold Slack's 3,000.
 // A new entry over a cap is refused with ContextRefused, whose words say why.
@@ -43,20 +45,29 @@
 //
 // Reads never stop boot or a call: a missing folder is no entries; an entry
 // file that can't be read, or isn't a well-formed entry of this hub, is
-// skipped and logged by id.
+// skipped and logged by id. Symlinks are never followed (PR #264 review): a
+// client or hub folder that is not a real folder gives no entries (and
+// refuses an add or a remove), and an entry is opened with O_NOFOLLOW and
+// read only when it is a regular file.
+//
+// The client id names the client folder. A profile slug longer than 64
+// characters is shortened to its first 47 characters, a dash and 16 hex
+// characters of its SHA-256 (64 in all), so it never fails boot.
 //
 // Logs: the entry id, the hub, the kind, the size and the admin's Slack id.
 // Never the text, the title or the file name.
 
 const nodeFs = require('node:fs/promises');
+const { constants: FS } = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { RuntimeRefusal } = require('../errors');
 const { escapeData, addedContextPrompt } = require('../llm/context');
 
 const REPO = path.resolve(__dirname, '../../..');
-// The profile's and the hub schema's slug.
+// The hub schema's slug (at most 64), and the profile's (any length).
 const SLUG = /^[a-z][a-z0-9-]{0,63}$/;
+const CLIENT_SLUG = /^[a-z][a-z0-9-]*$/;
 const ENTRY_ID = /^[0-9a-f]{32}$/;
 const ENTRY_FILE = /^([0-9a-f]{32})\.json$/;
 const SLACK_ID = /^[A-Z0-9]{2,32}$/;
@@ -77,8 +88,11 @@ function varDirFor(env = process.env) {
 
 // The length a text takes in the prompt.
 const promptChars = (text) => escapeData(text).length;
-// What an entry counts toward its hub's total: its text and title, escaped.
-const entryChars = (e) => promptChars(e.text) + promptChars(e.title);
+// The client folder's name: the id, or a 64-character stand-in for a longer one.
+function clientDirName(clientId) {
+  if (clientId.length <= 64) return clientId;
+  return `${clientId.slice(0, 47)}-${crypto.createHash('sha256').update(clientId).digest('hex').slice(0, 16)}`;
+}
 
 // A new entry refused by a cap, or one with no text. reason is one of
 // CONTEXT_REFUSALS; details: { reason, max }. words: what to tell the admin.
@@ -147,9 +161,9 @@ function parseEntry(raw, hub, id) {
 function createKnowledgeStore({
   clientId, varDir, log, fs = nodeFs, now = () => Date.now(), newId = () => crypto.randomBytes(16).toString('hex'),
 }) {
-  if (typeof clientId !== 'string' || !SLUG.test(clientId)) throw new TypeError('the knowledge store needs the client id (a slug)');
+  if (typeof clientId !== 'string' || !CLIENT_SLUG.test(clientId)) throw new TypeError('the knowledge store needs the client id (a slug)');
   if (typeof varDir !== 'string' || !path.isAbsolute(varDir)) throw new TypeError('the knowledge store needs an absolute var dir');
-  const root = path.join(path.resolve(varDir), 'context', clientId);
+  const root = path.join(path.resolve(varDir), 'context', clientDirName(clientId));
 
   // Inside root, or a TypeError. Called before any file access.
   function inside(p) {
@@ -178,11 +192,46 @@ function createKnowledgeStore({
     return run;
   }
 
+  // 'ok' when the client folder and the hub folder are real folders (never a
+  // symlink), 'missing' when either is not there, else 'not_folder'. Throws
+  // what lstat throws for any other failure.
+  async function folderState(dir) {
+    for (const d of [root, dir]) {
+      let st;
+      try {
+        st = await fs.lstat(d);
+      } catch (err) {
+        if (err && err.code === 'ENOENT') return 'missing';
+        throw err;
+      }
+      if (!st.isDirectory()) return 'not_folder';
+    }
+    return 'ok';
+  }
+
+  // An entry file's text: opened without following a symlink, read only when
+  // it is a regular file. Throws otherwise.
+  async function readEntryFile(p) {
+    const handle = await fs.open(p, FS.O_RDONLY | FS.O_NOFOLLOW);
+    try {
+      if (!(await handle.stat()).isFile()) throw new Error('not a regular file');
+      return await handle.readFile('utf8');
+    } finally {
+      await handle.close();
+    }
+  }
+
   // The hub's entries, oldest first. Never throws for a file problem.
   async function read(hub) {
     const dir = hubDir(hub);
     let names;
     try {
+      const state = await folderState(dir);
+      if (state === 'missing') return [];
+      if (state !== 'ok') {
+        log.error('added context folder is not a folder; none used', { hub });
+        return [];
+      }
       names = await fs.readdir(dir);
     } catch (err) {
       if (err && err.code === 'ENOENT') return [];
@@ -196,7 +245,7 @@ function createKnowledgeStore({
       const id = m[1];
       let entry = null;
       try {
-        entry = parseEntry(JSON.parse(await fs.readFile(entryPath(hub, id), 'utf8')), hub, id);
+        entry = parseEntry(JSON.parse(await readEntryFile(entryPath(hub, id))), hub, id);
       } catch {
         entry = null;
       }
@@ -211,6 +260,7 @@ function createKnowledgeStore({
     const final = entryPath(hub, entry.id);
     const tmp = inside(path.join(dir, `.${entry.id}.${crypto.randomBytes(6).toString('hex')}.tmp`));
     await fs.mkdir(dir, { recursive: true, mode: DIR_MODE });
+    if (await folderState(dir) !== 'ok') throw new Error('added context folder is not a real folder');
     try {
       await fs.writeFile(tmp, `${JSON.stringify(entry, null, 2)}\n`, { mode: FILE_MODE, flag: 'wx' });
       await fs.rename(tmp, final);
@@ -240,11 +290,11 @@ function createKnowledgeStore({
     return serial(hub, async () => {
       const held = await read(hub);
       if (held.length >= CAPS.hubEntries) throw new ContextRefused('too_many', CAPS.hubEntries);
-      const total = held.reduce((sum, e) => sum + entryChars(e), 0);
-      if (total + chars + promptChars(cleanTitle) > CAPS.hubChars) throw new ContextRefused('hub_full', CAPS.hubChars);
       const entry = Object.freeze({
         id, hub, kind, title: cleanTitle, text, added_by: addedBy, added_at: new Date(now()).toISOString(), file: fileMeta,
       });
+      // What forPrompt would then give the AI, wrappers and sentence included.
+      if (addedContextPrompt([...held, entry]).length > CAPS.hubChars) throw new ContextRefused('hub_full', CAPS.hubChars);
       await writeEntry(hub, entry);
       log.info('added context stored', {
         id, hub, kind, chars, added_by: addedBy,
@@ -263,6 +313,9 @@ function createKnowledgeStore({
     const p = entryPath(hub, id);
     if (typeof removedBy !== 'string' || !SLACK_ID.test(removedBy)) throw new TypeError('a removal needs the Slack id of who removed it');
     return serial(hub, async () => {
+      const state = await folderState(path.dirname(p));
+      if (state === 'missing') return false;
+      if (state !== 'ok') throw new Error('added context folder is not a real folder');
       try {
         await fs.unlink(p);
       } catch (err) {
@@ -296,5 +349,5 @@ function createKnowledgeStore({
 }
 
 module.exports = {
-  createKnowledgeStore, varDirFor, promptChars, entryChars, ContextRefused, CONTEXT_REFUSALS, CAPS, KINDS, MAX_TITLE_CHARS, FILE_MODE,
+  createKnowledgeStore, varDirFor, promptChars, clientDirName, ContextRefused, CONTEXT_REFUSALS, CAPS, KINDS, MAX_TITLE_CHARS, FILE_MODE,
 };

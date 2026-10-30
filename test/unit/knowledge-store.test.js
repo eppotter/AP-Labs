@@ -16,7 +16,7 @@ const { createStore } = require('../../kit/runtime/store');
 const { createLlm } = require('../../kit/runtime/llm');
 const { escapeData, addedContextPrompt, ADDED_CONTEXT_RULE, MAX_CONTEXT_CHARS } = require('../../kit/runtime/llm/context');
 const {
-  createKnowledgeStore, varDirFor, promptChars, ContextRefused, CAPS, FILE_MODE,
+  createKnowledgeStore, varDirFor, promptChars, clientDirName, ContextRefused, CAPS, FILE_MODE,
 } = require('../../kit/runtime/knowledge/store');
 const { dataPathFor } = require('../../kit/runtime/data');
 const { createHubViews } = require('../../kit/runtime/slack/hub-view');
@@ -66,6 +66,14 @@ const typed = (hub, text, extra = {}) => ({
 const fromFile = (hub, text) => ({
   hub, kind: 'file', title: 'Price list', text, addedBy: ADMIN, file: { name: 'prices.pdf', type: 'application/pdf', bytes: 1234 },
 });
+// What one entry adds to a hub's prompt besides its escaped title and text:
+// the <added_context> wrapper and the blank line before it.
+const WRAPPER_CHARS = addedContextPrompt([{ id: '0'.repeat(32), title: '', text: '' }]).length - ADDED_CONTEXT_RULE.length;
+// How many escaped title-and-text characters a new entry may still hold.
+async function room(store, hub) {
+  const used = (await store.forPrompt(hub)).length;
+  return CAPS.hubChars - (used || ADDED_CONTEXT_RULE.length) - WRAPPER_CHARS;
+}
 const refused = (reason) => (err) => {
   assert.ok(err instanceof ContextRefused, `expected ContextRefused, got ${err && err.name}: ${err && err.message}`);
   assert.equal(err.reason, reason);
@@ -166,7 +174,7 @@ test('an unreadable or malformed entry file is skipped and logged by id; the res
 
 test('a folder that can\'t be listed is logged and gives no entries; it never throws', async (t) => {
   const failing = {
-    readdir: async () => { throw Object.assign(new Error('nope'), { code: 'EACCES' }); },
+    lstat: async () => { throw Object.assign(new Error('nope'), { code: 'EACCES' }); },
   };
   const { store, log } = make(t, { fs: failing });
   assert.deepEqual(await store.list('hub-a'), []);
@@ -175,6 +183,63 @@ test('a folder that can\'t be listed is logged and gives no entries; it never th
     ['added context unreadable; none used', { hub: 'hub-a', error: 'EACCES' }],
     ['added context unreadable; none used', { hub: 'hub-a', error: 'EACCES' }],
   ]);
+});
+
+// --- Symlinks are never followed (PR #264 review) ----------------------------------
+
+test('a planted symlink is never followed: an entry link is skipped and logged; a linked hub or client folder gives no entries and refuses writes', async (t) => {
+  const { store, varDir, log } = make(t);
+  const outside = tmpDir(t, 'outside');
+  const good = await store.add(typed('hub-a', 'Kept.'));
+  const dir = path.join(varDir, 'context', 'acme', 'hub-a');
+  // A well-formed entry, kept outside the store, linked in under an entry name.
+  const linkedId = '9'.repeat(32);
+  const target = path.join(outside, 'secret.json');
+  fs.writeFileSync(target, JSON.stringify({ ...good, id: linkedId, text: 'OUTSIDE text' }));
+  fs.symlinkSync(target, path.join(dir, `${linkedId}.json`));
+  assert.deepEqual((await store.list('hub-a')).map((e) => e.id), [good.id]);
+  assert.ok(!(await store.forPrompt('hub-a')).includes('OUTSIDE'));
+  assert.ok(log.lines.some((l) => l.msg === 'added context entry skipped' && l.fields.id === linkedId));
+
+  // A hub folder that is a symlink to a folder holding an entry.
+  const elsewhere = path.join(outside, 'hub-s');
+  fs.mkdirSync(elsewhere);
+  const planted = 'a'.repeat(32);
+  fs.writeFileSync(path.join(elsewhere, `${planted}.json`), JSON.stringify({ ...good, id: planted, hub: 'hub-s', text: 'OUTSIDE hub' }));
+  fs.symlinkSync(elsewhere, path.join(varDir, 'context', 'acme', 'hub-s'));
+  assert.deepEqual(await store.list('hub-s'), []);
+  assert.equal(await store.forPrompt('hub-s'), '');
+  assert.ok(log.lines.some((l) => l.msg === 'added context folder is not a folder; none used' && l.fields.hub === 'hub-s'));
+  await assert.rejects(store.add(typed('hub-s', 'should not land')), /not a real folder/);
+  await assert.rejects(store.remove({ hub: 'hub-s', id: planted, removedBy: ADMIN }), /not a real folder/);
+  assert.deepEqual(fs.readdirSync(elsewhere), [`${planted}.json`], 'nothing written or removed through the link');
+
+  // The client folder itself a symlink.
+  const other = tmpDir(t, 'linked-client');
+  fs.mkdirSync(path.join(other, 'context'));
+  fs.symlinkSync(path.join(varDir, 'context', 'acme'), path.join(other, 'context', 'acme'));
+  const linked = createKnowledgeStore({
+    clientId: 'acme', varDir: other, log: quietLog(), now: () => T0,
+  });
+  assert.deepEqual(await linked.list('hub-a'), []);
+  await assert.rejects(linked.add(typed('hub-a', 'x')), /not a real folder/);
+  assert.deepEqual((await store.list('hub-a')).map((e) => e.id), [good.id]);
+});
+
+test('a client id longer than 64 characters gets a 64-character folder name and never fails boot', async (t) => {
+  const varDir = tmpDir(t, 'long-client');
+  const long = `a${'b'.repeat(99)}`;
+  const store = createKnowledgeStore({
+    clientId: long, varDir, log: quietLog(), now: () => T0,
+  });
+  const name = path.basename(store.root);
+  assert.equal(name.length, 64);
+  assert.equal(name, clientDirName(long));
+  assert.ok(name.startsWith(long.slice(0, 47)));
+  assert.notEqual(clientDirName(`${long}c`), name, 'two long ids with the same start stay apart');
+  assert.equal(clientDirName('acme'), 'acme');
+  await store.add(typed('hub-a', 'Long client note'));
+  assert.equal((await store.list('hub-a')).length, 1);
 });
 
 // --- Paths -----------------------------------------------------------------------
@@ -242,21 +307,29 @@ test('caps are measured on the text as it sits in the prompt, and tested at each
   // A typed 3,001 is refused even where a file entry of that size would fit.
   await store.add(fromFile('files', 'y'.repeat(3001)));
 
-  // The hub total, text and titles ('A note' is 6): 15,000 fits exactly; one
-  // more character is refused as full.
+  // The hub total is what goes into the prompt: the fixed sentence, each
+  // entry's wrapper, its escaped title ('A note' is 6) and its escaped text.
+  // 15,000 fits exactly; one more character is refused as full.
+  assert.equal(await room(store, 'total'), CAPS.hubChars - ADDED_CONTEXT_RULE.length - WRAPPER_CHARS);
   for (let i = 0; i < 4; i += 1) await store.add(typed('total', 'z'.repeat(3000)));
-  await store.add(typed('total', 'z'.repeat(15000 - 4 * 3006 - 6)));
+  const left = await room(store, 'total');
+  await assert.rejects(store.add(typed('total', 'z'.repeat(left - 6 + 1))), refused('hub_full'));
+  await store.add(typed('total', 'z'.repeat(left - 6)));
+  assert.equal((await store.forPrompt('total')).length, CAPS.hubChars);
   await assert.rejects(store.add(typed('total', 'z', { title: 'Z' })), (err) => refused('hub_full')(err) && /15,000/.test(err.words));
-  // ... and the total counts escaped text and titles: '<' as 4, '&' as 5.
-  // 4 x (3,000 + 5) = 12,020, then 743 '<' (2,972) + 'xxx' + '&' (5) = 2,980.
+  // ... counting escaped text and titles: '<' as 4, '&' as 5.
   for (let i = 0; i < 4; i += 1) await store.add(typed('total-esc', 'z'.repeat(3000), { title: '&' }));
-  await store.add(typed('total-esc', `${'<'.repeat(743)}xxx`, { title: '&' }));
+  const r = (await room(store, 'total-esc')) - 5;
+  await store.add(typed('total-esc', `${'<'.repeat(Math.floor(r / 4))}${'x'.repeat(r % 4)}`, { title: '&' }));
+  assert.equal((await store.forPrompt('total-esc')).length, CAPS.hubChars);
   await assert.rejects(store.add(typed('total-esc', '<', { title: 'Z' })), refused('hub_full'));
-  // A title alone can tip it: 4 x 3,006 + 2,972 leaves 4.
+  // A title alone can tip it: leave room for 4.
   for (let i = 0; i < 4; i += 1) await store.add(typed('title-tip', 'z'.repeat(3000)));
-  await store.add(typed('title-tip', 'y'.repeat(2966)));
+  await store.add(typed('title-tip', 'y'.repeat((await room(store, 'title-tip')) - 6 - WRAPPER_CHARS - 4)));
+  assert.equal(await room(store, 'title-tip'), 4);
   await assert.rejects(store.add(typed('title-tip', 'y', { title: 'abcd' })), refused('hub_full'));
   await store.add(typed('title-tip', 'y', { title: 'abc' }));
+  assert.equal((await store.forPrompt('title-tip')).length, CAPS.hubChars);
 
   // The 21st entry is refused.
   for (let i = 0; i < 20; i += 1) await store.add(typed('count', `note ${i}`));
@@ -283,6 +356,7 @@ test('two adds at once, each fitting alone but not together: exactly one is stor
   const held = await store.list('busy');
   assert.equal(held.length, 5);
   assert.equal(held.reduce((n, e) => n + e.text.length + e.title.length, 0), 14030);
+  assert.ok((await store.forPrompt('busy')).length <= CAPS.hubChars);
 
   // The same with the 20-entry cap: 19 held, two at once, one gets in.
   for (let i = 0; i < 19; i += 1) await store.add(typed('many', `n${i}`));
@@ -290,7 +364,8 @@ test('two adds at once, each fitting alone but not together: exactly one is stor
   assert.deepEqual(two.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
   assert.equal((await store.list('many')).length, 20);
   // A failed write does not block the hub's queue.
-  assert.equal((await store.add(typed('busy', 'c'.repeat(900)))).text.length, 900);
+  const rest = (await room(store, 'busy')) - 6;
+  assert.equal((await store.add(typed('busy', 'c'.repeat(rest)))).text.length, rest);
 });
 
 // --- The prompt (D2) ----------------------------------------------------------------
@@ -393,9 +468,9 @@ test('an entry is used as soon as it is added, and is gone once removed', async 
 test('a prompt that would go over 40,000 characters, or a store that fails, refuses that hub\'s call only', async (t) => {
   const { store } = make(t);
   for (let i = 0; i < 4; i += 1) await store.add(typed('heavy', 'h'.repeat(3000)));
-  await store.add(typed('heavy', 'h'.repeat(2970)));
+  await store.add(typed('heavy', 'h'.repeat(2000)));
   // The profile's context fills most of the limit; the full hub then goes over.
-  const big = 'w'.repeat(MAX_CONTEXT_CHARS - 14000);
+  const big = 'w'.repeat(MAX_CONTEXT_CHARS - 13500);
   const { llm, model, log } = makeLlm(store, { readFile: (p) => (p.endsWith('data.md') ? big : '') });
   await assert.rejects(llm.forHub({ id: 'heavy', sees: ['context'] }).ask({ person: MEM, resource: 'ASK', request: 'x' }),
     (err) => err.name === 'LlmUnavailable' && err.reason === 'config');
@@ -412,13 +487,39 @@ test('a prompt that would go over 40,000 characters, or a store that fails, refu
   assert.equal(b.model.calls.length, 0);
 });
 
+test('the final structured prompt, with the request rule and the caller\'s instructions, is checked against 40,000: over refuses that call only', async () => {
+  const { llm, model, log } = makeLlm(null, { readFile: (p) => (p.endsWith('data.md') ? 'w'.repeat(MAX_CONTEXT_CHARS - 1200) : '') });
+  const hub = llm.forHub({ id: 'edge', sees: ['context'] });
+  await assert.rejects(hub.structured({
+    person: MEM, resource: 'ASK', request: 'x', tool: TOOL, instructions: 'i'.repeat(1000),
+  }), (err) => err.name === 'LlmUnavailable' && err.reason === 'config');
+  assert.equal(model.calls.length, 0);
+  assert.ok(log.lines.some((l) => l.msg === 'ai request refused' && l.fields.hub === 'edge'));
+  // The same hub's shorter calls still go.
+  await hub.structured({
+    person: MEM, resource: 'ASK', request: 'x', tool: TOOL, instructions: 'short',
+  });
+  await hub.ask({ person: MEM, resource: 'ASK', request: 'x' });
+  assert.equal(model.calls.length, 2);
+  assert.ok(model.calls[0].system.length <= MAX_CONTEXT_CHARS);
+});
+
 test('a full hub\'s added context, titles and tags included, stays well under 40,000 less /brightside\'s 18,000', async (t) => {
   const { store } = make(t);
-  // 20 entries, each an 80-character title of '&' (400) and 87 '<' (348): 14,960.
-  for (let i = 0; i < 20; i += 1) await store.add(typed('max', '<'.repeat(87), { title: '&'.repeat(80) }));
-  await assert.rejects(store.add(typed('max', '<')), refused('too_many'));
+  // Entries of an 80-character title of '&' (400) and 80 '<' (320) until full.
+  let held = 0;
+  for (;;) {
+    try {
+      await store.add(typed('max', '<'.repeat(80), { title: '&'.repeat(80) }));
+      held += 1;
+    } catch (err) {
+      assert.ok(refused('hub_full')(err) || refused('too_many')(err));
+      break;
+    }
+  }
+  assert.ok(held >= 18, `${held}`);
   const added = await store.forPrompt('max');
-  assert.ok(added.length < 17000, `${added.length}`);
+  assert.ok(added.length <= CAPS.hubChars, `${added.length}`);
   assert.ok(18000 + added.length < MAX_CONTEXT_CHARS);
 });
 
