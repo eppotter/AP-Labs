@@ -459,8 +459,9 @@ test('the AI service has no unbound ask or structured: boot code can reach an AI
     }
   };
   walk(path.join(ROOT, 'kit/runtime'));
-  // extract.js calls the bound service the hub hands it, named llm there.
-  assert.deepEqual(offenders, ['kit/runtime/archetypes/scoped-pull/extract.js']);
+  // extract.js and the build request (Story 16.6) call the bound service the
+  // hub hands them (the module's own hub's view), named llm there.
+  assert.deepEqual(offenders, ['kit/runtime/archetypes/build-request/index.js', 'kit/runtime/archetypes/scoped-pull/extract.js']);
 });
 
 test('a context that can\'t be used: the startup line says the AI is on with a context fault, never plainly on', async (t) => {

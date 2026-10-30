@@ -1,0 +1,9 @@
+{
+  "id": "v0-build-request",
+  "hub": "brightside-v0",
+  "label": "Build request",
+  "description": "Ask the AP Labs team for a new tool or change. You see a preview before it posts.",
+  "resource": "BUILD_REQUEST",
+  "archetype": "build-request",
+  "environments": ["dev", "prod"]
+}

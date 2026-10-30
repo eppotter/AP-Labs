@@ -82,7 +82,10 @@ function setup({ env = 'dev', prof = profile, rows = ROWS } = {}) {
   mail.reset();
   const clock = { t: PINNED };
   const store = createStore({ now: () => clock.t });
-  const app = new FakeSlackApp({ views: true });
+  // The bot is a member of the profile's ops channel, if it names one (the
+  // fake refuses a channel the bot isn't in, as Slack does; Story 16.6).
+  const ops = prof.slack && prof.slack.ops_channel;
+  const app = new FakeSlackApp({ views: true, channels: ops ? [ops] : [] });
   const log = quietLog();
   const connectorEnv = {};
   const granted = { on: true };

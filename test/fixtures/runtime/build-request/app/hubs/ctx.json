@@ -1,0 +1,9 @@
+{
+  "id": "ctx",
+  "command": "/ctx",
+  "name": "Context tools",
+  "description": "Open the Context tools menu",
+  "sees": [
+    "context"
+  ]
+}

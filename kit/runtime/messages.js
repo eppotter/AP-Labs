@@ -302,6 +302,29 @@ const PUSH_WORDS = Object.freeze({
   empty: "This list has no rows, so there's nothing to push.",
 });
 
+// Build request's own words (plan brightside-v0, D11, Story 16.6). Fixed
+// text, plain and each with a next step; admin is Slack mrkdwn
+// (access.adminContact), maxChars and minutes are the engine's numbers.
+const BUILD_REQUEST_WORDS = Object.freeze({
+  label: () => 'What do you need?',
+  hint: (maxChars) => `Describe the tool or change you'd like, in your own words (${maxChars} characters at most). You'll see a preview before anything is posted.`,
+  empty: () => 'Type what you need first.',
+  tooLong: (maxChars) => `That's too long: ${maxChars} characters at most.`,
+  thinking: () => 'Thinking…',
+  willPost: () => 'This will post to the build-request channel as you:',
+  notSummarised: () => "The AI helper couldn't summarise this just now, so the preview shows your own words, not summarised.",
+  posted: () => 'Posted. The AP Labs team will pick it up.',
+  posting: () => 'This request is being posted now. It will only be posted once.',
+  alreadyPosted: () => 'This request was already posted. It is only posted once.',
+  cancelled: () => 'Cancelled. Nothing was posted. Press Back to return to the menu.',
+  wasCancelled: () => 'This request was cancelled, so nothing was posted. Press Back and open Build request to start again.',
+  expired: (minutes) => `This preview has expired (a preview lasts ${minutes} minutes), so nothing was posted. Press Back and open Build request to start again.`,
+  notYours: () => "This preview belongs to someone else's window, so I can't post it. Press Back and open Build request to start your own.",
+  refused: (admin) => `Slack didn't take the post, so nothing was posted. Press Try again, or Back to leave it. If it keeps happening, tell ${admin}.`,
+  notSetUp: (admin) => `Build requests aren't set up yet: no channel to post them to. Ask ${admin} to set one up.`,
+  notOnThisHub: () => 'Build request is not available on this hub yet. Use it from a hub that has no business context or data.',
+});
+
 // Hub wording (Story 6.4). A hub file may set its own welcome and feedback
 // lines; these defaults keep a hub without them working.
 function welcomeText(hub) {
@@ -339,4 +362,5 @@ function messageFor(err, { admin = 'your admin' } = {}) {
 
 module.exports = {
   messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, READ_WORDS, MAP_WORDS, ROUTE_WORDS,
+  BUILD_REQUEST_WORDS,
 };
