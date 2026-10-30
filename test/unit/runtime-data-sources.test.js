@@ -316,10 +316,12 @@ test('a data-sources manifest has no handler, query, parameters, scoring or row_
 const MENU = (hub) => ({ id: 'VMENU', type: 'modal', private_metadata: hub, hash: 'hmenu' });
 const calls = (app, method) => app.views.filter((v) => v.method === method).map((v) => v.args);
 
-function setup({ data = fakeData(), rules = reader(), views = true } = {}) {
+function setup({
+  data = fakeData(), rules = reader(), views = true, knowledge = null,
+} = {}) {
   const app = new FakeSlackApp({ views });
   const log = quietLog();
-  const hubViews = createHubViews({ hubs: registry.hubs, data });
+  const hubViews = createHubViews({ hubs: registry.hubs, data, knowledge });
   registerHubs(app, {
     registry, profile, env: 'dev', log, store: createStore(), forHub: hubViews.forHub, rules,
   });
@@ -472,9 +474,10 @@ test('a data-sources module hidden in this environment is refused as not availab
   assert.deepEqual(blockTexts(calls(app2, 'push')[0].view.blocks), [NOT_AVAILABLE]);
 });
 
-test('at boot the app reads the rules beside the profile: Data sources on the full hub shows the fixture\'s truths', async () => {
+test('at boot the app reads the rules beside the profile: Data sources on the full hub shows the fixture\'s truths', async (t) => {
   const { main } = require('../../kit/runtime/app');
   const lines = [];
+  const varDir = tmpDir(t, 'ds-boot-var');
   const data = { ...fakeData(), open: async () => {}, close: () => {} };
   const res = await main({
     env: {
@@ -483,6 +486,7 @@ test('at boot the app reads the rules beside the profile: Data sources on the fu
       SLACK_APP_TOKEN: 'xapp-1-A000-222-fakeappvalue',
       APLABS_PROFILE: PROFILE_PATH,
       APLABS_APP_DIR: path.join(FIX, 'app'),
+      APLABS_VAR_DIR: varDir,
     },
     cwd: os.tmpdir(),
     deps: { App: FakeSlackApp, write: (l) => lines.push(l), data },
@@ -498,4 +502,38 @@ test('at boot the app reads the rules beside the profile: Data sources on the fu
   for (const s of NEVER) assert.ok(!JSON.stringify(res.app.responded).includes(s), s);
   res.engineJobs.stop();
   res.jobs.stop();
+});
+
+// --- added context (the hub's knowledge store, Story 16.4) -----------------------------
+
+const { createKnowledgeStore } = require('../../kit/runtime/knowledge/store');
+
+test('Data sources lists the hub\'s own added context (title, who, when), never an entry\'s text or another hub\'s entries', async (t) => {
+  const varDir = tmpDir(t, 'ds-var');
+  const now = Date.parse('2026-10-30T09:15:00Z');
+  const knowledge = createKnowledgeStore({ clientId: 'tiny', varDir, log: quietLog(), now: () => now });
+  await knowledge.add({ hub: 'blank', kind: 'text', title: 'Prices & <hours>', text: 'ENTRY_TEXT_NEVER_SHOWN', addedBy: 'UADA' });
+  await knowledge.add({ hub: 'full', kind: 'text', title: 'Other hub note', text: 'x', addedBy: 'UADA' });
+  const { app } = setup({ knowledge });
+  await app.dispatchAction('blank-sources:open', { user: ADMIN, view: MENU('blank') });
+  const [push] = calls(app, 'push');
+  assert.deepEqual(blockTexts(push.view.blocks), [
+    'No data connected yet. No known truths or rules yet.',
+    '*Added context*\n• Prices &amp; &lt;hours&gt; by <@UADA> on 2026-10-30',
+  ]);
+  const json = JSON.stringify(app.views);
+  assert.ok(!json.includes('ENTRY_TEXT_NEVER_SHOWN'));
+  assert.ok(!json.includes('Other hub note'));
+});
+
+test('way out, the added context can\'t be listed: "None yet." with the plain note naming the admin, and Back', async () => {
+  const knowledge = { forHub: () => ({ list: async () => { throw Object.assign(new Error('SECRET_CAUSE'), { code: 'EACCES' }); } }) };
+  const { app, log: hubLog } = setup({ knowledge });
+  await app.dispatchAction('blank-sources:open', { user: ADMIN, view: MENU('blank') });
+  const [push] = calls(app, 'push');
+  assert.equal(push.view.close.text, 'Back');
+  assert.match(push.view.blocks[0].text.text, /^Some of this couldn't be read just now.*ask <@UADA>\.$/);
+  assert.match(allText(push.view.blocks), /\*Added context\*\nNone yet\./);
+  assert.ok(!JSON.stringify(app.views).includes('SECRET_CAUSE'));
+  assert.deepEqual(hubLog.lines.find((l) => l.msg === 'added context not listed').fields, { hub: 'blank', reason: 'EACCES' });
 });

@@ -9,6 +9,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { main } = require('../../../kit/runtime/app');
@@ -20,6 +21,9 @@ const ADMIN_SLACK = 'U0FIXTUREDANA'; // Dana, the fixture's admin
 
 async function boot(t) {
   const lines = [];
+  // An empty var dir: the added-context store reads nothing a local run left.
+  const varDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-v0-var-')));
+  t.after(() => fs.rmSync(varDir, { recursive: true, force: true }));
   const res = await main({
     env: {
       APLABS_NO_KEYCHAIN: '1',
@@ -29,6 +33,7 @@ async function boot(t) {
       APLABS_PROFILE: PROFILE,
       APLABS_APP_DIR: path.join(ROOT, 'examples/brightside/app'),
       APLABS_DATA_PATH: path.join(os.tmpdir(), 'aplabs-no-such-v0-data.duckdb'),
+      APLABS_VAR_DIR: varDir,
     },
     cwd: os.tmpdir(),
     deps: { App: FakeSlackApp, write: (line) => lines.push(line), readKeychain: () => assert.fail('no Keychain') },

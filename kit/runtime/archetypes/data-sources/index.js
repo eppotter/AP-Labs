@@ -11,9 +11,9 @@
 //                           and its last verify result on this machine ("not
 //                           checked on this machine" without one). Never a
 //                           truth's expect (the client's number) or run.
-//   Added context           what admins added on this hub (titles, who, when):
-//                           "None yet." until the knowledge store (Story 16.4)
-//                           is handed in.
+//   Added context           what admins added on this hub (titles, who, when),
+//                           from the hub view's knowledge store (Story 16.4;
+//                           entriesOf), else "None yet." Never an entry's text.
 //
 // A hub that sees neither data nor rules (the v0 hub) reads: "No data
 // connected yet. No known truths or rules yet." then its added context.
@@ -96,13 +96,31 @@ function contextLines(entries) {
   });
 }
 
+// The hub's added context: { entries, problem }. A hub view with no
+// knowledge store has none; a list that fails is none, with problem set
+// (logged with the hub only).
+async function entriesOf(view, log) {
+  const store = view && view.knowledge;
+  if (!store || typeof store.list !== 'function') return { entries: [], problem: false };
+  try {
+    const entries = await store.list();
+    return { entries: Array.isArray(entries) ? entries : [], problem: false };
+  } catch (err) {
+    if (log) log.warn('added context not listed', { hub: view.id || null, reason: (err && err.code) || 'error' });
+    return { entries: [], problem: true };
+  }
+}
+
 // The view's message: { text, blocks }. ready: readiness() for the hub.
-// entries: the hub's added context ([] until Story 16.4). admin: who to
-// ask, as Slack mrkdwn (kit/runtime/access adminContact).
-function render({ ready, entries = [], admin = 'your admin' }) {
+// entries: the hub's added context (entriesOf). contextProblem: the list
+// could not be read. admin: who to ask, as Slack mrkdwn (kit/runtime/access
+// adminContact).
+function render({
+  ready, entries = [], contextProblem = false, admin = 'your admin',
+}) {
   const { data, rules } = ready.detail;
   const sections = [];
-  if (data.problem || rules.problem) {
+  if (data.problem || rules.problem || contextProblem) {
     sections.push(`Some of this couldn't be read just now, so it may show less than is set up. Press Back and try again in a minute, or ask ${admin}.`);
   }
   if (!data.seen && !rules.seen) {
@@ -116,5 +134,5 @@ function render({ ready, entries = [], admin = 'your admin' }) {
 }
 
 module.exports = {
-  render, NOTHING_YET, NO_DATA, NO_RULES, NO_CONTEXT, NOT_CHECKED,
+  render, entriesOf, NOTHING_YET, NO_DATA, NO_RULES, NO_CONTEXT, NOT_CHECKED,
 };

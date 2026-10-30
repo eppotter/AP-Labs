@@ -785,8 +785,11 @@ function registerHubs(app, {
       }
       if (mod.archetype === 'data-sources') {
         log.info('module dispatched', { module: mod.id, hub: mod.hub });
-        // Added context is listed once the hub's knowledge store is handed in (Story 16.5).
-        await target.reply(dataSources.render({ ready: readiness(viewOf(mod.hub), { rules }), entries: [], admin }));
+        const hubView = viewOf(mod.hub);
+        const listed = await dataSources.entriesOf(hubView, log);
+        await target.reply(dataSources.render({
+          ready: readiness(hubView, { rules }), entries: listed.entries, contextProblem: listed.problem, admin,
+        }));
         return;
       }
       if (QUERY_ARCHETYPES.has(mod.archetype)) {
