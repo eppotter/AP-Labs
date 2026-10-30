@@ -86,6 +86,11 @@ resources:
   - key: ROUTING_OWN_CREW
     label: Routing map, own crew only (crew leads)
     admin_grantable: false
+  # Runtime: Data sources on /brightside-v0 (plan brightside-v0, Story 16.3, D8): what data,
+  # known truths, rules and added context a hub has. Not open_access: on a hub that sees rules
+  # it lists the known truths and who signed them off. The admin role confers it.
+  - key: DATA_SOURCES
+    label: Data sources
 
 users:
   - id: dana

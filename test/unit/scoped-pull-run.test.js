@@ -408,7 +408,7 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
     'store, log, run: createRunner({ data: view.data, log, admin, store, hooks }), read: view.llm ? createReader({ llm: view.llm, log }) : null,',
   ]);
   const app = fs.readFileSync(path.join(ROOT, 'kit/runtime/app/index.js'), 'utf8');
-  assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, forHub, connectors, mapFiles \}\)/);
+  assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, forHub, connectors, mapFiles, rules \}\)/);
   // The approval-write archetype (Story 10.2) shows rows too: none of its files reaches or names the AI.
   const writeDir = path.join(ROOT, 'kit/runtime/archetypes/approval-write');
   for (const f of fs.readdirSync(writeDir)) {

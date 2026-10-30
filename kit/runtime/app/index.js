@@ -98,6 +98,7 @@ const { createLog, slackLogger } = require('../log');
 const { registerGreeting } = require('../slack/greeting');
 const { registerHubs } = require('../slack/hubs');
 const { createHubViews, bootProblems } = require('../slack/hub-view');
+const { createRulesReader } = require('../knowledge/readiness');
 const { loadRegistry, ENV_PATTERN } = require('../registry');
 const { createStore } = require('../store');
 const { createData, dataPathFor, sourceOf } = require('../data');
@@ -240,9 +241,10 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
 // injectable so tests use a fake Slack client.
 // sweeping(name): true while that engine job runs (main's engine jobs).
 // forHub: each hub's view (kit/runtime/slack/hub-view); the hubs never get
-// the app-wide runner or AI service.
+// the app-wide runner or AI service. profilePath: where Data sources reads
+// the client files beside the profile (kit/runtime/knowledge/readiness).
 function createApp({
-  tokens, profile, registry, env, store, forHub, log, App, connectors = null, sweeping = () => false,
+  tokens, profile, profilePath = null, registry, env, store, forHub, log, App, connectors = null, sweeping = () => false,
 }) {
   const AppClass = App || require('@slack/bolt').App;
   const app = new AppClass({
@@ -259,7 +261,9 @@ function createApp({
   const mapFiles = createMapFiles({
     store, client: app.client, log, sweeping: () => sweeping(SWEEP_MAP_FILES),
   });
-  registerHubs(app, { registry, profile, env, log, store, forHub, connectors, mapFiles });
+  // Data sources' rules: the client files beside the profile (Story 16.3).
+  const rules = createRulesReader({ profile, profilePath });
+  registerHubs(app, { registry, profile, env, log, store, forHub, connectors, mapFiles, rules });
   return app;
 }
 

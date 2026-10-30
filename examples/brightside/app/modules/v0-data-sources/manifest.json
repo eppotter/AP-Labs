@@ -1,0 +1,9 @@
+{
+  "id": "v0-data-sources",
+  "hub": "brightside-v0",
+  "label": "Data sources",
+  "description": "See what data, known truths, rules and added context this bot has.",
+  "resource": "DATA_SOURCES",
+  "archetype": "data-sources",
+  "environments": ["dev", "prod"]
+}

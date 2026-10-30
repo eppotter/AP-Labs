@@ -57,6 +57,10 @@
 // not see data may hold is decided at boot by kit/runtime/slack/hub-view
 // (bootProblems).
 //
+// Plan brightside-v0 (Story 16.3): data-sources is accepted
+// (kit/runtime/archetypes/data-sources). The engine shows it, so its manifest
+// has no handler, query, parameters, scoring or row_id.
+//
 // Story 15.14: a routing-map module may name its screen: "views" (the
 // default) or "route-editor" (Plan a route, AD-R26). Whether the profile has
 // routing.depot and the adapter a route() is checked when it opens (the hub
@@ -73,7 +77,7 @@ const { forbiddenColumnsOf } = require('../sql');
 
 const SCHEMA_DIR = path.join(__dirname, '../schema');
 // Archetypes whose engine code exists (every archetype the schema names).
-const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write', 'routing-map']);
+const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write', 'routing-map', 'data-sources']);
 // The archetypes the engine runs from a fixed SQL file and a typed form.
 const QUERY_ARCHETYPES = new Set(['scoped-pull', 'approval-write']);
 const ENV_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -260,6 +264,12 @@ function routingMapProblems(m, file, profile) {
   return problems;
 }
 
+// What a data-sources manifest may not hold: the engine shows it (Story 16.3).
+const NOT_DATA_SOURCES = Object.freeze(['handler', 'query', 'parameters', 'scoring', 'row_id']);
+const dataSourcesProblems = (m, file) => NOT_DATA_SOURCES
+  .filter((key) => m[key] !== undefined)
+  .map((key) => `${file}: field "${key}" is not used by a data-sources module (the engine shows it)`);
+
 // A scoped-pull's SQL template, read once, then checked (checkQuery).
 function loadQuery(abs, file, problems) {
   try {
@@ -311,7 +321,12 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
       problems.push(`${file}: field "handler" is not used by ${m.archetype === 'approval-write' ? 'an' : 'a'} ${m.archetype} module (the engine runs its form)`);
     }
     if (m.archetype === 'routing-map') problems.push(...routingMapProblems(m, file, profile));
+    if (m.archetype === 'data-sources') problems.push(...dataSourcesProblems(m, file));
     if (problems.length > before) continue;
+    if (m.archetype === 'data-sources') {
+      modules.push(Object.freeze({ ...m, file }));
+      continue;
+    }
     if (m.archetype === 'routing-map') {
       const createAdapter = loadAdapter(path.join(appDir, 'modules', folder, m.adapter), file, problems);
       if (createAdapter) modules.push(Object.freeze({ ...m, file, createAdapter }));
@@ -372,5 +387,5 @@ function isVisible(entry, env) {
 }
 
 module.exports = {
-  loadRegistry, loadHubs, loadModules, createRegistry, isVisible, ENV_PATTERN, QUERY_ARCHETYPES, HUB_SEES,
+  loadRegistry, loadHubs, loadModules, createRegistry, isVisible, ENV_PATTERN, QUERY_ARCHETYPES, BUILT_ARCHETYPES, HUB_SEES,
 };
