@@ -164,13 +164,32 @@
 // the hub instance holding its session. The AI service reaches only the
 // scoped-pull reader, bound to its hub. data and llm, given instead of
 // forHub, are a test seam (hub-view everyHubSeesAll); boot never passes them.
+//
+// Add context, typed (plan brightside-v0, D4, D13, Story 16.5): Open on an
+// add-context module (kit/runtime/archetypes/add-context) pushes its form,
+// with the hub's entries below it, as the module's view (from an old message
+// menu, or when the push falls back to a private reply, the person is told
+// to open it from the hub window: a form is never sent as a message). Its
+// submit ("Add") answers in the ack: errors beside the boxes for the
+// instant checks, else "Saving…" in the view. After the ack the entry goes
+// into the hub view's knowledge store, and the view is updated (views.update
+// on the submitted view's id, with no hash: the ack replaced the view, so
+// the submit's hash is stale, and "Saving…" has nothing to click) to "Added.
+// Ask can use it now." with the list, or to why it wasn't added (the hub's
+// context full, a store failure), with Back. When the person has closed the
+// view meanwhile, the entry is still stored, and Slack's not_found is logged
+// at info with the hub only. Remove (a confirm dialog first) updates the
+// view the click came from in place. Access is re-checked at Open, at the
+// submit and at each Remove; the hub is the module's, never the payload's.
 
 const access = require('../access');
 const {
   NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
 } = require('../errors');
 const { messageFor, welcomeText, feedbackText, joinWelcomeText } = require('../messages');
-const { handle, handleView, PLAIN_ERROR } = require('./handle');
+const {
+  handle, handleView, afterAck, PLAIN_ERROR,
+} = require('./handle');
 const {
   buildMenu, buildHelp, moduleIdFromAction, hubIdFromHelpAction, OPEN_ACTION, HELP_ACTION,
 } = require('../registry/menu');
@@ -199,6 +218,8 @@ const routingAudience = require('../archetypes/routing-map/audience');
 const { createRoutingMap, LISTEN_PATTERN: ROUTING_MAP_ACTION } = require('../archetypes/routing-map');
 const dataSources = require('../archetypes/data-sources');
 const { readiness } = require('../knowledge/readiness');
+const addContext = require('../archetypes/add-context');
+const { ContextRefused } = require('../errors');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
@@ -397,6 +418,7 @@ function registerHubs(app, {
   };
   const resolveForm = (person, actionId) => resolveModule(person, actionId, QUERY_ARCHETYPES);
   const WRITES = new Set(['approval-write']);
+  const ADD_CONTEXT = new Set(['add-context']);
 
   // Where a click's replies go. From a hub modal: a view pushed onto it
   // (reply() pushes, then appends; loading() pushes "Loading…" first). From a
@@ -692,6 +714,81 @@ function registerHubs(app, {
     }
   };
 
+  // Add context (Story 16.5). The hub's knowledge store, or null (logged:
+  // boot always makes one, so its absence is a setup fault).
+  const knowledgeOf = (mod) => {
+    const knowledge = viewOf(mod.hub).knowledge;
+    if (!knowledge) log.error('add context has no knowledge store', { module: mod.id, hub: mod.hub });
+    return knowledge;
+  };
+  const openAddContext = async (mod, target) => {
+    if (!knowledgeOf(mod)) {
+      await target.reply(addContext.NO_STORE(admin));
+      return;
+    }
+    if (!target.modal) {
+      await target.reply(FORM_NEEDS_WINDOW);
+      return;
+    }
+    const listed = await dataSources.entriesOf(viewOf(mod.hub), log);
+    await target.reply({
+      ...addContext.form({
+        hubId: mod.hub, moduleId: mod.id, entries: listed.entries, problem: listed.problem, admin,
+      }),
+      ephemeralFallback: FORM_NEEDS_WINDOW,
+    });
+  };
+  // A result shown after the ack (D13): views.update on the view's id. A view
+  // the person closed meanwhile is Slack's not_found, logged at info.
+  const showAfterAck = async ({
+    client, viewId, title, hubId, message, where,
+  }) => {
+    if (!hasViews(client) || typeof viewId !== 'string' || !viewId) {
+      log.warn('result not shown', { where, reason: 'no view', hub: hubId });
+      return;
+    }
+    const shown = screened(where, message);
+    try {
+      await client.views.update({ view_id: viewId, view: moduleView({ title, hubId, blocks: messageBlocks(shown), message: shown }) });
+    } catch (err) {
+      const reason = failureReason(err);
+      if (reason === 'not_found') log.info('view closed before its result', { where, hub: hubId });
+      else log.error('result not shown', { where, reason, hub: hubId });
+    }
+  };
+  // Stores what was typed, then shows how it went. Never throws for a store
+  // problem: the person is told in the view.
+  const saveEntry = async ({
+    client, viewId, title, mod, knowledge, person, typed,
+  }) => {
+    let note;
+    try {
+      await knowledge.add({
+        kind: 'text', title: typed.title, text: typed.text, addedBy: person.id,
+      });
+      note = addContext.ADDED;
+    } catch (err) {
+      if (err instanceof ContextRefused) {
+        log.info('added context refused', { hub: mod.hub, reason: err.reason });
+        note = messageFor(err);
+      } else {
+        log.error('added context not saved', { hub: mod.hub, reason: (err && err.code) || 'error' });
+        note = addContext.saveFailed(admin);
+      }
+    }
+    const listed = await dataSources.entriesOf(viewOf(mod.hub), log);
+    await showAfterAck({
+      client,
+      viewId,
+      title,
+      hubId: mod.hub,
+      where: 'add-context',
+      message: addContext.result({
+        hubId: mod.hub, moduleId: mod.id, note, entries: listed.entries, problem: listed.problem, admin,
+      }),
+    });
+  };
+
   for (const hub of registry.hubs) {
     app.command(hub.command, handle(`hub:${hub.id}`, async ({ command, respond, client }) => {
       const person = personOf(command.user_id);
@@ -790,6 +887,11 @@ function registerHubs(app, {
         await target.reply(dataSources.render({
           ready: readiness(hubView, { rules }), entries: listed.entries, contextProblem: listed.problem, admin,
         }));
+        return;
+      }
+      if (mod.archetype === 'add-context') {
+        log.info('module dispatched', { module: mod.id, hub: mod.hub });
+        await openAddContext(mod, target);
         return;
       }
       if (QUERY_ARCHETYPES.has(mod.archetype)) {
@@ -1098,6 +1200,104 @@ function registerHubs(app, {
         await view.show(PLAIN_ERROR);
       } catch (showErr) {
         log.error('could not tell the person about a failure', { handler: 'hub:approval', err: showErr });
+      }
+    }
+  }, { log, store }));
+
+  // Add context's submit (Story 16.5, D13). The instant checks answer in the
+  // ack; the store is written after it (afterAck), then the view updated.
+  const answerIn = (view, hubId, message) => {
+    const shown = screened('add-context', message);
+    return {
+      response_action: 'update',
+      view: moduleView({
+        title: view && view.title && view.title.text, hubId, blocks: messageBlocks(shown), message: shown,
+      }),
+    };
+  };
+  app.view(addContext.SUBMIT_CALLBACK, handleView('hub:add-context', ({ body, client }) => {
+    const view = body.view || {};
+    const person = personOf((body.user || {}).id);
+    const { hubId, moduleId } = addContext.parseMetadata(view.private_metadata);
+    const found = resolveModule(person, addContext.SUBMIT_CALLBACK, ADD_CONTEXT)(moduleId);
+    if (found.refusal) return answerIn(view, hubId, found.refusal);
+    const { mod } = found;
+    if (mod.hub !== hubId) {
+      log.warn('hub action refused', { action_id: addContext.SUBMIT_CALLBACK, reason: 'not on this hub', env });
+      return answerIn(view, hubId, NOT_AVAILABLE);
+    }
+    const knowledge = knowledgeOf(mod);
+    if (!knowledge) return answerIn(view, hubId, addContext.NO_STORE(admin));
+    const typed = addContext.readState(view.state);
+    const errors = addContext.fieldErrors(typed);
+    if (errors) return { response_action: 'errors', errors };
+    const title = view.title && view.title.text;
+    return afterAck(answerIn(view, mod.hub, addContext.saving({ hubId: mod.hub, moduleId: mod.id })), () => saveEntry({
+      client, viewId: view.id, title, mod, knowledge, person, typed,
+    }));
+  }, {
+    log,
+    onError: ({ body }) => answerIn(body && body.view, addContext.parseMetadata(body && body.view && body.view.private_metadata).hubId, PLAIN_ERROR),
+  }));
+
+  // Remove, on an entry in Add context's view (Story 16.5), after Slack's
+  // confirm dialog. Updates the view the click came from in place (the form
+  // stays a form, a result a result), re-checking access first.
+  app.action(addContext.REMOVE_ACTION, handle('hub:add-context-remove', async ({
+    action, body, client, respond,
+  }) => {
+    const from = body.view;
+    if (!from || typeof from.id !== 'string' || !from.id || !hasViews(client)) {
+      fellBack('add-context', from ? 'no views client' : 'not from a modal', null);
+      if (typeof respond === 'function') await respond(ephemeral(FORM_NEEDS_WINDOW));
+      return;
+    }
+    const { hubId } = addContext.parseMetadata(from.private_metadata);
+    const view = updatedView({
+      client, view: from, title: from.title && from.title.text, hubId,
+    });
+    const show = async (message) => {
+      const status = await view.show(screened('add-context', message), { force: true });
+      if (status === 'forced') log.info('stale view replaced by a confirmed result', { action: 'remove', reason: 'hash_conflict' });
+      return status;
+    };
+    const person = personOf((body.user || {}).id);
+    try {
+      const target = addContext.parseRemoveValue(action && action.value);
+      const found = resolveModule(person, addContext.REMOVE_ACTION, ADD_CONTEXT)(target ? target.moduleId : null);
+      if (found.refusal) {
+        await show(found.refusal);
+        return;
+      }
+      const { mod } = found;
+      if (mod.hub !== hubId) {
+        log.warn('hub action refused', { action_id: addContext.REMOVE_ACTION, reason: 'not on this hub', env });
+        await show(NOT_AVAILABLE);
+        return;
+      }
+      const knowledge = knowledgeOf(mod);
+      if (!knowledge) {
+        await show(addContext.NO_STORE(admin));
+        return;
+      }
+      let note;
+      try {
+        note = (await knowledge.remove({ id: target.entryId, removedBy: person.id })) ? addContext.REMOVED : addContext.ALREADY_REMOVED;
+      } catch (err) {
+        log.error('added context not removed', { hub: mod.hub, reason: (err && err.code) || 'error' });
+        note = addContext.removeFailed(admin);
+      }
+      const listed = await dataSources.entriesOf(viewOf(mod.hub), log);
+      const shown = {
+        hubId: mod.hub, moduleId: mod.id, note, entries: listed.entries, problem: listed.problem, admin,
+      };
+      await show(from.callback_id === addContext.SUBMIT_CALLBACK ? addContext.form(shown) : addContext.result(shown));
+    } catch (err) {
+      log.error('handler failed', { handler: 'hub:add-context-remove', err });
+      try {
+        await view.show(PLAIN_ERROR);
+      } catch (showErr) {
+        log.error('could not tell the person about a failure', { handler: 'hub:add-context-remove', err: showErr });
       }
     }
   }, { log, store }));

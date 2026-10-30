@@ -1,0 +1,9 @@
+{
+  "id": "blank-sources",
+  "hub": "blank",
+  "label": "Data sources",
+  "description": "See what data, known truths, rules and added context this bot has.",
+  "resource": "DATA_SOURCES",
+  "archetype": "data-sources",
+  "environments": ["dev", "prod"]
+}

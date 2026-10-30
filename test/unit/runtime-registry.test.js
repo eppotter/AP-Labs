@@ -122,9 +122,9 @@ test('a module on a declared resource that is not open_access registers (access 
   assert.equal(registry.module('echo').resource, 'CLOSED_THING');
 });
 
-test('every archetype the schema names is built: approval-write is accepted (Story 10.2), data-sources too (Story 16.3)', () => {
+test('every archetype the schema names is built: approval-write is accepted (Story 10.2), data-sources (Story 16.3) and add-context (Story 16.5) too', () => {
   const schema = JSON.parse(fs.readFileSync(path.join(__dirname, '../../kit/runtime/schema/module.schema.json'), 'utf8'));
-  assert.deepEqual(schema.properties.archetype.enum, ['handler', 'scoped-pull', 'approval-write', 'routing-map', 'data-sources']);
+  assert.deepEqual(schema.properties.archetype.enum, ['handler', 'scoped-pull', 'approval-write', 'routing-map', 'data-sources', 'add-context']);
   assert.deepEqual([...require('../../kit/runtime/registry').BUILT_ARCHETYPES], schema.properties.archetype.enum);
   const { registry, problems } = loadApproval();
   assert.deepEqual(problems, []);

@@ -1,0 +1,7 @@
+{
+  "id": "other",
+  "command": "/other",
+  "name": "Other tools",
+  "description": "Open the Other menu",
+  "sees": []
+}

@@ -1,0 +1,12 @@
+# Add context test profile (Story 16.5, plan brightside-v0 D8): ADD_CONTEXT
+# and DATA_SOURCES, which the admin role confers, and ASK for the injection
+# test's AI call. Ada is an admin; Marcus a member with no grants.
+schema_version: 1
+client: { id: tiny, name: Tiny }
+resources:
+  - { key: ADD_CONTEXT, label: Add context }
+  - { key: DATA_SOURCES, label: Data sources }
+  - { key: ASK, label: Ask }
+users:
+  - { id: ada, name: Ada, role: admin, identities: { slack: UADA } }
+  - { id: marcus, name: Marcus, role: member, identities: { slack: UMARCUS } }
