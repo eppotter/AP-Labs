@@ -1,0 +1,12 @@
+{
+  "id": "full-add",
+  "hub": "full",
+  "label": "Add context",
+  "description": "A fixture tool.",
+  "resource": "ADD_CONTEXT",
+  "archetype": "add-context",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

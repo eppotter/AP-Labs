@@ -1,0 +1,14 @@
+{
+  "id": "full-report-c",
+  "hub": "full",
+  "label": "Crew report",
+  "description": "A fixture tool.",
+  "resource": "TOOL",
+  "archetype": "handler",
+  "group": "Reports",
+  "handler": "handler.js",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

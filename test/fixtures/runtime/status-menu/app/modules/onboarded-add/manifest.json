@@ -1,0 +1,12 @@
+{
+  "id": "onboarded-add",
+  "hub": "onboarded",
+  "label": "Add context",
+  "description": "A fixture tool.",
+  "resource": "ADD_CONTEXT",
+  "archetype": "add-context",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

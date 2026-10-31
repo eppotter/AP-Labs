@@ -1,0 +1,14 @@
+{
+  "id": "full-tool-c",
+  "hub": "full",
+  "label": "Notes",
+  "description": "A fixture tool.",
+  "resource": "TOOL",
+  "archetype": "handler",
+  "group": "Tools",
+  "handler": "handler.js",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

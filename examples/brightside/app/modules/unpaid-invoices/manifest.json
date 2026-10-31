@@ -5,6 +5,7 @@
   "description": "Invoices with money still owed at the data's as-of date, oldest due date first, with what is left to pay.",
   "resource": "UNPAID_INVOICES",
   "archetype": "scoped-pull",
+  "group": "Lists",
   "environments": ["dev", "prod"],
   "parameters": [
     {

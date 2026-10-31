@@ -1,0 +1,12 @@
+{
+  "id": "blank-request",
+  "hub": "blank",
+  "label": "Request a tool",
+  "description": "A fixture tool.",
+  "resource": "BUILD_REQUEST",
+  "archetype": "build-request",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

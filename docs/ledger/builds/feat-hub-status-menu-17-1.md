@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-10-31 | 17.1 | feature | T3 | The groundwork for the new hub menu, with nothing new in Slack yet: one module holds every status mark, word and verb; each tool's status and the hub's setup counts (notes, sources, signed-off truths, approved rules) are worked out from what the hub already knows; the rules reader counts approved rule cards and skips any client file over 256 KB; an unreadable notes folder reads as "couldn't check", not 0; and manifests may name a menu `verb` and `group`. | DEP-038, DEP-039 |

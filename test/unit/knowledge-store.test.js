@@ -172,12 +172,12 @@ test('an unreadable or malformed entry file is skipped and logged by id; the res
   await store.add(typed('hub-a', 'More.'));
 });
 
-test('a folder that can\'t be listed is logged and gives no entries; it never throws', async (t) => {
+test('a folder that can\'t be listed is logged; list() rejects (never "no entries", plan hub-status-menu P2-4), forPrompt gives none', async (t) => {
   const failing = {
     lstat: async () => { throw Object.assign(new Error('nope'), { code: 'EACCES' }); },
   };
   const { store, log } = make(t, { fs: failing });
-  assert.deepEqual(await store.list('hub-a'), []);
+  await assert.rejects(store.list('hub-a'), (err) => err.code === 'EACCES' && !/nope/.test(err.message));
   assert.equal(await store.forPrompt('hub-a'), '');
   assert.deepEqual(log.lines.map((l) => [l.msg, l.fields]), [
     ['added context unreadable; none used', { hub: 'hub-a', error: 'EACCES' }],

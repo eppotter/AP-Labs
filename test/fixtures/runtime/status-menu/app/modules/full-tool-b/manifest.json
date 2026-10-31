@@ -1,0 +1,14 @@
+{
+  "id": "full-tool-b",
+  "hub": "full",
+  "label": "Outbox",
+  "description": "A fixture tool.",
+  "resource": "TOOL",
+  "archetype": "handler",
+  "verb": "View",
+  "handler": "handler.js",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

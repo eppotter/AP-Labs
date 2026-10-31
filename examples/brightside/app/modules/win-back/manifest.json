@@ -5,6 +5,8 @@
   "description": "Clients in one zone whose plan lapsed recently and who have no plan now, best win-back prospects first.",
   "resource": "WIN_BACK",
   "archetype": "approval-write",
+  "verb": "Review",
+  "group": "Lists",
   "environments": ["dev", "prod"],
   "parameters": [
     {

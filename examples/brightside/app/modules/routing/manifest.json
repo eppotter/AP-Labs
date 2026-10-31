@@ -5,6 +5,7 @@
   "description": "Each crew's day on a map: suggestions only, nothing is changed",
   "resource": "ROUTING_ALL_CREWS",
   "archetype": "routing-map",
+  "group": "Routing",
   "environments": ["dev"],
   "adapter": "adapter.js"
 }

@@ -13,6 +13,8 @@
     "description": { "description": "One line under the button.", "type": "string", "$ref": "#/$defs/text", "maxLength": 200 },
     "resource": { "description": "The profile resource key that grants it.", "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
     "archetype": { "enum": ["handler", "scoped-pull", "approval-write", "routing-map", "data-sources", "add-context", "build-request", "ask"] },
+    "verb": { "description": "The menu button's word (plan hub-status-menu, D10). Defaults by archetype: Ask for ask, Add for add-context, View for data-sources and routing-map, Request for build-request, Run for the rest. The button still opens the module; Why? is never set here.", "enum": ["Ask", "Run", "View", "Add", "Review", "Request"] },
+    "group": { "description": "The menu header the module sits under (plan hub-status-menu, D5): groups in the order their first module appears, then the ungrouped ones under Tools. One line, at most 40 characters. Not used by add-context or data-sources: the engine puts them in the admins' Setup group.", "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^\\r\\n\\u2028\\u2029]*\\S[^\\r\\n\\u2028\\u2029]*$" },
     "environments": {
       "description": "Where it shows (APLABS_ENV). Left off the menu, and refused at dispatch, everywhere else.",
       "type": "array",
@@ -99,6 +101,7 @@
     { "if": { "properties": { "archetype": { "const": "scoped-pull" } } }, "then": { "required": ["parameters", "query"] } },
     { "if": { "properties": { "archetype": { "const": "approval-write" } } }, "then": { "required": ["parameters", "query", "row_id", "write"] } },
     { "if": { "properties": { "archetype": { "not": { "const": "approval-write" } } } }, "then": { "properties": { "write": false } } },
+    { "if": { "properties": { "archetype": { "enum": ["add-context", "data-sources"] } } }, "then": { "properties": { "group": false } } },
     { "if": { "properties": { "archetype": { "const": "routing-map" } } }, "then": { "required": ["adapter"] }, "else": { "properties": { "adapter": false, "screen": false } } }
   ],
   "$defs": {

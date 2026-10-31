@@ -1,0 +1,25 @@
+{
+  "id": "first-pull",
+  "hub": "first-tool",
+  "label": "Visits by zone",
+  "description": "A fixture tool.",
+  "resource": "PULL",
+  "archetype": "scoped-pull",
+  "parameters": [
+    {
+      "name": "zone",
+      "label": "Zone",
+      "type": "string",
+      "enum": [
+        "north",
+        "south"
+      ],
+      "required": true
+    }
+  ],
+  "query": "visits.sql",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

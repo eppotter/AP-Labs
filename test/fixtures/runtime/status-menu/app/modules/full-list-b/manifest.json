@@ -1,0 +1,27 @@
+{
+  "id": "full-list-b",
+  "hub": "full",
+  "label": "Lapsed clients",
+  "description": "A fixture tool.",
+  "resource": "PULL",
+  "archetype": "scoped-pull",
+  "group": "Lists",
+  "verb": "Review",
+  "parameters": [
+    {
+      "name": "zone",
+      "label": "Zone",
+      "type": "string",
+      "enum": [
+        "north",
+        "south"
+      ],
+      "required": true
+    }
+  ],
+  "query": "visits.sql",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

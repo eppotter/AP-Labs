@@ -1,0 +1,12 @@
+{
+  "id": "blank-ask",
+  "hub": "blank",
+  "label": "Ask",
+  "description": "A fixture tool.",
+  "resource": "ASK",
+  "archetype": "ask",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

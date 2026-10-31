@@ -1,0 +1,9 @@
+{
+  "id": "first-tool",
+  "command": "/first-tool",
+  "name": "First tool",
+  "description": "Open the First tool menu",
+  "sees": [
+    "data"
+  ]
+}

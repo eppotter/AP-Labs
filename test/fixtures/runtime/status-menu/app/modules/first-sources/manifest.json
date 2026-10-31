@@ -1,0 +1,12 @@
+{
+  "id": "first-sources",
+  "hub": "first-tool",
+  "label": "Data sources",
+  "description": "A fixture tool.",
+  "resource": "DATA_SOURCES",
+  "archetype": "data-sources",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}
