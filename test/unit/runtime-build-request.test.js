@@ -366,14 +366,18 @@ test('the preview shows the title, the summary and the person\'s words exactly a
 
 test('the Anthropic fake refuses a tool the real API refuses: an extra field (effects), a bad name, a schema that is not an object', () => {
   const tool = { name: 'summarize_request', description: 'd', input_schema: { type: 'object', properties: { a: { type: 'string' } }, required: ['a'] } };
-  checkRequest({ tools: [tool] });
+  // A whole request, as the real API needs (a model and max_tokens, Story 16.8).
+  const req = (tools) => ({
+    model: 'claude-sonnet-5-5', max_tokens: 100, messages: [{ role: 'user', content: 'x' }], tools,
+  });
+  checkRequest(req([tool]));
   for (const bad of [
     { ...tool, effects: 'none' },
     { ...tool, name: 'summarize request' },
     { ...tool, input_schema: { type: 'string' } },
     { ...tool, input_schema: { type: 'object', properties: {}, required: ['a'] } },
-  ]) assert.throws(() => checkRequest({ tools: [bad] }), (err) => err.status === 400, JSON.stringify(bad));
-  assert.throws(() => checkRequest({ tools: tool }), (err) => err.status === 400);
+  ]) assert.throws(() => checkRequest(req([bad])), (err) => err.status === 400, JSON.stringify(bad));
+  assert.throws(() => checkRequest(req(tool)), (err) => err.status === 400);
 });
 
 test('way out, the AI off, over its limit, failing or not calling its tool: the preview shows the person\'s own words, labelled not summarised', async () => {

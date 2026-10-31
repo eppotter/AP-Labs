@@ -193,12 +193,29 @@
 // (resolveModule) before the archetype acts. The post goes only through
 // kit/runtime/slack/channel.js, the build-request exception. The AI service
 // it uses is the module's hub's own (viewOf), never another hub's.
+//
+// Add context, upload a file (plan brightside-v0, D5, D7, D13, Story 16.8):
+// a submit with a file (and no text) answers in the ack with "Reading…".
+// After the ack, slackFiles (kit/runtime/slack/files, built by app/index with
+// the bot token; none: "reading files isn't set up") fetches the file:
+// files.info, the owner, type and size checks, the download and the
+// signature. A .txt or .md file is read as UTF-8; a PDF or an image goes to
+// the hub view's AI (readFile, with the module's resource for its access
+// check). The text is stored as a "file" entry (its name, type and size kept
+// with it, never the file), and the view is updated to "Here's what I took
+// from <title>:" with Remove, or to why nothing was added, with Back: a
+// refused file (kit/runtime/messages FILE_WORDS), the AI off, limited or
+// failing (readFileAiText), the hub's context full. Closing the view while it
+// reads stores the entry all the same (not_found logged at info). The file's
+// name, its text and the title are never logged.
 
 const access = require('../access');
 const {
   NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
 } = require('../errors');
-const { messageFor, welcomeText, feedbackText, joinWelcomeText } = require('../messages');
+const {
+  messageFor, welcomeText, feedbackText, joinWelcomeText, readFileAiText,
+} = require('../messages');
 const {
   handle, handleView, afterAck, PLAIN_ERROR,
 } = require('./handle');
@@ -232,7 +249,8 @@ const dataSources = require('../archetypes/data-sources');
 const { readiness } = require('../knowledge/readiness');
 const addContext = require('../archetypes/add-context');
 const buildRequest = require('../archetypes/build-request');
-const { ContextRefused } = require('../errors');
+const { ContextRefused, FileRefused, LlmUnavailable } = require('../errors');
+const { readText } = require('./files');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
@@ -318,7 +336,7 @@ function moduleData(data, mod) {
 
 function registerHubs(app, {
   registry, profile, env, log, store, forHub = null, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),
-  mapFiles = null, routingMap: routingMapOptions = {}, rules = null, buildRequest: buildRequestOptions = {},
+  mapFiles = null, routingMap: routingMapOptions = {}, rules = null, buildRequest: buildRequestOptions = {}, slackFiles = null,
 }) {
   if (forHub && (data || llm)) throw new TypeError('registerHubs takes forHub, or (a test seam) data and llm, never both');
   const viewFor = forHub || everyHubSeesAll({ data, llm }).forHub;
@@ -815,6 +833,75 @@ function registerHubs(app, {
     });
   };
 
+  // Upload a file (Story 16.8): fetch it, read it, store its text. Returns
+  // the stored entry; throws a refusal (FileRefused, ContextRefused,
+  // LlmUnavailable, AccessDenied) or a store failure.
+  const readUpload = async ({
+    client, mod, knowledge, person, typed,
+  }) => {
+    if (!slackFiles) throw new FileRefused('not_set_up');
+    const file = await slackFiles.fetchFile({ client, fileId: typed.files[0].id, person: person.id });
+    let text;
+    if (file.kind === 'text') {
+      text = readText(file.bytes);
+    } else {
+      const { llm } = viewOf(mod.hub);
+      if (!llm) throw new LlmUnavailable('off');
+      ({ text } = await llm.readFile({
+        person: person.id, resource: mod.resource, file: { kind: file.kind, mediaType: file.mediaType, data: file.bytes },
+      }));
+    }
+    try {
+      return await knowledge.add({
+        kind: 'file', title: typed.title, text, addedBy: person.id, file: { name: file.name, type: file.mediaType, bytes: file.bytes.length },
+      });
+    } catch (err) {
+      // A file's own text over the entry cap, or empty: worded for a file.
+      if (err instanceof ContextRefused && err.reason === 'too_long') throw new FileRefused('too_long', err.details.max);
+      if (err instanceof ContextRefused && err.reason === 'empty') throw new FileRefused('empty');
+      throw err;
+    }
+  };
+  // Fetches, reads and stores an upload, then shows how it went (D13).
+  // Never throws for a refusal or a store problem: the person is told in the view.
+  const readEntry = async ({
+    client, viewId, title, mod, knowledge, person, typed,
+  }) => {
+    let entry = null;
+    let note = null;
+    try {
+      entry = await readUpload({
+        client, mod, knowledge, person, typed,
+      });
+    } catch (err) {
+      if (err instanceof LlmUnavailable) {
+        log.info('upload not read', { hub: mod.hub, reason: `ai ${err.reason}` });
+        note = readFileAiText(err, { admin });
+      } else if (err instanceof FileRefused || err instanceof ContextRefused) {
+        log.info('upload not read', { hub: mod.hub, reason: err.reason });
+        note = messageFor(err, { admin });
+      } else if (messageFor(err, { admin })) {
+        log.info('upload not read', { hub: mod.hub, reason: err.name });
+        note = messageFor(err, { admin });
+      } else {
+        log.error('upload not saved', { hub: mod.hub, reason: (err && err.code) || (err && err.name) || 'error' });
+        note = addContext.saveFailed(admin);
+      }
+    }
+    const listed = await dataSources.entriesOf(viewOf(mod.hub), log);
+    const shown = {
+      hubId: mod.hub, moduleId: mod.id, entries: listed.entries, problem: listed.problem, admin,
+    };
+    await showAfterAck({
+      client,
+      viewId,
+      title,
+      hubId: mod.hub,
+      where: 'add-context',
+      message: entry ? addContext.fileAdded({ ...shown, entry }) : addContext.result({ ...shown, note }),
+    });
+  };
+
   for (const hub of registry.hubs) {
     app.command(hub.command, handle(`hub:${hub.id}`, async ({ command, respond, client }) => {
       const person = personOf(command.user_id);
@@ -1267,6 +1354,11 @@ function registerHubs(app, {
     const errors = addContext.fieldErrors(typed);
     if (errors) return { response_action: 'errors', errors };
     const title = view.title && view.title.text;
+    if (typed.files.length) {
+      return afterAck(answerIn(view, mod.hub, addContext.reading({ hubId: mod.hub, moduleId: mod.id })), () => readEntry({
+        client, viewId: view.id, title, mod, knowledge, person, typed,
+      }));
+    }
     return afterAck(answerIn(view, mod.hub, addContext.saving({ hubId: mod.hub, moduleId: mod.id })), () => saveEntry({
       client, viewId: view.id, title, mod, knowledge, person, typed,
     }));

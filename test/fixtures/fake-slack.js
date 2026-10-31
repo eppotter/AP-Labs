@@ -106,6 +106,42 @@
 // error). closeView(id) marks a view the person closed: a views.update on it
 // then answers not_found, as Slack does.
 //
+// Story 16.8 (Add context, upload a file) adds, each as Slack does it
+// (docs.slack.dev/reference/block-kit/block-elements/file-input-element,
+// .../methods/files.info):
+//   - this.scopes, the bot's scopes (files:read among them by default).
+//     files.info without files:read answers missing_scope, and so does a
+//     views call whose view holds a file_input ("your app must have the
+//     files:read scope").
+//   - addSlackFile({ id, name, user, mimetype, bytes, size }) puts a file in
+//     the workspace, as if the person uploaded it through a file_input; it
+//     returns the file object Slack sends. fileState(file) is that file as
+//     the view_submission carries it in state.values ({ type: 'file_input',
+//     files: [file] }). files.delete({ file }) deletes it too.
+//   - client.files.info({ file }): the file object, with
+//     url_private_download on files.slack.com. An unknown id is
+//     file_not_found, a deleted one file_deleted, no id invalid_arguments;
+//     set this.filesInfoFail (an error) to make it throw.
+//   - this.fetch(url, init): Slack's file server, for the download. Every
+//     request is recorded in this.fetches ({ url, headers, redirect }),
+//     whatever its host, so a test can prove none was made. Like Slack, a
+//     request without the bot token (Authorization: Bearer this.botToken)
+//     gets a 200 web page (text/html), not the file. Like fetch, a 3xx with
+//     redirect 'error' rejects (TypeError, "fetch failed"), a 3xx with
+//     'follow' (fetch's default) is followed, headers and all, and an aborted
+//     signal rejects the call or errors the body (AbortError).
+//     this.downloadAs[id] changes how one file is served: { redirect: url },
+//     { status }, { html: true }, { noLength: true } (no Content-Length),
+//     { slowMs } (the rest of the body after slowMs), { length } (a
+//     Content-Length that lies), { contentType } (another Content-Type), and
+//     { body, okStatus } (another body, sent with a 2xx status: what a
+//     server error page in JSON looks like when it comes back with 200).
+//   - a file_input element, refused as Slack refuses it (invalid_blocks):
+//     outside an input block; max_files not an integer from 1 to 10;
+//     filetypes not a non-empty list of file extensions (lowercase letters
+//     and digits, no dot: Slack takes extensions, so "application/pdf" or
+//     ".pdf" is unknown).
+//
 // new FakeSlackApp({ views: true }) adds client.views: open, push and update
 // record { method, args } in this.views and answer with a view id and a fresh
 // hash; set this.viewsFail[method] to an error to make that call throw.
@@ -175,6 +211,13 @@ class FakeSlackApp {
     this.notReady = new Map(); // file id -> views calls still refused
     this.triggers = new Map();
     this.closed = new Set(); // view ids the person closed (closeView)
+    this.scopes = new Set(FAKE_BOT_SCOPES);
+    this.botToken = FAKE_BOT_TOKEN;
+    this.slackFiles = new Map(); // file id -> { file, bytes }
+    this.filesInfoFail = null;
+    this.fetches = [];
+    this.downloadAs = {};
+    this.fetch = (url, init) => this.serveFile(url, init);
     this.dmChannel = (user) => `D${String(user).replace(/^U/, '')}`;
     this.client = {
       conversations: {
@@ -210,6 +253,16 @@ class FakeSlackApp {
           this.deleted.push(file);
           return { ok: true };
         },
+        info: async (args = {}) => {
+          if (!this.scopes.has('files:read')) throw slackError('missing_scope', 'files:read is needed');
+          const { file } = args;
+          if (typeof file !== 'string' || !file) throw slackError('invalid_arguments', 'file is required');
+          if (this.filesInfoFail) throw this.filesInfoFail;
+          if (this.deleted.includes(file)) throw slackError('file_deleted', 'the file has been deleted');
+          const held = this.slackFiles.get(file);
+          if (!held) throw slackError('file_not_found', 'no such file');
+          return { ok: true, file: { ...held.file } };
+        },
       },
       chat: {
         postEphemeral: async (args) => { this.said.push({ ephemeral: true, ...args }); return { ok: true }; },
@@ -239,6 +292,7 @@ class FakeSlackApp {
         if ((method === 'open' || method === 'push') && this.triggerExpired(args.trigger_id)) {
           throw slackError('expired_trigger_id', 'the trigger_id is more than 3 seconds old');
         }
+        if (viewHasFileInput(args.view) && !this.scopes.has('files:read')) throw slackError('missing_scope', 'a file_input needs files:read');
         const bad = invalidModal(args.view);
         if (bad) throw Object.assign(new Error(`An API error occurred: invalid_arguments (${bad})`), { data: { ok: false, error: 'invalid_arguments' } });
         const badView = invalidView(args.view);
@@ -296,6 +350,61 @@ class FakeSlackApp {
       if (id && (!this.files.has(id) || this.deleted.includes(id))) return i;
     }
     return null;
+  }
+
+  // A file the person uploaded (see the top). Returns Slack's file object.
+  addSlackFile({
+    id, name, user, mimetype = 'application/octet-stream', bytes, size,
+  }) {
+    const data = Buffer.from(bytes);
+    const file = {
+      id,
+      created: 1761815700,
+      timestamp: 1761815700,
+      name,
+      title: name,
+      mimetype,
+      filetype: String(name).split('.').pop().toLowerCase(),
+      user,
+      size: size === undefined ? data.length : size,
+      mode: 'hosted',
+      is_external: false,
+      is_public: false,
+      url_private: `https://files.slack.com/files-pri/T0FAKE-${id}/${encodeURIComponent(name)}`,
+      url_private_download: `https://files.slack.com/files-pri/T0FAKE-${id}/download/${encodeURIComponent(name)}`,
+      permalink: `https://fake.slack.test/files/${user}/${id}/${encodeURIComponent(name)}`,
+    };
+    this.slackFiles.set(id, { file, bytes: data });
+    this.files.add(id);
+    return { ...file };
+  }
+
+  // Slack's file server (see the top).
+  async serveFile(url, init = {}) {
+    const headers = { ...(init.headers || {}) };
+    this.fetches.push({ url: String(url), headers, redirect: init.redirect });
+    const { signal } = init;
+    if (signal && signal.aborted) throw abortError();
+    const u = new URL(url);
+    const held = u.hostname === 'files.slack.com' ? [...this.slackFiles.values()].find((f) => f.file.url_private_download === u.href) : null;
+    const how = (held && this.downloadAs[held.file.id]) || {};
+    if (how.redirect) {
+      if (init.redirect === 'error') throw Object.assign(new TypeError('fetch failed'), { cause: new Error('unexpected redirect') });
+      if (init.redirect === 'manual') return new Response(null, { status: 302, headers: { location: how.redirect } });
+      return this.serveFile(how.redirect, { ...init, headers });
+    }
+    if (!held || this.deleted.includes(held.file.id)) return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain' } });
+    if (how.status) return new Response('error', { status: how.status, headers: { 'content-type': 'text/plain' } });
+    if (how.html || headers.Authorization !== `Bearer ${this.botToken}`) {
+      return new Response('<!DOCTYPE html><html><body>Sign in to Slack</body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+    }
+    const out = { 'content-type': how.contentType || held.file.mimetype };
+    if (how.body !== undefined) {
+      const body = Buffer.from(how.body);
+      return new Response(bodyStream(body, { signal }), { status: how.okStatus || 200, headers: { ...out, 'content-length': String(body.length) } });
+    }
+    if (!how.noLength) out['content-length'] = String(how.length === undefined ? held.bytes.length : how.length);
+    return new Response(bodyStream(held.bytes, { slowMs: how.slowMs, signal }), { status: 200, headers: out });
   }
 
   // A trigger handed out now (Slack's lasts 3 seconds).
@@ -487,6 +596,8 @@ function invalidElements(view) {
       if (bad) return bad;
     } else if ([b.accessory, ...(Array.isArray(b.elements) ? b.elements : [])].some((e) => e && e.type === 'plain_text_input')) {
       return 'a plain_text_input belongs in an input block';
+    } else if ([b.accessory, b.element, ...(Array.isArray(b.elements) ? b.elements : [])].some((e) => e && e.type === 'file_input')) {
+      return 'a file_input belongs in an input block';
     }
     const elements = b.type === 'actions' ? b.elements : [b.accessory, b.element].filter(Boolean);
     const actionIds = new Set();
@@ -508,6 +619,12 @@ function invalidElements(view) {
 
 function invalidElement(e) {
   if (!e || typeof e !== 'object') return null;
+  if (e.type === 'file_input') {
+    if (e.max_files !== undefined && (!Number.isInteger(e.max_files) || e.max_files < 1 || e.max_files > MAX_FILES)) return `a file_input's max_files is 1 to ${MAX_FILES}`;
+    if (e.filetypes !== undefined && (!Array.isArray(e.filetypes) || !e.filetypes.length || e.filetypes.some((t) => typeof t !== 'string' || !FILE_EXTENSION.test(t)))) {
+      return "a file_input's filetypes are file extensions";
+    }
+  }
   if (e.type === 'overflow') {
     if (e.accessibility_label !== undefined) return 'an overflow has no accessibility_label';
     if (!Array.isArray(e.options) || e.options.length < MIN_OVERFLOW_OPTIONS || e.options.length > MAX_OVERFLOW_OPTIONS) {
@@ -567,6 +684,68 @@ function invalidViewAck(payload, submitted) {
     return invalidModal(v) || invalidView(v) || invalidImageBlocks(v) || invalidElements(v);
   }
   return null;
+}
+
+const MAX_FILES = 10;
+const FILE_EXTENSION = /^[a-z0-9]{1,10}$/;
+// Not a real token: the fake file server's stand-in for the bot token.
+const FAKE_BOT_TOKEN = 'fake-bot-token-for-tests';
+const FAKE_BOT_SCOPES = Object.freeze(['commands', 'chat:write', 'im:write', 'files:read', 'files:write', 'users:read']);
+
+// True when a view holds a file_input anywhere.
+function viewHasFileInput(view) {
+  const blocks = view && Array.isArray(view.blocks) ? view.blocks : [];
+  return blocks.some((b) => b && [b.element, b.accessory, ...(Array.isArray(b.elements) ? b.elements : [])].some((e) => e && e.type === 'file_input'));
+}
+
+// A file as a view_submission carries it in state.values (Story 16.8).
+const fileState = (...files) => ({ type: 'file_input', files: files.map((f) => ({ ...f })) });
+
+function abortError() {
+  return new DOMException('This operation was aborted', 'AbortError');
+}
+
+// A body that sends the first half at once and, with slowMs, the rest after
+// slowMs. An abort errors it, as fetch's body does.
+function bodyStream(bytes, { slowMs = 0, signal } = {}) {
+  const half = Math.ceil(bytes.length / 2);
+  let step = 0;
+  let timer = null;
+  return new ReadableStream({
+    start(controller) {
+      if (signal) {
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          try { controller.error(abortError()); } catch { /* already closed */ }
+        }, { once: true });
+      }
+    },
+    pull(controller) {
+      if (step === 0) {
+        step = 1;
+        if (half) controller.enqueue(new Uint8Array(bytes.subarray(0, half)));
+        return undefined;
+      }
+      if (step === 1) {
+        step = 2;
+        const rest = () => {
+          if (bytes.length > half) controller.enqueue(new Uint8Array(bytes.subarray(half)));
+          controller.close();
+        };
+        if (!slowMs) {
+          rest();
+          return undefined;
+        }
+        return new Promise((resolve) => {
+          timer = setTimeout(() => {
+            try { rest(); } catch { /* errored by an abort */ }
+            resolve();
+          }, slowMs);
+        });
+      }
+      return undefined;
+    },
+  });
 }
 
 const MAX_INPUT_LENGTH = 3000;
@@ -680,5 +859,6 @@ function invalidModal(view) {
 }
 
 module.exports = {
+  fileState, FAKE_BOT_TOKEN, FAKE_BOT_SCOPES,
   FakeSlackApp, invalidModal, invalidUpload, invalidImageBlocks, invalidView, invalidElements, invalidViewAck, notReadyError, rateLimitedError, TRIGGER_MS,
 };

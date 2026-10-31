@@ -63,12 +63,21 @@ test('accepts sql.forbidden_columns as unique lower-case "table.column" strings'
 
 test('llm settings are optional, default in code, and refuse unknown keys and bad values', () => {
   assert.deepEqual(loadProfile(fixture('minimal')).llm, {
-    model: 'claude-sonnet-5-5', extraction_model: 'claude-sonnet-5-5', hourly_usd_limit: 2, max_tokens: 1024,
+    model: 'claude-sonnet-5-5', extraction_model: 'claude-sonnet-5-5', hourly_usd_limit: 2, max_tokens: 1024, upload_hourly_usd_limit: 1,
   });
-  assert.deepEqual(loadProfile(fixture('minimal')).llm, { ...LLM_DEFAULTS });
+  assert.deepEqual(loadProfile(fixture('minimal')).llm, { ...LLM_DEFAULTS, upload_hourly_usd_limit: 1 });
   const set = validateProfile({ ...parsed('minimal'), llm: { model: 'claude-opus-5-5', hourly_usd_limit: 0.5, max_tokens: 8192 } }).llm;
-  assert.deepEqual(set, { model: 'claude-opus-5-5', extraction_model: 'claude-sonnet-5-5', hourly_usd_limit: 0.5, max_tokens: 8192 });
+  // Story 16.8: the upload cap defaults to $1, or the hourly limit when that is lower.
+  assert.deepEqual(set, {
+    model: 'claude-opus-5-5', extraction_model: 'claude-sonnet-5-5', hourly_usd_limit: 0.5, max_tokens: 8192, upload_hourly_usd_limit: 0.5,
+  });
   const llm = (v) => ({ ...parsed('minimal'), llm: v });
+  assert.equal(validateProfile(llm({ upload_hourly_usd_limit: 0.25 })).llm.upload_hourly_usd_limit, 0.25);
+  assert.equal(validateProfile(llm({ hourly_usd_limit: 5, upload_hourly_usd_limit: 5 })).llm.upload_hourly_usd_limit, 5);
+  rejects(llm({ upload_hourly_usd_limit: 3 }), /llm\.upload_hourly_usd_limit \(3\) must be at most llm\.hourly_usd_limit \(2\)/);
+  rejects(llm({ hourly_usd_limit: 0.5, upload_hourly_usd_limit: 1 }), /must be at most llm\.hourly_usd_limit \(0\.5\)/);
+  rejects(llm({ upload_hourly_usd_limit: 0 }), /\/llm\/upload_hourly_usd_limit must be > 0/);
+  rejects(llm({ upload_hourly_usd_limit: '1' }), /\/llm\/upload_hourly_usd_limit/);
   rejects(llm({ hourly_usd_limit: 0 }), /\/llm\/hourly_usd_limit must be > 0/);
   rejects(llm({ hourly_usd_limit: -1 }), /\/llm\/hourly_usd_limit/);
   rejects(llm({ max_tokens: 0 }), /\/llm\/max_tokens must be >= 1/);

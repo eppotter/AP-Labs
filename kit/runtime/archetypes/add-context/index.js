@@ -31,10 +31,27 @@
 // and nothing typed here changes access or posts anywhere.
 //
 // Every value from an entry is escaped (escapeText), shown on one line.
+//
+// Upload a file (plan brightside-v0, D5, D6, D7, D13, Story 16.8): the form
+// also has an optional file_input (FILE_BLOCK, max_files 1, filetypes from
+// kit/runtime/slack/files FILETYPES: pdf, png, jpg, jpeg, gif, webp, txt,
+// md), with "Everyone who can use Ask here can read what this file says."
+// and "The file stays in your Slack files; you can delete it there." beside
+// it. A submit holds exactly one of typed text or a file. The instant checks
+// beside the fields (fieldErrors): the title; neither or both; more than one
+// file; and the file's type by its name (an office file: "save it as a PDF
+// first"). Everything else is after the ack: "Reading…" in the view, then
+// the hubs fetch the file (kit/runtime/slack/files), read a PDF or image
+// through the hub's AI (llm readFile) or a .txt or .md file as UTF-8, store
+// the text, and update the view to "Here's what I took from <title>:" with
+// the first 1,500 characters of what was stored and Remove (fileAdded), or
+// to why nothing was added, with Back. The file itself is never stored.
 
 const { escapeText, messageFor } = require('../../messages');
-const { ContextRefused } = require('../../errors');
+const { ContextRefused, FileRefused } = require('../../errors');
 const { promptChars, CAPS, MAX_TITLE_CHARS } = require('../../knowledge/store');
+const { FILETYPES, typeOf } = require('../../slack/files');
+const { MAX_PDF_PAGES } = require('../../llm/file-check');
 
 const SUBMIT_CALLBACK = 'add-context:submit';
 // The callback of the screen once it shows a result (no boxes, no submit).
@@ -43,15 +60,28 @@ const REMOVE_ACTION = 'add-context:remove';
 const SUBMIT = 'Add';
 const TITLE_BLOCK = 'ac-title';
 const TEXT_BLOCK = 'ac-text';
+const FILE_BLOCK = 'ac-file';
+// The block of "Here's what I took from …", which carries its own Remove.
+const TOOK_BLOCK = 'ac-took:';
 const VALUE_ACTION = 'value';
 const ENTRY_BLOCK = 'ac-entry:';
 const MAX_TEXT_CHARS = CAPS.text;
 // How much of an entry's text the list shows.
 const PREVIEW_CHARS = 150;
+// How much of a file's stored text "Here's what I took" shows (Story 16.8).
+const TOOK_CHARS = 1500;
+// A section holds at most 3,000 characters; escaping can grow the text.
+const SECTION_CHARS = 2900;
 
 const READERS = 'Everyone who can use Ask here can read this.';
-const INTRO = `${READERS} Type something about the business that Ask should know, give it a title, and press Add. Ask can use it as soon as it is added.`;
+const INTRO = `${READERS} Type something about the business that Ask should know, or upload a file (a PDF, a photo, or a .txt or .md file), give it a title, and press Add. Ask can use it as soon as it is added.`;
+const FILE_READERS = 'Everyone who can use Ask here can read what this file says.';
+const FILE_STAYS = 'The file stays in your Slack files; you can delete it there.';
 const SAVING = 'Saving…';
+const READING = 'Reading…';
+const NEED_ONE = 'Type some text, or choose a file to upload.';
+const BOTH = 'Add typed text or a file, not both. Clear one of them, then press Add.';
+const ONE_FILE = 'Choose one file at a time.';
 const ADDED = 'Added. Ask can use it now.';
 const REMOVED = 'Removed. Ask no longer uses it.';
 const ALREADY_REMOVED = 'That entry was already removed.';
@@ -92,27 +122,28 @@ function parseRemoveValue(value) {
   return { moduleId: mod, entryId: id };
 }
 
+function removeButton(moduleId, id) {
+  return {
+    type: 'button',
+    action_id: REMOVE_ACTION,
+    text: plain('Remove'),
+    style: 'danger',
+    value: removeValue(moduleId, id),
+    confirm: {
+      title: plain('Remove this entry?'),
+      text: plain('Ask stops using it at once. This cannot be undone.'),
+      confirm: plain('Remove'),
+      deny: plain('Keep it'),
+      style: 'danger',
+    },
+  };
+}
+
 function entryBlock(moduleId, e) {
   const who = typeof e.added_by === 'string' && SLACK_USER.test(e.added_by) ? ` by <@${e.added_by}>` : '';
   const when = typeof e.added_at === 'string' && /^\d{4}-\d{2}-\d{2}/.test(e.added_at) ? ` on ${e.added_at.slice(0, 10)}` : '';
   const text = `• *${escapeText(cut(e.title || 'Untitled', MAX_TITLE_CHARS))}*${who}${when}\n${escapeText(cut(e.text || '', PREVIEW_CHARS))}`;
-  return section(text, {
-    block_id: `${ENTRY_BLOCK}${e.id}`,
-    accessory: {
-      type: 'button',
-      action_id: REMOVE_ACTION,
-      text: plain('Remove'),
-      style: 'danger',
-      value: removeValue(moduleId, e.id),
-      confirm: {
-        title: plain('Remove this entry?'),
-        text: plain('Ask stops using it at once. This cannot be undone.'),
-        confirm: plain('Remove'),
-        deny: plain('Keep it'),
-        style: 'danger',
-      },
-    },
-  });
+  return section(text, { block_id: `${ENTRY_BLOCK}${e.id}`, accessory: removeButton(moduleId, e.id) });
 }
 
 // The hub's entries as blocks: a heading, then one section per entry with
@@ -148,8 +179,19 @@ function form({
       block_id: TEXT_BLOCK,
       label: plain('What Ask should know'),
       hint: plain(READERS),
+      optional: true,
       element: {
         type: 'plain_text_input', action_id: VALUE_ACTION, multiline: true, max_length: MAX_TEXT_CHARS,
+      },
+    },
+    {
+      type: 'input',
+      block_id: FILE_BLOCK,
+      label: plain('Or upload a file'),
+      hint: plain(`${FILE_READERS} ${FILE_STAYS} PDF (at most ${MAX_PDF_PAGES} pages), PNG, JPEG, GIF, WebP, .txt or .md, at most 5 MB.`),
+      optional: true,
+      element: {
+        type: 'file_input', action_id: VALUE_ACTION, max_files: 1, filetypes: [...FILETYPES],
       },
     },
     ...listBlocks({
@@ -182,26 +224,91 @@ const saving = ({ hubId, moduleId }) => result({
   hubId, moduleId, note: SAVING, list: false,
 });
 
-// What was typed: { title, text }, '' for a box left empty.
+// "Reading…", shown by the ack while a file is fetched and read (Story 16.8).
+const reading = ({ hubId, moduleId }) => result({
+  hubId, moduleId, note: READING, list: false,
+});
+
+// Text in sections of at most SECTION_CHARS once escaped, never cutting an
+// escape in two.
+function textSections(text) {
+  const out = [];
+  let part = '';
+  for (const ch of Array.from(text)) {
+    const e = escapeText(ch);
+    if (part.length + e.length > SECTION_CHARS) {
+      out.push(section(part));
+      part = '';
+    }
+    part += e;
+  }
+  if (part) out.push(section(part));
+  return out;
+}
+
+// After an upload (Story 16.8): "Here's what I took from <title>:" with
+// Remove for this entry, the first TOOK_CHARS characters of the stored text,
+// then the hub's entries. A result: no boxes, no submit.
+function fileAdded({
+  hubId, moduleId, entry, entries, problem, admin,
+}) {
+  const title = escapeText(cut(entry.title || 'Untitled', MAX_TITLE_CHARS));
+  const chars = Array.from(String(entry.text || ''));
+  const shown = chars.slice(0, TOOK_CHARS).join('');
+  const more = chars.length > TOOK_CHARS ? `_…and ${(chars.length - TOOK_CHARS).toLocaleString('en-US')} more characters._\n` : '';
+  const note = `Here's what I took from *${title}*:`;
+  return {
+    text: `Here's what I took from ${cut(entry.title || 'Untitled', MAX_TITLE_CHARS)}.`,
+    blocks: [
+      section(note, { block_id: `${TOOK_BLOCK}${entry.id}`, accessory: removeButton(moduleId, entry.id) }),
+      ...textSections(shown),
+      section(`${more}${ADDED} ${FILE_STAYS}`),
+      ...listBlocks({
+        moduleId, entries, problem, admin,
+      }),
+    ],
+    modal: { callbackId: VIEW_CALLBACK, privateMetadata: metadata(hubId, moduleId) },
+  };
+}
+
+// What was submitted: { title, text, files }, '' for a box left empty, and
+// files: [{ id, name }] from the file_input (none: []).
 function readState(state) {
   const values = (state && state.values) || {};
   const read = (block) => {
     const v = values[block] && values[block][VALUE_ACTION] && values[block][VALUE_ACTION].value;
     return typeof v === 'string' ? v : '';
   };
-  return { title: read(TITLE_BLOCK), text: read(TEXT_BLOCK) };
+  const picked = values[FILE_BLOCK] && values[FILE_BLOCK][VALUE_ACTION] && values[FILE_BLOCK][VALUE_ACTION].files;
+  const files = (Array.isArray(picked) ? picked : [])
+    .filter((f) => f && typeof f === 'object')
+    .map((f) => ({ id: typeof f.id === 'string' ? f.id : '', name: typeof f.name === 'string' ? f.name : '' }));
+  return { title: read(TITLE_BLOCK), text: read(TEXT_BLOCK), files };
 }
 
 // The instant checks (D13): Slack's errors object, beside the boxes, or null.
 // The text is measured as the store measures it (escaped), so what passes
 // here is never refused as too long after the ack.
-function fieldErrors({ title, text }) {
+// Exactly one of text or a file (Story 16.8); a file's type is checked by
+// its name only (D13: its size and contents are checked after the ack).
+function fieldErrors({ title, text, files = [] }) {
   const errors = {};
   const t = oneLine(title.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' '));
   if (!t) errors[TITLE_BLOCK] = TITLE_MISSING;
   else if (Array.from(t).length > MAX_TITLE_CHARS) errors[TITLE_BLOCK] = TITLE_TOO_LONG;
-  if (!text.trim()) errors[TEXT_BLOCK] = messageFor(new ContextRefused('empty'));
-  else if (promptChars(text) > MAX_TEXT_CHARS) errors[TEXT_BLOCK] = messageFor(new ContextRefused('too_long', MAX_TEXT_CHARS));
+  const hasText = Boolean(text.trim());
+  if (files.length && hasText) {
+    errors[FILE_BLOCK] = BOTH;
+  } else if (files.length > 1) {
+    errors[FILE_BLOCK] = ONE_FILE;
+  } else if (files.length === 1) {
+    const type = typeOf(files[0].name);
+    if (type instanceof FileRefused) errors[FILE_BLOCK] = messageFor(type);
+  } else if (!hasText) {
+    errors[TEXT_BLOCK] = NEED_ONE;
+  } else if (promptChars(text) > MAX_TEXT_CHARS) {
+    errors[TEXT_BLOCK] = messageFor(new ContextRefused('too_long', MAX_TEXT_CHARS));
+  }
   return Object.keys(errors).length ? errors : null;
 }
 
@@ -209,6 +316,8 @@ module.exports = {
   form,
   result,
   saving,
+  reading,
+  fileAdded,
   readState,
   fieldErrors,
   parseMetadata,
@@ -224,10 +333,19 @@ module.exports = {
   SUBMIT,
   TITLE_BLOCK,
   TEXT_BLOCK,
+  FILE_BLOCK,
+  TOOK_BLOCK,
+  TOOK_CHARS,
   VALUE_ACTION,
   MAX_TEXT_CHARS,
   READERS,
   SAVING,
+  READING,
+  NEED_ONE,
+  BOTH,
+  ONE_FILE,
+  FILE_READERS,
+  FILE_STAYS,
   ADDED,
   REMOVED,
   ALREADY_REMOVED,

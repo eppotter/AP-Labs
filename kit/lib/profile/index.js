@@ -43,6 +43,8 @@ const LLM_DEFAULTS = Object.freeze({
   hourly_usd_limit: 2,
   max_tokens: 1024,
 });
+// llm.upload_hourly_usd_limit's default (Story 16.8), capped at the hourly limit.
+const UPLOAD_DEFAULT_USD = 1;
 
 // The routing block's defaults (AD-R10, Story 13.1). The block itself has no
 // default: absent means routing is off. Filled only on a copy, so the parsed
@@ -333,6 +335,9 @@ function validateProfile(profile, file) {
   p.data = { source: 'local', ...p.data };
   p.jobs = { enabled: false, ...p.jobs };
   p.llm = { ...LLM_DEFAULTS, ...p.llm };
+  // Uploads' own spend cap (plan brightside-v0, D5, Story 16.8): default $1,
+  // or the hourly limit when that is lower; never above the hourly limit.
+  p.llm.upload_hourly_usd_limit ??= Math.min(UPLOAD_DEFAULT_USD, p.llm.hourly_usd_limit);
   p.verify.checks = p.verify.checks.map((c) => ({ timeout_seconds: 300, ...c }));
   p.users = p.users.map((u) => ({ identities: {}, grants: [], deny: [], ...u }));
 
@@ -354,6 +359,9 @@ function validateProfile(profile, file) {
     }
   });
   if (!p.users.some((u) => u.role === 'admin')) problems.push('`users` must include at least one admin');
+  if (p.llm.upload_hourly_usd_limit > p.llm.hourly_usd_limit) {
+    problems.push(`llm.upload_hourly_usd_limit (${p.llm.upload_hourly_usd_limit}) must be at most llm.hourly_usd_limit (${p.llm.hourly_usd_limit})`);
+  }
   if (p.routing) {
     p.routing = { ...ROUTING_DEFAULTS, ...p.routing, gap_fill: { ...ROUTING_DEFAULTS.gap_fill, ...p.routing.gap_fill } };
     if (p.routing.audience) p.routing.audience = { crew_leads: [], ...p.routing.audience };
