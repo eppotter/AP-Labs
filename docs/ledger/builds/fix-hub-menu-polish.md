@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-10-31 | 17 follow-up | fix | T1 | Hub menu polish from Ely's live check of Epic 17. A hub that sees nothing (`sees: []`, `/brightside-v0`) shows its welcome only while its summary says it is blank (no notes, sources, truths or rules); never while "checking…" or when the summary can't be read. A hub that sees context, data or rules keeps its first-visit welcome (a general greeting). The menu no longer repeats the hub's name as a header under the modal's title; the private fallback reply, which has no title, keeps it (`withTitle`). Brightside's routing-map tool is now "Route map", so it is not named like its "Routing" group. | |

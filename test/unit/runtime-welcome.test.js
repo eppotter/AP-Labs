@@ -79,6 +79,7 @@ test('first visit: the hub file\'s welcome sits above the entries, escaped', asy
   const w = welcomeOf(menu);
   assert.equal(w.text.text, 'Hi &amp; welcome to &lt;Alpha&gt;.');
   const at = blocks.indexOf(w);
+  // The private reply leads with the hub's name (no modal title there).
   assert.equal(blocks[0].type, 'header');
   assert.ok(at > 0 && at < blocks.findIndex((b) => b.block_id === 'entry:echo'), 'welcome comes before the first entry');
   assert.match(menu.text, /^Hi &amp; welcome to &lt;Alpha&gt;\.\nAlpha tools: Echo, Second/);
@@ -100,9 +101,11 @@ test('the welcome is once per person per hub: another hub or another person stil
   await app.dispatchCommand('/alpha', { user_id: 'U2' });
   await app.dispatchCommand('/beta', { user_id: 'U1' });
   const welcomes = app.responded.map((m) => welcomeOf(m) && welcomeOf(m).text.text);
-  // beta has no welcome of its own, so it gets the default naming the hub.
   assert.equal(welcomes[0], 'Hi &amp; welcome to &lt;Alpha&gt;.');
-  assert.match(welcomes[1], /^Welcome to Beta tools\. .*Help at the bottom/);
+  // beta sees nothing (sees: []), so its welcome is a blank hub's and shows
+  // only while a summary says it is blank; this setup reads none, so it is
+  // left out. The default welcome on a blank hub is in hub-status-menu.
+  assert.equal(welcomes[1], undefined);
   assert.equal(welcomes[2], 'Hi &amp; welcome to &lt;Alpha&gt;.');
   assert.equal(welcomes[3], undefined);
 });

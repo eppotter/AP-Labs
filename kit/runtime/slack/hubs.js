@@ -29,7 +29,10 @@
 //
 // Welcome and help (Story 6.4): the first time a person opens a hub (per
 // person per hub, in the store's `welcome` namespace, so again after a restart
-// or the 7-day TTL) the hub's welcome sits above the entries. Every menu ends
+// or the 7-day TTL) the hub's welcome sits above the entries. A hub that sees
+// nothing (sees: []) has a blank hub's welcome, shown only while its summary
+// says it is still blank (no notes, sources, truths or rules), and left out
+// when the summary can't be read. Every menu ends
 // with Help; a Help click re-reads the same access decision as the menu, so it
 // never lists a module the person cannot open. A person joining the workspace
 // (team_join) gets a private DM naming the hubs with at least one entry they
@@ -283,7 +286,7 @@ const {
   handle, handleView, afterAck, PLAIN_ERROR,
 } = require('./handle');
 const {
-  buildMenu, buildHelp, moduleIdFromAction, moduleIdFromWhy, hubIdFromHelpAction, verbFor, isSetup, OPEN_ACTION, WHY_ACTION, HELP_ACTION,
+  buildMenu, buildHelp, withTitle, moduleIdFromAction, moduleIdFromWhy, hubIdFromHelpAction, verbFor, isSetup, OPEN_ACTION, WHY_ACTION, HELP_ACTION,
 } = require('../registry/menu');
 const statusModule = require('../registry/status');
 const nextStepModule = require('../registry/next-step');
@@ -377,6 +380,10 @@ function ephemeral(message) {
   const m = typeof message === 'string' ? { text: message } : message;
   return { response_type: 'ephemeral', replace_original: false, ...m };
 }
+
+// A hub that sees no context, data or rules (sees: []): its welcome is a
+// blank hub's, about knowing nothing yet (kit/runtime/registry/menu).
+const seesNothing = (hub) => Array.isArray(hub.sees) && hub.sees.length === 0;
 
 // True the first time this person opens this hub; records the visit.
 // Synchronous: no await between the check and the set (AD-7).
@@ -1072,8 +1079,9 @@ function registerHubs(app, {
       const welcome = firstVisit(store, command.user_id, hub.id) ? welcomeText(hub) : undefined;
       const entries = menuEntries(hub.id, person);
       const newIds = newSinceLastMenu(store, command.user_id, hub.id, entries.map((m) => m.id));
+      // A blank hub's welcome (sees: []) shows only while the hub is blank.
       const base = {
-        notice: notSetUp(person), welcome, admin: isAdmin(person), log,
+        notice: notSetUp(person), welcome, blankWelcome: seesNothing(hub), admin: isAdmin(person), log,
       };
       const plainMenu = () => buildMenu(hub, rowsOf(entries, null, null), base);
       // The strip and the statuses: only for a person in the profile with at
@@ -1143,7 +1151,8 @@ function registerHubs(app, {
       }
       // The private reply has no 3-second limit, so it waits for late notes.
       if (late) menu = fullMenu(await late, true);
-      await respond(ephemeral(menu));
+      // No modal title here: the hub's name leads as a header.
+      await respond(ephemeral(withTitle(hub, menu)));
     }, { log, store }));
   }
 
