@@ -4,5 +4,5 @@
   "name": "Brightside v0",
   "description": "Open the Brightside v0 (blank) menu",
   "sees": [],
-  "welcome": "Welcome to Brightside v0, a blank bot. It has no business context and no data yet, so it knows nothing about Brightside. An admin can add context to teach it. Press Help at the bottom to see what you can use here."
+  "welcome": "A blank Brightside bot: it knows nothing about the business until an admin teaches it."
 }

@@ -77,7 +77,7 @@ test('each hub file registers its slash command; one listener each handles Open,
   assert.deepEqual([...app.eventListeners.keys()], ['team_join']);
 });
 
-test('fallback (no views client): the hub command replies privately with the hub\'s visible entries, label and description', async () => {
+test('fallback (no views client): the hub command replies privately with the hub\'s visible entries, each its label and verb (the description is in Help, D1)', async () => {
   const { app } = setup();
   await app.dispatchCommand('/alpha', { user_id: 'U1' });
   assert.equal(app.acks, 1);
@@ -89,7 +89,9 @@ test('fallback (no views client): the hub command replies privately with the hub
   // prod-only is hidden in dev; boom belongs to beta.
   assert.deepEqual(buttons(menu), ['echo:open', 'second:open']);
   const echo = menu.blocks.find((b) => b.block_id === 'entry:echo');
-  assert.equal(echo.text.text, '*Echo*\nSays who you are &amp; where &lt;you&gt; are.');
+  // U1 is not in the profile: the label and the verb, no status line (D4).
+  assert.equal(echo.text.text, '*Echo*');
+  assert.equal(echo.accessory.text.text, 'Run');
   assert.match(menu.text, /Alpha tools: Echo, Second/);
 });
 
@@ -180,13 +182,20 @@ test('by default access asks kit/lib/permissions, so open-access modules are all
   assert.deepEqual(buttons(app.responded[0]), ['echo:open', 'second:open']);
 });
 
-test('buildMenu: entries become sections with an Open button each', () => {
+test('buildMenu: rows become sections under their group, each with its verb as the button; the action id is still <id>:open (D1, D10)', () => {
   const hub = { id: 'h', name: 'H' };
-  const { text, blocks } = buildMenu(hub, [{ id: 'a-b', label: 'A', description: 'd' }]);
+  const entry = {
+    id: 'a-b', label: 'A', description: 'd', archetype: 'handler',
+  };
+  const { text, blocks } = buildMenu(hub, [{ entry, status: { key: 'ready', detail: null }, verb: 'Run' }]);
   assert.equal(text, 'H: A');
-  assert.deepEqual(blocks[1].accessory, {
-    type: 'button', action_id: 'a-b:open', value: 'a-b', text: { type: 'plain_text', text: 'Open', emoji: false },
+  assert.deepEqual(blocks[1], { type: 'header', block_id: 'group:0', text: { type: 'plain_text', text: 'Tools', emoji: false } });
+  assert.deepEqual(blocks[2].accessory, {
+    type: 'button', action_id: 'a-b:open', value: 'a-b', text: { type: 'plain_text', text: 'Run', emoji: false },
   });
+  assert.equal(blocks[2].text.text, '*A*\n✓ Ready');
+  // With no verb given, the module's menu verb.
+  assert.equal(buildMenu(hub, [{ entry, status: null }]).blocks[2].accessory.text.text, 'Run');
 });
 
 // --- modals ----------------------------------------------------------------
@@ -216,7 +225,7 @@ test('the hub command opens a modal with the menu: hub title, the same blocks, C
   const fallback = setup();
   await fallback.app.dispatchCommand('/alpha', { user_id: 'U1' });
   assert.deepEqual(view.blocks, fallback.app.responded[0].blocks);
-  assert.equal(view.blocks.find((b) => b.block_id === 'entry:echo').text.text, '*Echo*\nSays who you are &amp; where &lt;you&gt; are.');
+  assert.equal(view.blocks.find((b) => b.block_id === 'entry:echo').text.text, '*Echo*');
   assert.equal(view.blocks.at(-1).accessory.action_id, 'alpha:help');
   assert.deepEqual(fallbacks(log), []);
 });
@@ -442,8 +451,10 @@ test('a menu over 100 blocks keeps Help at the end with a "more…" note; long t
   assert.equal(view.blocks.length, 100);
   assert.equal(view.blocks.at(-1).accessory.action_id, 'big:help');
   assert.equal(view.blocks.at(-2).type, 'divider');
-  // 125 blocks (header, welcome, not-set-up notice, 120 entries, divider, Help): 97 + note + 2.
-  assert.equal(view.blocks.at(-3).elements[0].text, '_more… 26 more not shown here._');
+  // 126 blocks (header, not-set-up notice, welcome, the Tools header, 120
+  // entries, divider, Help): 97 + note + 2. One group too big on its own is
+  // left to modalView's cut (D1: the first group is never dropped whole).
+  assert.equal(view.blocks.at(-3).elements[0].text, '_more… 27 more not shown here._');
   assert.equal(view.title.text, 'A hub with a really lon…');
   assert.equal(Array.from(view.title.text).length, 24);
 });

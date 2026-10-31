@@ -8,12 +8,19 @@
 //   statusText({ key, detail })  ->  "✓ Done · 3 notes"
 //   setupBar(done, of)           ->  "▰▰▱▱ Setup 2 of 4"
 //   toolsReady(n, m)             ->  "✓ 1 of 2 tools ready"
+//   setupProgress(d, o, n, m)    ->  "▱ Setup 0 of 1 · 1 of 2 tools ready"
 //   menuVerbOf(mod)              ->  "Ask" | "Run" | "View" | "Add" | "Review" | "Request"
 //   SETUP_GROUP                  ->  "🔒 Setup · admins"
+//   CHECKING                     ->  "Checking…"
 //
 // Every status carries a word: a glyph never stands alone. A status may add
 // a short detail after a middle dot. An unknown status key throws (the
 // menu's guard catches it and shows the row with its verb only, D1).
+//
+// CHECKING (Story 17.2, D8) is not a status: it is the line every row shows
+// while the menu's notes are still being read (the menu opened before its
+// summary), so it has no glyph and no key. statusText still refuses
+// "checking", so no tool can claim it.
 //
 // Two statuses are deferred until the code has a source for them, so no
 // screen can show a status the code can't back: "Requested · in build"
@@ -67,6 +74,9 @@ const UNGROUPED = 'Tools';
 
 const SEP = ' · ';
 
+// A row's line while the menu waits for its summary (D8).
+const CHECKING = 'Checking…';
+
 // One line for a status: its glyph, its word and an optional detail.
 // Throws for an unknown key or a detail that is not text.
 function statusText({ key, detail = null } = {}) {
@@ -90,6 +100,13 @@ function toolsReady(n, m) {
   return `${MARK.done} ${n} of ${m} tools ready`;
 }
 
+// An admin's progress line while setup is not complete (D4): the bar, then
+// how many tools are ready, with no tick (the tick means "all set").
+function setupProgress(done, of, n, m) {
+  if (!count(m) || !count(n, m)) throw new RangeError('setupProgress needs 0 <= n <= m');
+  return `${setupBar(done, of)}${SEP}${n} of ${m} tools ready`;
+}
+
 // The button's text for a module: its manifest verb, else its archetype's.
 function menuVerbOf(mod) {
   if (!mod || typeof mod !== 'object') throw new TypeError('menuVerbOf needs a module');
@@ -99,5 +116,5 @@ function menuVerbOf(mod) {
 }
 
 module.exports = {
-  statusText, setupBar, toolsReady, menuVerbOf, STATUSES, VERBS, DEFAULT_VERBS, GLYPHS, RESERVED_GLYPHS, SETUP_GROUP, UNGROUPED, SEP,
+  statusText, setupBar, toolsReady, setupProgress, menuVerbOf, STATUSES, VERBS, DEFAULT_VERBS, GLYPHS, RESERVED_GLYPHS, SETUP_GROUP, UNGROUPED, SEP, CHECKING,
 };

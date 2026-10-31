@@ -35,7 +35,11 @@
 //
 // Only a hub that sees neither context nor data may post (D11, until v1
 // decides; channel.js refuses the rest). Unset channel: the tool says it is
-// not set up and names the admin, and no form opens.
+// not set up and names the admin, and no form opens. available(hub) is that
+// check as true or false (Ask's button); availability(hub) adds its reason,
+// "channel" or "hub", for the hub menu's status (plan hub-status-menu, D11).
+// The tool's label in the example is "Request a tool" (D10); the archetype
+// and its resource key keep their names.
 //
 // Closing the screen while the summary runs: the work finishes, Slack
 // answers views.update with not_found, the preview entry is dropped and the
@@ -372,9 +376,17 @@ function createBuildRequest({
   // True when this hub could take a build request now (Ask's Build request
   // button shows only then, review B9): a channel is set and the hub may post.
   const available = (hub) => blockedOn(hub) === null;
+  // The same check with its reason, for the hub menu's status (plan
+  // hub-status-menu, D11, architect P3-13): { available: true }, or
+  // { available: false, reason: 'channel' | 'hub' }.
+  const availability = (hub) => {
+    if (!channel) return Object.freeze({ available: false, reason: 'channel' });
+    if (blockedOn(hub) !== null) return Object.freeze({ available: false, reason: 'hub' });
+    return Object.freeze({ available: true });
+  };
 
   return Object.freeze({
-    open, submit, click, available,
+    open, submit, click, available, availability,
   });
 }
 

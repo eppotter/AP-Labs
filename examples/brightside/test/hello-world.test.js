@@ -43,10 +43,13 @@ test('/brightside shows a private menu with the Dataset and hello-world entries'
   const entries = menu.blocks.filter((b) => b.accessory && /^entry:/.test(b.block_id));
   // Someone the profile doesn't know: open-access entries only (Routing needs a grant).
   assert.deepEqual(entries.map((e) => e.accessory.action_id), ['dataset:open', 'hello-world:open']);
-  assert.match(entries[0].text.text, /^\*Dataset\*\nSee which data the bot reads/);
-  assert.match(entries[1].text.text, /\*Say hello\*\nCheck the bot knows who you are/);
-  // First visit: Brightside's welcome from its hub file; the menu ends with Help.
-  assert.match(menu.blocks.find((b) => b.block_id === 'welcome').text.text, /^Welcome to the Brightside bot\./);
+  // Each row is its label and its verb (plan hub-status-menu, D1, D10): the
+  // description is in Help, and someone the profile doesn't know sees no
+  // status line. No button says Open.
+  assert.deepEqual(entries.map((e) => e.text.text), ['*Dataset*', '*Say hello*']);
+  assert.deepEqual(entries.map((e) => e.accessory.text.text), ['View', 'Run']);
+  // First visit: Brightside's welcome from its hub file, one sentence (D9); the menu ends with Help.
+  assert.match(menu.blocks.find((b) => b.block_id === 'welcome').text.text, /^Welcome to the Brightside bot: /);
   assert.equal(menu.blocks.at(-1).accessory.action_id, 'brightside:help');
 });
 

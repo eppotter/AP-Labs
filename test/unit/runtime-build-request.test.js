@@ -265,7 +265,7 @@ test('way out, the channel unset: the tool says it is not set up and names the a
   const shown = await openForm(app);
   assert.equal(shown.callback_id, 'hub:module');
   assert.equal(shown.submit, undefined);
-  assert.deepEqual(texts(shown.blocks), ["Build requests aren't set up yet: no channel to post them to. Ask <@UADA> to set one up."]);
+  assert.deepEqual(texts(shown.blocks), ["Tool requests aren't set up yet: no channel to post them to. Ask <@UADA> to set one up."]);
   assert.ok(!shown.blocks.some((b) => b.type === 'input'));
 });
 

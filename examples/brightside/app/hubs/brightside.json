@@ -4,5 +4,5 @@
   "name": "Brightside",
   "description": "Open the Brightside menu",
   "sees": ["context", "data", "rules"],
-  "welcome": "Welcome to the Brightside bot. Each option below is one tool for your day-to-day work, and you only see the ones you're set up for. Press Open to start one, or Help at the bottom to see everything you can use and how to tell us what's missing."
+  "welcome": "Welcome to the Brightside bot: your day-to-day tools, and only the ones you're set up for."
 }
