@@ -1,7 +1,7 @@
 'use strict';
 
 // Story 16.2 (plan brightside-v0, D1, D12): a blank hub (`"sees": []`, no
-// modules) opens a menu with only Help and its welcome, and every way out of
+// modules) opens a menu with only Help, and every way out of
 // it works: Help then Back, the X, an expired trigger (the ephemeral
 // fallback) and a person not in the profile (the "not set up" notice). The
 // Slack mirror: files:read is a bot scope, and the example's manifest is the
@@ -58,7 +58,7 @@ test('the blank fixture hub loads: it sees nothing, has no usage hint and no mod
   assert.equal(forHub('blank').data, null, 'a hub that sees no data gets the null runner');
 });
 
-test('the blank hub opens a modal with its welcome and only Help', async () => {
+test('the blank hub opens a modal with only Help: with no rows there is no summary, so its blank-hub welcome is left out', async () => {
   const { app } = setup();
   await app.dispatchCommand('/blank', { user_id: 'UADA' });
   assert.equal(app.acks, 1);
@@ -69,7 +69,11 @@ test('the blank hub opens a modal with its welcome and only Help', async () => {
   assert.equal(view.submit, undefined);
   assert.deepEqual(openButtons(view.blocks), []);
   assert.deepEqual(actionIds(view.blocks), ['blank:help']);
-  assert.match(view.blocks.find((b) => b.block_id === 'welcome').text.text, /no business context and no data yet\. An admin can add context/);
+  // A hub that sees nothing shows its welcome only while its summary says
+  // it is blank; no rows means no summary is read, so no welcome.
+  assert.equal(view.blocks.find((b) => b.block_id === 'welcome'), undefined);
+  // No header repeats the modal's title.
+  assert.ok(!view.blocks.some((b) => b.type === 'header'), 'the title is not repeated');
   assert.ok(!view.blocks.some((b) => b.type === 'context'), 'a set-up person sees no notice');
 });
 

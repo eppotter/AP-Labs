@@ -70,11 +70,12 @@ test('the Plan a route manifest: label, routing-map on the route-editor screen, 
   assert.equal(require('../app/modules/route-planner/adapter').createAdapter, createAdapter);
   assert.equal(require('../app/modules/routing/adapter').createAdapter, createAdapter);
   // The existing Routing module is unchanged (Story 15.5's manifest), but
-  // for its menu group (plan hub-status-menu, D5).
+  // for its menu group (plan hub-status-menu, D5) and its label: "Route map",
+  // so the tool is not named like its "Routing" group (2026-10-31 live check).
   assert.deepEqual(routing, {
     id: 'routing',
     hub: 'brightside',
-    label: 'Routing',
+    label: 'Route map',
     description: 'Each crew\'s day on a map: suggestions only, nothing is changed',
     resource: 'ROUTING_ALL_CREWS',
     archetype: 'routing-map',

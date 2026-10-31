@@ -12,7 +12,7 @@ A folder under `<app>/modules/<id>/` with two files.
 {
   "id": "routing",
   "hub": "ops",
-  "label": "Routing",
+  "label": "Route map",
   "description": "Each crew's day on a map",
   "resource": "ROUTING_ALL_CREWS",
   "archetype": "routing-map",
@@ -41,11 +41,13 @@ The test fixture `test/fixtures/routing-map/adapter.js` is a working example; Br
 - **Views:** Booked vs optimized (one crew), Route change (one zone; a crew lead: their crew), Zone (one zone's booked routes), Gap fill (one crew's first gap and up to five visits that could move into it).
 - **A switch:** "Drawing the map…", then the new map. The old image file is deleted.
 - **A crew lead:** only their crew. Stops moved off their crew say "moved to another crew"; gap candidates booked on other crews are counted, not named.
-- **Ways out:** Back (to the menu), Close (the X), an error (a plain message, with Back), an expired window after 15 minutes without use ("This map has expired… open Routing again"), access withdrawn (the refusal, in the window).
+- **Ways out:** Back (to the menu), Close (the X), an error (a plain message, with Back), an expired window after 15 minutes without use ("This map has expired… open Route map again"), access withdrawn (the refusal, in the window).
 
 Image files are private Slack files shared nowhere. They are deleted when the window closes or, at the latest, 20 minutes after upload (the sweep).
 
 ## Brightside's Routing module (Story 15.5)
+
+Its menu label is **Route map** (renamed 2026-10-31, so the tool is not named like its **Routing** group header); the module id stays `routing`.
 
 `examples/brightside/app/modules/routing/`: dev only (`environments: ["dev"]`) until Dana Reyes signs GRD-002's map image rule (Story 15.6). Its adapter is `examples/brightside/app/routing/adapter.js`; names come from `labels.sql`. The audience in `profiles/brightside/profile.yml` is a **dev placeholder**: Dana (the user Ely drives in dev) is the one dispatcher, and no crew leads are listed until Dana confirms the real list (DEP-024).
 
@@ -60,16 +62,16 @@ Real Slack only, so each step is **untested until you run it**. About 10 minutes
 
 | # | You do (as Dana) | Look for |
 |---|---|---|
-| 1 | `/brightside`, **Open** on **Routing**. Pick day **2026-10-03** (as_of+3). | "Loading…", then a map, the controls (view, day, crew) and a list. |
+| 1 | `/brightside`, **View** on **Route map** (under the **Routing** header). Pick day **2026-10-03** (as_of+3). | "Loading…", then a map, the controls (view, day, crew) and a list. |
 | 2 | Switch the view to **Route change**, then the zone to **Zone east**. | A map, and in the list one "Recommended for another zone" line and no "To rebook". |
 | 3 | Switch to **Zone**, then **Gap fill**, then **Booked vs optimized**. | Each: "Drawing the map…", then a map or a plain sentence (Gap fill on this day: no cancellation). Terminal: `map image shown` per map, no `map not shown`. |
 | 4 | Pick a day more than 7 days before 2026-09-30. | "That day is outside what this map can show…", no map. |
 | 5 | Read the list and the alt text (hover the image on desktop). | No address, postal code or coordinate anywhere. |
 | 6 | Look through your DM with the bot, a channel and Files. | `route-map.png` is nowhere outside the window. |
 | 7 | Press **Back**. | The menu. Terminal: `map view closed`, `deleted:` at least 1. |
-| 8 | **15.1 carry-over:** open Routing again and close it with the **X** (desktop), then once more with a swipe down (iOS). | `map view closed` with `cleared: true` each time. None? Note it: the sweep deletes within 20 minutes; nothing changes. |
-| 9 | Open Routing, leave it over 15 minutes, then switch the view. | "This map has expired… open Routing again". |
-| 10 | **15.1 carry-over:** a second person (not in the audience) searches **Files** for `route-map.png` and `Route map`. | They find nothing; they don't see Routing on their menu either. |
+| 8 | **15.1 carry-over:** open Route map again and close it with the **X** (desktop), then once more with a swipe down (iOS). | `map view closed` with `cleared: true` each time. None? Note it: the sweep deletes within 20 minutes; nothing changes. |
+| 9 | Open Route map, leave it over 15 minutes, then switch the view. | "This map has expired… open Route map again". |
+| 10 | **15.1 carry-over:** a second person (not in the audience) searches **Files** for `route-map.png` and `Route map`. | They find nothing; they don't see Route map on their menu either. |
 
 **Pending DEP-024:** the crew-lead check (a lead sees only their crew in every view) waits for Dana's audience list. The tests cover it on the fixture today.
 
