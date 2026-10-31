@@ -1,6 +1,6 @@
 # Adding a module
 
-A module is one entry on a hub's menu: a person types the hub's slash command, presses **Open** on the entry, and the module's handler replies to them privately. Adding one is a folder of files in the app dir. No engine file (`kit/**`, `profiles/_schema/**`) changes.
+A module is one entry on a hub's menu: a person types the hub's slash command, presses the entry's button (its verb, such as **Run** or **View**: the `verb` field below), and the module's handler replies to them privately. Adding one is a folder of files in the app dir. No engine file (`kit/**`, `profiles/_schema/**`) changes.
 
 A module never writes to an external system itself: a push is a manifest `write` block, run by the approval-write archetype (AD-15). `npm run check` fails a module that passes `dryRun` (other than `dryRun: true`), touches a connector's `.write`, or creates its own connector instance (DEP-012; see `kit/templates/connector.md`).
 
@@ -16,7 +16,7 @@ A module never writes to an external system itself: a push is a manifest `write`
 2. Fill in the manifest (fields below). At minimum: `id`, `hub`, `label`, `description`, `resource` and `archetype`.
 3. Declare the resource in the profile, under `resources`, **without** `open_access`, and grant it to the people who need it (see "Why the resource is gated" below).
 4. Write the handler and its test, then run `npm test`.
-5. Restart the app. The entry shows on its hub's menu for the people the profile allows.
+5. Restart the app. The entry shows on its hub's menu for the people the profile allows, with its status and its verb (see "What the menu shows" below).
 
 If the manifest is wrong, `npm test` and app startup both fail with the module's file and the field, for example `modules/weekly-report/manifest.json: field "hub" names no hub`.
 
@@ -29,7 +29,7 @@ The manifest is JSON, checked against `kit/runtime/schema/module.schema.json`. U
 | `id` | yes | Lower-case slug (`weekly-report`). Must equal the folder name, so two modules can never share an id. |
 | `hub` | yes | The id of the hub whose menu lists it: a file `app/hubs/<hub>.json` must exist. What the module can reach is what that hub's `sees` lists: on a hub without `"data"`, `ctx.data.run` refuses ("no data source"), a `scoped-pull`, `approval-write` or `routing-map` module stops startup, and `npm run check` fails a module file there that imports `kit/runtime/data`. On a hub without `"context"`, it fails one that imports `kit/runtime/llm` or `kit/runtime/knowledge`, or names the profile's context files (`.aplabs/context`, or `org.md`, `data.md`, `guardrails.md` or `connectors.md` under a `context/` folder). |
 | `label` | yes | The tool's name on the menu, up to 60 characters. It may not say "Setup" or "Set up", or hold a menu status mark (✓ ◐ ◌ ○ 🔒 ▰ ▱ ⏳ ⚠): startup fails naming the file and the field. |
-| `description` | yes | One line under the button, up to 200 characters. Say what it does for the person. |
+| `description` | yes | One line, up to 200 characters, shown beside the tool in the hub's Help. Say what it does for the person. |
 | `resource` | yes | The profile resource key that grants it (`WEEKLY_REPORT`). It must be declared in the profile, or startup fails: a missing key is a setup fault, never shown to a person as a denial. |
 | `archetype` | yes | `handler` (your code replies), `scoped-pull` (a list with a typed form, no code: see below), `approval-write` (a scoped pull whose list can be pushed to another system after the person previews and approves it: see below), `routing-map` (the routing map), or one of the four starter tools the engine shows itself: `data-sources`, `add-context`, `ask` and `build-request` (see "The four starter tools" below). |
 | `environments` | yes | Where it shows, by `APLABS_ENV` (`["dev"]`, then `["dev", "prod"]` when it is ready). Off the menu, and refused if opened, everywhere else. |
@@ -56,14 +56,14 @@ Every hub file (`app/hubs/<id>.json`) has a required `sees`: what the hub, and e
 
 ## The four starter tools
 
-Four archetypes are tools the engine shows itself. Their manifest is the required fields only: no `handler`, `query`, `parameters`, `scoring` or `row_id` (startup stops on any of them). The template's example client has one of each to copy, and the fork guide (`docs/fork-guide.md`, step 8) says how. Each opens in the module's own view, whose Back returns to the hub's menu.
+Four archetypes are tools the engine shows itself. Their manifest is the required fields only: no `handler`, `query`, `parameters`, `scoring` or `row_id` (startup stops on any of them). The template's example client has one of each to copy, and the fork guide (`docs/fork-guide.md`, step 8) says how. Each opens in the module's own view, whose Back returns to the hub's menu. Data sources and Add context always sit in the menu's **🔒 Setup · admins** group, which only a person whose profile role is `admin` sees: granting their keys to anyone else by name does not show it to them. The example labels its build request tool **Request a tool**.
 
-| Archetype | What a person sees |
-|---|---|
-| `data-sources` | What the hub has: its connected data (available or not, never a table or row count), whether `data.md` and `guardrails.md` are signed off and each known truth with its owner and last check, and the titles of its added context. On a hub that sees neither data nor rules: "No data connected yet. No known truths or rules yet." |
-| `add-context` | A title and a text box (at most 3,000 characters), or one uploaded file (PDF, image, `.txt` or `.md`), for Ask to use on this hub, and the hub's entries, each with Remove. An entry is live at once. A PDF or image is read once through the AI; only the text is kept, and the file stays in the uploader's Slack files. |
-| `ask` | A question in the person's own words (at most 500 characters). Ask points to a tool on this hub the person can open, says what is missing when a data question comes before the hub's data and rules are set up, or answers from the hub's prompt. It never writes or runs SQL. |
-| `build-request` | What the person needs (at most 500 characters), summarised by the AI, previewed exactly as it will post, then posted to the profile's `slack.build_requests_channel` with a mention of the person. Only a hub that sees neither `"context"` nor `"data"` may post. |
+| Archetype | Button | Status on the menu | What a person sees |
+|---|---|---|---|
+| `data-sources` | View | `✓ Done` when the data, known truths and rules the hub can reach are all set up (`✓ Done · no data on this hub` on a hub that sees neither data nor rules); `○ Not started · no data, no rules`; else `◐ Partly ready · needs <what>` | What the hub has: its connected data (available or not, never a table or row count), whether `data.md` and `guardrails.md` are signed off and each known truth with its owner and last check, and the titles of its added context. On a hub that sees neither data nor rules: "No data connected yet. No known truths or rules yet." |
+| `add-context` | Add | `✓ Done · N notes`; `○ Not started · no notes yet`; `◌ Waiting · needs storage` with no knowledge store | A title and a text box (at most 3,000 characters), or one uploaded file (PDF, image, `.txt` or `.md`), for Ask to use on this hub, and the hub's entries, each with Remove. An entry is live at once. A PDF or image is read once through the AI; only the text is kept, and the file stays in the uploader's Slack files. |
+| `ask` | Ask | `✓ Ready` with data and rules set up; else `◐ Partly ready · nothing taught yet`, `· no data yet` or `· no rules yet`; `◌ Waiting · needs the AI` with no AI service | A question in the person's own words (at most 500 characters). Ask points to a tool on this hub the person can open, says what is missing when a data question comes before the hub's data and rules are set up, or answers from the hub's prompt. It never writes or runs SQL. |
+| `build-request` | Request | `✓ Ready`; `◌ Waiting · needs a channel` while `slack.build_requests_channel` is unset; `◌ Waiting · not on this hub` on a hub that sees context or data | What the person needs (at most 500 characters), summarised by the AI, previewed exactly as it will post, then posted to the profile's `slack.build_requests_channel` with a mention of the person. Only a hub that sees neither `"context"` nor `"data"` may post. |
 
 Their resources:
 
@@ -71,14 +71,36 @@ Their resources:
 - **Keep `data-sources` and `build-request` gated too.** On a hub that sees rules, Data sources lists the known truths and who signed them off; Build request posts in the person's name.
 - The admin role confers each key unless the profile declares it `admin_grantable: false`.
 
+## What the menu shows
+
+A hub's menu lists each tool a person may open as one row: the label, then its status, with the verb as the button beside it. A manifest never sets a status: the engine works it out from what the hub has (`kit/runtime/registry/status.js`). Every status is a mark and a word, sometimes with a detail after a middle dot:
+
+| Status | Means |
+|---|---|
+| `✓ Ready` | The tool works fully. |
+| `✓ Done` | A setup tool whose step is complete (`✓ Done · 3 notes`). |
+| `◐ Partly ready` | It works, with limits (`◐ Partly ready · no data yet`). |
+| `◌ Waiting` | It can't work yet (`◌ Waiting · needs data`). The button is **Why?** instead of the verb. |
+| `○ Not started` | A setup tool with nothing in it yet. |
+
+What a fork's own modules show:
+
+- **`handler`:** `✓ Ready`. A module that uploads map images waits while the map files aren't set up (`◌ Waiting · needs map setup`).
+- **`scoped-pull` and `approval-write`:** `✓ Ready` when the hub's data is connected, else `◌ Waiting · needs data`.
+- **`routing-map`:** `✓ Ready` when the data is connected and the map is set up, else `◌ Waiting · needs data` or `◌ Waiting · needs map setup`.
+
+**Why?** opens a screen titled with the tool's label. It says what is missing, in the bot's own words; offers **Request** when the person has the build request tool on the same hub and it is ready, otherwise says to ask the admin; and Back returns to the menu. If the tool became ready since the menu opened, it says so.
+
+Above the rows the menu shows what the hub knows (counts only) and, for an admin, how far setup has got; tools sit under their `group` headers, then **Tools**, then the admins' Setup group. The fork guide (`docs/fork-guide.md`, step 8, "What the menu shows") describes the whole window. Every mark and word lives in `kit/runtime/registry/vocabulary.js`, and a label or group may not use one.
+
 ## A scoped pull: a list with a typed form
 
 A `scoped-pull` module has no handler. Its manifest declares its inputs and names a fixed SQL file; the engine does the rest:
 
-1. **Open** shows the form in the module's window: one input per parameter, defaults filled in. Its submit button is **Check values** (Slack requires a submit on any window with inputs).
+1. **Run** (its button on the menu) shows the form in the module's window: one input per parameter, defaults filled in. Its submit button is **Check values** (Slack requires a submit on any window with inputs).
 2. **Check values** reads what was typed and checks it against the declarations. A problem shows beside its input, worded from the input's label. Good values replace the form with the values as plain text and **Confirm** and **Change** buttons.
 3. **Change** returns to the form with the values filled in. **Confirm** runs the request once: a double click or a replay is told it is running or done.
-4. **The results** replace the window: the row count, the values, the first 10 rows, and a link to the CSV of every row, which goes only to the person's DM with the bot (never a channel). The engine stops at 5,000 rows and says "the first 5,000 of N". Zero rows, a refused query, a failed one or the data being unavailable each get a plain message instead. A run that didn't finish still uses up that Confirm: open the module again from the menu to retry.
+4. **The results** replace the window: the row count, the values, the first 10 rows, and a link to the CSV of every row, which goes only to the person's DM with the bot (never a channel). The engine stops at 5,000 rows and says "the first 5,000 of N". Zero rows, a refused query, a failed one or the data being unavailable each get a plain message instead. A run that didn't finish still uses up that Confirm: press its button on the menu again to retry.
 
 Each open form is a session bound to the person who opened it. A click by anyone else is refused, and after 30 minutes without use the form expires. Every step updates the same window in place.
 
@@ -187,7 +209,7 @@ For example (Brightside's Win-back list):
 
 The handler gets one argument, `ctx`:
 
-- `ctx.person`: `{ id, name }`, the Slack user who pressed Open.
+- `ctx.person`: `{ id, name }`, the Slack user who pressed the module's button.
 - `ctx.client`: `{ id, name }`, from the profile.
 - `ctx.module`: `{ id, label }`, from the manifest.
 - `ctx.data.run(sql, params)`: the read-only, guarded query runner. `ctx.data.describe()` says which data it reads.
