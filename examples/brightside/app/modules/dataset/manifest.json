@@ -5,6 +5,7 @@
   "description": "See which data the bot reads: its source, version, as-of date and table sizes.",
   "resource": "DATASET",
   "archetype": "handler",
+  "verb": "View",
   "environments": ["dev", "prod"],
   "handler": "handler.js"
 }

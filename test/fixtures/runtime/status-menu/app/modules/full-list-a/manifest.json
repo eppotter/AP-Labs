@@ -1,0 +1,26 @@
+{
+  "id": "full-list-a",
+  "hub": "full",
+  "label": "Late visits",
+  "description": "A fixture tool.",
+  "resource": "PULL",
+  "archetype": "scoped-pull",
+  "group": "Lists",
+  "parameters": [
+    {
+      "name": "zone",
+      "label": "Zone",
+      "type": "string",
+      "enum": [
+        "north",
+        "south"
+      ],
+      "required": true
+    }
+  ],
+  "query": "visits.sql",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

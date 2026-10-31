@@ -1,0 +1,9 @@
+{
+  "id": "onboarded",
+  "command": "/onboarded",
+  "name": "Onboarded tools",
+  "description": "Open the Onboarded tools menu",
+  "sees": [
+    "context"
+  ]
+}

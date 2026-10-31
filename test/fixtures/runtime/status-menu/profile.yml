@@ -1,0 +1,21 @@
+# Hub status menu test profile (plan hub-status-menu, Stories 17.1 to 17.5).
+# Four fixture hubs, one per stage: blank (sees nothing, no notes),
+# onboarded (sees context), first-tool (sees data, one scoped pull) and full
+# (sees context, data and rules; 12 modules in several groups). The admin
+# role confers every key; Bo is a member granted ASK and TOOL by name. Its
+# client files are in context/: data.md (one signed-off truth, one pending)
+# and guardrails.md (signed off; two approved rule cards among cards that
+# must not count).
+schema_version: 1
+client: { id: tiny, name: Tiny }
+resources:
+  - { key: ASK, label: Ask }
+  - { key: BUILD_REQUEST, label: Request a tool }
+  - { key: ADD_CONTEXT, label: Add context }
+  - { key: DATA_SOURCES, label: Data sources }
+  - { key: PULL, label: Pull }
+  - { key: TOOL, label: Tool }
+users:
+  - { id: ada, name: Ada, role: admin, identities: { slack: UADA } }
+  - { id: bo, name: Bo, role: member, identities: { slack: UBO }, grants: [ASK, TOOL] }
+slack: { build_requests_channel: C0BUILDREQ1 }

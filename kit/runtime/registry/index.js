@@ -84,6 +84,14 @@
 // default) or "route-editor" (Plan a route, AD-R26). Whether the profile has
 // routing.depot and the adapter a route() is checked when it opens (the hub
 // shows "not available" and opens no modal), since the adapter is made then.
+//
+// Plan hub-status-menu (Story 17.1): a manifest may name its menu verb
+// ("verb", one of kit/runtime/registry/vocabulary VERBS) and its group
+// ("group", one line, at most 40 characters). add-context and data-sources
+// take no group: the engine puts them in the admins' Setup group. A label or
+// group saying "Setup" or "Set up" (any case), or holding a menu status mark
+// (vocabulary RESERVED_GLYPHS), is refused naming the module file and the
+// field, so no manifest can pass for the Setup group or fake a status.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -93,6 +101,7 @@ const { checkQuery } = require('../archetypes/scoped-pull/run');
 const { checkScoring } = require('../scoring');
 const approvalWrite = require('../archetypes/approval-write');
 const { forbiddenColumnsOf } = require('../sql');
+const { RESERVED_GLYPHS } = require('./vocabulary');
 
 const SCHEMA_DIR = path.join(__dirname, '../schema');
 // Archetypes whose engine code exists (every archetype the schema names).
@@ -163,6 +172,7 @@ function schemaProblems(validate, data, file) {
       if (e.keyword === 'false schema' && e.instancePath === '/write') return `${file}: field "write" is used only by an approval-write module (writes go through that archetype)`;
       if (e.keyword === 'false schema' && e.instancePath === '/adapter') return `${file}: field "adapter" is used only by a routing-map module`;
       if (e.keyword === 'false schema' && e.instancePath === '/screen') return `${file}: field "screen" is used only by a routing-map module`;
+      if (e.keyword === 'false schema' && e.instancePath === '/group') return `${file}: field "group" is not used by a${/^[aeiou]/.test(data.archetype) ? 'n' : ''} ${data.archetype} module (the engine puts it in the admins' Setup group)`;
       const field = fieldName(e.instancePath);
       return field ? `${file}: field "${field}"${note} ${e.message}` : `${file}: ${e.message}`;
     });
@@ -306,6 +316,22 @@ function askProblems(m, file, profile) {
   return [`${file}: field "resource" ${m.resource} is open_access in the profile, but module ${m.id} reads out the hub's added context; remove open_access and grant it to the admin role and the people the profile names`];
 }
 
+// A label or group that could pass for the engine's Setup group or a status
+// (plan hub-status-menu, D5, architect P3-11): "Setup" or "Set up" in any
+// case, or any of the menu's status marks.
+const SETUP_WORDS = /\bset[ -]?up\b/i;
+function menuTextProblems(m, file) {
+  const problems = [];
+  for (const field of ['label', 'group']) {
+    const v = m[field];
+    if (typeof v !== 'string') continue;
+    if (SETUP_WORDS.test(v)) problems.push(`${file}: field "${field}" must not say "Setup" or "Set up" (the menu's Setup group is the engine's, for admins only)`);
+    const glyph = RESERVED_GLYPHS.find((g) => v.includes(g));
+    if (glyph) problems.push(`${file}: field "${field}" must not hold "${glyph}" (the menu's status marks are the engine's)`);
+  }
+  return problems;
+}
+
 // A scoped-pull's SQL template, read once, then checked (checkQuery).
 function loadQuery(abs, file, problems) {
   try {
@@ -343,6 +369,7 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
     }
     const before = problems.length;
     if (m.id !== folder) problems.push(`${file}: field "id" must equal the folder name ("${folder}")`);
+    problems.push(...menuTextProblems(m, file));
     if (failedHubs.has(m.hub)) problems.push(`${file}: field "hub" names hubs/${m.hub}.json, which did not load (see above)`);
     else if (!hubIds.has(m.hub)) problems.push(`${file}: field "hub" names no hub ("${m.hub}" has no hubs/${m.hub}.json)`);
     if (!resources.has(m.resource)) {

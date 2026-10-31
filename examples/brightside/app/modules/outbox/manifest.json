@@ -5,6 +5,7 @@
   "description": "See what was sent to the email tool: the latest lists, their contact counts and a sample.",
   "resource": "OUTBOX",
   "archetype": "handler",
+  "verb": "View",
   "environments": ["dev", "prod"],
   "handler": "handler.js"
 }

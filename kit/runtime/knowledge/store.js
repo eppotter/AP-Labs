@@ -46,7 +46,10 @@
 //
 // Reads never stop boot or a call: a missing folder is no entries; an entry
 // file that can't be read, or isn't a well-formed entry of this hub, is
-// skipped and logged by id. Symlinks are never followed (PR #264 review): a
+// skipped and logged by id. One exception (plan hub-status-menu, architect
+// P2-4): list() rejects when the hub's folder is there but can't be listed,
+// so Data sources and the menu's strip say "couldn't check just now", never
+// "0 notes". forPrompt still gives '' then (logged), so Ask keeps answering. Symlinks are never followed (PR #264 review): a
 // client or hub folder that is not a real folder gives no entries (and
 // refuses an add or a remove), and an entry is opened with O_NOFOLLOW and
 // read only when it is a regular file.
@@ -214,8 +217,11 @@ function createKnowledgeStore({
     }
   }
 
-  // The hub's entries, oldest first. Never throws for a file problem.
-  async function read(hub) {
+  // The hub's entries, oldest first. Never throws for a file problem, except
+  // with strict (list): a folder that is there but can't be read rejects
+  // (plan hub-status-menu, architect P2-4), so a screen can say it couldn't
+  // check rather than "no entries".
+  async function read(hub, { strict = false } = {}) {
     const dir = hubDir(hub);
     let names;
     try {
@@ -229,6 +235,7 @@ function createKnowledgeStore({
     } catch (err) {
       if (err && err.code === 'ENOENT') return [];
       log.error('added context unreadable; none used', { hub, error: err && err.code });
+      if (strict) throw Object.assign(new Error('added context unreadable'), { code: (err && err.code) || 'EIO' });
       return [];
     }
     const entries = [];
@@ -296,9 +303,11 @@ function createKnowledgeStore({
     });
   }
 
+  // Rejects when the hub's folder is there but can't be read; a missing
+  // folder is no entries.
   async function list(hub) {
     hubDir(hub);
-    return read(hub);
+    return read(hub, { strict: true });
   }
 
   // true when the entry was there and is gone; false when it was not there.
@@ -320,9 +329,11 @@ function createKnowledgeStore({
     });
   }
 
-  // The hub's entries as they go into its AI prompt (D2), or ''.
+  // The hub's entries as they go into its AI prompt (D2), or ''. A folder
+  // that can't be read gives '' (logged), as before: Ask still answers.
   async function forPrompt(hub) {
-    return addedContextPrompt(await list(hub));
+    hubDir(hub);
+    return addedContextPrompt(await read(hub));
   }
 
   // The store bound to one hub, for its view (kit/runtime/slack/hub-view).

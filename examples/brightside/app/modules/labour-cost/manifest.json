@@ -5,6 +5,7 @@
   "description": "What staff time on visits cost in pay for one month: totals only, never one person's rate or name.",
   "resource": "LABOUR_COST",
   "archetype": "scoped-pull",
+  "group": "Lists",
   "environments": ["dev", "prod"],
   "parameters": [
     {

@@ -1,0 +1,15 @@
+{
+  "id": "full-report-b",
+  "hub": "full",
+  "label": "Monthly report",
+  "description": "A fixture tool.",
+  "resource": "TOOL",
+  "archetype": "handler",
+  "group": "Reports",
+  "verb": "View",
+  "handler": "handler.js",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

@@ -5,6 +5,7 @@
   "description": "Reorder one crew's day from the Office: suggestions only, nothing is changed",
   "resource": "ROUTING_ALL_CREWS",
   "archetype": "routing-map",
+  "group": "Routing",
   "screen": "route-editor",
   "environments": ["dev"],
   "adapter": "adapter.js"

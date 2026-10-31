@@ -1,0 +1,13 @@
+{
+  "id": "full-tool-a",
+  "hub": "full",
+  "label": "Say hello",
+  "description": "A fixture tool.",
+  "resource": "TOOL",
+  "archetype": "handler",
+  "handler": "handler.js",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

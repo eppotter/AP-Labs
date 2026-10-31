@@ -60,6 +60,7 @@ test('the Plan a route manifest: label, routing-map on the route-editor screen, 
     description: "Reorder one crew's day from the Office: suggestions only, nothing is changed",
     resource: routing.resource,
     archetype: 'routing-map',
+    group: 'Routing', // plan hub-status-menu, D5
     screen: 'route-editor',
     environments: ['dev'],
     adapter: 'adapter.js',
@@ -68,7 +69,8 @@ test('the Plan a route manifest: label, routing-map on the route-editor screen, 
   // Its adapter is Brightside's routing adapter, as the Routing module's is.
   assert.equal(require('../app/modules/route-planner/adapter').createAdapter, createAdapter);
   assert.equal(require('../app/modules/routing/adapter').createAdapter, createAdapter);
-  // The existing Routing module is unchanged (Story 15.5's manifest).
+  // The existing Routing module is unchanged (Story 15.5's manifest), but
+  // for its menu group (plan hub-status-menu, D5).
   assert.deepEqual(routing, {
     id: 'routing',
     hub: 'brightside',
@@ -76,6 +78,7 @@ test('the Plan a route manifest: label, routing-map on the route-editor screen, 
     description: 'Each crew\'s day on a map: suggestions only, nothing is changed',
     resource: 'ROUTING_ALL_CREWS',
     archetype: 'routing-map',
+    group: 'Routing',
     environments: ['dev'],
     adapter: 'adapter.js',
   });
