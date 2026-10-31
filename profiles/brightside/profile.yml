@@ -122,6 +122,12 @@ users:
     role: member
     identities: { github: mlee-bright }
     grants: [VERIFY_SKIP]
+  # Steven Auslander (AP Labs partner): admin so he can drive /brightside-v0 in the dev
+  # workspace (plan steven-access, 2026-10-31). No by-name grants (no Win-back, no routing map).
+  - id: steven
+    name: Steven Auslander
+    role: admin
+    identities: { slack: U0CB6GJ6UTH }
 
 # Slack settings (kit/runtime).
 slack:
