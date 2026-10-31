@@ -1,0 +1,12 @@
+{
+  "id": "data-request",
+  "hub": "data",
+  "label": "Build request",
+  "description": "Ask for a new tool or change. You see a preview before it posts.",
+  "resource": "BUILD_REQUEST",
+  "archetype": "build-request",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

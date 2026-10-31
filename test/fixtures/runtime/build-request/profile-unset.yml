@@ -1,0 +1,8 @@
+# profile.yml with no build-request channel (Story 16.6).
+schema_version: 1
+client: { id: tiny, name: Tiny }
+resources:
+  - { key: BUILD_REQUEST, label: Build request }
+users:
+  - { id: ada, name: Ada, role: admin, identities: { slack: UADA } }
+  - { id: bo, name: Bo, role: member, identities: { slack: UBO } }

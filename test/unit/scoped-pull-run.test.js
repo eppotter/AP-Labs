@@ -385,7 +385,8 @@ test('deliverCsv always uploads to the person\'s DM (channel_id required), and r
 });
 
 // Story 9.4 hands the AI service to the hubs for one use: the plain-English
-// reader (archetypes/scoped-pull/extract). Only that file may name it, and it
+// reader (archetypes/scoped-pull/extract); Story 16.6 adds a second, the
+// build request's summary (archetypes/build-request), which reads no data. Only that file may name it, and it
 // imports nothing that holds rows (scoped-pull-extract.test.js checks its
 // imports and what it sends).
 test('rows never reach the AI: the scoped-pull engine does not import the AI service, and the hubs give it only to the reader', () => {
@@ -406,6 +407,9 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
     "if (forHub && (data || llm)) throw new TypeError('registerHubs takes forHub, or (a test seam) data and llm, never both');",
     'const viewFor = forHub || everyHubSeesAll({ data, llm }).forHub;',
     'store, log, run: createRunner({ data: view.data, log, admin, store, hooks }), read: view.llm ? createReader({ llm: view.llm, log }) : null,',
+    // Story 16.6: a build request's summary uses its own hub's bound service
+    // (archetypes/build-request); it reads no data, so no row can reach it.
+    'return hub ? { id: hub.id, name: hub.name, sees: view.sees, llm: view.llm } : null;',
     // Story 16.8: Add context's upload hands its hub's AI the uploaded file's
     // bytes only (readFile), never rows: no runner is in reach there.
     'const { llm } = viewOf(mod.hub);',

@@ -1,0 +1,12 @@
+# Build request test profile (Story 16.6, plan brightside-v0 D11): the
+# BUILD_REQUEST key the admin role confers, an admin and a member with Slack
+# ids, and a fake build-request channel id. profile-unset.yml is the same
+# with no channel.
+schema_version: 1
+client: { id: tiny, name: Tiny }
+resources:
+  - { key: BUILD_REQUEST, label: Build request }
+users:
+  - { id: ada, name: Ada, role: admin, identities: { slack: UADA } }
+  - { id: bo, name: Bo, role: member, identities: { slack: UBO } }
+slack: { build_requests_channel: C0BUILDREQ1 }

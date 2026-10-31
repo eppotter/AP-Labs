@@ -182,6 +182,18 @@
 // view the click came from in place. Access is re-checked at Open, at the
 // submit and at each Remove; the hub is the module's, never the payload's.
 //
+// Build request (plan brightside-v0, D11, D13, Story 16.6): Open on a
+// build-request module pushes its form (kit/runtime/archetypes/build-request),
+// or says the tool is not set up (no slack.build_requests_channel; names the
+// admin) or not available on this hub (one that sees context or data). The
+// form's submit (build-request:form) answers in the ack: field errors, or
+// "Thinking…" in the view at once; the summary then arrives as the preview by
+// views.update on that view (handleView's afterAck). Post, Edit and Cancel
+// (and Try again) update the view they came from, each re-checking access
+// (resolveModule) before the archetype acts. The post goes only through
+// kit/runtime/slack/channel.js, the build-request exception. The AI service
+// it uses is the module's hub's own (viewOf), never another hub's.
+//
 // Add context, upload a file (plan brightside-v0, D5, D7, D13, Story 16.8):
 // a submit with a file (and no text) answers in the ack with "Reading…".
 // After the ack, slackFiles (kit/runtime/slack/files, built by app/index with
@@ -236,6 +248,7 @@ const { createRoutingMap, LISTEN_PATTERN: ROUTING_MAP_ACTION } = require('../arc
 const dataSources = require('../archetypes/data-sources');
 const { readiness } = require('../knowledge/readiness');
 const addContext = require('../archetypes/add-context');
+const buildRequest = require('../archetypes/build-request');
 const { ContextRefused, FileRefused, LlmUnavailable } = require('../errors');
 const { readText } = require('./files');
 
@@ -323,7 +336,7 @@ function moduleData(data, mod) {
 
 function registerHubs(app, {
   registry, profile, env, log, store, forHub = null, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),
-  mapFiles = null, routingMap: routingMapOptions = {}, rules = null, slackFiles = null,
+  mapFiles = null, routingMap: routingMapOptions = {}, rules = null, buildRequest: buildRequestOptions = {}, slackFiles = null,
 }) {
   if (forHub && (data || llm)) throw new TypeError('registerHubs takes forHub, or (a test seam) data and llm, never both');
   const viewFor = forHub || everyHubSeesAll({ data, llm }).forHub;
@@ -383,6 +396,19 @@ function registerHubs(app, {
   const approvalWrite = createApprovalWrite({
     store, log, connectors, admin, opsChannel,
   });
+  // Build requests post to the profile's slack.build_requests_channel (Story
+  // 16.6); with none set, the tool says it is not set up.
+  const requests = buildRequest.createBuildRequest({
+    store, log, admin, channel: (profile.slack && profile.slack.build_requests_channel) || null, ...buildRequestOptions,
+  });
+  const BUILD_REQUESTS = new Set(['build-request']);
+  // A hub as the build request needs it: its name and sees (the hub file's),
+  // and its own AI service (its view's).
+  const requestHubOf = (hubId) => {
+    const hub = registry.hubs.find((h) => h.id === hubId);
+    const view = viewOf(hubId);
+    return hub ? { id: hub.id, name: hub.name, sees: view.sees, llm: view.llm } : null;
+  };
   // The routing map (Story 15.4). Its views ask Slack for view_closed and
   // carry only the session id. routingMapOptions: test seams (mapPoints,
   // render, now); never the AI service.
@@ -981,6 +1007,15 @@ function registerHubs(app, {
         await openAddContext(mod, target);
         return;
       }
+      if (mod.archetype === 'build-request') {
+        log.info('module dispatched', { module: mod.id, hub: mod.hub });
+        // The form, or why not (plain text, which works anywhere). A form
+        // needs the hub window: from an old message menu, the person is told.
+        const opened = requests.open({ mod, hub: requestHubOf(mod.hub) });
+        if (typeof opened === 'string') await target.reply(opened);
+        else await target.reply(target.modal ? { ...opened, ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
+        return;
+      }
       if (QUERY_ARCHETYPES.has(mod.archetype)) {
         log.info('module dispatched', { module: mod.id, hub: mod.hub });
         await target.reply(target.modal ? { ...pullOfHub(mod.hub).open(mod, user.id), ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
@@ -1390,6 +1425,83 @@ function registerHubs(app, {
         await view.show(PLAIN_ERROR);
       } catch (showErr) {
         log.error('could not tell the person about a failure', { handler: 'hub:add-context-remove', err: showErr });
+      }
+    }
+  }, { log, store }));
+
+  // A build request's form submit (Story 16.6). Field errors in the ack, or
+  // "Thinking…" in the view at once, then the preview by views.update.
+  const requestView = (view, message) => {
+    const shown = screened('build-request', message);
+    return moduleView({
+      title: view && view.title && view.title.text, hubId: buildRequest.parseMetadata(view && view.private_metadata).hubId, blocks: messageBlocks(shown), message: shown,
+    });
+  };
+  app.view(buildRequest.FORM_CALLBACK, handleView('hub:build-request-submit', ({ body, client }) => {
+    const view = body.view || {};
+    const person = personOf((body.user || {}).id);
+    const later = updatedView({
+      client, view: { id: view.id }, title: view.title && view.title.text, hubId: buildRequest.parseMetadata(view.private_metadata).hubId,
+    });
+    const res = requests.submit({
+      view,
+      person: person.id,
+      resolve: resolveModule(person, buildRequest.FORM_CALLBACK, BUILD_REQUESTS),
+      hubOf: requestHubOf,
+      show: async (message) => {
+        if (!hasViews(client) || typeof view.id !== 'string' || !view.id) throw Object.assign(new Error('no view to update'), { code: 'not_found' });
+        await later.show(screened('build-request', message), { force: true });
+      },
+    });
+    if (res.errors) return { response_action: 'errors', errors: res.errors };
+    if (res.message !== undefined) return { response_action: 'update', view: requestView(view, res.message) };
+    // An unexpected failure after the ack: logged, and the plain error
+    // replaces "Thinking…", so the person is never left waiting.
+    return afterAck({ response_action: 'update', view: requestView(view, res.thinking) }, async () => {
+      try {
+        await res.later();
+      } catch (err) {
+        log.error('handler failed', { handler: 'hub:build-request-submit', err });
+        try {
+          await later.show(PLAIN_ERROR, { force: true });
+        } catch (showErr) {
+          log.error('could not tell the person about a failure', { handler: 'hub:build-request-submit', err: showErr });
+        }
+      }
+    });
+  }, { log, onError: ({ body }) => ({ response_action: 'update', view: requestView(body && body.view, PLAIN_ERROR) }) }));
+
+  // Post (and Try again), Edit and Cancel on a build request's preview.
+  app.action(buildRequest.ACTION_PATTERN, handle('hub:build-request', async ({
+    action, body, client, respond,
+  }) => {
+    const verb = buildRequest.verbOf(action && action.action_id);
+    const from = body.view;
+    if (!from || typeof from.id !== 'string' || !from.id || !hasViews(client)) {
+      fellBack('build-request', from ? 'no views client' : 'not from a modal', null);
+      if (typeof respond === 'function') await respond(ephemeral(FORM_NEEDS_WINDOW));
+      return;
+    }
+    const view = updatedView({
+      client, view: from, title: from.title && from.title.text, hubId: buildRequest.parseMetadata(from.private_metadata).hubId || from.private_metadata,
+    });
+    const show = async (message, opts) => {
+      const status = await view.show(screened('build-request', message), opts);
+      if (status === 'dropped') log.info('stale view result dropped', { action: verb, reason: 'hash_conflict' });
+      if (status === 'forced') log.info('stale view replaced by a confirmed result', { action: verb, reason: 'hash_conflict' });
+      return status;
+    };
+    const person = personOf((body.user || {}).id);
+    try {
+      await requests.click({
+        verb, id: action.value, person: person.id, resolve: resolveModule(person, action.action_id, BUILD_REQUESTS), hubOf: requestHubOf, show, client,
+      });
+    } catch (err) {
+      log.error('handler failed', { handler: 'hub:build-request', err });
+      try {
+        await view.show(PLAIN_ERROR);
+      } catch (showErr) {
+        log.error('could not tell the person about a failure', { handler: 'hub:build-request', err: showErr });
       }
     }
   }, { log, store }));

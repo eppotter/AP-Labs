@@ -33,6 +33,13 @@
 //     "Image limits and costs"): 400.
 // The plan named a 5 MB base64 image limit; the current reference says 10 MB
 // on the first-party API, so the fake uses 10 MB.
+//
+// Tools (Story 16.6), refused as the API refuses them: tools not a list, a
+// tool with a field the API doesn't take (effects is the engine's own and is
+// never sent: "Extra inputs are not permitted"), a name not matching
+// ^[a-zA-Z0-9_-]{1,64}$, a description that is not text, or an input_schema
+// that is not a JSON Schema object with type "object" (and, when given,
+// properties an object and required a list of property names).
 
 const UNSUPPORTED_TOOL_CHOICE = new Set(['tool', 'any']);
 const MODEL_MAX_OUTPUT = Object.freeze({
@@ -47,6 +54,31 @@ const MAX_IMAGE_PIXELS = 8000;
 const MAX_PDF_PAGES = 600;
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+const TOOL_FIELDS = new Set(['name', 'description', 'input_schema', 'cache_control', 'type']);
+const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+
+// Why the API would refuse this tool, or null.
+function badTool(tool, i) {
+  if (!tool || typeof tool !== 'object' || Array.isArray(tool)) return `tools.${i}: must be an object`;
+  const extra = Object.keys(tool).find((k) => !TOOL_FIELDS.has(k));
+  if (extra) return `tools.${i}.${extra}: Extra inputs are not permitted`;
+  if (typeof tool.name !== 'string' || !TOOL_NAME.test(tool.name)) return `tools.${i}.name: String should match pattern '^[a-zA-Z0-9_-]{1,64}$'`;
+  if (tool.description !== undefined && typeof tool.description !== 'string') return `tools.${i}.description: Input should be a valid string`;
+  const schema = tool.input_schema;
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return `tools.${i}.input_schema: Field required`;
+  if (schema.type !== 'object') return `tools.${i}.input_schema.type: Input should be 'object'`;
+  if (schema.properties !== undefined && (!schema.properties || typeof schema.properties !== 'object' || Array.isArray(schema.properties))) {
+    return `tools.${i}.input_schema.properties: Input should be a valid dictionary`;
+  }
+  if (schema.required !== undefined) {
+    const props = schema.properties || {};
+    if (!Array.isArray(schema.required) || schema.required.some((r) => typeof r !== 'string' || !Object.hasOwn(props, r))) {
+      return `tools.${i}.input_schema.required: each entry must name a property`;
+    }
+  }
+  return null;
+}
 
 function badRequest(message) {
   return Object.assign(new Error(`400 ${message}`), { name: 'BadRequestError', status: 400 });
@@ -117,6 +149,14 @@ function checkRequest(params, { maxRequestBytes = MAX_REQUEST_BYTES } = {}) {
     throw badRequest('tool_choice: type "tool" and "any" are not supported for this model.');
   }
   if (!params || typeof params !== 'object') throw badRequest('the request body must be an object');
+  const tools = params && params.tools;
+  if (tools !== undefined) {
+    if (!Array.isArray(tools)) throw badRequest('tools: Input should be a valid list');
+    tools.forEach((tool, i) => {
+      const why = badTool(tool, i);
+      if (why) throw badRequest(why);
+    });
+  }
   if (Buffer.byteLength(JSON.stringify(params)) > maxRequestBytes) throw tooLarge('request_too_large: Request exceeds the maximum allowed number of bytes.');
   if (!Object.hasOwn(MODEL_MAX_OUTPUT, params.model)) throw notFound(`not_found_error: model: ${params.model}`);
   const max = MODEL_MAX_OUTPUT[params.model];
@@ -129,5 +169,5 @@ function checkRequest(params, { maxRequestBytes = MAX_REQUEST_BYTES } = {}) {
 }
 
 module.exports = {
-  checkRequest, badRequest, UNSUPPORTED_TOOL_CHOICE, MODEL_MAX_OUTPUT, MAX_REQUEST_BYTES, MAX_IMAGE_BASE64, MAX_IMAGE_PIXELS, MAX_PDF_PAGES,
+  checkRequest, badRequest, badTool, UNSUPPORTED_TOOL_CHOICE, MODEL_MAX_OUTPUT, MAX_REQUEST_BYTES, MAX_IMAGE_BASE64, MAX_IMAGE_PIXELS, MAX_PDF_PAGES,
 };
