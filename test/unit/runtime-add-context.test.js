@@ -298,9 +298,9 @@ test('each entry has Remove behind a confirm dialog; Remove deletes it and the f
   const [update] = calls(app, 'update');
   assert.equal(update.view_id, 'VFORM');
   assert.equal(update.hash, 'hform');
-  // Still the form (Add and its boxes), with the note on top and no entries.
+  // Still the form (Add, its boxes and the file field), with the note on top and no entries.
   assert.equal(update.view.submit.text, 'Add');
-  assert.equal(inputs(update.view).length, 2);
+  assert.equal(inputs(update.view).length, 3);
   assert.equal(update.view.blocks[0].text.text, 'Removed. Ask no longer uses it.');
   assert.match(allText(update.view.blocks), /Nothing added here yet\./);
   assert.equal(entry.hub, 'blank');
@@ -416,10 +416,11 @@ test('way out, an empty submit: an error beside the box in the ack (response_act
   await submit(app, form, { title: 'Prices', text: '   \n  ' });
   await submit(app, form, { title: '  ', text: 'Something.' });
   await submit(app, form, { title: '', text: '' });
+  // Story 16.8: with no text and no file, the error asks for one of them.
   assert.deepEqual(app.viewAcks, [
-    { response_action: 'errors', errors: { [addContext.TEXT_BLOCK]: messageFor(new ContextRefused('empty')) } },
+    { response_action: 'errors', errors: { [addContext.TEXT_BLOCK]: addContext.NEED_ONE } },
     { response_action: 'errors', errors: { [addContext.TITLE_BLOCK]: addContext.TITLE_MISSING } },
-    { response_action: 'errors', errors: { [addContext.TITLE_BLOCK]: addContext.TITLE_MISSING, [addContext.TEXT_BLOCK]: 'There is nothing to add: the text is empty.' } },
+    { response_action: 'errors', errors: { [addContext.TITLE_BLOCK]: addContext.TITLE_MISSING, [addContext.TEXT_BLOCK]: 'Type some text, or choose a file to upload.' } },
   ]);
   assert.deepEqual(calls(app, 'update'), []);
   assert.deepEqual(await knowledge.list('blank'), []);

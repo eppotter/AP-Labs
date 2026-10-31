@@ -162,13 +162,14 @@
     },
 
     "llm": {
-      "description": "The AI helper (kit/runtime/llm). All optional. model and extraction_model must be priced in kit/runtime/llm/prices.js (boot refuses one that is not); default claude-sonnet-5-5. hourly_usd_limit caps this process's estimated AI spend in any hour, in US dollars (default 2). max_tokens caps each reply (default 1024). The key is never set here.",
+      "description": "The AI helper (kit/runtime/llm). All optional. model and extraction_model must be priced in kit/runtime/llm/prices.js (boot refuses one that is not); default claude-sonnet-5-5. hourly_usd_limit caps this process's estimated AI spend in any hour, in US dollars (default 2). upload_hourly_usd_limit caps the part of it spent reading files uploaded through Add context (default 1, or hourly_usd_limit when that is lower; at most hourly_usd_limit), so uploads can never use up the AI for everything else. max_tokens caps each reply (default 1024). The key is never set here.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "model": { "$ref": "#/$defs/modelId" },
         "extraction_model": { "$ref": "#/$defs/modelId" },
         "hourly_usd_limit": { "type": "number", "exclusiveMinimum": 0 },
+        "upload_hourly_usd_limit": { "type": "number", "exclusiveMinimum": 0 },
         "max_tokens": { "type": "integer", "minimum": 1, "maximum": 8192 }
       }
     },

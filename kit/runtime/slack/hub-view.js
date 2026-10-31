@@ -114,7 +114,7 @@ function boundLater(llm, id, sees) {
     if (!bound) bound = llm.forHub({ id, sees: [...sees] });
     return bound;
   };
-  return Object.freeze({ ask: (args) => get().ask(args), structured: (args) => get().structured(args) });
+  return Object.freeze({ ask: (args) => get().ask(args), structured: (args) => get().structured(args), readFile: (args) => get().readFile(args) });
 }
 
 // registerHubs' test seam (see the header): every hub sees everything.

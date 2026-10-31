@@ -85,6 +85,11 @@
 // and each hub's view gets the store bound to it. The job scheduler gets
 // neither.
 //
+// Story 16.8: the hubs get slackFiles (kit/runtime/slack/files), built here
+// with the bot token, the one path that downloads a file an admin uploaded
+// through Add context. The token stays inside it and goes only to
+// files.slack.com.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
@@ -97,6 +102,7 @@ const { loadProfile, findProfilePath, ProfileError, PROFILE_REL } = require('../
 const { createLog, slackLogger } = require('../log');
 const { registerGreeting } = require('../slack/greeting');
 const { registerHubs } = require('../slack/hubs');
+const { createSlackFiles } = require('../slack/files');
 const { createHubViews, bootProblems } = require('../slack/hub-view');
 const { createRulesReader } = require('../knowledge/readiness');
 const { loadRegistry, ENV_PATTERN } = require('../registry');
@@ -263,7 +269,9 @@ function createApp({
   });
   // Data sources' rules: the client files beside the profile (Story 16.3).
   const rules = createRulesReader({ profile, profilePath });
-  registerHubs(app, { registry, profile, env, log, store, forHub, connectors, mapFiles, rules });
+  // Reading uploaded files (Story 16.8): the bot token, only to files.slack.com.
+  const slackFiles = createSlackFiles({ token: tokens.SLACK_BOT_TOKEN, log });
+  registerHubs(app, { registry, profile, env, log, store, forHub, connectors, mapFiles, rules, slackFiles });
   return app;
 }
 
