@@ -77,6 +77,7 @@ New `kit/runtime/registry/vocabulary.js` holds every glyph and every status word
 |---|---|---|---|
 | `ready` | ✓ Ready | yes | a tool that works fully |
 | `done` | ✓ Done | yes | a setup step or setup tool that is complete |
+| `context-only` | ✓ Context only | yes | Data sources on a hub that doesn't connect to data but has notes (fix/data-sources-wording) |
 | `partly` | ◐ Partly ready | yes | works with limits (Ask before data and rules) |
 | `waiting` | ◌ Waiting · needs X | yes | can't work yet; the button becomes **Why?** |
 | `not-started` | ○ Not started | yes | a setup tool with nothing in it yet |
@@ -215,7 +216,7 @@ New `kit/runtime/registry/status.js`, a pure function `toolStatus(mod, facts)`. 
 |---|---|
 | `ask` | `ready` when `readiness.data` and `readiness.rules`; `waiting · needs the AI` when the hub has no AI service; else `partly · no data yet` (or `· nothing taught yet` with no notes and no context). Never waiting for data: Ask works without it |
 | `add-context` | `done · N notes`, or `not-started · no notes yet`; `waiting · needs storage` with no knowledge store |
-| `data-sources` | of the counted steps 2 to 4 (D4): `done` when all are done; `not-started · no data, no rules` when none is; else `partly · needs <data, truths or rules>`. On a hub that counts none of them (`sees: []`): `done · no data on this hub` |
+| `data-sources` | of the counted steps 2 to 4 (D4): `done` when all are done; `not-started · no data, no rules` when none is; else `partly · needs <data, truths or rules>`. On a hub that counts none of them (`sees: []`): `context-only · N notes` once it has notes, else `done · no data on this hub` (fix/data-sources-wording) |
 | `build-request` | `ready` when `requests.available(hub)` (the archetype's own check: a channel set and a hub that may post); else `waiting · needs a channel` or `waiting · not on this hub`, from the same check (architect P3-13) |
 | `scoped-pull`, `approval-write` | `ready` when the hub's data is connected; else `waiting · needs data` |
 | `routing-map` | `ready` when data is connected, the map files are ready (below) and the module is not `unready`; else `waiting · needs data` or `waiting · needs map setup` |
@@ -281,7 +282,7 @@ Every story, in addition to what is listed:
 - `kit/runtime/registry/menu.js` `buildMenu` builds the blocks in D1, from rows the hub hands it (`{ entry, status, verb }`), the summary, and whether the person is an admin. `buildHelp` is unchanged and keeps each tool's description.
 - `kit/runtime/slack/hubs.js`, the slash command: gathers the summary (D8's budget), each row's status (D11) and verb, places the setup archetypes in the Setup group for admins only (D5), and opens the menu. A late summary updates the view (D8).
 - The four stages, one test each, on fixture hubs:
-  - **blank**, admin: `Knows: 0 notes · 0 sources · 0 truths · 0 rules`, `▱ Setup 0 of 1 · 1 of 2 tools ready`, Tools (Ask `◐ Partly ready · nothing taught yet`, Request a tool `✓ Ready`), then 🔒 Setup · admins (Add context `○ Not started · no notes yet`, Data sources `✓ Done · no data on this hub`);
+  - **blank**, admin: `Knows: 0 notes · 0 sources · 0 truths · 0 rules`, `▱ Setup 0 of 1 · 1 of 2 tools ready`, Tools (Ask `◐ Partly ready · nothing taught yet`, Request a tool `✓ Ready`), then 🔒 Setup · admins (Add context `○ Not started · no notes yet`, Data sources `✓ Done · no data on this hub`, or `✓ Context only · N notes` once it has notes);
   - **blank**, member with Ask: `Your admin is setting this up. You can still ask questions.` and no Setup group; a member with other rows but not Ask: the first sentence only;
   - **onboarded** (blank hub, two notes): `2 notes`, setup complete so `✓ 1 of 2 tools ready`, Add context `✓ Done · 2 notes`; and a fixture hub that sees all three with one note: `▰▱▱▱ Setup 1 of 4`;
   - **first tool** (a fixture scoped pull, data connected): `1 source`, the tool `✓ Ready` with **Run**;
@@ -379,7 +380,7 @@ Ely runs it in Slack, from Ely's own account (an admin in the profile), in `/bri
 
 **Epic 16, carried over.** Step 1 of Epic 16 has passed: the four tools show. These are the steps still to run.
 
-1. Type `/brightside-v0`, then press **View** on Data sources. You should see that no data is connected and there are no known truths or rules yet.
+1. Type `/brightside-v0`, then press **View** on Data sources. You should see "Nothing yet: no added context, and this hub doesn't connect to data." If the hub already has notes, you should instead see "Answers from the added context below. This hub doesn't connect to data, so it can't answer questions about numbers." above them. Nothing about known truths or rules.
 2. Press **Ask**, type "How many cleans did we do last week?" and send it. The answer should say it can't answer data questions yet: no data is connected and there are no rules yet.
 3. Press **Add** on Add context, type a title ("Opening hours") and a note ("We open at 7am on weekdays."), and press **Add**. The note should appear in the list of entries.
 4. Press **Ask** and ask "What time do we open on weekdays?". The answer should say 7am, taken from your note.
@@ -396,7 +397,7 @@ Ely runs it in Slack, from Ely's own account (an admin in the profile), in `/bri
 **Epic 17.**
 
 14. Type `/brightside-v0` and read the line that starts with "Knows:". Note the number of notes it shows.
-15. Add one typed note in Add context, then close the window and type `/brightside-v0` again. The "Knows:" line should show one more note than in step 14, and the Add context row should say "✓ Done" with the number of notes.
+15. Add one typed note in Add context, then close the window and type `/brightside-v0` again. The "Knows:" line should show one more note than in step 14, the Add context row should say "✓ Done" with the number of notes, and the Data sources row should say "✓ Context only" with the same number.
 16. In Add context, remove every entry, then close the window and type `/brightside-v0` again. The line under "Knows:" should start with "▱ Setup 0 of 1".
 17. Look just under those two lines. You should see "Next: teach it the business" with a green **Add context** button, and it should be the only green button in the window.
 18. Press the green **Add context** button. Add context should open, ready for a note.

@@ -47,7 +47,7 @@ async function boot(t) {
   return res.app;
 }
 
-test('/brightside-v0 lists Ask (Story 16.7) and Request a tool (Story 16.6), then Add context and Data sources in the Setup group, for an admin only, and it reads "No data connected yet. No known truths or rules yet."', async (t) => {
+test('/brightside-v0 lists Ask (Story 16.7) and Request a tool (Story 16.6), then Add context and Data sources in the Setup group, for an admin only, and it reads "Nothing yet: no added context, and this hub doesn\'t connect to data."', async (t) => {
   const app = await boot(t);
   await app.dispatchCommand('/brightside-v0', { user_id: ADMIN_SLACK });
   await app.dispatchCommand('/brightside-v0', { user_id: 'UNOBODY' });
@@ -66,5 +66,5 @@ test('/brightside-v0 lists Ask (Story 16.7) and Request a tool (Story 16.6), the
   await app.dispatchAction('v0-data-sources:open', { user: { id: ADMIN_SLACK, name: 'dana' } });
   const reply = app.responded.at(-1);
   assert.equal(reply.response_type, 'ephemeral');
-  assert.deepEqual(reply.blocks.map((b) => b.text.text), ['No data connected yet. No known truths or rules yet.', '*Added context*\nNone yet.']);
+  assert.deepEqual(reply.blocks.map((b) => b.text.text), ["Nothing yet: no added context, and this hub doesn't connect to data.", '*Added context*\nNone yet.']);
 });
