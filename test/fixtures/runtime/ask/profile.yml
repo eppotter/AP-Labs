@@ -1,0 +1,19 @@
+# Ask test profile (Story 16.7, plan brightside-v0 D8, D10, gate item 4).
+# ASK and BUILD_REQUEST, which the admin role confers; Bo is a member granted
+# ASK by name (not BUILD_REQUEST); Cy is a member with no grants. HELLO is a
+# tool the admin role confers; SECRET is never conferred (admin_grantable
+# false, granted to no one), so no one may open it. PULL is the scoped pull
+# on the hub that sees data and rules.
+schema_version: 1
+client: { id: tiny, name: Tiny }
+resources:
+  - { key: ASK, label: Ask }
+  - { key: BUILD_REQUEST, label: Build request }
+  - { key: HELLO, label: Hello }
+  - { key: SECRET, label: Secret, admin_grantable: false }
+  - { key: PULL, label: Pull }
+users:
+  - { id: ada, name: Ada, role: admin, identities: { slack: UADA } }
+  - { id: bo, name: Bo, role: member, identities: { slack: UBO }, grants: [ASK] }
+  - { id: cy, name: Cy, role: member, identities: { slack: UCY } }
+slack: { build_requests_channel: C0BUILDREQ1 }

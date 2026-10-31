@@ -1,0 +1,13 @@
+{
+  "id": "blank-secret",
+  "hub": "blank",
+  "label": "Secret",
+  "description": "The secret tool.",
+  "resource": "SECRET",
+  "archetype": "handler",
+  "environments": [
+    "dev",
+    "prod"
+  ],
+  "handler": "handler.js"
+}

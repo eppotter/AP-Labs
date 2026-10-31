@@ -42,10 +42,14 @@ function setup({ env = 'dev', canUse, views = false, reg = registry } = {}) {
 // The Open buttons, in menu order (the Help button is checked on its own).
 const buttons = (msg) => msg.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
 
-test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" (and Back), push, routing-map, Add context\'s Remove and build-request clicks', () => {
+test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" (and Back), push, routing-map, Add context\'s Remove, build-request and Ask clicks', () => {
   const { app } = setup();
   assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
-  assert.equal(app.actionListeners.length, 8);
+  assert.equal(app.actionListeners.length, 9);
+  // Ask another and Build request on an Ask answer (Story 16.7), last.
+  for (const id of ['ask:again', 'ask:build-request']) assert.ok(app.actionListeners[8].pattern.test(id), id);
+  assert.ok(!app.actionListeners[8].pattern.test('ask:open'));
+  app.actionListeners.pop();
   // Remove on an Add context entry (Story 16.5), then Post, Edit and Cancel
   // on a build request's preview (Story 16.6), registered last.
   assert.equal(app.actionListeners[6].pattern, 'add-context:remove');
@@ -68,7 +72,7 @@ test('each hub file registers its slash command; one listener each handles Open,
   // "Check values", a follow-up question's answer (Story 9.4), Add
   // context's Add (Story 16.5) and a build request's Preview (Story 16.6).
   assert.deepEqual(app.viewListeners.map((v) => v.callbackId), [
-    { callback_id: 'hub:map', type: 'view_closed' }, 'scoped-pull:form', 'scoped-pull:answer', 'add-context:submit', 'build-request:form',
+    { callback_id: 'hub:map', type: 'view_closed' }, 'scoped-pull:form', 'scoped-pull:answer', 'add-context:submit', 'build-request:form', 'ask:form',
   ]);
   assert.deepEqual([...app.eventListeners.keys()], ['team_join']);
 });

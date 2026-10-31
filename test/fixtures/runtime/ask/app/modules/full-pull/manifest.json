@@ -1,0 +1,25 @@
+{
+  "id": "full-pull",
+  "hub": "full",
+  "label": "Visits by zone",
+  "description": "The visits in one zone.",
+  "resource": "PULL",
+  "archetype": "scoped-pull",
+  "environments": [
+    "dev",
+    "prod"
+  ],
+  "parameters": [
+    {
+      "name": "zone",
+      "label": "Zone",
+      "type": "string",
+      "enum": [
+        "north",
+        "south"
+      ],
+      "required": true
+    }
+  ],
+  "query": "visits.sql"
+}

@@ -1,0 +1,13 @@
+{
+  "id": "blank-hello",
+  "hub": "blank",
+  "label": "Hello",
+  "description": "The hello tool.",
+  "resource": "HELLO",
+  "archetype": "handler",
+  "environments": [
+    "dev",
+    "prod"
+  ],
+  "handler": "handler.js"
+}

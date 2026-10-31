@@ -73,6 +73,13 @@
 // and post, so its manifest has no handler, query, parameters, scoring or
 // row_id either.
 //
+// Plan brightside-v0 (Story 16.7): ask is accepted
+// (kit/runtime/archetypes/ask). The engine runs its form and answer, so its
+// manifest has none of those fields either. Its resource must not be
+// open_access (gate item 4: Ask goes to the admin role plus users the
+// profile names): Ask reads out the hub's added context, and open_access
+// would include people the profile doesn't name.
+//
 // Story 15.14: a routing-map module may name its screen: "views" (the
 // default) or "route-editor" (Plan a route, AD-R26). Whether the profile has
 // routing.depot and the adapter a route() is checked when it opens (the hub
@@ -89,9 +96,9 @@ const { forbiddenColumnsOf } = require('../sql');
 
 const SCHEMA_DIR = path.join(__dirname, '../schema');
 // Archetypes whose engine code exists (every archetype the schema names).
-const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write', 'routing-map', 'data-sources', 'add-context', 'build-request']);
+const BUILT_ARCHETYPES = new Set(['handler', 'scoped-pull', 'approval-write', 'routing-map', 'data-sources', 'add-context', 'build-request', 'ask']);
 // The archetypes the engine shows itself: no handler, query or parameters.
-const ENGINE_SHOWN = new Set(['data-sources', 'add-context', 'build-request']);
+const ENGINE_SHOWN = new Set(['data-sources', 'add-context', 'build-request', 'ask']);
 // The archetypes the engine runs from a fixed SQL file and a typed form.
 const QUERY_ARCHETYPES = new Set(['scoped-pull', 'approval-write']);
 const ENV_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -278,18 +285,25 @@ function routingMapProblems(m, file, profile) {
   return problems;
 }
 
-// What a data-sources, add-context or build-request manifest may not hold:
-// the engine shows it (Stories 16.3, 16.5, 16.6).
+// What a data-sources, add-context, build-request or ask manifest may not
+// hold: the engine shows it (Stories 16.3, 16.5, 16.6, 16.7).
 const NOT_ENGINE_SHOWN = Object.freeze(['handler', 'query', 'parameters', 'scoring', 'row_id']);
 const engineShownProblems = (m, file) => NOT_ENGINE_SHOWN
   .filter((key) => m[key] !== undefined)
-  .map((key) => `${file}: field "${key}" is not used by a${m.archetype === 'add-context' ? 'n' : ''} ${m.archetype} module (the engine shows it)`);
+  .map((key) => `${file}: field "${key}" is not used by a${/^[aeiou]/.test(m.archetype) ? 'n' : ''} ${m.archetype} module (the engine shows it)`);
 
 // An add-context module's key must not be open to everyone (Story 16.5, D8).
 function addContextProblems(m, file, profile) {
   const resource = ((profile && profile.resources) || []).find((r) => r.key === m.resource);
   if (!resource || resource.open_access !== true) return [];
   return [`${file}: field "resource" ${m.resource} is open_access in the profile, but module ${m.id} adds context everyone on the hub's Ask reads; remove open_access so only the people the profile names (the admin role) hold it`];
+}
+
+// An ask module's key must not be open to everyone (Story 16.7, gate item 4).
+function askProblems(m, file, profile) {
+  const resource = ((profile && profile.resources) || []).find((r) => r.key === m.resource);
+  if (!resource || resource.open_access !== true) return [];
+  return [`${file}: field "resource" ${m.resource} is open_access in the profile, but module ${m.id} reads out the hub's added context; remove open_access and grant it to the admin role and the people the profile names`];
 }
 
 // A scoped-pull's SQL template, read once, then checked (checkQuery).
@@ -345,6 +359,7 @@ function loadModules(appDir, { hubs, profile, failedHubs = new Set() }) {
     if (m.archetype === 'routing-map') problems.push(...routingMapProblems(m, file, profile));
     if (ENGINE_SHOWN.has(m.archetype)) problems.push(...engineShownProblems(m, file));
     if (m.archetype === 'add-context') problems.push(...addContextProblems(m, file, profile));
+    if (m.archetype === 'ask') problems.push(...askProblems(m, file, profile));
     if (problems.length > before) continue;
     if (ENGINE_SHOWN.has(m.archetype)) {
       modules.push(Object.freeze({ ...m, file }));

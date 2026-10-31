@@ -1,0 +1,12 @@
+{
+  "id": "blank-request",
+  "hub": "blank",
+  "label": "Build request",
+  "description": "Ask for a new tool or change.",
+  "resource": "BUILD_REQUEST",
+  "archetype": "build-request",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

@@ -193,6 +193,19 @@
 // (resolveModule) before the archetype acts. The post goes only through
 // kit/runtime/slack/channel.js, the build-request exception. The AI service
 // it uses is the module's hub's own (viewOf), never another hub's.
+//
+// Ask (plan brightside-v0, D10, D13, Story 16.7): Open on an ask module
+// pushes its form (kit/runtime/archetypes/ask). The submit (ask:form)
+// answers in the ack: field errors, or "Thinking…" at once; the answer then
+// arrives by views.update on that view (afterAck). The archetype gets the
+// module's hub's own AI service and readiness (viewOf, rules), the modules
+// on that hub this person can open now (visibleEntries, the menu's own
+// decision) and whether Build request is offered (a build-request module
+// they can open there, and the build request's own available(): a channel
+// set and a hub that may post). Its Open button is the dispatcher's own
+// <id>:open, re-checked there. Ask another and Build request update the view
+// they came from, each re-checking access first: Build request shows 16.6's
+// form with the question filled in, or why it can't.
 
 const access = require('../access');
 const {
@@ -232,6 +245,7 @@ const dataSources = require('../archetypes/data-sources');
 const { readiness } = require('../knowledge/readiness');
 const addContext = require('../archetypes/add-context');
 const buildRequest = require('../archetypes/build-request');
+const askTool = require('../archetypes/ask');
 const { ContextRefused } = require('../errors');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
@@ -929,6 +943,12 @@ function registerHubs(app, {
         else await target.reply(target.modal ? { ...opened, ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
         return;
       }
+      if (mod.archetype === 'ask') {
+        log.info('module dispatched', { module: mod.id, hub: mod.hub });
+        // A form needs the hub window: from an old message menu, the person is told.
+        await target.reply(target.modal ? { ...askTool.form({ hubId: mod.hub, moduleId: mod.id }), ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
+        return;
+      }
       if (QUERY_ARCHETYPES.has(mod.archetype)) {
         log.info('module dispatched', { module: mod.id, hub: mod.hub });
         await target.reply(target.modal ? { ...pullOfHub(mod.hub).open(mod, user.id), ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
@@ -1410,6 +1430,121 @@ function registerHubs(app, {
         await view.show(PLAIN_ERROR);
       } catch (showErr) {
         log.error('could not tell the person about a failure', { handler: 'hub:build-request', err: showErr });
+      }
+    }
+  }, { log, store }));
+
+  // Ask (Story 16.7). The module a submit or click names, if this person may
+  // still open it, on the hub the view says (a payload naming another hub's
+  // module is refused).
+  const ASKS = new Set(['ask']);
+  const asks = askTool.createAsk({ log, admin });
+  const resolveAsk = (person, actionId, hubId) => (moduleId) => {
+    const found = resolveModule(person, actionId, ASKS)(moduleId);
+    if (found.refusal || found.mod.hub === hubId) return found;
+    log.warn('hub action refused', { action_id: actionId, reason: 'not on this hub', env });
+    return { refusal: NOT_AVAILABLE };
+  };
+  // The build-request module this person could use from Ask on hubId, or
+  // null (review B9: the key, a channel, a hub that may post).
+  const buildRequestFor = (person, hubId) => {
+    const mod = visibleEntries(hubId, person).find((m) => m.archetype === 'build-request');
+    return mod && requests.available(requestHubOf(hubId)) ? mod : null;
+  };
+  const askView = (view, message) => {
+    const shown = screened('ask', message);
+    return moduleView({
+      title: view && view.title && view.title.text, hubId: askTool.parseMetadata(view && view.private_metadata).hubId, blocks: messageBlocks(shown), message: shown,
+    });
+  };
+  app.view(askTool.FORM_CALLBACK, handleView('hub:ask-submit', ({ body, client }) => {
+    const view = body.view || {};
+    const person = personOf((body.user || {}).id);
+    const { hubId } = askTool.parseMetadata(view.private_metadata);
+    const later = updatedView({
+      client, view: { id: view.id }, title: view.title && view.title.text, hubId,
+    });
+    const res = asks.submit({
+      view,
+      person: person.id,
+      resolve: resolveAsk(person, askTool.FORM_CALLBACK, hubId),
+      hubOf: (id) => {
+        const hubView = viewOf(id);
+        return { llm: hubView.llm, ready: () => readiness(hubView, { rules }) };
+      },
+      toolsFor: (id) => visibleEntries(id, person),
+      offerFor: (id) => buildRequestFor(person, id),
+      show: async (message) => {
+        if (!hasViews(client) || typeof view.id !== 'string' || !view.id) throw Object.assign(new Error('no view to update'), { code: 'not_found' });
+        await later.show(screened('ask', message), { force: true });
+      },
+    });
+    if (res.errors) return { response_action: 'errors', errors: res.errors };
+    if (res.message !== undefined) return { response_action: 'update', view: askView(view, res.message) };
+    // An unexpected failure after the ack: logged, and the plain error
+    // replaces "Thinking…", so the person is never left waiting.
+    return afterAck({ response_action: 'update', view: askView(view, res.thinking) }, async () => {
+      try {
+        await res.later();
+      } catch (err) {
+        log.error('handler failed', { handler: 'hub:ask-submit', err });
+        try {
+          await later.show(PLAIN_ERROR, { force: true });
+        } catch (showErr) {
+          log.error('could not tell the person about a failure', { handler: 'hub:ask-submit', err: showErr });
+        }
+      }
+    });
+  }, { log, onError: ({ body }) => ({ response_action: 'update', view: askView(body && body.view, PLAIN_ERROR) }) }));
+
+  // Ask another, and Build request, on an answer. Each updates the view it
+  // came from, after re-checking access to Ask (and, for Build request, to
+  // the build-request module, whose open() says why not when it can't).
+  app.action(askTool.ACTION_PATTERN, handle('hub:ask', async ({
+    action, body, client, respond,
+  }) => {
+    const verb = askTool.verbOf(action && action.action_id);
+    const from = body.view;
+    if (!from || typeof from.id !== 'string' || !from.id || !hasViews(client)) {
+      fellBack('ask', from ? 'no views client' : 'not from a modal', null);
+      if (typeof respond === 'function') await respond(ephemeral(FORM_NEEDS_WINDOW));
+      return;
+    }
+    const { hubId, moduleId } = askTool.parseMetadata(from.private_metadata);
+    const person = personOf((body.user || {}).id);
+    const title = from.title && from.title.text;
+    const show = async (message, viewTitle = title) => {
+      const view = updatedView({
+        client, view: from, title: viewTitle, hubId,
+      });
+      await view.show(screened('ask', message), { force: true });
+    };
+    try {
+      const found = resolveAsk(person, action.action_id, hubId)(moduleId);
+      if (found.refusal) {
+        await show(found.refusal);
+        return;
+      }
+      const { mod } = found;
+      if (verb === 'again') {
+        await show(askTool.form({ hubId: mod.hub, moduleId: mod.id }));
+        return;
+      }
+      const target = visibleEntries(mod.hub, person).find((m) => m.archetype === 'build-request');
+      if (!target) {
+        log.warn('hub action refused', { action_id: action.action_id, reason: 'no build request here', env });
+        await show(NOT_AVAILABLE);
+        return;
+      }
+      const question = typeof action.value === 'string' ? action.value : '';
+      log.info('module dispatched', { module: target.id, hub: target.hub, via: 'ask' });
+      await show(requests.open({ mod: target, hub: requestHubOf(mod.hub), initial: question }), target.label);
+    } catch (err) {
+      log.error('handler failed', { handler: 'hub:ask', err });
+      try {
+        await show(PLAIN_ERROR);
+      } catch (showErr) {
+        log.error('could not tell the person about a failure', { handler: 'hub:ask', err: showErr });
       }
     }
   }, { log, store }));

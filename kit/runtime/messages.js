@@ -325,6 +325,31 @@ const BUILD_REQUEST_WORDS = Object.freeze({
   notOnThisHub: () => 'Build request is not available on this hub yet. Use it from a hub that has no business context or data.',
 });
 
+// Ask (plan brightside-v0, D10, Story 16.7). Written by the bot, never by
+// the AI; a tool's label comes from its reviewed manifest and is escaped
+// here. The four readiness messages, one per state of a hub's data and rules
+// (kit/runtime/knowledge/readiness), decide every data question: Ask never
+// writes or runs SQL.
+const ASK_WORDS = Object.freeze({
+  label: () => 'Ask a question',
+  hint: (maxChars) => `In your own words, ${maxChars} characters at most.`,
+  empty: () => 'Type a question first.',
+  tooLong: (maxChars) => `That's too long: ${maxChars} characters at most.`,
+  thinking: () => 'Thinking…',
+  // Data questions, by readiness (D10's table).
+  noDataNoRules: () => "I can't answer data questions yet. No data is connected, and there are no rules yet for using it safely.",
+  dataNoRules: () => "Data is connected, but the rules for using it safely (approved tables, known truths, columns to keep out) aren't set up yet, so I won't pull from it.",
+  rulesNoData: () => 'The rules are set up, but no data is connected yet.',
+  noToolYet: () => "There's no tool for that yet.",
+  // A tool that fits, from the person's own openable list.
+  tool: (label) => `*${escapeName(label)}* can help with that. Press Open to use it.`,
+  notSorted: () => "I couldn't sort that question. Try asking it another way.",
+  noAnswer: () => "I couldn't answer that just now. Try asking it another way.",
+  notWhatYouNeeded: () => 'Not what you needed?',
+  // When the Build request button is hidden (review B9).
+  askAdmin: (admin) => `Not what you needed? Tell ${admin} what you were looking for.`,
+});
+
 // Hub wording (Story 6.4). A hub file may set its own welcome and feedback
 // lines; these defaults keep a hub without them working.
 function welcomeText(hub) {
@@ -362,5 +387,5 @@ function messageFor(err, { admin = 'your admin' } = {}) {
 
 module.exports = {
   messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, READ_WORDS, MAP_WORDS, ROUTE_WORDS,
-  BUILD_REQUEST_WORDS,
+  BUILD_REQUEST_WORDS, ASK_WORDS,
 };

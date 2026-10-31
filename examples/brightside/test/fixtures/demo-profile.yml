@@ -23,6 +23,7 @@ resources:
   - { key: DATA_SOURCES, label: Data sources }
   - { key: ADD_CONTEXT, label: Add context }
   - { key: BUILD_REQUEST, label: Build request }
+  - { key: ASK, label: Ask }
 
 users:
   - { id: dana, name: Dana Reyes, role: admin, identities: { github: dana-r, slack: U0FIXTUREDANA }, grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS] }
