@@ -42,10 +42,19 @@ function setup({ env = 'dev', canUse, views = false, reg = registry } = {}) {
 // The Open buttons, in menu order (the Help button is checked on its own).
 const buttons = (msg) => msg.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
 
-test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" (and Back), push, routing-map, Add context\'s Remove, build-request and Ask clicks', () => {
+test('each hub file registers its slash command; one listener each handles Open, Help, form, "How was this made?" (and Back), push, routing-map, Add context\'s Remove, build-request, Ask and Why? clicks', () => {
   const { app } = setup();
   assert.deepEqual([...app.commandListeners.keys()], ['/alpha', '/beta']);
-  assert.equal(app.actionListeners.length, 9);
+  assert.equal(app.actionListeners.length, 10);
+  // Why? on a waiting menu row (Story 17.3), last: <module-id>:why, which
+  // no other listener's pattern takes, and which takes no other click.
+  const why = app.actionListeners[9].pattern;
+  assert.ok(why.test('echo:why'));
+  for (const id of ['echo:open', 'alpha:help', 'echo:whyx', 'Echo:why', ':why']) assert.ok(!why.test(id), id);
+  for (const { pattern } of app.actionListeners.slice(0, 9)) {
+    assert.ok(!(pattern instanceof RegExp ? pattern.test('echo:why') : pattern === 'echo:why'), String(pattern));
+  }
+  app.actionListeners.pop();
   // Ask another and Build request on an Ask answer (Story 16.7), last.
   for (const id of ['ask:again', 'ask:build-request']) assert.ok(app.actionListeners[8].pattern.test(id), id);
   assert.ok(!app.actionListeners[8].pattern.test('ask:open'));

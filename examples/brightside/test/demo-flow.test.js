@@ -228,10 +228,16 @@ async function demo(t, { llmOff }) {
   await app.dispatchCommand('/brightside', { user_id: DANA });
   const menuArgs = app.views[0].args;
   assert.equal(app.views[0].method, 'open');
-  const entries = (view) => view.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id.replace(/:open$/, ''));
+  // A row's button sends <id>:open, or <id>:why while the tool waits (Story 17.3).
+  const entries = (view) => view.blocks.filter((b) => b.accessory && /:(open|why)$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id.replace(/:(open|why)$/, ''));
   // routing is the dev-only Routing map (Story 15.5) and route-planner the dev-only Plan a
   // route (Story 15.15), on the same resource: Dana holds ROUTING_ALL_CREWS by name.
   assert.deepEqual(entries(menuArgs.view).sort(), ['dataset', 'hello-world', 'labour-cost', 'outbox', 'route-planner', 'routing', 'unpaid-invoices', 'win-back']);
+  // Plan a route can't open in this boot (its editor is unready: the
+  // dispatcher refuses it), so its status is waiting for map setup and its
+  // button is Why? (plan hub-status-menu, D7).
+  const waiting = menuArgs.view.blocks.filter((b) => b.accessory && /:why$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
+  assert.deepEqual(waiting, ['route-planner:why']);
   ctx.menu = { id: 'V1', type: 'modal', private_metadata: menuArgs.view.private_metadata, title: menuArgs.view.title };
   // Someone the profile doesn't know sees only the open-access entries.
   await app.dispatchCommand('/brightside', { user_id: 'U0NOTINPROFILE' });

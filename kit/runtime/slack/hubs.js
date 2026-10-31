@@ -58,7 +58,18 @@
 // (profile role) only; the menu and Help leave them out for anyone else,
 // even with the key granted by name (fail closed). Access is unchanged: the
 // dispatcher still re-checks every click, and every button still sends
-// <module-id>:open.
+// <module-id>:open, except a waiting row's.
+//
+// Why? (plan hub-status-menu, D7, Story 17.3): a row whose status is waiting
+// shows Why? and sends <module-id>:why instead. Its own listener re-checks
+// the module and the person's access first, as dispatch does, and shows why
+// only to a person in the profile with that row in their menu; it then
+// recomputes the status at the click and pushes kit/runtime/registry/why's
+// screen (what is missing, Request when a ready Request a tool row is in
+// their menu on the same hub, else "Ask <admin> about it."; "This is ready
+// now…" when it no longer waits). Request is the build request's own
+// <id>:open, pushed by the dispatcher as the third view. From an old message
+// menu the words come as a private reply with no buttons.
 //
 // Seam: canUse(person, module) returns 'allowed' | 'denied' | 'error' (true
 // and false are read as allowed and denied); person is { id, user } with user
@@ -258,9 +269,10 @@ const {
   handle, handleView, afterAck, PLAIN_ERROR,
 } = require('./handle');
 const {
-  buildMenu, buildHelp, moduleIdFromAction, hubIdFromHelpAction, verbFor, isSetup, OPEN_ACTION, HELP_ACTION,
+  buildMenu, buildHelp, moduleIdFromAction, moduleIdFromWhy, hubIdFromHelpAction, verbFor, isSetup, OPEN_ACTION, WHY_ACTION, HELP_ACTION,
 } = require('../registry/menu');
 const statusModule = require('../registry/status');
+const { whyScreen } = require('../registry/why');
 const summaryModule = require('../knowledge/summary');
 const { isVisible } = require('../registry');
 const {
@@ -1801,6 +1813,65 @@ function registerHubs(app, {
       } catch (showErr) {
         log.error('could not tell the person about a failure', { handler: 'hub:ask', error: askError(showErr) });
       }
+    }
+  }, { log, store }));
+
+  // Why? on a waiting row (plan hub-status-menu, D7, Story 17.3). Acked
+  // first (handle), then, before anything else, the module (unknown, or
+  // hidden in this environment: "not available") and the person's access
+  // (refusalFor: the existing refusal). Then only a person in the profile
+  // with this row in their menu sees why (the strip's audience, P1-1): a
+  // person not in the profile gets the not-set-up notice, and a member
+  // clicking a Setup tool gets "not available". The status is recomputed
+  // from the hub's facts at the click (the notes raced against the menu's
+  // budget; late, they count as unread), and the screen (registry/why) is
+  // pushed like any tool view, titled with the tool's label; from an old
+  // message menu its words come as a private reply with no buttons. A failed
+  // push falls back as every click does (replyTarget, logged).
+  app.action(WHY_ACTION, handle('hub:why', async (args) => {
+    const { action, body } = args;
+    const actionId = action && action.action_id;
+    const mod = registry.module(moduleIdFromWhy(actionId));
+    const shown = Boolean(mod && isVisible(mod, env));
+    const target = replyTarget(args, { where: 'why', title: shown ? mod.label : 'Not available', hubId: shown ? mod.hub : null });
+    try {
+      if (!shown) {
+        log.warn('hub action refused', { action_id: actionId, reason: !mod ? 'unknown module' : 'hidden in this environment', env });
+        await target.reply(NOT_AVAILABLE);
+        return;
+      }
+      const person = personOf((body.user || {}).id);
+      const refused = refusalFor(person, mod, actionId);
+      if (refused) {
+        await target.reply(refused);
+        return;
+      }
+      if (!person.user) {
+        log.warn('hub action refused', { action_id: actionId, reason: 'not in the profile', env });
+        await target.reply(notSetUp(person));
+        return;
+      }
+      const entries = menuEntries(mod.hub, person);
+      if (!entries.includes(mod)) {
+        log.warn('hub action refused', { action_id: actionId, reason: 'not in this menu', user: person.user.id, env });
+        await target.reply(NOT_AVAILABLE);
+        return;
+      }
+      const facts = hubFacts(mod.hub);
+      const got = await within(listNotes(facts.view), menuBudgetMs);
+      const listed = got === LATE ? { entries: [], problem: true } : got;
+      const summary = summaryOf(mod.hub, facts, listed);
+      const unready = mod.archetype === 'routing-map' ? Boolean(routingMapOf(mod.hub).unready(mod)) : false;
+      const status = statusModule.toolStatus(mod, { ...facts, summary, unready });
+      const offered = entries.find((m) => m.archetype === 'build-request' && m !== mod);
+      const request = offered && requests.availability(requestHubOf(mod.hub)).available === true ? offered : null;
+      log.info('why shown', { module: mod.id, hub: mod.hub, waiting: Boolean(status && status.key === 'waiting') });
+      await target.reply(whyScreen({
+        mod, status, ready: facts.ready, admin, request,
+      }));
+    } catch (err) {
+      if (!target.modal) throw err;
+      await failInView('hub:why', target, err);
     }
   }, { log, store }));
 }

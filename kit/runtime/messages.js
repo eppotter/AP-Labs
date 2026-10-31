@@ -394,6 +394,20 @@ const ASK_WORDS = Object.freeze({
   askAdmin: (admin) => `Not what you needed? Tell ${admin} what you were looking for.`,
 });
 
+// Why? (plan hub-status-menu, D7, Story 17.3): the words a waiting tool's
+// Why? screen adds to the existing ones (ASK_WORDS' readiness lines,
+// BUILD_REQUEST_WORDS' notSetUp and notOnThisHub, add-context's NO_STORE).
+// admin is Slack mrkdwn (access.adminContact); verb is a menu verb and
+// label a reviewed manifest label, both escaped here.
+const WHY_WORDS = Object.freeze({
+  noMap: (admin) => `The map isn't set up on this bot yet. Ask ${admin}.`,
+  noAi: (admin) => `The AI helper isn't set up on this bot yet. Ask ${admin}.`,
+  readyNow: (verb) => `This is ready now. Press Back, then ${escapeText(verb)} it from the menu.`,
+  askAdmin: (admin) => `Ask ${admin} about it.`,
+  request: (label) => `Need it, or something else? Tell the team with *${escapeName(label)}*.`,
+  requestInWindow: (label) => `Need it, or something else? Use *${escapeName(label)}* from the hub's window.`,
+});
+
 // Hub wording (Story 6.4). A hub file may set its own welcome and feedback
 // lines; these defaults keep a hub without them working. The welcome sits
 // below the menu's strip, which already says what is set up, so it is kept
@@ -433,5 +447,5 @@ function messageFor(err, { admin = 'your admin' } = {}) {
 
 module.exports = {
   messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, FILE_WORDS, READ_FILE_AI_WORDS, readFileAiText, READ_WORDS, MAP_WORDS, ROUTE_WORDS,
-  BUILD_REQUEST_WORDS, ASK_WORDS, REQUEST_A_TOOL,
+  BUILD_REQUEST_WORDS, ASK_WORDS, REQUEST_A_TOOL, WHY_WORDS,
 };
