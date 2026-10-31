@@ -31,7 +31,7 @@ The manifest is JSON, checked against `kit/runtime/schema/module.schema.json`. U
 | `label` | yes | The menu button's text, up to 60 characters. |
 | `description` | yes | One line under the button, up to 200 characters. Say what it does for the person. |
 | `resource` | yes | The profile resource key that grants it (`WEEKLY_REPORT`). It must be declared in the profile, or startup fails: a missing key is a setup fault, never shown to a person as a denial. |
-| `archetype` | yes | `handler` (your code replies), `scoped-pull` (a list with a typed form, no code: see below) or `approval-write` (a scoped pull whose list can be pushed to another system after the person previews and approves it: see below). |
+| `archetype` | yes | `handler` (your code replies), `scoped-pull` (a list with a typed form, no code: see below), `approval-write` (a scoped pull whose list can be pushed to another system after the person previews and approves it: see below), `routing-map` (the routing map), or one of the four starter tools the engine shows itself: `data-sources`, `add-context`, `ask` and `build-request` (see "The four starter tools" below). |
 | `environments` | yes | Where it shows, by `APLABS_ENV` (`["dev"]`, then `["dev", "prod"]` when it is ready). Off the menu, and refused if opened, everywhere else. |
 | `handler` | for `handler` | The handler file in the module's folder (`handler.js`). It exports one async function. |
 | `parameters` | for `scoped-pull` and `approval-write` | The inputs a person gives (see "Declaring inputs" below). The query runner refuses a parameter the manifest does not declare. |
@@ -39,6 +39,35 @@ The manifest is JSON, checked against `kit/runtime/schema/module.schema.json`. U
 | `row_id` | with `scoring`, and for `approval-write` | The column the query returns that tells rows apart (`client_id`). Equal scores are ordered by it, and a push's idempotency key is built from it. |
 | `scoring` | no | A score from 0 to 100 and a one-line reason per row, worked out by the engine (see "A scored list" below). |
 | `write` | for `approval-write` | Where and what it pushes (see "Pushing a list" below). |
+
+## What a hub sees
+
+Every hub file (`app/hubs/<id>.json`) has a required `sees`: what the hub, and every module on it, may reach. Boot stops on a hub file without it, or with a value not in the list.
+
+| Value | What it gives the hub |
+|---|---|
+| `"context"` | The profile's context files (`org.md`, `data.md`) in the AI's prompt. |
+| `"data"` | The read-only query runner. Without it, `ctx.data.run` refuses ("no data source"). |
+| `"rules"` | The known truths, guardrails and forbidden columns, as Data sources and Ask report them. |
+
+`[]` sees none of them: a blank hub. A hub's added context (from Add context) belongs to that hub whatever `sees` says, and is always in its AI's prompt. The checks that follow from `sees` are in the `hub` row above. The full list is `kit/runtime/schema/hub.schema.json`.
+
+## The four starter tools
+
+Four archetypes are tools the engine shows itself. Their manifest is the required fields only: no `handler`, `query`, `parameters`, `scoring` or `row_id` (startup stops on any of them). The template's example client has one of each to copy, and the fork guide (`docs/fork-guide.md`, step 8) says how. Each opens in the module's own view, whose Back returns to the hub's menu.
+
+| Archetype | What a person sees |
+|---|---|
+| `data-sources` | What the hub has: its connected data (available or not, never a table or row count), whether `data.md` and `guardrails.md` are signed off and each known truth with its owner and last check, and the titles of its added context. On a hub that sees neither data nor rules: "No data connected yet. No known truths or rules yet." |
+| `add-context` | A title and a text box (at most 3,000 characters), or one uploaded file (PDF, image, `.txt` or `.md`), for Ask to use on this hub, and the hub's entries, each with Remove. An entry is live at once. A PDF or image is read once through the AI; only the text is kept, and the file stays in the uploader's Slack files. |
+| `ask` | A question in the person's own words (at most 500 characters). Ask points to a tool on this hub the person can open, says what is missing when a data question comes before the hub's data and rules are set up, or answers from the hub's prompt. It never writes or runs SQL. |
+| `build-request` | What the person needs (at most 500 characters), summarised by the AI, previewed exactly as it will post, then posted to the profile's `slack.build_requests_channel` with a mention of the person. Only a hub that sees neither `"context"` nor `"data"` may post. |
+
+Their resources:
+
+- **Never `open_access` for `add-context` or `ask`:** startup stops on it. Everyone who can use Ask on a hub can read the context added there, so grant Ask only to people who may see all of it.
+- **Keep `data-sources` and `build-request` gated too.** On a hub that sees rules, Data sources lists the known truths and who signed them off; Build request posts in the person's name.
+- The admin role confers each key unless the profile declares it `admin_grantable: false`.
 
 ## A scoped pull: a list with a typed form
 

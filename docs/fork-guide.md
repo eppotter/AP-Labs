@@ -98,9 +98,11 @@ node kit/lib/tier app/jobs/nightly-check.js app/connectors/crm/connector.js
 
 ## 3. Remove the example client and start an empty ledger
 
-The template ships a demo client, Brightside. A fork deletes it:
+The template ships a demo client, Brightside. First keep its four starter tools (step 8 sets them up): copy their folders into the fork's app dir. Then delete the example:
 
 ```bash
+mkdir -p app/modules
+cp -r examples/brightside/app/modules/v0-data-sources examples/brightside/app/modules/v0-add-context examples/brightside/app/modules/v0-ask examples/brightside/app/modules/v0-build-request app/modules/
 git rm -r examples/brightside profiles/brightside
 ```
 
@@ -131,7 +133,7 @@ It writes `.aplabs/template-version` (the version and a fingerprint of `kit/` an
 The runtime bot is its own Slack app. It is separate from any app you use for an incoming webhook (such as the one `npm run notify` posts through): never add bot scopes to that one.
 
 1. Write `app/slack-manifest.json` with what a person sets once: `display_information` (the app's name and description), `features.bot_user` and `features.app_home`. Copy the shape from the example's `examples/brightside/app/slack-manifest.json` before you delete it, and change the names.
-2. Add the first hub, `app/hubs/acme.json` (an `id`, its slash `command`, a `name`, a `description`, a `welcome` and `sees`), as in the example's `examples/brightside/app/hubs/`. `sees` is required: it lists what the hub may see, any of `"context"` (the profile's context files in the AI's prompt), `"data"` (the query runner) and `"rules"` (the truths and guardrails), or `[]` for none. A hub file without it stops boot. A fork taking the template update that brings `sees` adds it to every hub file; `["context", "data", "rules"]` keeps a hub as it was.
+2. Add the first hub, `app/hubs/acme.json` (an `id`, its slash `command`, a `name`, a `description`, a `welcome` and `sees`), as in the example's `examples/brightside/app/hubs/`. `sees` is required: it lists what the hub may see, any of `"context"` (the profile's context files in the AI's prompt), `"data"` (the query runner) and `"rules"` (the truths and guardrails), or `[]` for none. Every hub file needs it: one without it stops boot. A data tool (a `scoped-pull`, `approval-write` or `routing-map` module) stops boot on a hub that does not see `"data"`. A fork taking the template update that brings `sees` adds it to every hub file; `["context", "data", "rules"]` keeps a hub as it was.
 3. Generate the rest of the manifest (one slash command per hub, the bot scopes, Socket Mode):
 
    ```bash
@@ -164,6 +166,42 @@ Columns no query may name go in the profile under `sql.forbidden_columns`. Decid
 
 Every addition is a folder in the app dir, `app/`. No engine file changes.
 
+- **The four starter tools** come with the template: a manifest each, no code. Step 3 copied them into `app/modules/`. They work on a blank hub (`"sees": []`) before any data is connected:
+
+  | Folder | Archetype | Resource | What it does |
+  |---|---|---|---|
+  | `v0-data-sources` | `data-sources` | `DATA_SOURCES` | Shows what data, known truths, rules and added context the hub has. |
+  | `v0-add-context` | `add-context` | `ADD_CONTEXT` | An admin types something about the business, or uploads a file, for Ask to use on this hub. |
+  | `v0-ask` | `ask` | `ASK` | A person asks a question in their own words. |
+  | `v0-build-request` | `build-request` | `BUILD_REQUEST` | A person asks the AP Labs team for a new tool or change, sees a preview, then it posts to a channel. |
+
+  In each manifest, set `hub` to the fork's hub id (step 5). A module's `id` must equal its folder name, so a tool sits on one hub; to put Ask on a second hub, copy the folder again under a new name and set its `id` and `hub`. `kit/templates/module.md` describes the four archetypes.
+
+  Declare the four resource keys in the profile. Leave all four gated (no `open_access`): boot refuses `ADD_CONTEXT` or `ASK` with `open_access`. The admin role confers each one; grant one to anyone else by name.
+
+  ```yaml
+  resources:
+    - key: DATA_SOURCES
+      label: Data sources
+    - key: ADD_CONTEXT
+      label: Add context
+    - key: ASK
+      label: Ask
+    - key: BUILD_REQUEST
+      label: Build request
+  ```
+
+  Build request posts to the channel id in the profile's `slack.build_requests_channel`. Pick the channel with the client, write its audience in a comment beside the id (for example, the AP Labs build team and the client's admins), and invite the bot to it. What goes there is the person's own previewed words, the AI's title and summary of them, and a mention of the person. Only a hub that sees neither `context` nor `data` may post: on any other hub the tool says it is not available there yet, and while the channel is unset it says it is not set up and names the admin. Neither opens a form or posts.
+
+  ```yaml
+  slack:
+    # Audience: the AP Labs build team and Acme's admins.
+    build_requests_channel: C0123456789
+  ```
+
+  **Tell the client who reads what is added.** Everyone who can use Ask on a hub can read the context added there: Ask answers from it. So grant `ASK` only to people who may see everything an admin adds on that hub. An uploaded file stays in the uploader's Slack files: the bot keeps only the text it read from it, and they can delete it there.
+
+  Added context is stored under the var dir (`APLABS_VAR_DIR`, else a `var` folder in the repo), one folder per client and hub, so on a host it needs a lasting volume (step 10).
 - **A module** is one entry on a hub's menu. Copy the template and follow `kit/templates/module.md`:
 
   ```bash
@@ -209,6 +247,7 @@ On a host, run the container, following `docs/runtime/container.md`. **You, not 
 - **Exactly one replica**, deployed **stop-then-start**, never rolling. Two copies split Slack's events.
 - Secrets come from the host's secret store as env vars; nothing is baked into the image.
 - Mount `.aplabs/` read-only and set `APLABS_PROFILE`, `APLABS_APP_DIR` and `APLABS_HEALTH_PORT`.
+- Put a lasting volume, not a tmpfs, at the var dir (`APLABS_VAR_DIR`, `/var/lib/aplabs` in the image). Added context lives there: on a tmpfs it is gone after every restart or deploy. Back it up with the host's other data.
 
 ## What a fork never edits
 
