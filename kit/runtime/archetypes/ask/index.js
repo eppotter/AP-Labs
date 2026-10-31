@@ -16,7 +16,10 @@
 //      data, context or other. The tools it sees are only the modules on this
 //      hub the person can open (never Ask itself), as escaped data in tags.
 //   2. module: the id must be in that list, or the answer is read as other.
-//      The reply names the tool with an Open button: the dispatcher's own
+//      A data tool (a scoped pull or an approval write) is first checked by
+//      readiness as in 3: until its hub's data and rules are both set up,
+//      the readiness message is shown instead of Open. Otherwise the reply
+//      names the tool with an Open button: the dispatcher's own
 //      `<id>:open`, which re-checks access. Nothing the AI says widens what
 //      the person may open (D6).
 //   3. data: readiness (kit/runtime/knowledge/readiness) decides, with no
@@ -206,14 +209,26 @@ function createAsk({ log, admin = 'your admin' }) {
     // A module id not in the person's own list (hidden, made up) is other.
     if (kind === 'module' && !named) kind = 'other';
     log.info('ask routed', { module: mod.id, kind });
-    if (kind === 'module') return result({ ...base, text: WORDS.tool(named.label), open: named });
-    if (kind === 'data') {
+    // What readiness says about a data question, or null when data and rules
+    // are both set up (PR #276 review: also before Open on a data tool).
+    const notReady = () => {
       const ready = hub.ready();
       if (!ready.data && !ready.rules) return result({ ...base, text: WORDS.noDataNoRules(), offer: offer(false) });
       if (ready.data && !ready.rules) return result({ ...base, text: WORDS.dataNoRules() });
       if (!ready.data && ready.rules) return result({ ...base, text: WORDS.rulesNoData() });
+      return null;
+    };
+    const isDataTool = Boolean(named && QUERY_ARCHETYPES.has(named.archetype));
+    if (kind === 'module') {
+      // A data tool is offered only once its hub's data and rules are set up.
+      if (isDataTool) return notReady() || result({ ...base, text: WORDS.tool(named.label), open: named });
+      return result({ ...base, text: WORDS.tool(named.label), open: named });
+    }
+    if (kind === 'data') {
+      const said = notReady();
+      if (said) return said;
       // Both: only a data tool from the person's own list, through Open.
-      if (named && QUERY_ARCHETYPES.has(named.archetype)) return result({ ...base, text: WORDS.tool(named.label), open: named });
+      if (isDataTool) return result({ ...base, text: WORDS.tool(named.label), open: named });
       return result({ ...base, text: WORDS.noToolYet(), offer: offer(false) });
     }
     let reply;

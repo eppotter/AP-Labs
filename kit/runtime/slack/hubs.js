@@ -246,7 +246,7 @@ const { readiness } = require('../knowledge/readiness');
 const addContext = require('../archetypes/add-context');
 const buildRequest = require('../archetypes/build-request');
 const askTool = require('../archetypes/ask');
-const { ContextRefused } = require('../errors');
+const { ContextRefused, RuntimeRefusal } = require('../errors');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
@@ -1438,6 +1438,19 @@ function registerHubs(app, {
   // still open it, on the hub the view says (a payload naming another hub's
   // module is refused).
   const ASKS = new Set(['ask']);
+  // What an error on the Ask path may log (PR #276 review): its name and
+  // code, and its message only when it is one of the engine's own refusals
+  // (fixed text). Never the error itself: a library's message or stack could
+  // carry the person's question.
+  const askError = (err) => {
+    const name = err && typeof err.name === 'string' && /^[A-Za-z0-9_]{1,60}$/.test(err.name) ? err.name : 'Error';
+    const code = failureReason(err);
+    return {
+      name,
+      ...(code !== 'views call failed' ? { code } : {}),
+      ...(err instanceof RuntimeRefusal ? { message: err.message } : {}),
+    };
+  };
   const asks = askTool.createAsk({ log, admin });
   const resolveAsk = (person, actionId, hubId) => (moduleId) => {
     const found = resolveModule(person, actionId, ASKS)(moduleId);
@@ -1487,11 +1500,11 @@ function registerHubs(app, {
       try {
         await res.later();
       } catch (err) {
-        log.error('handler failed', { handler: 'hub:ask-submit', err });
+        log.error('handler failed', { handler: 'hub:ask-submit', error: askError(err) });
         try {
           await later.show(PLAIN_ERROR, { force: true });
         } catch (showErr) {
-          log.error('could not tell the person about a failure', { handler: 'hub:ask-submit', err: showErr });
+          log.error('could not tell the person about a failure', { handler: 'hub:ask-submit', error: askError(showErr) });
         }
       }
     });
@@ -1540,11 +1553,11 @@ function registerHubs(app, {
       log.info('module dispatched', { module: target.id, hub: target.hub, via: 'ask' });
       await show(requests.open({ mod: target, hub: requestHubOf(mod.hub), initial: question }), target.label);
     } catch (err) {
-      log.error('handler failed', { handler: 'hub:ask', err });
+      log.error('handler failed', { handler: 'hub:ask', error: askError(err) });
       try {
         await show(PLAIN_ERROR);
       } catch (showErr) {
-        log.error('could not tell the person about a failure', { handler: 'hub:ask', err: showErr });
+        log.error('could not tell the person about a failure', { handler: 'hub:ask', error: askError(showErr) });
       }
     }
   }, { log, store }));

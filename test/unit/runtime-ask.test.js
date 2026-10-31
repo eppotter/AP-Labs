@@ -159,6 +159,7 @@ function click(ctx, button, { user = ADA, hub = 'blank' } = {}) {
 test('the fixture app loads: ask is a built archetype on every hub', () => {
   assert.deepEqual(loadProblems, []);
   assert.deepEqual(registry.modules.filter((m) => m.archetype === 'ask').map((m) => m.hub), ['blank', 'ctx', 'data', 'full', 'rules']);
+  assert.deepEqual(registry.modules.filter((m) => m.archetype === 'scoped-pull').map((m) => m.id), ['data-pull', 'full-pull']);
 });
 
 function editedApp(t, edit) {
@@ -367,6 +368,51 @@ test('data, both: the scoped pull the AI named, with Open, or "There\'s no tool 
     assert.deepEqual(none.runner.runs, []);
     assert.equal(none.model.calls.length, 1);
   }
+});
+
+test('module naming a data tool: readiness first; until data and rules are both set up, the readiness message instead of Open (PR #276 review)', async () => {
+  const notReady = setup({ model: fakeModel({ route: { kind: 'module', module_id: 'data-pull' } }) });
+  const shown = await ask(notReady, 'Show me the visits by zone.', { hub: 'data' });
+  assert.equal(texts(shown.blocks)[0], WORDS.dataNoRules());
+  assert.deepEqual(buttonIds(shown), [askTool.ACTIONS.again]);
+  assert.equal(notReady.model.calls.length, 1);
+  assert.deepEqual(notReady.runner.runs, []);
+  // Both set up: Open, as for any tool.
+  const ready = setup({ model: fakeModel({ route: { kind: 'module', module_id: 'full-pull' } }) });
+  const open = await ask(ready, 'Show me the visits by zone.', { hub: 'full' });
+  assert.equal(texts(open.blocks)[0], WORDS.tool('Visits by zone'));
+  assert.deepEqual(buttonIds(open), ['full-pull:open', askTool.ACTIONS.again]);
+  assert.deepEqual(ready.runner.runs, []);
+});
+
+test('an unexpected error on the Ask path logs its name only, never its message or stack when either holds the question (PR #276 review)', async () => {
+  const QUESTION = 'What does Marcus earn an hour?';
+  const leaky = Object.assign(new Error(`request failed: ${QUESTION}`), { name: 'APIError' });
+  const ctx = setup({
+    llm: { forHub: () => ({ structured: async () => { throw leaky; }, ask: async () => assert.fail('no ask') }) },
+  });
+  const shown = await ask(ctx, QUESTION);
+  assert.deepEqual(texts(shown.blocks), [PLAIN_ERROR]);
+  const line = ctx.log.lines.find((l) => l.msg === 'handler failed');
+  assert.deepEqual(line.fields, { handler: 'hub:ask-submit', error: { name: 'APIError' } });
+  // The show of the plain error failing too: still the name only.
+  const both = setup({
+    llm: { forHub: () => ({ structured: async () => { throw leaky; }, ask: async () => assert.fail('no ask') }) },
+  });
+  const form = await openForm(both.app);
+  both.app.viewsFail.update = Object.assign(new Error(`An API error occurred: internal_error ${QUESTION}`), { data: { ok: false, error: 'internal_error' } });
+  await both.app.dispatchView(askTool.FORM_CALLBACK, { user: ADA, view: submitted(form, QUESTION) });
+  const told = both.log.lines.find((l) => l.msg === 'could not tell the person about a failure');
+  assert.deepEqual(told.fields, { handler: 'hub:ask-submit', error: { name: 'Error', code: 'internal_error' } });
+  // A click's failure on the Ask path is logged the same way.
+  const clicked = setup();
+  clicked.app.viewsFail.update = Object.assign(new Error(`An API error occurred: internal_error ${QUESTION}`), { data: { ok: false, error: 'internal_error' } });
+  await click(clicked, { action_id: askTool.ACTIONS.again, value: 'blank-ask' });
+  assert.deepEqual(clicked.log.lines.filter((l) => l.level === 'error').map((l) => [l.msg, l.fields]), [
+    ['handler failed', { handler: 'hub:ask', error: { name: 'Error', code: 'internal_error' } }],
+    ['could not tell the person about a failure', { handler: 'hub:ask', error: { name: 'Error', code: 'internal_error' } }],
+  ]);
+  for (const c of [ctx, both, clicked]) assert.ok(!JSON.stringify(c.log.lines).includes('Marcus earn'), 'the question is never logged');
 });
 
 // --- context and other ------------------------------------------------------------------------
