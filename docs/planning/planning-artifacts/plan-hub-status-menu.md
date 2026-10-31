@@ -421,7 +421,7 @@ The Orchestrator assigns the next free DEP ids when the stories open them (DEP-0
 - **P3-13**: the vocabulary's verb function is `menuVerbOf` (archetypes already export `verbOf`); Build request's status uses `requests.available(hub)`. D11, 17.1.
 - **P3-14**: the rule-card parser skips fenced code; a member with no rows sees "Nothing is available to you here yet." and Help, with no strip. D3, D4, 17.1, 17.2.
 
-`bmad-review` on this plan: not run (the plan was approved from the roundtable).
+T3 plan review (adversarial and edge-case lenses): run by the architect agent on 2026-10-31, in place of a separate `bmad-review` pass; its 14 findings are folded in above.
 
 ## Open items, each with a recommended default
 
