@@ -546,7 +546,9 @@ test('the stand-in client refuses a forced tool with a 400, as the real API does
   for (const type of ['tool', 'any']) {
     await assert.rejects(client.messages.create({ tool_choice: { type, name: 't' } }), (err) => err.name === 'BadRequestError' && err.status === 400 && /not supported for this model/.test(err.message));
   }
-  await client.messages.create({ tool_choice: { type: 'auto', disable_parallel_tool_use: true } });
+  await client.messages.create({
+    model: 'claude-sonnet-5-5', max_tokens: 10, messages: [{ role: 'user', content: 'x' }], tool_choice: { type: 'auto', disable_parallel_tool_use: true },
+  });
 });
 
 test('a structured reply with text only and no tool call returns toolInput null', async () => {

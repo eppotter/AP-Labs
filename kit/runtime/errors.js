@@ -271,10 +271,44 @@ class ContextRefused extends RuntimeRefusal {
   }
 }
 
+// A file uploaded through Add context refused (plan brightside-v0, D5, D7,
+// Story 16.8). Nothing is stored. reason is one of FILE_REFUSALS; details:
+// { reason, max } (max: the cap in bytes, pages, pixels or characters, when
+// one applies). Worded by kit/runtime/messages; the log gets the reason only.
+//   type        the name's extension is not one we read
+//   docx        an office file (.docx, .doc, ...): "save it as a PDF first"
+//   size        over the byte cap (Slack's size, or the download itself)
+//   signature   the first bytes don't match the type the name says
+//   pages       a PDF over the page cap
+//   pages_unreadable  a PDF whose page count can't be read
+//   pixels      an image wider or taller than the API takes
+//   encoding    a text file that is not UTF-8, or holds a NUL byte
+//   not_owner   the file belongs to someone other than the person submitting
+//   not_found   Slack says the file is gone (file_not_found, file_deleted)
+//   info_failed files.info failed for another reason
+//   download_failed  the download failed, timed out, was redirected or
+//               answered with a web page
+//   too_long    what was taken from it is over the 6,000-character cap
+//   empty       nothing could be taken from it
+//   too_costly  its worst-case price alone is over the hourly upload limit
+//   not_set_up  this bot has no way to read Slack files
+const FILE_REFUSALS = Object.freeze([
+  'type', 'docx', 'size', 'signature', 'pages', 'pages_unreadable', 'pixels', 'encoding', 'not_owner',
+  'not_found', 'info_failed', 'download_failed', 'too_long', 'empty', 'too_costly', 'not_set_up',
+]);
+class FileRefused extends RuntimeRefusal {
+  constructor(reason, max = null) {
+    if (!FILE_REFUSALS.includes(reason)) throw new TypeError(`unknown FileRefused reason "${reason}"`);
+    super(`file refused: ${reason}`, { reason, max });
+    this.code = 'FILE_REFUSED';
+    this.reason = reason;
+  }
+}
+
 module.exports = {
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, LLM_REASONS,
   KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
   SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
   ProvenanceGone, ProvenanceNotYours, ScoringFault, SCORING_PROBLEMS, PreviewInvalid, PushRefused, PUSH_REFUSALS, AlreadyPushed,
-  RoutingFault, ROUTING_PROBLEMS, ContextRefused, CONTEXT_REFUSALS,
+  RoutingFault, ROUTING_PROBLEMS, ContextRefused, CONTEXT_REFUSALS, FileRefused, FILE_REFUSALS,
 };

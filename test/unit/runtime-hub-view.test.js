@@ -182,7 +182,7 @@ test('each view is built once: a blank hub gets no runner, a bound AI service an
   for (const v of [alpha, beta]) {
     assert.ok(Object.isFrozen(v));
     assert.notEqual(v.llm, llm);
-    assert.deepEqual(Object.keys(v.llm).sort(), ['ask', 'structured']);
+    assert.deepEqual(Object.keys(v.llm).sort(), ['ask', 'readFile', 'structured']);
   }
   assert.throws(() => views.forHub('gamma'), /no view for hub "gamma"/);
   assert.throws(() => createHubViews({ hubs: [{ id: 'x', file: 'hubs/x.json' }] }), /add "sees" to hubs\/x\.json/);
@@ -256,7 +256,7 @@ test('the test seam (data and llm handed straight to registerHubs) sees everythi
 
 test('the boot wiring hands registerHubs only forHub; the scheduler keeps the runner and gets no AI service', () => {
   const src = fs.readFileSync(path.join(ROOT, 'kit/runtime/app/index.js'), 'utf8');
-  assert.match(src, /registerHubs\(app, \{ registry, profile, env, log, store, forHub, connectors, mapFiles, rules \}\)/);
+  assert.match(src, /registerHubs\(app, \{ registry, profile, env, log, store, forHub, connectors, mapFiles, rules, slackFiles \}\)/);
   assert.match(src, /createHubViews\(\{\s*hubs: cfg\.registry\.hubs, data, llm: ai, knowledge,\s*\}\)/);
   const scheduler = /jobs\.createScheduler\(\{([\s\S]*?)\n  \}\);/.exec(src)[1];
   assert.ok(!/llm|ai\b|knowledge/.test(scheduler), scheduler);

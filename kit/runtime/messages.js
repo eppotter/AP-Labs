@@ -16,7 +16,7 @@ const {
 const {
   ProvenanceGone, ProvenanceNotYours, ScoringFault, PreviewInvalid, PushRefused, AlreadyPushed,
 } = require('./errors');
-const { RoutingFault, ContextRefused } = require('./errors');
+const { RoutingFault, ContextRefused, FileRefused } = require('./errors');
 
 // Slack mrkdwn treats &, < and > as control characters.
 function escapeText(s) {
@@ -188,6 +188,45 @@ const CONTEXT_WORDS = Object.freeze({
   too_many: (max) => `This hub already holds ${max} entries, the most it can. Remove one to make room, then try again.`,
 });
 
+// A file refused by Add context (Story 16.8). Nothing was added in any case.
+const mb = (bytes) => `${Math.round((Number(bytes) / (1024 * 1024)) * 10) / 10} MB`;
+const FILE_WORDS = Object.freeze({
+  type: () => 'I can read PDF, PNG, JPEG, GIF and WebP files, and .txt or .md text files. Choose one of those, or type the text instead.',
+  docx: () => "I can't read Word or other office files yet. Save it as a PDF first, then upload the PDF.",
+  size: (max) => `That file is too big: I read files of at most ${mb(max)}. Split it or make it smaller, then try again.`,
+  signature: () => "That file isn't what its name says it is (its contents don't match its type), so I didn't read it. Save it again in the right format, then try again.",
+  pages: (max) => `That PDF has more than ${num(max)} pages, the most I read in one go. Split it into smaller PDFs, then add each one.`,
+  pages_unreadable: () => "I couldn't count the pages in that PDF, so I didn't read it. Save or print it to a new PDF, then try again.",
+  pixels: (max) => `That image is too large: at most ${num(max)} pixels wide and tall. Make it smaller, then try again.`,
+  encoding: () => "That text file isn't plain UTF-8 text, so I didn't read it. Save it as UTF-8 text, or paste the text in instead.",
+  not_owner: () => 'You can only add a file you uploaded yourself. Upload your own copy, then try again.',
+  not_found: () => 'Slack says that file is gone, so nothing was added. Choose the file again, then try again.',
+  info_failed: () => "I couldn't get that file from Slack just now, so nothing was added. Press Back and try again in a minute.",
+  download_failed: () => "I couldn't download that file from Slack just now, so nothing was added. Press Back and try again in a minute.",
+  too_long: (max) => `I took more than ${num(max)} characters from that file, more than one entry holds. Split the file into smaller parts, then add each one.`,
+  empty: () => "I couldn't take any text from that file, so nothing was added. Try a clearer copy, or type the text instead.",
+  too_costly: () => "That file is too large to read within this hour's limit for reading files. Split it into smaller parts, then add each one.",
+  not_set_up: (max, admin) => `Reading files isn't set up on this bot, so nothing was added. Type the text instead, or tell ${admin}.`,
+});
+
+// The AI refusing to read an uploaded file (Story 16.8): each says nothing
+// was added and that typing the text still works. reason: an LlmUnavailable
+// reason (kit/runtime/errors LLM_REASONS).
+const READ_FILE_AI_WORDS = Object.freeze({
+  off: () => 'Reading files needs the AI, which is off right now, so nothing was added. Type the text instead.',
+  no_key: () => 'Reading files needs the AI, which is off on this bot, so nothing was added. Type the text instead.',
+  config: (admin) => `Reading files needs the AI, which isn't set up correctly, so nothing was added. I've logged the problem; please tell ${admin}. You can type the text instead.`,
+  too_long: () => "I couldn't read that file, so nothing was added. Type the text instead.",
+  rate_limited: (admin, { perHour = 20 }) => `You've reached the limit of ${perHour} AI requests an hour, so I didn't read that file and nothing was added. Type the text instead, or try again later.`,
+  over_budget: () => "Reading files has reached the AI's spending limit for this hour, so nothing was added. Type the text instead, or try again later.",
+  failed: () => "I couldn't read that file just now, so nothing was added. Press Back and try again in a minute, or type the text instead.",
+});
+function readFileAiText(err, { admin = 'your admin' } = {}) {
+  const details = (err && err.details) || {};
+  const words = READ_FILE_AI_WORDS[details.reason] || READ_FILE_AI_WORDS.failed;
+  return words(admin, details);
+}
+
 const MESSAGES = [
   [NotSetUp, ({ client, admin }) => `You're not set up in ${escapeText(client)}'s bot yet, so you only see what's open to everyone. Ask ${admin} to add you.`],
   [AccessDenied, ({ label, admin }) => `You don't have access to ${escapeText(label)}; ask ${admin}.`],
@@ -238,6 +277,7 @@ const MESSAGES = [
   // The routing engine's input (Story 12.1): a setup fault, so no plan is shown.
   // Added context (Stories 16.4, 16.5).
   [ContextRefused, ({ reason, max }) => CONTEXT_WORDS[reason](max)],
+  [FileRefused, ({ reason, max }, { admin }) => FILE_WORDS[reason](max, admin)],
   [RoutingFault, (details, { admin }) => `The suggested plan couldn't be worked out: ${escapeText(ROUTING_WORDS[details.problem](details))}. Nothing was changed. I've logged the problem; please tell ${admin}.`],
   // "How was this made?" (Story 9.6). Neither says anything about the run.
   [ProvenanceGone, () => "The details of this run are no longer available (they're kept for 24 hours). Run the list again from the menu to see how a new one is made."],
@@ -386,6 +426,6 @@ function messageFor(err, { admin = 'your admin' } = {}) {
 }
 
 module.exports = {
-  messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, READ_WORDS, MAP_WORDS, ROUTE_WORDS,
+  messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, FILE_WORDS, READ_FILE_AI_WORDS, readFileAiText, READ_WORDS, MAP_WORDS, ROUTE_WORDS,
   BUILD_REQUEST_WORDS, ASK_WORDS,
 };
