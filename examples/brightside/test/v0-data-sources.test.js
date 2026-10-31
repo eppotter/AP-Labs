@@ -51,12 +51,18 @@ test('/brightside-v0 lists Ask (Story 16.7) and Request a tool (Story 16.6), the
   const app = await boot(t);
   await app.dispatchCommand('/brightside-v0', { user_id: ADMIN_SLACK });
   await app.dispatchCommand('/brightside-v0', { user_id: 'UNOBODY' });
-  const openIds = (m) => m.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
+  // The rows (block entry:<id>); the next-step line's button is checked below.
+  const openIds = (m) => m.blocks.filter((b) => /^entry:/.test(b.block_id || '') && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
   const [admin, stranger] = app.responded;
   // Tools first, then the Setup group (plan hub-status-menu, D5).
   assert.deepEqual(openIds(admin), ['v0-ask:open', 'v0-build-request:open', 'v0-add-context:open', 'v0-data-sources:open']);
   assert.ok(admin.blocks.some((b) => b.type === 'header' && /Setup · admins$/.test(b.text.text)));
   assert.deepEqual(openIds(stranger), []);
+  // The blank hub's next step (plan hub-status-menu, D6): teach it the business.
+  const next = admin.blocks.find((b) => b.block_id === 'next');
+  assert.equal(next.text.text, '*Next:* teach it the business');
+  assert.equal(next.accessory.action_id, 'v0-add-context:open');
+  assert.equal(stranger.blocks.find((b) => b.block_id === 'next'), undefined);
   await app.dispatchAction('v0-data-sources:open', { user: { id: ADMIN_SLACK, name: 'dana' } });
   const reply = app.responded.at(-1);
   assert.equal(reply.response_type, 'ephemeral');

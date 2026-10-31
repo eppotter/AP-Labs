@@ -1,7 +1,7 @@
 'use strict';
 
 // Builds a hub's private Block Kit menu (plan hub-status-menu, D1 to D11,
-// Stories 17.2 and 17.3) and its help (Story 6.4). No hub-specific code: the hub file,
+// Stories 17.2 to 17.4) and its help (Story 6.4). No hub-specific code: the hub file,
 // the module manifests and the facts the slash command gathers
 // (kit/runtime/slack/hubs) are the only inputs. Every glyph and status word
 // comes from ./vocabulary; this file writes none.
@@ -18,6 +18,14 @@
 //                    a blank hub (plus " You can still ask questions." with
 //                    an Ask row), else "N of M tools ready" (D4)
 //   welcome          first visit only, one sentence (D9)
+//   next             the next step (D6, Story 17.4), when the rule in
+//                    ./next-step finds one: "*Next:* teach it the business",
+//                    "*New:* <label>" or "*Next:* request your first tool",
+//                    with the menu's only primary button, which sends the
+//                    chosen row's own <module-id>:open (access re-checked at
+//                    the click). Shown only with the strip, never while the
+//                    menu is "checking…", and only for a tool whose row is in
+//                    this menu.
 //   group:<n>        a header per group with a row this person sees (D5):
 //                    the manifests' groups in order of their first module,
 //                    then the ungrouped tools under "Tools", then the Setup
@@ -219,12 +227,13 @@ const moreLine = () => ({ type: 'context', block_id: 'more', elements: [{ type: 
 //   strip     the person may see the strip (in the profile, P1-1)
 //   summary   summarize() for the hub, or null ("couldn't check just now")
 //   checking  the notes are still being read (D8): "Knows: checking…", no
-//             progress line, and each row says "Checking…"
+//             progress line, no next step, and each row says "Checking…"
+//   next      nextStep() for this person (./next-step), or null
 //   log       for the guard's lines
 // Returns { text, blocks }: the blocks are the hub modal's
 // (kit/runtime/slack/modal), the whole is the ephemeral fallback reply.
 function buildMenu(hub, rows, {
-  notice, welcome, admin = false, strip = false, summary = null, checking = false, log = NO_LOG,
+  notice, welcome, admin = false, strip = false, summary = null, checking = false, next = null, log = NO_LOG,
 } = {}) {
   const shown = rows.filter((r) => admin || !isSetup(r.entry));
   const opts = { checking, log };
@@ -239,6 +248,8 @@ function buildMenu(hub, rows, {
     if (progress) head.push({ type: 'context', block_id: 'strip:progress', elements: [{ type: 'mrkdwn', text: progress }] });
   }
   if (welcome) head.push({ type: 'section', block_id: 'welcome', text: { type: 'mrkdwn', text: welcome } });
+  const step = strip && !checking ? nextBlock(next, shown) : null;
+  if (step) head.push(step);
   if (!shown.length) head.push({ type: 'section', text: { type: 'mrkdwn', text: NOTHING_HERE } });
   const tail = [
     { type: 'divider' },
@@ -276,8 +287,27 @@ function buildMenu(hub, rows, {
   const list = shown.length
     ? `${hub.name}: ${shown.map((r) => r.entry.label).join(', ')}`
     : `${hub.name}: nothing is available to you here yet.`;
-  const text = [welcome, list, knows, progress, notice].filter(Boolean).join('\n');
+  const text = [welcome, list, knows, progress, step && step.text.text, notice].filter(Boolean).join('\n');
   return { text, blocks };
+}
+
+// The next-step block (D6), or null: only for a row in this menu, so the
+// button never names a tool the person can't see here.
+function nextBlock(next, shown) {
+  if (!next || typeof next.text !== 'string' || typeof next.label !== 'string' || !next.label) return null;
+  if (!shown.some((r) => r.entry.id === next.moduleId) || next.actionId !== openActionId(next.moduleId)) return null;
+  return {
+    type: 'section',
+    block_id: 'next',
+    text: { type: 'mrkdwn', text: next.text },
+    accessory: {
+      type: 'button',
+      action_id: next.actionId,
+      value: next.moduleId,
+      style: 'primary',
+      text: { type: 'plain_text', text: next.label, emoji: false },
+    },
+  };
 }
 
 // A hub's help for one person. entries: the modules this person may use, from

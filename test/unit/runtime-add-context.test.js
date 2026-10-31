@@ -160,8 +160,11 @@ test('the menu shows Add context to the admin (the role confers ADD_CONTEXT), no
   await app.dispatchCommand('/blank', { user_id: 'UADA' });
   await app.dispatchCommand('/blank', { user_id: 'UMARCUS' });
   await app.dispatchCommand('/blank', { user_id: 'UNOBODY' });
-  const ids = (v) => v.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
-  assert.deepEqual(calls(app, 'open').map((c) => ids(c.view)), [['blank-add:open', 'blank-sources:open'], [], []]);
+  // The rows (entry:<id>); the admin's next step (Story 17.4) points at Add context too.
+  const ids = (v) => v.blocks.filter((b) => /^entry:/.test(b.block_id || '') && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
+  const views = calls(app, 'open').map((c) => c.view);
+  assert.deepEqual(views.map(ids), [['blank-add:open', 'blank-sources:open'], [], []]);
+  assert.deepEqual(views.map((v) => (v.blocks.find((b) => b.block_id === 'next') || { accessory: {} }).accessory.action_id), ['blank-add:open', undefined, undefined]);
 });
 
 test('Open by a member or a stranger is refused (the existing refusal); nothing is listed or stored', async (t) => {

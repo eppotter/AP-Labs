@@ -71,6 +71,20 @@
 // <id>:open, pushed by the dispatcher as the third view. From an old message
 // menu the words come as a private reply with no buttons.
 //
+// The next step (plan hub-status-menu, D6, Story 17.4): each menu open
+// records the module ids the menu lists for this person under
+// seen:<slack id>:<hub id> in the store's `welcome` namespace (7 days, in
+// memory; per person and per hub, so a tool on one hub is never "new" on
+// another). The ids new since the last record are computed from the old
+// record before the new one is written, synchronously (AD-7: no await
+// between the read and the write); no record (a first visit, a restart, 7
+// days) means nothing is new. kit/runtime/registry/next-step picks the line
+// from the hub's own summary, the rows and the new ids; a throw there is
+// logged with the hub and the function's name and leaves no next step. Its
+// button is the chosen row's own <module-id>:open, so the dispatcher
+// re-checks access at the click. The late menu (D8) has none until its
+// update.
+//
 // Seam: canUse(person, module) returns 'allowed' | 'denied' | 'error' (true
 // and false are read as allowed and denied); person is { id, user } with user
 // the profile user or null. Tests may inject their own.
@@ -272,6 +286,7 @@ const {
   buildMenu, buildHelp, moduleIdFromAction, moduleIdFromWhy, hubIdFromHelpAction, verbFor, isSetup, OPEN_ACTION, WHY_ACTION, HELP_ACTION,
 } = require('../registry/menu');
 const statusModule = require('../registry/status');
+const nextStepModule = require('../registry/next-step');
 const { whyScreen } = require('../registry/why');
 const summaryModule = require('../knowledge/summary');
 const { isVisible } = require('../registry');
@@ -371,6 +386,19 @@ function firstVisit(store, slackId, hubId) {
   if (store.get('welcome', key) !== undefined) return false;
   store.set('welcome', key, true);
   return true;
+}
+
+// The module ids in this menu that were not in the last one this person
+// opened on this hub (D6), then records this menu's ids. The new ids come
+// from the old record before the new one is written (architect P3-12), and
+// nothing awaits in between (AD-7). No record: nothing is new.
+function newSinceLastMenu(store, slackId, hubId, ids) {
+  if (!store || typeof slackId !== 'string' || !slackId) return [];
+  const key = `seen:${slackId}:${hubId}`;
+  const before = store.get('welcome', key);
+  const fresh = Array.isArray(before) ? ids.filter((id) => !before.includes(id)) : [];
+  store.set('welcome', key, Object.freeze([...ids]));
+  return fresh;
 }
 
 // team_join sends the user object; tolerate a bare id.
@@ -1020,6 +1048,19 @@ function registerHubs(app, {
       return { entry: mod, status: null, verb };
     }
   });
+  // The next step (D6), or null; a throw is logged with the hub and the
+  // function's name only. Called through its module, so a test can make it
+  // throw.
+  const nextOf = (hubId, { summary, admin, rows, newIds }) => {
+    try {
+      return nextStepModule.nextStep({
+        summary, admin, rows, newIds, hubTools: registry.entries(hubId).filter((m) => isVisible(m, env)),
+      });
+    } catch {
+      log.warn('menu fact skipped', { hub: hubId, fn: 'nextStep' });
+      return null;
+    }
+  };
   const menuView = (hub, menu) => modalView({
     // The divider and Help stay at the end of a menu cut to Slack's limit.
     title: hub.name, blocks: menu.blocks, hubId: hub.id, keepTail: 2, callbackId: 'hub:menu',
@@ -1030,6 +1071,7 @@ function registerHubs(app, {
       const person = personOf(command.user_id);
       const welcome = firstVisit(store, command.user_id, hub.id) ? welcomeText(hub) : undefined;
       const entries = menuEntries(hub.id, person);
+      const newIds = newSinceLastMenu(store, command.user_id, hub.id, entries.map((m) => m.id));
       const base = {
         notice: notSetUp(person), welcome, admin: isAdmin(person), log,
       };
@@ -1049,7 +1091,13 @@ function registerHubs(app, {
       const fullMenu = (listed, failedStrip) => {
         const summary = summaryOf(hub.id, facts, listed);
         if (!summary) return buildMenu(hub, rowsOf(entries, null, null), { ...base, strip: failedStrip });
-        return buildMenu(hub, rowsOf(entries, facts, summary), { ...base, strip: true, summary });
+        const rows = rowsOf(entries, facts, summary);
+        const next = nextOf(hub.id, {
+          summary, admin: base.admin, rows, newIds,
+        });
+        return buildMenu(hub, rows, {
+          ...base, strip: true, summary, next,
+        });
       };
       let late = null;
       let menu;
@@ -1877,5 +1925,5 @@ function registerHubs(app, {
 }
 
 module.exports = {
-  registerHubs, personName, firstVisit, NOT_AVAILABLE, FORM_NEEDS_WINDOW, MAP_NOT_SHOWN, MAP_NEEDS_WINDOW, MAP_VIEW_CALLBACK,
+  registerHubs, personName, firstVisit, newSinceLastMenu, NOT_AVAILABLE, FORM_NEEDS_WINDOW, MAP_NOT_SHOWN, MAP_NEEDS_WINDOW, MAP_VIEW_CALLBACK,
 };
