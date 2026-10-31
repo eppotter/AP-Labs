@@ -18,21 +18,24 @@
 //   2. module: the id must be in that list, or the answer is read as other.
 //      A data tool (a scoped pull or an approval write) is first checked by
 //      readiness as in 3: until its hub's data and rules are both set up,
-//      the readiness message is shown instead of Open. Otherwise the reply
-//      names the tool with an Open button: the dispatcher's own
-//      `<id>:open`, which re-checks access. Nothing the AI says widens what
-//      the person may open (D6).
+//      the readiness message is shown instead of its button. Otherwise the
+//      reply names the tool with a button bearing the tool's menu verb (Run,
+//      View…; plan hub-status-menu, D10): the dispatcher's own `<id>:open`,
+//      which re-checks access. Nothing the AI says widens what the person
+//      may open (D6).
 //   3. data: readiness (kit/runtime/knowledge/readiness) decides, with no
 //      AI call: no data and no rules, data but no rules, rules but no data
 //      each get their own plain message (kit/runtime/messages ASK_WORDS);
 //      with both, a scoped-pull or approval-write tool from the person's list
-//      that the AI named, with Open, or "There's no tool for that yet". The
-//      runner is never called (readiness reads only its describe()).
+//      that the AI named, with its button, or "There's no tool for that
+//      yet". The runner is never called (readiness reads only its
+//      describe()).
 //   4. context or other: a plain ask on the hub's own service answers from
 //      the hub's prompt (D2), shown escaped through toMrkdwn. It always ends
-//      with "Not what you needed?" and Build request (review B8).
+//      with "Not what you needed?" and Request a tool (review B8).
 //
-// Build request (review B9): the button shows only when the person can open
+// Request a tool (review B9; the build-request archetype, named "Request a
+// tool" since plan hub-status-menu D10): the button shows only when the person can open
 // a build-request module on this hub, a channel is set and the hub may post
 // (offerBuildRequest decides). Without it, the line names the admin instead.
 // Its click opens 16.6's form in this view with the question filled in; the
@@ -43,16 +46,18 @@
 // nothing runs; the person closing the screen while it thinks drops the
 // answer, logged at info with Slack's code only; the AI off, rate-limited,
 // over budget or failing shows the existing LlmUnavailable words; the route
-// tool not called shows "I couldn't sort that question" with Build request.
+// tool not called shows "I couldn't sort that question" with Request a tool.
 //
 // Never logged: the question, the AI's reply or a module id it named. Each
 // AI call is logged by the service (model, tokens, cost) with no text.
 
 const { LlmUnavailable } = require('../../errors');
-const { ASK_WORDS: WORDS, messageFor, escapeText } = require('../../messages');
+const {
+  ASK_WORDS: WORDS, messageFor, escapeText, REQUEST_A_TOOL,
+} = require('../../messages');
 const { textBlocks, toMrkdwn } = require('../../slack/format');
 const { failureReason } = require('../../slack/modal');
-const { openActionId } = require('../../registry/menu');
+const { openActionId, verbFor } = require('../../registry/menu');
 const { QUERY_ARCHETYPES } = require('../../registry');
 
 const MAX_QUESTION = 500;
@@ -133,7 +138,8 @@ function form({ hubId, moduleId, initial = '' }) {
 }
 
 // An answer screen: the text (mrkdwn, already escaped), then the buttons:
-// Open (a tool that fits), Build request (when offered), Ask another.
+// the tool that fits, with its menu verb (Run, View…: plan hub-status-menu,
+// D10), Request a tool (when offered), Ask another.
 // offer: { buildRequest: bool, question, admin, tail: bool } adds the
 // "Not what you needed?" line.
 function result({
@@ -141,11 +147,11 @@ function result({
 }) {
   const blocks = [...textBlocks(text)];
   const elements = [];
-  if (open) elements.push(button('Open', openActionId(open.id), open.id, 'primary'));
+  if (open) elements.push(button(verbFor(open), openActionId(open.id), open.id, 'primary'));
   if (offer) {
     if (offer.buildRequest) {
       if (offer.tail) blocks.push(...textBlocks(WORDS.notWhatYouNeeded()));
-      elements.push(button('Build request', ACTIONS.buildRequest, cut(offer.question, MAX_QUESTION)));
+      elements.push(button(REQUEST_A_TOOL, ACTIONS.buildRequest, cut(offer.question, MAX_QUESTION)));
     } else if (offer.tail) {
       blocks.push(...textBlocks(WORDS.askAdmin(offer.admin)));
     }
@@ -221,14 +227,14 @@ function createAsk({ log, admin = 'your admin' }) {
     const isDataTool = Boolean(named && QUERY_ARCHETYPES.has(named.archetype));
     if (kind === 'module') {
       // A data tool is offered only once its hub's data and rules are set up.
-      if (isDataTool) return notReady() || result({ ...base, text: WORDS.tool(named.label), open: named });
-      return result({ ...base, text: WORDS.tool(named.label), open: named });
+      if (isDataTool) return notReady() || result({ ...base, text: WORDS.tool(named.label, verbFor(named, log)), open: named });
+      return result({ ...base, text: WORDS.tool(named.label, verbFor(named, log)), open: named });
     }
     if (kind === 'data') {
       const said = notReady();
       if (said) return said;
       // Both: only a data tool from the person's own list, through Open.
-      if (isDataTool) return result({ ...base, text: WORDS.tool(named.label), open: named });
+      if (isDataTool) return result({ ...base, text: WORDS.tool(named.label, verbFor(named, log)), open: named });
       return result({ ...base, text: WORDS.noToolYet(), offer: offer(false) });
     }
     let reply;

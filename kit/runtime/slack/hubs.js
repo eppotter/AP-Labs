@@ -35,6 +35,31 @@
 // (team_join) gets a private DM naming the hubs with at least one entry they
 // can use.
 //
+// The status menu (plan hub-status-menu, D1 to D11, Story 17.2): the menu is
+// built by kit/runtime/registry/menu from rows of { entry, status, verb }.
+// For a person in the profile with at least one row, the command gathers
+// the hub's facts: readiness() (synchronous, each file bounded at 256 KB),
+// the data runner's describe(), the build request's availability() and
+// whether the map files are ready, then the hub's notes (the knowledge
+// store's list(), raced against MENU_BUDGET_MS, 1,000 ms). The summary
+// (kit/runtime/knowledge/summary) and each row's status
+// (kit/runtime/registry/status) come from those; no AI call, no SQL, no
+// Slack call. Late notes: the menu opens with "Knows: checking…" and each
+// row "Checking…", then the whole menu follows by views.update on the
+// opened view's id and hash; any error from that update (hash_conflict,
+// not_found, anything else) is dropped and logged at info with the hub and
+// Slack's code. Without a view (the ephemeral fallback) the reply waits for
+// the notes. A summary or status that throws is logged (hub or module id
+// and the function's name) and leaves no strip, or that row its verb with
+// no status line: the menu always opens. A person not in the profile, or
+// with no rows, gets the menu as before (the notice, or "Nothing is
+// available to you here yet."), with no strip and no status lines. The
+// add-context and data-sources tools sit in the Setup group for an admin
+// (profile role) only; the menu and Help leave them out for anyone else,
+// even with the key granted by name (fail closed). Access is unchanged: the
+// dispatcher still re-checks every click, and every button still sends
+// <module-id>:open.
+//
 // Seam: canUse(person, module) returns 'allowed' | 'denied' | 'error' (true
 // and false are read as allowed and denied); person is { id, user } with user
 // the profile user or null. Tests may inject their own.
@@ -233,8 +258,10 @@ const {
   handle, handleView, afterAck, PLAIN_ERROR,
 } = require('./handle');
 const {
-  buildMenu, buildHelp, moduleIdFromAction, hubIdFromHelpAction, OPEN_ACTION, HELP_ACTION,
+  buildMenu, buildHelp, moduleIdFromAction, hubIdFromHelpAction, verbFor, isSetup, OPEN_ACTION, HELP_ACTION,
 } = require('../registry/menu');
+const statusModule = require('../registry/status');
+const summaryModule = require('../knowledge/summary');
 const { isVisible } = require('../registry');
 const {
   modalView, moduleView, messageBlocks, pushedView, fromModal, hasViews, failureReason, updatedView, HASH_CONFLICT,
@@ -269,9 +296,13 @@ const {
 const { readText } = require('./files');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
-const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press Open on it there.";
+const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press its button there.";
 const MAP_NOT_SHOWN = "The map couldn't be shown this time. Press Back to return to the menu, then try again in a minute.";
-const MAP_NEEDS_WINDOW = "The map opens in its own window, which Slack didn't open this time. Type the hub's command and press Open again.";
+const MAP_NEEDS_WINDOW = "The map opens in its own window, which Slack didn't open this time. Type the hub's command and press its button there again.";
+// How long the menu waits for the hub's notes before it opens without them
+// (plan hub-status-menu, D8): Slack's trigger lasts 3 seconds.
+const MENU_BUDGET_MS = 1000;
+const LATE = Symbol('late');
 // A map view: Slack sends view_closed for it (Back or the X).
 const MAP_VIEW_CALLBACK = 'hub:map';
 const MAP_VIEW = Object.freeze({ callbackId: MAP_VIEW_CALLBACK, notifyOnClose: true });
@@ -353,6 +384,7 @@ function moduleData(data, mod) {
 function registerHubs(app, {
   registry, profile, env, log, store, forHub = null, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),
   mapFiles = null, routingMap: routingMapOptions = {}, rules = null, buildRequest: buildRequestOptions = {}, slackFiles = null,
+  menuBudgetMs = MENU_BUDGET_MS,
 }) {
   if (forHub && (data || llm)) throw new TypeError('registerHubs takes forHub, or (a test seam) data and llm, never both');
   const viewFor = forHub || everyHubSeesAll({ data, llm }).forHub;
@@ -370,6 +402,12 @@ function registerHubs(app, {
   };
   const visibleEntries = (hubId, person) => registry.entries(hubId)
     .filter((m) => isVisible(m, env) && decide(person, m) === 'allowed');
+  // An admin by the profile's role (plan hub-status-menu, D5).
+  const isAdmin = (person) => Boolean(person.user && person.user.role === 'admin');
+  // The tools the menu and Help list: what the person may open, less the
+  // Setup group's tools for anyone but an admin, even one granted a setup
+  // key by name (fail closed). The dispatcher's re-check is unchanged.
+  const menuEntries = (hubId, person) => visibleEntries(hubId, person).filter((m) => isAdmin(person) || !isSetup(m));
   const notSetUp = (person) => (person.user ? undefined : messageFor(new NotSetUp({ client: profile.client.name, admin })));
   const fellBack = (where, reason, hub, via) => log.info('hub modal fallback', { where, reason, hub: hub || null, ...(via ? { via } : {}) });
   // A message on any path but the map lifecycle: one carrying an image is
@@ -918,23 +956,133 @@ function registerHubs(app, {
     });
   };
 
+  // The hub menu (plan hub-status-menu, D1 to D11, Story 17.2). The facts
+  // every row's status reads, for one hub (D11): local reads only, no AI
+  // call, no SQL and no Slack call (D8). readiness() bounds its synchronous
+  // file reads (256 KB a file); the notes are the only async read.
+  const hubFacts = (hubId) => {
+    const view = viewOf(hubId);
+    return {
+      view,
+      ready: readiness(view, { rules }),
+      llm: Boolean(view.llm),
+      knowledge: Boolean(view.knowledge),
+      requests: requests.availability(requestHubOf(hubId)),
+      mapReady: Boolean(mapFiles && mapFiles.ready()),
+    };
+  };
+  // The hub's notes, never rejecting: a list that fails is a problem, so the
+  // strip says "couldn't check just now", never "0 notes" (P2-4).
+  const listNotes = (view) => Promise.resolve()
+    .then(() => dataSources.entriesOf(view, log))
+    .catch(() => ({ entries: [], problem: true }));
+  // The notes within the budget, else LATE (D8).
+  const within = (promise, ms) => new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(LATE), ms);
+    promise.then((v) => {
+      clearTimeout(timer);
+      resolve(v);
+    });
+  });
+  // The guards (D1, P2-5): a throw gives no strip, or that row no status
+  // line, logged with the hub or module id and the function's name only.
+  // Called through their modules, so a test can make one throw.
+  const summaryOf = (hubId, facts, listed) => {
+    try {
+      return summaryModule.summarize({
+        ready: facts.ready, entries: listed.entries, entriesProblem: listed.problem, sees: facts.view.sees,
+      });
+    } catch {
+      log.warn('menu fact skipped', { hub: hubId, fn: 'summarize' });
+      return null;
+    }
+  };
+  const rowsOf = (entries, facts, summary) => entries.map((mod) => {
+    const verb = verbFor(mod, log);
+    if (!facts || !summary) return { entry: mod, status: null, verb };
+    try {
+      const unready = mod.archetype === 'routing-map' ? Boolean(routingMapOf(mod.hub).unready(mod)) : false;
+      return { entry: mod, status: statusModule.toolStatus(mod, { ...facts, summary, unready }), verb };
+    } catch {
+      log.warn('menu fact skipped', { module: mod.id, fn: 'toolStatus' });
+      return { entry: mod, status: null, verb };
+    }
+  });
+  const menuView = (hub, menu) => modalView({
+    // The divider and Help stay at the end of a menu cut to Slack's limit.
+    title: hub.name, blocks: menu.blocks, hubId: hub.id, keepTail: 2, callbackId: 'hub:menu',
+  });
+
   for (const hub of registry.hubs) {
     app.command(hub.command, handle(`hub:${hub.id}`, async ({ command, respond, client }) => {
       const person = personOf(command.user_id);
       const welcome = firstVisit(store, command.user_id, hub.id) ? welcomeText(hub) : undefined;
-      const menu = buildMenu(hub, visibleEntries(hub.id, person), { notice: notSetUp(person), welcome });
+      const entries = menuEntries(hub.id, person);
+      const base = {
+        notice: notSetUp(person), welcome, admin: isAdmin(person), log,
+      };
+      const plainMenu = () => buildMenu(hub, rowsOf(entries, null, null), base);
+      // The strip and the statuses: only for a person in the profile with at
+      // least one row (D4, P1-1). Anyone else gets what they got before.
+      let facts = null;
+      if (person.user && entries.length) {
+        try {
+          facts = hubFacts(hub.id);
+        } catch {
+          log.warn('menu fact skipped', { hub: hub.id, fn: 'readiness' });
+        }
+      }
+      // The whole menu from the notes. failedStrip: the strip stays (it was
+      // shown as "checking…") and says "couldn't check just now".
+      const fullMenu = (listed, failedStrip) => {
+        const summary = summaryOf(hub.id, facts, listed);
+        if (!summary) return buildMenu(hub, rowsOf(entries, null, null), { ...base, strip: failedStrip });
+        return buildMenu(hub, rowsOf(entries, facts, summary), { ...base, strip: true, summary });
+      };
+      let late = null;
+      let menu;
+      if (!facts) {
+        menu = plainMenu();
+      } else {
+        const listing = listNotes(facts.view);
+        const got = await within(listing, menuBudgetMs);
+        if (got === LATE) {
+          late = listing;
+          menu = buildMenu(hub, rowsOf(entries, null, null), { ...base, strip: true, checking: true });
+        } else {
+          menu = fullMenu(got, false);
+        }
+      }
+      let opened = null;
       if (!hasViews(client) || typeof command.trigger_id !== 'string' || !command.trigger_id) {
         fellBack('command', hasViews(client) ? 'no trigger_id' : 'no views client', hub.id);
       } else {
         try {
-          // The divider and Help stay at the end of a menu cut to Slack's limit.
-          const view = modalView({ title: hub.name, blocks: menu.blocks, hubId: hub.id, keepTail: 2, callbackId: 'hub:menu' });
-          await client.views.open({ trigger_id: command.trigger_id, view });
-          return;
+          opened = await client.views.open({ trigger_id: command.trigger_id, view: menuView(hub, menu) });
         } catch (err) {
           fellBack('command', failureReason(err), hub.id);
         }
       }
+      if (opened) {
+        if (!late) return;
+        // The late summary (D8): the whole menu again, into the view just
+        // opened (its id and hash). Any error is dropped and logged at info
+        // with the hub and Slack's code only: the person keeps the menu.
+        const next = fullMenu(await late, true);
+        const shown = opened.view || {};
+        if (typeof shown.id !== 'string' || !shown.id) {
+          log.info('menu update dropped', { hub: hub.id, reason: 'no view id' });
+          return;
+        }
+        try {
+          await client.views.update({ view_id: shown.id, ...(typeof shown.hash === 'string' ? { hash: shown.hash } : {}), view: menuView(hub, next) });
+        } catch (err) {
+          log.info('menu update dropped', { hub: hub.id, reason: failureReason(err) });
+        }
+        return;
+      }
+      // The private reply has no 3-second limit, so it waits for late notes.
+      if (late) menu = fullMenu(await late, true);
       await respond(ephemeral(menu));
     }, { log, store }));
   }
@@ -952,7 +1100,7 @@ function registerHubs(app, {
         return;
       }
       const person = personOf((body.user || {}).id);
-      await target.reply(buildHelp(hub, visibleEntries(hub.id, person), {
+      await target.reply(buildHelp(hub, menuEntries(hub.id, person), {
         notice: notSetUp(person),
         feedback: feedbackText(hub, admin),
       }));

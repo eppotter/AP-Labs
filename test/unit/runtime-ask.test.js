@@ -300,11 +300,14 @@ test('the route call: route_question with only the four kinds, the person\'s own
 
 // --- module ---------------------------------------------------------------------------------
 
-test('module: a tool from the person\'s list is named with Open, the dispatcher\'s own button, which opens it after its re-check', async () => {
+test('module: a tool from the person\'s list is named with its verb (Run), the dispatcher\'s own button, which opens it after its re-check', async () => {
   const ctx = setup({ model: fakeModel({ route: { kind: 'module', module_id: 'blank-hello' } }) });
   const shown = await ask(ctx, 'Can you say hello?');
-  assert.equal(texts(shown.blocks)[0], WORDS.tool('Hello'));
+  assert.equal(texts(shown.blocks)[0], WORDS.tool('Hello', 'Run'));
+  assert.equal(texts(shown.blocks)[0], '*Hello* can help with that. Press Run to use it.');
   assert.deepEqual(buttonIds(shown), ['blank-hello:open', askTool.ACTIONS.again]);
+  // The button carries the tool's menu verb (plan hub-status-menu, D10), never "Open".
+  assert.deepEqual(buttonsOf(shown).map((b) => b.text.text), ['Run', 'Ask another']);
   assert.equal(ctx.model.calls.length, 1, 'no answer call');
   await ctx.app.dispatchAction('blank-hello:open', { user: ADA, view: { id: 'VASK', type: 'modal', private_metadata: 'blank:blank-ask', hash: 'h1' } });
   assert.match(allText(calls(ctx.app, 'update').at(-1).view.blocks), /hello/);
@@ -354,10 +357,10 @@ test('data, rules but no data: its own message', async () => {
   assert.deepEqual(ctx.runner.runs, []);
 });
 
-test('data, both: the scoped pull the AI named, with Open, or "There\'s no tool for that yet"; the runner is never called', async () => {
+test('data, both: the scoped pull the AI named, with its verb, or "There\'s no tool for that yet"; the runner is never called', async () => {
   const fits = setup({ model: fakeModel({ route: { kind: 'data', module_id: 'full-pull' } }) });
   const shown = await ask(fits, 'Visits in the north?', { hub: 'full' });
-  assert.equal(texts(shown.blocks)[0], WORDS.tool('Visits by zone'));
+  assert.equal(texts(shown.blocks)[0], WORDS.tool('Visits by zone', 'Run'));
   assert.deepEqual(buttonIds(shown), ['full-pull:open', askTool.ACTIONS.again]);
   assert.deepEqual(fits.runner.runs, []);
   // No tool named (or one not in the person's list): no tool yet.
@@ -370,7 +373,7 @@ test('data, both: the scoped pull the AI named, with Open, or "There\'s no tool 
   }
 });
 
-test('module naming a data tool: readiness first; until data and rules are both set up, the readiness message instead of Open (PR #276 review)', async () => {
+test('module naming a data tool: readiness first; until data and rules are both set up, the readiness message instead of its button (PR #276 review)', async () => {
   const notReady = setup({ model: fakeModel({ route: { kind: 'module', module_id: 'data-pull' } }) });
   const shown = await ask(notReady, 'Show me the visits by zone.', { hub: 'data' });
   assert.equal(texts(shown.blocks)[0], WORDS.dataNoRules());
@@ -380,7 +383,7 @@ test('module naming a data tool: readiness first; until data and rules are both 
   // Both set up: Open, as for any tool.
   const ready = setup({ model: fakeModel({ route: { kind: 'module', module_id: 'full-pull' } }) });
   const open = await ask(ready, 'Show me the visits by zone.', { hub: 'full' });
-  assert.equal(texts(open.blocks)[0], WORDS.tool('Visits by zone'));
+  assert.equal(texts(open.blocks)[0], WORDS.tool('Visits by zone', 'Run'));
   assert.deepEqual(buttonIds(open), ['full-pull:open', askTool.ACTIONS.again]);
   assert.deepEqual(ready.runner.runs, []);
 });
@@ -426,6 +429,8 @@ test('context or other: a plain ask on the hub\'s own service, shown escaped, th
     assert.equal(tail, 'Not what you needed?');
     const [request, again] = buttonsOf(shown);
     assert.equal(request.action_id, askTool.ACTIONS.buildRequest);
+    // The tool is named "Request a tool" (plan hub-status-menu, D10).
+    assert.equal(request.text.text, 'Request a tool');
     assert.equal(request.value, 'When do crews work?');
     assert.equal(again.action_id, askTool.ACTIONS.again);
     assert.equal(shown.close.text, 'Back');

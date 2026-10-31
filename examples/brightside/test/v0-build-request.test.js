@@ -1,6 +1,6 @@
 'use strict';
 
-// Brightside v0's Build request entry (plan brightside-v0, Story 16.6), end
+// Brightside v0's Request a tool entry (plan brightside-v0, Story 16.6), end
 // to end through the booted engine with the fake Slack client. An example
 // test (architecture carve-out): it reads Brightside's app dir and the demo
 // profile fixture (its fake channel id; never profiles/brightside/), and is
@@ -56,7 +56,7 @@ async function boot(t) {
   return res.app;
 }
 
-test('/brightside-v0: Build request opens its form, previews the person\'s own words (AI off), and Post puts one message in the channel naming them', async (t) => {
+test('/brightside-v0: Request a tool opens its form, previews the person\'s own words (AI off), and Post puts one message in the channel naming them', async (t) => {
   const app = await boot(t);
   const menu = { id: 'VMENU', type: 'modal', private_metadata: 'brightside-v0', hash: 'h0' };
   await app.dispatchAction('v0-build-request:open', { user: ADMIN, view: menu });

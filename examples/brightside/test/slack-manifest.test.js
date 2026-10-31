@@ -31,8 +31,8 @@ test('the v0 hub sees nothing, has no usage hint, and its welcome says it is a b
   assert.equal(hub.command, '/brightside-v0');
   assert.deepEqual(hub.sees, []);
   assert.equal(hub.usage_hint, undefined);
-  assert.match(hub.welcome, /no business context and no data yet/);
-  assert.match(hub.welcome, /An admin can add context/);
+  // One sentence (plan hub-status-menu, D9): the menu's strip says the rest.
+  assert.match(hub.welcome, /^A blank Brightside bot: it knows nothing about the business until an admin teaches it\.$/);
 });
 
 test('bot scopes are exactly the runtime\'s allowed set: the seven Slack shows, files:read included', () => {

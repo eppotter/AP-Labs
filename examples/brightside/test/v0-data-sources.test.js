@@ -47,13 +47,15 @@ async function boot(t) {
   return res.app;
 }
 
-test('/brightside-v0 lists Add context, Ask (Story 16.7), Build request (Story 16.6) and Data sources for an admin only, and it reads "No data connected yet. No known truths or rules yet."', async (t) => {
+test('/brightside-v0 lists Ask (Story 16.7) and Request a tool (Story 16.6), then Add context and Data sources in the Setup group, for an admin only, and it reads "No data connected yet. No known truths or rules yet."', async (t) => {
   const app = await boot(t);
   await app.dispatchCommand('/brightside-v0', { user_id: ADMIN_SLACK });
   await app.dispatchCommand('/brightside-v0', { user_id: 'UNOBODY' });
   const openIds = (m) => m.blocks.filter((b) => b.accessory && /:open$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
   const [admin, stranger] = app.responded;
-  assert.deepEqual(openIds(admin), ['v0-add-context:open', 'v0-ask:open', 'v0-build-request:open', 'v0-data-sources:open']);
+  // Tools first, then the Setup group (plan hub-status-menu, D5).
+  assert.deepEqual(openIds(admin), ['v0-ask:open', 'v0-build-request:open', 'v0-add-context:open', 'v0-data-sources:open']);
+  assert.ok(admin.blocks.some((b) => b.type === 'header' && /Setup · admins$/.test(b.text.text)));
   assert.deepEqual(openIds(stranger), []);
   await app.dispatchAction('v0-data-sources:open', { user: { id: ADMIN_SLACK, name: 'dana' } });
   const reply = app.responded.at(-1);

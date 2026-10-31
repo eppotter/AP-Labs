@@ -357,13 +357,16 @@ const BUILD_REQUEST_WORDS = Object.freeze({
   posting: () => 'This request is being posted now. It will only be posted once.',
   alreadyPosted: () => 'This request was already posted. It is only posted once.',
   cancelled: () => 'Cancelled. Nothing was posted. Press Back to return to the menu.',
-  wasCancelled: () => 'This request was cancelled, so nothing was posted. Press Back and open Build request to start again.',
-  expired: (minutes) => `This preview has expired (a preview lasts ${minutes} minutes), so nothing was posted. Press Back and open Build request to start again.`,
-  notYours: () => "This preview belongs to someone else's window, so I can't post it. Press Back and open Build request to start your own.",
+  wasCancelled: () => 'This request was cancelled, so nothing was posted. Press Back and open Request a tool to start again.',
+  expired: (minutes) => `This preview has expired (a preview lasts ${minutes} minutes), so nothing was posted. Press Back and open Request a tool to start again.`,
+  notYours: () => "This preview belongs to someone else's window, so I can't post it. Press Back and open Request a tool to start your own.",
   refused: (admin) => `Slack didn't take the post, so nothing was posted. Press Try again, or Back to leave it. If it keeps happening, tell ${admin}.`,
-  notSetUp: (admin) => `Build requests aren't set up yet: no channel to post them to. Ask ${admin} to set one up.`,
-  notOnThisHub: () => 'Build request is not available on this hub yet. Use it from a hub that has no business context or data.',
+  notSetUp: (admin) => `Tool requests aren't set up yet: no channel to post them to. Ask ${admin} to set one up.`,
+  notOnThisHub: () => 'Request a tool is not available on this hub yet. Use it from a hub that has no business context or data.',
 });
+// The tool's name wherever the bot names it (plan hub-status-menu, D10):
+// "Request a tool". The archetype and its resource key keep their names.
+const REQUEST_A_TOOL = 'Request a tool';
 
 // Ask (plan brightside-v0, D10, Story 16.7). Written by the bot, never by
 // the AI; a tool's label comes from its reviewed manifest and is escaped
@@ -381,20 +384,23 @@ const ASK_WORDS = Object.freeze({
   dataNoRules: () => "Data is connected, but the rules for using it safely (approved tables, known truths, columns to keep out) aren't set up yet, so I won't pull from it.",
   rulesNoData: () => 'The rules are set up, but no data is connected yet.',
   noToolYet: () => "There's no tool for that yet.",
-  // A tool that fits, from the person's own openable list.
-  tool: (label) => `*${escapeName(label)}* can help with that. Press Open to use it.`,
+  // A tool that fits, from the person's own openable list. verb: the tool's
+  // menu verb (plan hub-status-menu, D10), the text of its button.
+  tool: (label, verb) => `*${escapeName(label)}* can help with that. Press ${escapeText(verb)} to use it.`,
   notSorted: () => "I couldn't sort that question. Try asking it another way.",
   noAnswer: () => "I couldn't answer that just now. Try asking it another way.",
   notWhatYouNeeded: () => 'Not what you needed?',
-  // When the Build request button is hidden (review B9).
+  // When the Request a tool button is hidden (review B9).
   askAdmin: (admin) => `Not what you needed? Tell ${admin} what you were looking for.`,
 });
 
 // Hub wording (Story 6.4). A hub file may set its own welcome and feedback
-// lines; these defaults keep a hub without them working.
+// lines; these defaults keep a hub without them working. The welcome sits
+// below the menu's strip, which already says what is set up, so it is kept
+// short (plan hub-status-menu, D9).
 function welcomeText(hub) {
   if (hub.welcome) return escapeText(hub.welcome);
-  return `Welcome to ${escapeText(hub.name)}. Each option below opens one tool. `
+  return `Welcome to ${escapeText(hub.name)}. `
     + 'Press Help at the bottom any time to see what you can use here and how to give feedback.';
 }
 
@@ -427,5 +433,5 @@ function messageFor(err, { admin = 'your admin' } = {}) {
 
 module.exports = {
   messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, FILE_WORDS, READ_FILE_AI_WORDS, readFileAiText, READ_WORDS, MAP_WORDS, ROUTE_WORDS,
-  BUILD_REQUEST_WORDS, ASK_WORDS,
+  BUILD_REQUEST_WORDS, ASK_WORDS, REQUEST_A_TOOL,
 };

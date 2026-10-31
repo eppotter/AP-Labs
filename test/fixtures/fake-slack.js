@@ -82,7 +82,11 @@
 // missing or over 150 characters, and an accessibility_label (an overflow
 // has none). Story 15.17 adds the header block and a section's fields
 // (invalid_blocks): a header's text not plain_text of 1 to 150 characters,
-// more than 10 fields, a field's text over 2000 characters. With
+// more than 10 fields, a field's text over 2000 characters. Story 17.2 (the
+// hub status menu) adds the context block (invalid_blocks): no elements or
+// more than 10, and an element's text empty or over 3000 characters; and
+// relies on views.open answering the view's id and hash, as Slack does, for
+// the menu's late update. With
 // this.checkHashes set, a views.update whose hash is not the view's current
 // one (for a view this fake opened or pushed) answers hash_conflict, as
 // Slack does; it is off by default because older tests replay a click's
@@ -558,6 +562,8 @@ const MAX_OPTION_VALUE = 150;
 const MAX_HEADER_TEXT = 150;
 const MAX_FIELDS = 10;
 const MAX_FIELD_TEXT = 2000;
+const MAX_CONTEXT_ELEMENTS = 10;
+const MAX_CONTEXT_TEXT = 3000;
 
 // Why Slack would reject this view's frame (title, blocks, metadata), or null.
 function invalidView(view) {
@@ -585,6 +591,14 @@ function invalidElements(view) {
     if (b.type === 'header') {
       const text = b.text && b.text.text;
       if (!b.text || b.text.type !== 'plain_text' || typeof text !== 'string' || !text || Array.from(text).length > MAX_HEADER_TEXT) return `a header's text is plain_text of 1 to ${MAX_HEADER_TEXT} characters`;
+    }
+    if (b.type === 'context') {
+      if (!Array.isArray(b.elements) || b.elements.length === 0 || b.elements.length > MAX_CONTEXT_ELEMENTS) return `a context block holds 1 to ${MAX_CONTEXT_ELEMENTS} elements`;
+      for (const e of b.elements) {
+        if (e && (e.type === 'mrkdwn' || e.type === 'plain_text') && (typeof e.text !== 'string' || !e.text || e.text.length > MAX_CONTEXT_TEXT)) {
+          return `a context element's text is 1 to ${MAX_CONTEXT_TEXT} characters`;
+        }
+      }
     }
     if (b.type === 'section' && b.fields !== undefined) {
       if (!Array.isArray(b.fields) || b.fields.length === 0 || b.fields.length > MAX_FIELDS) return `a section holds 1 to ${MAX_FIELDS} fields`;

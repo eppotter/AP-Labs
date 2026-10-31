@@ -415,6 +415,9 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
     'const { llm } = viewOf(mod.hub);',
     "if (!llm) throw new LlmUnavailable('off');",
     '({ text } = await llm.readFile({',
+    // Story 17.2: the hub menu reads only whether the hub has an AI service
+    // (a boolean for Ask's status); the service itself goes nowhere.
+    'llm: Boolean(view.llm),',
     // Story 16.7: Ask uses its own hub's bound service (archetypes/ask); it
     // reads readiness only (the runner's describe()), never a row.
     'return { llm: hubView.llm, ready: () => readiness(hubView, { rules }) };',
