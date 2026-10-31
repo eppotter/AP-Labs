@@ -73,7 +73,7 @@ Their resources:
 
 ## What the menu shows
 
-A hub's menu lists each tool a person may open as one row: the label, with the verb as the button beside it. A manifest never sets a status: the engine works it out from what the hub has (`kit/runtime/registry/status.js`). Health shows only when something isn't right (subtle health): a status line, in small grey text under the row, starts with a coloured dot and a few lower-case words, never a colour alone.
+A hub's menu lists each tool a person may open as one row: the label, with the verb as the button beside it. A manifest never sets a status: the engine works it out from what the hub has (`kit/runtime/registry/status.js`). Health shows only when something isn't right (subtle health): the status follows the label on the same line, after a middle dot, its words in italics (`Ask · 🟡 _no data yet_`), a coloured dot and a few lower-case words, never a colour alone. It is part of the row's text, never a line below it, because on a phone the button sits under the text.
 
 | Status | Line | Means |
 |---|---|---|

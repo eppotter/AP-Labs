@@ -205,9 +205,10 @@ test('buildMenu: rows become sections under their group, each with its verb as t
   assert.deepEqual(blocks[1].accessory, {
     type: 'button', action_id: 'a-b:open', value: 'a-b', text: { type: 'plain_text', text: 'Run', emoji: false },
   });
-  // A ready tool is healthy: no status line under it (subtle health).
+  // A ready tool is healthy: no status, inline or below (subtle health).
   assert.equal(blocks[1].text.text, '*A*');
-  assert.equal(blocks.find((b) => b.block_id === 'status:a-b'), undefined);
+  assert.ok(!blocks[1].text.text.includes(' · '));
+  assert.equal(blocks.length, 4, 'group header, row, divider, Help: no block for a status');
   // With no verb given, the module's menu verb.
   assert.equal(buildMenu(hub, [{ entry, status: null }]).blocks[1].accessory.text.text, 'Run');
   // withTitle (the private reply) adds the name back, once.

@@ -101,8 +101,13 @@ const knowsOf = (view) => (block(view, 'strip:knows') || { text: {} }).text.text
 const progressOf = (view) => { const b = block(view, 'strip:progress'); return b ? b.elements[0].text : undefined; };
 const groupsOf = (view) => view.blocks.filter((b) => /^group:/.test(b.block_id || '')).map((b) => b.text.text);
 const rowOf = (view, id) => block(view, `entry:${id}`);
-// A row's status line: the context block under it (subtle health), or null.
-const statusOf = (view, id) => { const b = block(view, `status:${id}`); return b ? b.elements[0].text : null; };
+// A row's status: the mrkdwn after "*<label>* · " in the row's own section
+// (inline, 2026-10-31 live check), or null for a healthy row.
+const statusOf = (view, id) => {
+  const b = rowOf(view, id);
+  const m = b ? /^\*[^*]*\*( · (.+))?$/s.exec(b.text.text) : null;
+  return m && m[2] ? m[2] : null;
+};
 const rowsOf = (view) => view.blocks.filter((b) => /^entry:/.test(b.block_id || '')).map((b) => ({
   id: b.block_id.slice(6), text: b.text.text, status: statusOf(view, b.block_id.slice(6)), verb: b.accessory.text.text, action: b.accessory.action_id,
 }));
@@ -126,25 +131,28 @@ test('blank, admin: the strip, then Tools (Ask partly, Request a tool healthy), 
   assert.deepEqual(groupsOf(view), ['Tools', 'Setup · admins only']);
   assert.deepEqual(rowsOf(view), [
     {
-      id: 'blank-ask', text: '*Ask*', status: '🟡 nothing taught yet', verb: 'Ask', action: 'blank-ask:open',
+      id: 'blank-ask', text: '*Ask* · 🟡 _nothing taught yet_', status: '🟡 _nothing taught yet_', verb: 'Ask', action: 'blank-ask:open',
     },
     {
       id: 'blank-request', text: '*Request a tool*', status: null, verb: 'Request', action: 'blank-request:open',
     },
     {
-      id: 'blank-add', text: '*Add context*', status: '⚪ not started', verb: 'Add', action: 'blank-add:open',
+      id: 'blank-add', text: '*Add context* · ⚪ _not started_', status: '⚪ _not started_', verb: 'Add', action: 'blank-add:open',
     },
     {
-      id: 'blank-sources', text: '*Data sources*', status: 'no data on this hub', verb: 'View', action: 'blank-sources:open',
+      id: 'blank-sources', text: '*Data sources* · _no data on this hub_', status: '_no data on this hub_', verb: 'View', action: 'blank-sources:open',
     },
   ]);
-  // Each status line is a context block (Slack's small grey text) right
-  // under its row; a healthy row has none.
+  // Each status sits inline in its row's own section, the one holding the
+  // button (on a phone the button renders under the section text, so a
+  // block after it read as the next row's); no row has a block after it.
   const ids = view.blocks.map((b) => b.block_id || b.type);
-  assert.equal(block(view, 'status:blank-ask').type, 'context');
-  assert.equal(ids[ids.indexOf('entry:blank-ask') + 1], 'status:blank-ask');
-  assert.equal(ids[ids.indexOf('entry:blank-request') + 1], 'group:1', 'a healthy row has no status line');
-  assert.equal(block(view, 'status:blank-request'), undefined);
+  assert.equal(rowOf(view, 'blank-ask').type, 'section');
+  assert.equal(rowOf(view, 'blank-ask').accessory.type, 'button');
+  assert.equal(ids[ids.indexOf('entry:blank-ask') + 1], 'entry:blank-request');
+  assert.equal(ids[ids.indexOf('entry:blank-request') + 1], 'group:1');
+  assert.ok(!ids.some((id) => /^status:/.test(id)), 'no status block');
+  assert.ok(!rowOf(view, 'blank-request').text.text.includes(' · '), 'a healthy row has no " · "');
   // Top to bottom (D1): strip, welcome, groups, divider, Help. No header:
   // the modal's title names the hub. The next step (Story 17.4) follows the welcome: nothing is taught yet.
   assert.deepEqual(ids.slice(0, 5), ['strip:knows', 'strip:progress', 'welcome', 'next', 'group:0']);
@@ -171,9 +179,9 @@ test('onboarded: the blank hub with two notes is set up (1 of 2 tools working ·
   const { view } = await menuFor(ADA, '/blank', { notes: { blank: 2 } });
   assert.equal(knowsOf(view), 'Knows: 2 notes');
   assert.equal(progressOf(view), '1 of 2 tools working · 1 limited');
-  assert.equal(statusOf(view, 'blank-add'), '2 notes');
-  assert.equal(statusOf(view, 'blank-sources'), 'notes only · no data on this hub');
-  assert.equal(statusOf(view, 'blank-ask'), '🟡 no data yet');
+  assert.equal(statusOf(view, 'blank-add'), '_2 notes_');
+  assert.equal(statusOf(view, 'blank-sources'), '_notes only · no data on this hub_');
+  assert.equal(statusOf(view, 'blank-ask'), '🟡 _no data yet_');
   // The full hub before anything is signed off and with no data: only
   // "taught" is done (it sees context).
   const full = await menuFor(ADA, '/full', { notes: { full: 1 }, data: false, rules: nothingSigned() });
@@ -198,7 +206,7 @@ test('full: every group in order (manifest groups by first module, then Tools, t
   assert.equal(progressOf(view), 'All 10 tools working');
   assert.deepEqual(groupsOf(view), ['Lists', 'Reports', 'Tools', 'Setup · admins only']);
   // Every tool is healthy: the only status line is Add context's fact.
-  assert.deepEqual(rowsOf(view).filter((r) => r.status).map((r) => `${r.id}:${r.status}`), ['full-add:3 notes']);
+  assert.deepEqual(rowsOf(view).filter((r) => r.status).map((r) => `${r.id}:${r.status}`), ['full-add:_3 notes_']);
   // Each archetype's verb, or the manifest's own (D10).
   assert.deepEqual(rowsOf(view).map((r) => `${r.id}:${r.verb}`), [
     'full-list-a:Run', 'full-list-b:Review', 'full-list-c:Run',
@@ -294,20 +302,20 @@ test('toolStatus throws for one module: that row keeps its verb with no status l
   assert.equal(rowOf(view, 'blank-request').text.text, '*Request a tool*');
   assert.equal(statusOf(view, 'blank-request'), null);
   assert.equal(rowOf(view, 'blank-request').accessory.text.text, 'Request');
-  assert.equal(statusOf(view, 'blank-ask'), '🟡 nothing taught yet');
+  assert.equal(statusOf(view, 'blank-ask'), '🟡 _nothing taught yet_');
   assert.ok(knowsOf(view));
   assert.deepEqual(log.lines.filter((l) => l.msg === 'menu fact skipped').map((l) => l.fields), [{ module: 'blank-request', fn: 'toolStatus' }]);
 });
 
-test('statusText gets an unknown key for one row: that row keeps its verb with no status line, logged with the module id and function name only', async (t) => {
+test('statusParts gets an unknown key for one row: that row keeps its verb with no status line, logged with the module id and function name only', async (t) => {
   const real = statusModule.toolStatus;
   t.mock.method(statusModule, 'toolStatus', (mod, facts) => (mod.id === 'blank-ask' ? { key: 'requested', detail: null } : real(mod, facts)));
   const { view, log } = await menuFor(ADA, '/blank');
   assert.equal(rowOf(view, 'blank-ask').text.text, '*Ask*');
   assert.equal(statusOf(view, 'blank-ask'), null);
   assert.equal(rowOf(view, 'blank-ask').accessory.text.text, 'Ask');
-  assert.equal(statusOf(view, 'blank-add'), '⚪ not started');
-  assert.deepEqual(log.lines.filter((l) => l.msg === 'menu fact skipped').map((l) => l.fields), [{ module: 'blank-ask', fn: 'statusText' }]);
+  assert.equal(statusOf(view, 'blank-add'), '⚪ _not started_');
+  assert.deepEqual(log.lines.filter((l) => l.msg === 'menu fact skipped').map((l) => l.fields), [{ module: 'blank-ask', fn: 'statusParts' }]);
 });
 
 // --- unreadable notes (D3, architect P2-4) ----------------------------------------------------
@@ -332,9 +340,9 @@ test('two hubs in one process: each menu\'s counts and statuses come from its ow
     }
     assert.equal(knowsOf(seen['/blank']), 'Knows: 1 note', order.join());
     assert.equal(knowsOf(seen['/full']), 'Knows: 3 notes · 1 source · 1 truth · 2 rules', order.join());
-    assert.equal(statusOf(seen['/blank'], 'blank-add'), '1 note');
-    assert.equal(statusOf(seen['/full'], 'full-add'), '3 notes');
-    assert.equal(statusOf(seen['/blank'], 'blank-sources'), 'notes only · no data on this hub');
+    assert.equal(statusOf(seen['/blank'], 'blank-add'), '_1 note_');
+    assert.equal(statusOf(seen['/full'], 'full-add'), '_3 notes_');
+    assert.equal(statusOf(seen['/blank'], 'blank-sources'), '_notes only · no data on this hub_');
     assert.equal(statusOf(seen['/full'], 'full-sources'), null);
     assert.equal(progressOf(seen['/blank']), '1 of 2 tools working · 1 limited');
     assert.equal(progressOf(seen['/full']), 'All 10 tools working');
@@ -370,9 +378,9 @@ test('over 100 blocks: 120 tools in eight groups cut whole groups only, keep the
   assert.ok(block(view, 'strip:knows') && block(view, 'strip:progress'));
   const groups = groupsOf(view);
   // Two strip lines, welcome, next step (4) + the private reply's header
-  // kept free (1) + divider and Help (2) + the more line (1) + Setup (5:
-  // its header, two rows and a status line under each) leave 87: five
-  // groups of 1 + 15 (the tools are healthy, so no status lines).
+  // kept free (1) + divider and Help (2) + the more line (1) + Setup (3:
+  // its header and two rows, each status inline) leave 89: five groups of
+  // 1 + 15.
   assert.deepEqual(groups, ['Group 1', 'Group 2', 'Group 3', 'Group 4', 'Group 5', 'Setup · admins only']);
   const rows = rowsOf(view).map((r) => r.id);
   assert.equal(rows.length, 5 * 15 + 2, 'every kept group is whole');
@@ -414,7 +422,7 @@ test('a slow knowledge store: the ack and the menu ("Knows: checking…", every 
   assert.equal(knowsOf(open.view), KNOWS_CHECKING);
   assert.equal(progressOf(open.view), undefined);
   assert.equal(block(open.view, 'next'), undefined);
-  for (const r of rowsOf(open.view)) assert.equal(r.status, CHECKING, r.id);
+  for (const r of rowsOf(open.view)) assert.equal(r.status, `_${CHECKING}_`, r.id);
   assert.equal(calls(s.app, 'update').length, 0);
   slow.release();
   await done;
@@ -651,21 +659,21 @@ test('setupProgress is "Setup N of M" then "X of Y tools working", with no bar; 
   assert.equal(setupProgress(2, 4, 0, 0), 'Setup 2 of 4');
   assert.throws(() => setupProgress(0, 1, 3, 2), RangeError);
   assert.throws(() => setupProgress(2, 1, 0, 0), RangeError);
-  assert.equal(CHECKING, 'Checking…');
+  assert.equal(CHECKING, 'checking…');
   assert.throws(() => statusText({ key: 'checking' }), TypeError);
 });
 
 // --- buildMenu, pure ----------------------------------------------------------------------------
 
-test('buildMenu: a member never gets setup rows even when handed them; checking rows say "Checking…"', () => {
+test('buildMenu: a member never gets setup rows even when handed them; checking rows say "*<label>* · _checking…_"', () => {
   const hub = { id: 'h', name: 'H' };
   const rows = [
     { entry: { id: 'a', label: 'A', archetype: 'ask' }, status: { key: 'ready' }, verb: 'Ask' },
     { entry: { id: 'b', label: 'B', archetype: 'add-context' }, status: { key: 'done', detail: '1 note' }, verb: 'Add' },
   ];
   const member = buildMenu(hub, rows, { strip: true, checking: true });
-  assert.deepEqual(member.blocks.filter((b) => /^entry:/.test(b.block_id || '')).map((b) => b.text.text), ['*A*']);
-  assert.equal(statusOf(member, 'a'), CHECKING);
+  assert.deepEqual(member.blocks.filter((b) => /^entry:/.test(b.block_id || '')).map((b) => b.text.text), ['*A* · _checking…_']);
+  assert.equal(statusOf(member, 'a'), `_${CHECKING}_`);
   assert.equal(member.blocks.find((b) => b.block_id === 'strip:knows').text.text, KNOWS_CHECKING);
   const admin = buildMenu(hub, rows, { admin: true });
   assert.deepEqual(admin.blocks.filter((b) => /^group:/.test(b.block_id || '')).map((b) => b.text.text), ['Tools', SETUP_GROUP]);
@@ -683,7 +691,7 @@ const pureSummary = (done, of, counts = {}) => ({
   steps: [{ step: 'taught', counted: true, done: done > 0 }],
 });
 
-test('buildMenu, subtle health: a healthy row has no status line; each attention state is a small grey dot line; a setup fact has no dot', () => {
+test('buildMenu, subtle health: a healthy row has no status; each attention state is a dot and italic words inline in its row; a setup fact has no dot', () => {
   const hub = { id: 'h', name: 'H' };
   const e = (id, archetype) => ({ id, label: id.toUpperCase(), archetype });
   const rows = [
@@ -695,17 +703,22 @@ test('buildMenu, subtle health: a healthy row has no status line; each attention
   ];
   const { blocks } = buildMenu(hub, rows, { admin: true, strip: true, summary: pureSummary(1, 1, { notes: 2 }) });
   const view = { blocks };
-  assert.equal(statusOf(view, 'ok'), null);
-  assert.equal(statusOf(view, 'part'), '🟡 no data yet');
-  assert.equal(statusOf(view, 'wait'), '⚪ needs data');
-  assert.equal(statusOf(view, 'add'), '⚪ not started');
-  assert.equal(statusOf(view, 'src'), 'notes only · no data on this hub');
-  for (const id of ['part', 'wait', 'add', 'src']) {
-    const b = block(view, `status:${id}`);
-    assert.equal(b.type, 'context', id);
-    assert.equal(b.elements.length, 1, id);
-    assert.equal(b.elements[0].type, 'mrkdwn', id);
+  assert.equal(rowOf(view, 'ok').text.text, '*OK*');
+  assert.ok(!rowOf(view, 'ok').text.text.includes(' · '), 'a healthy row has no " · "');
+  assert.equal(rowOf(view, 'part').text.text, '*PART* · 🟡 _no data yet_');
+  assert.equal(rowOf(view, 'wait').text.text, '*WAIT* · ⚪ _needs data_');
+  assert.equal(rowOf(view, 'add').text.text, '*ADD* · ⚪ _not started_');
+  assert.equal(rowOf(view, 'src').text.text, '*SRC* · _notes only · no data on this hub_');
+  // The status is in the same section as the button, and nothing follows a
+  // row: one block per row.
+  for (const id of ['ok', 'part', 'wait', 'add', 'src']) {
+    const b = rowOf(view, id);
+    assert.equal(b.type, 'section', id);
+    assert.equal(b.text.type, 'mrkdwn', id);
+    assert.equal(b.accessory.type, 'button', id);
   }
+  assert.ok(!blocks.some((b) => /^status:/.test(b.block_id || '')), 'no status block');
+  assert.equal(blocks.filter((b) => /^entry:/.test(b.block_id || '')).length, rows.length);
   // A waiting row's button is still Why?; the others keep their verbs.
   assert.equal(rowOf(view, 'wait').accessory.text.text, 'Why?');
   assert.equal(rowOf(view, 'part').accessory.text.text, 'Ask');
@@ -740,18 +753,41 @@ test('buildMenu, the strip: zero counts are left off, "Knows: nothing yet" when 
   assert.equal(strip(ok, { ...pureSummary(1, 1), problem: true })[0], KNOWS_UNCHECKED);
 });
 
-test('buildMenu, the block budget counts each status line: 60 waiting tools in eight groups cut whole groups to stay under 100', () => {
+test('buildMenu, the block budget: a status costs no block, so 80 waiting tools in eight groups fit whole; 96 cut whole groups to stay under 100', () => {
   const hub = { id: 'h', name: 'H' };
-  const rows = Array.from({ length: 60 }, (_, i) => ({
+  const waiting = (n) => Array.from({ length: n }, (_, i) => ({
     entry: {
-      id: `w${i}`, label: `W ${i}`, archetype: 'scoped-pull', group: `G${Math.floor(i / 7.5) + 1}`,
+      id: `w${i}`, label: `W ${i}`, archetype: 'scoped-pull', group: `G${Math.floor(i / (n / 8)) + 1}`,
     },
     status: { key: 'waiting', detail: 'needs data' },
   }));
-  const { blocks } = buildMenu(hub, rows, { admin: true, strip: true, summary: pureSummary(1, 1) });
+  const opts = { admin: true, strip: true, summary: pureSummary(1, 1) };
+  // 80 rows + 8 headers + 2 strip lines + divider and Help + the kept
+  // title block = 93: nothing is cut, and every row is one block.
+  const fit = buildMenu(hub, waiting(80), opts).blocks;
+  assert.equal(fit.filter((b) => /^entry:/.test(b.block_id || '')).length, 80);
+  assert.ok(!fit.some((b) => b.block_id === 'more'));
+  assert.ok(!fit.some((b) => /^status:/.test(b.block_id || '')));
+  assert.equal(statusOf({ blocks: fit }, 'w0'), '⚪ _needs data_');
+  const { blocks } = buildMenu(hub, waiting(96), opts);
   assert.ok(blocks.length <= 100, `${blocks.length}`);
   assert.ok(blocks.some((b) => b.block_id === 'more'));
-  // Every kept row has its status line right under it: no half rows.
-  const ids = blocks.map((b) => b.block_id || b.type);
-  for (const id of ids.filter((x) => /^entry:/.test(x))) assert.equal(ids[ids.indexOf(id) + 1], `status:${id.slice(6)}`, id);
+  // Whole groups only: each kept group keeps all 12 of its rows.
+  assert.equal(blocks.filter((b) => /^entry:/.test(b.block_id || '')).length % 12, 0);
+});
+
+test('buildMenu, escaping: a label or a status detail holding * _ ~ ` & < > can\'t end the bold or the italics early', () => {
+  const hub = { id: 'h', name: 'H' };
+  const rows = [
+    { entry: { id: 'a', label: 'A*b_c', archetype: 'ask' }, status: { key: 'partly', detail: 'no *data_ yet <@U1> & `x`' } },
+    { entry: { id: 'b', label: '_Big_ ~deal~', archetype: 'handler' }, status: { key: 'ready', detail: null } },
+  ];
+  const view = buildMenu(hub, rows, {});
+  const a = rowOf(view, 'a').text.text;
+  assert.equal(a, '*A\u2217b\u02CDc* · 🟡 _no \u2217data\u02CD yet &lt;@U1&gt; &amp; \u02CBx\u02CB_');
+  // Exactly the two bold and two italic marks the menu writes.
+  assert.equal((a.match(/\*/g) || []).length, 2);
+  assert.equal((a.match(/_/g) || []).length, 2);
+  assert.ok(!/[<>]/.test(a));
+  assert.equal(rowOf(view, 'b').text.text, '*\u02CDBig\u02CD \u223Cdeal\u223C*');
 });

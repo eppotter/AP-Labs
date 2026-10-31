@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
-  statusText, needsAttention, toolsWorking, setupProgress, menuVerbOf, STATUSES, VERBS, DEFAULT_VERBS, GLYPHS, SHORTCODES, RESERVED_GLYPHS, SETUP_GROUP,
+  statusText, statusParts, needsAttention, toolsWorking, setupProgress, menuVerbOf, STATUSES, VERBS, DEFAULT_VERBS, GLYPHS, SHORTCODES, RESERVED_GLYPHS, SETUP_GROUP,
 } = require('../../kit/runtime/registry/vocabulary');
 
 const DOTS = ['🟢', '🟡', '⚪', '🔴'];
@@ -41,6 +41,18 @@ test('a setup fact with no problem is plain text with no dot', () => {
   for (const line of ['2 notes', 'notes only · no data on this hub']) {
     for (const dot of [...DOTS, ...OLD_MARKS]) assert.ok(!line.includes(dot), line);
   }
+});
+
+test('statusParts splits the line into its dot (null for a fact) and its words, for the menu\'s inline status; statusText joins them', () => {
+  assert.equal(statusParts({ key: 'ready' }), null);
+  assert.equal(statusParts({ key: 'done' }), null);
+  assert.deepEqual(statusParts({ key: 'done', detail: '2 notes' }), { dot: null, words: '2 notes' });
+  assert.deepEqual(statusParts({ key: 'context-only', detail: 'no data on this hub' }), { dot: null, words: 'notes only · no data on this hub' });
+  assert.deepEqual(statusParts({ key: 'partly', detail: 'no data yet' }), { dot: '🟡', words: 'no data yet' });
+  assert.deepEqual(statusParts({ key: 'waiting', detail: 'needs map setup' }), { dot: '⚪', words: 'needs map setup' });
+  assert.deepEqual(statusParts({ key: 'not-started', detail: 'no notes yet' }), { dot: '⚪', words: 'not started' });
+  assert.throws(() => statusParts({ key: 'checking' }), TypeError);
+  assert.throws(() => statusParts({ key: 'waiting', detail: 42 }), TypeError);
 });
 
 test('each attention state is a dot then a few lower-case words, never a colour alone', () => {
