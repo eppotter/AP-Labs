@@ -12,6 +12,7 @@
 //   menuVerbOf(mod)              ->  "Ask" | "Run" | "View" | "Add" | "Review" | "Request"
 //   SETUP_GROUP                  ->  "🔒 Setup · admins"
 //   CHECKING                     ->  "Checking…"
+//   WHY                          ->  "Why?" (a waiting row's button, Story 17.3)
 //
 // Every status carries a word: a glyph never stands alone. A status may add
 // a short detail after a middle dot. An unknown status key throws (the
@@ -30,8 +31,8 @@
 // menuVerbOf is the button's text only: the button still sends
 // <module id>:open. It is not verbOf, which the scoped-pull, approval-write
 // and ask archetypes export for their own action ids. "Why?" is never a
-// manifest's verb: it comes from a waiting status (Story 17.3). "Open" is
-// not a verb.
+// manifest's verb: it comes from a waiting status (Story 17.3: the row's
+// button says WHY and sends <module id>:why). "Open" is not a verb.
 
 // The marks. GLYPHS are the ones a status or the bar shows; RESERVED_GLYPHS
 // adds the two the deferred statuses will use. The registry refuses a
@@ -55,6 +56,8 @@ const STATUSES = Object.freeze({
 
 // The menu's verbs (D10). The manifest's optional "verb" is one of these.
 const VERBS = Object.freeze(['Ask', 'Run', 'View', 'Add', 'Review', 'Request']);
+// A waiting row's button (D7): never a manifest's verb.
+const WHY = 'Why?';
 // Each archetype's default verb (D10's table).
 const DEFAULT_VERBS = Object.freeze({
   ask: 'Ask',
@@ -116,5 +119,5 @@ function menuVerbOf(mod) {
 }
 
 module.exports = {
-  statusText, setupBar, toolsReady, setupProgress, menuVerbOf, STATUSES, VERBS, DEFAULT_VERBS, GLYPHS, RESERVED_GLYPHS, SETUP_GROUP, UNGROUPED, SEP, CHECKING,
+  statusText, setupBar, toolsReady, setupProgress, menuVerbOf, STATUSES, VERBS, DEFAULT_VERBS, GLYPHS, RESERVED_GLYPHS, SETUP_GROUP, UNGROUPED, SEP, CHECKING, WHY,
 };

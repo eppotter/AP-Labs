@@ -1,7 +1,7 @@
 'use strict';
 
 // Builds a hub's private Block Kit menu (plan hub-status-menu, D1 to D11,
-// Story 17.2) and its help (Story 6.4). No hub-specific code: the hub file,
+// Stories 17.2 and 17.3) and its help (Story 6.4). No hub-specific code: the hub file,
 // the module manifests and the facts the slash command gathers
 // (kit/runtime/slack/hubs) are the only inputs. Every glyph and status word
 // comes from ./vocabulary; this file writes none.
@@ -26,6 +26,11 @@
 //                    the button (D2, D10). The button still sends
 //                    <module-id>:open, so the dispatcher and its re-check
 //                    are unchanged. The description lives in Help.
+//                    A row whose status is waiting shows "Why?" instead
+//                    (D7, Story 17.3), sending <module-id>:why: Slack has no
+//                    disabled button. Its listener (kit/runtime/slack/hubs)
+//                    re-checks the click and pushes the Why? screen
+//                    (./why).
 //   divider, help    as before (modalView keepTail: 2)
 //
 // "Tools ready" counts the rows outside the Setup group whose status is
@@ -49,11 +54,13 @@
 // notice.
 
 const {
-  statusText, toolsReady, setupProgress, menuVerbOf, SETUP_GROUP, UNGROUPED, SEP, CHECKING,
+  statusText, toolsReady, setupProgress, menuVerbOf, SETUP_GROUP, UNGROUPED, SEP, CHECKING, WHY,
 } = require('./vocabulary');
 
 const OPEN_VERB = 'open';
 const OPEN_ACTION = /^([a-z][a-z0-9-]*):open$/;
+// A waiting row's Why? click (D7, Story 17.3).
+const WHY_ACTION = /^([a-z][a-z0-9-]*):why$/;
 const HELP_ACTION = /^([a-z][a-z0-9-]*):help$/;
 // The archetypes the engine places in the Setup group (D5).
 const SETUP_ARCHETYPES = Object.freeze(['add-context', 'data-sources']);
@@ -72,6 +79,16 @@ function openActionId(moduleId) {
 // Returns the module id an Open click names, or null.
 function moduleIdFromAction(actionId) {
   const m = typeof actionId === 'string' ? OPEN_ACTION.exec(actionId) : null;
+  return m ? m[1] : null;
+}
+
+function whyActionId(moduleId) {
+  return `${moduleId}:why`;
+}
+
+// Returns the module id a Why? click names, or null.
+function moduleIdFromWhy(actionId) {
+  const m = typeof actionId === 'string' ? WHY_ACTION.exec(actionId) : null;
   return m ? m[1] : null;
 }
 
@@ -146,18 +163,23 @@ function statusLine(row, { checking, log }) {
   }
 }
 
+// A waiting row (D7): its button is Why?, never its verb. Only once its
+// status is worded: a row with no status line, or "Checking…", keeps its verb.
+const isWaiting = (row, line, { checking }) => !checking && Boolean(line) && row.status.key === 'waiting';
+
 function rowBlock(row, opts) {
   const { entry } = row;
   const line = statusLine(row, opts);
+  const why = isWaiting(row, line, opts);
   return {
     type: 'section',
     block_id: `entry:${entry.id}`,
     text: { type: 'mrkdwn', text: `*${escapeText(entry.label)}*${line ? `\n${line}` : ''}` },
     accessory: {
       type: 'button',
-      action_id: openActionId(entry.id),
+      action_id: why ? whyActionId(entry.id) : openActionId(entry.id),
       value: entry.id,
-      text: { type: 'plain_text', text: row.verb || verbFor(entry, opts.log), emoji: false },
+      text: { type: 'plain_text', text: why ? WHY : (row.verb || verbFor(entry, opts.log)), emoji: false },
     },
   };
 }
@@ -277,6 +299,6 @@ function buildHelp(hub, entries, { feedback, notice } = {}) {
 }
 
 module.exports = {
-  buildMenu, buildHelp, openActionId, moduleIdFromAction, helpActionId, hubIdFromHelpAction, verbFor, isSetup,
-  OPEN_ACTION, HELP_ACTION, SETUP_ARCHETYPES, NOTHING_HERE, MORE_TOOLS, KNOWS_CHECKING, KNOWS_UNCHECKED, SETTING_UP, STILL_ASK,
+  buildMenu, buildHelp, openActionId, moduleIdFromAction, whyActionId, moduleIdFromWhy, helpActionId, hubIdFromHelpAction, verbFor, isSetup,
+  OPEN_ACTION, WHY_ACTION, HELP_ACTION, SETUP_ARCHETYPES, NOTHING_HERE, MORE_TOOLS, KNOWS_CHECKING, KNOWS_UNCHECKED, SETTING_UP, STILL_ASK,
 };

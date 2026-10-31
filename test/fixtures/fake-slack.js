@@ -86,7 +86,13 @@
 // hub status menu) adds the context block (invalid_blocks): no elements or
 // more than 10, and an element's text empty or over 3000 characters; and
 // relies on views.open answering the view's id and hash, as Slack does, for
-// the menu's late update. With
+// the menu's late update. Story 17.3 (Why?) adds the view stack: Slack
+// holds at most 3 views (the opened one and two pushed on it), and a
+// views.push from a click in the third answers push_limit_reached. Each
+// click's trigger_id remembers the view it came from; a view this fake
+// never opened or pushed (a test's own) counts as the first. this.parentOf
+// (view id) is the view a pushed one was pushed from (Slack's back arrow
+// returns there), and this.depthOf(view id) its place in the stack. With
 // this.checkHashes set, a views.update whose hash is not the view's current
 // one (for a view this fake opened or pushed) answers hash_conflict, as
 // Slack does; it is off by default because older tests replay a click's
@@ -215,6 +221,9 @@ class FakeSlackApp {
     this.notReady = new Map(); // file id -> views calls still refused
     this.triggers = new Map();
     this.closed = new Set(); // view ids the person closed (closeView)
+    this.triggerViews = new Map(); // trigger_id -> the view the click came from
+    this.depths = new Map(); // view id -> its place in the stack (1 = opened)
+    this.parents = new Map(); // pushed view id -> the view it was pushed from
     this.scopes = new Set(FAKE_BOT_SCOPES);
     this.botToken = FAKE_BOT_TOKEN;
     this.slackFiles = new Map(); // file id -> { file, bytes }
@@ -296,6 +305,9 @@ class FakeSlackApp {
         if ((method === 'open' || method === 'push') && this.triggerExpired(args.trigger_id)) {
           throw slackError('expired_trigger_id', 'the trigger_id is more than 3 seconds old');
         }
+        const parent = method === 'push' ? (this.triggerViews.get(args.trigger_id) || null) : null;
+        const depth = method === 'push' ? (this.depths.get(parent) || 1) + 1 : 1;
+        if (depth > MAX_VIEW_STACK) throw slackError('push_limit_reached', `a view stack holds at most ${MAX_VIEW_STACK} views`);
         if (viewHasFileInput(args.view) && !this.scopes.has('files:read')) throw slackError('missing_scope', 'a file_input needs files:read');
         const bad = invalidModal(args.view);
         if (bad) throw Object.assign(new Error(`An API error occurred: invalid_arguments (${bad})`), { data: { ok: false, error: 'invalid_arguments' } });
@@ -313,6 +325,8 @@ class FakeSlackApp {
         this.viewSeq += 1;
         const id = method === 'update' ? args.view_id : `V${this.viewSeq}`;
         if (method !== 'update' || this.hashes.has(id)) this.hashes.set(id, `h${this.viewSeq}`);
+        if (method !== 'update') this.depths.set(id, depth);
+        if (method === 'push') this.parents.set(id, parent);
         return { ok: true, view: { id, hash: `h${this.viewSeq}`, ...args.view } };
       };
       this.client.views = { open: call('open'), push: call('push'), update: call('update') };
@@ -422,6 +436,11 @@ class FakeSlackApp {
     return Date.now() - this.triggers.get(id) > TRIGGER_MS;
   }
 
+  // The view a pushed view was pushed from, and a view's place in the stack.
+  parentOf(id) { return this.parents.has(id) ? this.parents.get(id) : null; }
+
+  depthOf(id) { return this.depths.get(id) || null; }
+
   // The person closed this view (Back or the X): later updates are not_found.
   closeView(id) { this.closed.add(id); }
 
@@ -520,7 +539,10 @@ class FakeSlackApp {
     else if (extra) action = { action_id, ...extra };
     else action = { type: 'button', action_id, value: value === undefined ? action_id.split(':')[0] : value };
     const body = { type: 'block_actions', user, actions: [action] };
-    if (view) Object.assign(body, { view, container: { type: 'view', view_id: view.id }, trigger_id: this.issueTrigger('T-action') });
+    if (view) {
+      Object.assign(body, { view, container: { type: 'view', view_id: view.id }, trigger_id: this.issueTrigger('T-action') });
+      this.triggerViews.set(body.trigger_id, view.id);
+    }
     const matching = this.actionListeners.filter(({ pattern }) => (
       pattern instanceof RegExp ? pattern.test(action_id) : pattern === action_id));
     for (const { fn } of matching) {
@@ -545,6 +567,7 @@ const MAX_POST_TEXT = 40000;
 const MAX_ALT = 2000;
 const MAX_TITLE = 24;
 const MAX_VIEW_BLOCKS = 100;
+const MAX_VIEW_STACK = 3;
 const MAX_METADATA = 3000;
 const MAX_SECTION_TEXT = 3000;
 const MAX_OPTIONS = 100;
