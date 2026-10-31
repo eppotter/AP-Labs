@@ -6,8 +6,11 @@
 // (kit/runtime/slack/hubs) are the only inputs. Every glyph and status word
 // comes from ./vocabulary; this file writes none.
 //
-// The menu, top to bottom (D1):
-//   header           the hub's name
+// The menu, top to bottom (D1). No header block: the modal's title already
+// names the hub (kit/runtime/slack/modal), so a header repeating it showed
+// the name twice (2026-10-31 live check). The private reply sent when the
+// modal can't open has no title, so withTitle() puts the hub's name back as
+// a header there; buildMenu keeps one block free for it.
 //   not set up       a context line, for a person the profile doesn't name
 //   strip:knows      "Knows: 2 notes · 0 sources · 0 truths · 0 rules", or
 //                    "Knows: checking…" (the notes are still being read, D8),
@@ -17,7 +20,13 @@
 //                    the tick; a member: "Your admin is setting this up." on
 //                    a blank hub (plus " You can still ask questions." with
 //                    an Ask row), else "N of M tools ready" (D4)
-//   welcome          first visit only, one sentence (D9)
+//   welcome          first visit only, one sentence (D9). On a hub that
+//                    sees nothing (sees: []) the welcome is about being
+//                    blank, so it shows only while the summary says the hub
+//                    is blank (isBlank: no notes, sources, truths or rules);
+//                    never while "checking…" or when the summary couldn't be
+//                    read. A hub that sees context, data or rules keeps its
+//                    first-visit welcome, a general greeting.
 //   next             the next step (D6, Story 17.4), when the rule in
 //                    ./next-step finds one: "*Next:* teach it the business",
 //                    "*New:* <label>" or "*Next:* request your first tool",
@@ -73,6 +82,8 @@ const HELP_ACTION = /^([a-z][a-z0-9-]*):help$/;
 // The archetypes the engine places in the Setup group (D5).
 const SETUP_ARCHETYPES = Object.freeze(['add-context', 'data-sources']);
 const MAX_BLOCKS = 100;
+// The private reply's header (withTitle): kept free in the menu's budget.
+const TITLE_BLOCKS = 1;
 const NOTHING_HERE = 'Nothing is available to you here yet.';
 const MORE_TOOLS = 'More tools than fit here: see Help.';
 const KNOWS_CHECKING = 'Knows: checking…';
@@ -128,6 +139,13 @@ function verbFor(entry, log = NO_LOG) {
     log.warn('menu fact skipped', { module: (entry && entry.id) || null, fn: 'menuVerbOf' });
     return 'Run';
   }
+}
+
+// The hub knows nothing yet: the summary was read and every count the strip
+// shows is 0. An unreadable summary is not blank (unknown).
+function isBlank(summary) {
+  const c = summary && !summary.problem && summary.counts;
+  return Boolean(c) && ['notes', 'sources', 'truths', 'rules'].every((k) => c[k] === 0);
 }
 
 // "Knows: 2 notes · 0 sources · 0 truths · 0 rules" (D3), or "couldn't
@@ -223,6 +241,8 @@ const moreLine = () => ({ type: 'context', block_id: 'more', elements: [{ type: 
 // null; verb the button's text, else the module's menu verb). Options:
 //   notice    mrkdwn under the header ("you're not set up yet")
 //   welcome   the first-visit welcome (mrkdwn)
+//   blankWelcome  the welcome is a blank hub's (sees: []): shown only while
+//             isBlank(summary), so never without a summary or while checking
 //   admin     the person's profile role is admin: the Setup group shows
 //   strip     the person may see the strip (in the profile, P1-1)
 //   summary   summarize() for the hub, or null ("couldn't check just now")
@@ -233,11 +253,12 @@ const moreLine = () => ({ type: 'context', block_id: 'more', elements: [{ type: 
 // Returns { text, blocks }: the blocks are the hub modal's
 // (kit/runtime/slack/modal), the whole is the ephemeral fallback reply.
 function buildMenu(hub, rows, {
-  notice, welcome, admin = false, strip = false, summary = null, checking = false, next = null, log = NO_LOG,
+  notice, welcome: firstWelcome, blankWelcome = false, admin = false, strip = false, summary = null, checking = false, next = null, log = NO_LOG,
 } = {}) {
   const shown = rows.filter((r) => admin || !isSetup(r.entry));
   const opts = { checking, log };
-  const head = [{ type: 'header', text: { type: 'plain_text', text: hub.name, emoji: false } }];
+  const welcome = blankWelcome && !isBlank(summary) ? undefined : firstWelcome;
+  const head = [];
   if (notice) head.push({ type: 'context', elements: [{ type: 'mrkdwn', text: notice }] });
   let knows = null;
   let progress = null;
@@ -268,7 +289,7 @@ function buildMenu(hub, rows, {
   // Whole groups only (P3-10): drop the last tool group until the menu fits.
   let groups = groupsOf(shown, admin);
   let cut = false;
-  const size = () => head.length + tail.length + (cut ? 1 : 0) + groups.reduce((n, g) => n + 1 + g.rows.length, 0);
+  const size = () => TITLE_BLOCKS + head.length + tail.length + (cut ? 1 : 0) + groups.reduce((n, g) => n + 1 + g.rows.length, 0);
   // The first tool group is always kept: one group too big on its own is
   // left to modalView's generic cut, the backstop.
   while (size() > MAX_BLOCKS && groups.filter((g) => !g.setup).length > 1) {
@@ -289,6 +310,12 @@ function buildMenu(hub, rows, {
     : `${hub.name}: nothing is available to you here yet.`;
   const text = [welcome, list, knows, progress, step && step.text.text, notice].filter(Boolean).join('\n');
   return { text, blocks };
+}
+
+// The menu as a private reply (the modal couldn't open): no modal title
+// there, so the hub's name leads as a header block.
+function withTitle(hub, menu) {
+  return { ...menu, blocks: [{ type: 'header', text: { type: 'plain_text', text: hub.name, emoji: false } }, ...menu.blocks] };
 }
 
 // The next-step block (D6), or null: only for a row in this menu, so the
@@ -329,6 +356,6 @@ function buildHelp(hub, entries, { feedback, notice } = {}) {
 }
 
 module.exports = {
-  buildMenu, buildHelp, openActionId, moduleIdFromAction, whyActionId, moduleIdFromWhy, helpActionId, hubIdFromHelpAction, verbFor, isSetup,
+  buildMenu, buildHelp, withTitle, isBlank, openActionId, moduleIdFromAction, whyActionId, moduleIdFromWhy, helpActionId, hubIdFromHelpAction, verbFor, isSetup,
   OPEN_ACTION, WHY_ACTION, HELP_ACTION, SETUP_ARCHETYPES, NOTHING_HERE, MORE_TOOLS, KNOWS_CHECKING, KNOWS_UNCHECKED, SETTING_UP, STILL_ASK,
 };

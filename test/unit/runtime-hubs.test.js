@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { loadProfile } = require('../../kit/lib/profile');
 const { loadRegistry } = require('../../kit/runtime/registry');
-const { buildMenu, moduleIdFromAction, hubIdFromHelpAction } = require('../../kit/runtime/registry/menu');
+const { buildMenu, withTitle, moduleIdFromAction, hubIdFromHelpAction } = require('../../kit/runtime/registry/menu');
 const { registerHubs, NOT_AVAILABLE } = require('../../kit/runtime/slack/hubs');
 const {
   modalTitle, limitBlocks, LOADING,
@@ -93,8 +93,10 @@ test('fallback (no views client): the hub command replies privately with the hub
   assert.equal(app.responded.length, 1);
   const [menu] = app.responded;
   assert.equal(menu.response_type, 'ephemeral');
+  // The private reply has no modal title, so the hub's name leads as a header.
   assert.equal(menu.blocks[0].type, 'header');
   assert.equal(menu.blocks[0].text.text, 'Alpha tools');
+  assert.equal(menu.blocks.filter((b) => b.type === 'header' && b.text.text === 'Alpha tools').length, 1);
   // prod-only is hidden in dev; boom belongs to beta.
   assert.deepEqual(buttons(menu), ['echo:open', 'second:open']);
   const echo = menu.blocks.find((b) => b.block_id === 'entry:echo');
@@ -198,13 +200,18 @@ test('buildMenu: rows become sections under their group, each with its verb as t
   };
   const { text, blocks } = buildMenu(hub, [{ entry, status: { key: 'ready', detail: null }, verb: 'Run' }]);
   assert.equal(text, 'H: A');
-  assert.deepEqual(blocks[1], { type: 'header', block_id: 'group:0', text: { type: 'plain_text', text: 'Tools', emoji: false } });
-  assert.deepEqual(blocks[2].accessory, {
+  // No header for the hub's name: the modal's title says it (no duplicate).
+  assert.deepEqual(blocks[0], { type: 'header', block_id: 'group:0', text: { type: 'plain_text', text: 'Tools', emoji: false } });
+  assert.deepEqual(blocks[1].accessory, {
     type: 'button', action_id: 'a-b:open', value: 'a-b', text: { type: 'plain_text', text: 'Run', emoji: false },
   });
-  assert.equal(blocks[2].text.text, '*A*\n✓ Ready');
+  assert.equal(blocks[1].text.text, '*A*\n✓ Ready');
   // With no verb given, the module's menu verb.
-  assert.equal(buildMenu(hub, [{ entry, status: null }]).blocks[2].accessory.text.text, 'Run');
+  assert.equal(buildMenu(hub, [{ entry, status: null }]).blocks[1].accessory.text.text, 'Run');
+  // withTitle (the private reply) adds the name back, once.
+  assert.deepEqual(withTitle(hub, { text, blocks }).blocks.slice(0, 2), [
+    { type: 'header', text: { type: 'plain_text', text: 'H', emoji: false } }, blocks[0],
+  ]);
 });
 
 // --- modals ----------------------------------------------------------------
@@ -230,10 +237,13 @@ test('the hub command opens a modal with the menu: hub title, the same blocks, C
   assert.equal(view.close.text, 'Close');
   assert.equal(view.submit, undefined);
   assert.deepEqual(buttons(view), ['echo:open', 'second:open']);
-  // The same blocks as the ephemeral menu, escaping included.
+  // The same blocks as the ephemeral menu, escaping included, but for the
+  // reply's header: the modal's title already names the hub, so no block
+  // repeats it there (2026-10-31 live check).
   const fallback = setup();
   await fallback.app.dispatchCommand('/alpha', { user_id: 'U1' });
-  assert.deepEqual(view.blocks, fallback.app.responded[0].blocks);
+  assert.deepEqual(view.blocks, fallback.app.responded[0].blocks.slice(1));
+  assert.ok(!view.blocks.some((b) => b.type === 'header' && b.text.text === 'Alpha tools'), 'no header repeats the title');
   assert.equal(view.blocks.find((b) => b.block_id === 'entry:echo').text.text, '*Echo*');
   assert.equal(view.blocks.at(-1).accessory.action_id, 'alpha:help');
   assert.deepEqual(fallbacks(log), []);
@@ -460,10 +470,11 @@ test('a menu over 100 blocks keeps Help at the end with a "more…" note; long t
   assert.equal(view.blocks.length, 100);
   assert.equal(view.blocks.at(-1).accessory.action_id, 'big:help');
   assert.equal(view.blocks.at(-2).type, 'divider');
-  // 126 blocks (header, not-set-up notice, welcome, the Tools header, 120
-  // entries, divider, Help): 97 + note + 2. One group too big on its own is
-  // left to modalView's cut (D1: the first group is never dropped whole).
-  assert.equal(view.blocks.at(-3).elements[0].text, '_more… 27 more not shown here._');
+  // 125 blocks (not-set-up notice, welcome, the Tools header, 120 entries,
+  // divider, Help; no header repeating the title): 97 + note + 2. One group
+  // too big on its own is left to modalView's cut (D1: the first group is
+  // never dropped whole).
+  assert.equal(view.blocks.at(-3).elements[0].text, '_more… 26 more not shown here._');
   assert.equal(view.title.text, 'A hub with a really lon…');
   assert.equal(Array.from(view.title.text).length, 24);
 });

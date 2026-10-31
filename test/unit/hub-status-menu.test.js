@@ -16,7 +16,7 @@ const { loadRegistry, createRegistry } = require('../../kit/runtime/registry');
 const { createRulesReader } = require('../../kit/runtime/knowledge/readiness');
 const { registerHubs, FORM_NEEDS_WINDOW, MAP_NEEDS_WINDOW } = require('../../kit/runtime/slack/hubs');
 const {
-  buildMenu, KNOWS_CHECKING, KNOWS_UNCHECKED, MORE_TOOLS, NOTHING_HERE,
+  buildMenu, isBlank, KNOWS_CHECKING, KNOWS_UNCHECKED, MORE_TOOLS, NOTHING_HERE,
 } = require('../../kit/runtime/registry/menu');
 const {
   CHECKING, SETUP_GROUP, setupProgress, statusText, VERBS,
@@ -135,10 +135,11 @@ test('blank, admin: the strip, then Tools (Ask partly, Request a tool ready), th
       id: 'blank-sources', text: '*Data sources*\n✓ Done · no data on this hub', verb: 'View', action: 'blank-sources:open',
     },
   ]);
-  // Top to bottom (D1): header, strip, welcome, groups, divider, Help.
+  // Top to bottom (D1): strip, welcome, groups, divider, Help. No header:
+  // the modal's title names the hub.
   const ids = view.blocks.map((b) => b.block_id || b.type);
   // The next step (Story 17.4) follows the welcome: nothing is taught yet.
-  assert.deepEqual(ids.slice(0, 6), ['header', 'strip:knows', 'strip:progress', 'welcome', 'next', 'group:0']);
+  assert.deepEqual(ids.slice(0, 5), ['strip:knows', 'strip:progress', 'welcome', 'next', 'group:0']);
   assert.deepEqual(ids.slice(-2), ['divider', 'help']);
   // In time: one views.open with the whole menu, no late update.
   assert.equal(calls(app, 'open').length, 1);
@@ -353,8 +354,9 @@ test('over 100 blocks: 120 tools in eight groups cut whole groups only, keep the
   assert.ok(view.blocks.length <= 100, `${view.blocks.length}`);
   assert.ok(block(view, 'strip:knows') && block(view, 'strip:progress'));
   const groups = groupsOf(view);
-  // Header, two strip lines, welcome, next step (5) + divider and Help (2)
-  // + the more line (1) + Setup (3) leave 89: five groups of 1 + 15.
+  // Two strip lines, welcome, next step (4) + the private reply's header
+  // kept free (1) + divider and Help (2) + the more line (1) + Setup (3)
+  // leave 89: five groups of 1 + 15.
   assert.deepEqual(groups, ['Group 1', 'Group 2', 'Group 3', 'Group 4', 'Group 5', '🔒 Setup · admins']);
   const rows = rowsOf(view).map((r) => r.id);
   assert.equal(rows.length, 5 * 15 + 2, 'every kept group is whole');
@@ -375,10 +377,10 @@ test('60 tools in eight groups fit in 100 blocks whole: nothing is cut', async (
 
 // --- the late summary (D8) ----------------------------------------------------------------------
 
-function slowNotes() {
+function slowNotes(n = 2) {
   let release;
   const gate = new Promise((r) => { release = r; });
-  return { list: async () => { await gate; return notesOf(2); }, release };
+  return { list: async () => { await gate; return notesOf(n); }, release };
 }
 
 test('a slow knowledge store: the ack and the menu ("Knows: checking…", every row "Checking…", no progress) come first; the whole menu follows by views.update with the opened view\'s id and hash', async (t) => {
@@ -406,6 +408,25 @@ test('a slow knowledge store: the ack and the menu ("Knows: checking…", every 
   assert.equal(knowsOf(update.view), 'Knows: 2 notes · 0 sources · 0 truths · 0 rules');
   assert.equal(progressOf(update.view), '✓ 1 of 2 tools ready');
   assert.equal(update.view.callback_id, 'hub:menu');
+  // The blank hub (sees: []) is taught now: its blank-hub welcome is gone,
+  // and it was never shown while "checking…".
+  assert.equal(block(open.view, 'welcome'), undefined, 'no blank-hub welcome while checking');
+  assert.equal(block(update.view, 'welcome'), undefined, 'no blank-hub welcome once taught');
+});
+
+test('a slow knowledge store on a still-blank hub: the welcome waits for the summary and comes with the late update', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+  const slow = slowNotes(0);
+  const s = setup({ notes: { blank: slow.list } });
+  const done = s.app.dispatchCommand('/blank', { user_id: ADA });
+  await settle();
+  t.mock.timers.tick(1000);
+  await settle();
+  const [open] = calls(s.app, 'open');
+  assert.equal(block(open.view, 'welcome'), undefined);
+  slow.release();
+  await done;
+  const [update] = calls(s.app, 'update');
   assert.ok(block(update.view, 'welcome'), 'the first visit\'s welcome is kept');
 });
 
@@ -525,6 +546,58 @@ test('the first-visit welcome sits below the strip, once per person per hub', as
   assert.match(block(first, 'welcome').text.text, /^Welcome to Blank tools\. Press Help/);
   assert.equal(block(second, 'welcome'), undefined);
   assert.doesNotMatch(welcomeText({ name: 'X' }), /opens one tool/);
+});
+
+// A hub that sees nothing (sees: []) has a blank hub's welcome: it shows only
+// while the summary says the hub is blank (no notes, sources, truths or
+// rules), so it never goes stale once an admin teaches it (2026-10-31 live
+// check). A hub that sees context, data or rules keeps its first-visit
+// welcome, a general greeting.
+
+test('the blank hub\'s welcome shows while it is blank (0 notes)', async () => {
+  const { view } = await menuFor(ADA, '/blank');
+  assert.equal(knowsOf(view), 'Knows: 0 notes · 0 sources · 0 truths · 0 rules');
+  assert.match(block(view, 'welcome').text.text, /^Welcome to Blank tools\./);
+  const bo = await menuFor(BO, '/blank');
+  assert.ok(block(bo.view, 'welcome'), 'a member on a blank hub gets it too');
+});
+
+test('the blank hub\'s welcome is hidden once it is taught (2 notes), on a first visit', async () => {
+  const { view, app } = await menuFor(ADA, '/blank', { notes: { blank: 2 } });
+  assert.equal(knowsOf(view), 'Knows: 2 notes · 0 sources · 0 truths · 0 rules');
+  assert.equal(block(view, 'welcome'), undefined);
+  assert.doesNotMatch(calls(app, 'open')[0].view.blocks.map((b) => (b.text && b.text.text) || '').join('\n'), /Welcome to Blank tools/);
+});
+
+test('the blank hub\'s welcome is left out when the summary can\'t be read', async () => {
+  const { view } = await menuFor(ADA, '/blank', { notes: { blank: async () => { throw new Error('unreadable'); } } });
+  assert.equal(knowsOf(view), KNOWS_UNCHECKED);
+  assert.equal(block(view, 'welcome'), undefined);
+});
+
+test('a hub that sees context, data or rules keeps its first-visit welcome when taught', async () => {
+  const { view } = await menuFor(ADA, '/full', { notes: { full: 2 } });
+  assert.match(knowsOf(view), /^Knows: 2 notes/);
+  assert.match(block(view, 'welcome').text.text, /^Welcome to Full tools\./);
+});
+
+test('isBlank: every count 0 and no problem; a count above 0, a problem or no summary is not blank', () => {
+  const counts = {
+    notes: 0, sources: 0, truths: 0, rules: 0,
+  };
+  assert.equal(isBlank({ counts, problem: false }), true);
+  for (const k of Object.keys(counts)) assert.equal(isBlank({ counts: { ...counts, [k]: 1 }, problem: false }), false, k);
+  assert.equal(isBlank({ counts: { ...counts, notes: null }, problem: true }), false);
+  assert.equal(isBlank({ counts, problem: true }), false);
+  assert.equal(isBlank(null), false);
+});
+
+test('no header repeats the modal title: the hub\'s name is the title only', async () => {
+  for (const [hub, user] of [['/blank', ADA], ['/full', ADA], ['/full', BO], ['/blank', NOBODY]]) {
+    const { view } = await menuFor(user, hub);
+    assert.ok(!view.blocks.some((b) => b.type === 'header' && b.text.text === view.title.text), `${hub} ${user}`);
+    assert.ok(!view.blocks.some((b) => b.type === 'header' && !/^group:/.test(b.block_id || '')), `${hub} ${user}: only group headers`);
+  }
 });
 
 // --- words (D10) --------------------------------------------------------------------------------
