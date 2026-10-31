@@ -19,8 +19,9 @@ const {
   buildMenu, KNOWS_CHECKING, KNOWS_UNCHECKED, MORE_TOOLS, NOTHING_HERE,
 } = require('../../kit/runtime/registry/menu');
 const {
-  CHECKING, SETUP_GROUP, setupProgress, statusText,
+  CHECKING, SETUP_GROUP, setupProgress, statusText, VERBS,
 } = require('../../kit/runtime/registry/vocabulary');
+const { TEACH_LABEL } = require('../../kit/runtime/registry/next-step');
 const statusModule = require('../../kit/runtime/registry/status');
 const summaryModule = require('../../kit/runtime/knowledge/summary');
 const {
@@ -136,7 +137,8 @@ test('blank, admin: the strip, then Tools (Ask partly, Request a tool ready), th
   ]);
   // Top to bottom (D1): header, strip, welcome, groups, divider, Help.
   const ids = view.blocks.map((b) => b.block_id || b.type);
-  assert.deepEqual(ids.slice(0, 5), ['header', 'strip:knows', 'strip:progress', 'welcome', 'group:0']);
+  // The next step (Story 17.4) follows the welcome: nothing is taught yet.
+  assert.deepEqual(ids.slice(0, 6), ['header', 'strip:knows', 'strip:progress', 'welcome', 'next', 'group:0']);
   assert.deepEqual(ids.slice(-2), ['divider', 'help']);
   // In time: one views.open with the whole menu, no late update.
   assert.equal(calls(app, 'open').length, 1);
@@ -203,7 +205,9 @@ test('the word "Open" is on no menu button, and every button is a verb or Help, 
       const { view } = await menuFor(user, command, opts);
       for (const b of allButtons(view)) {
         assert.notEqual(b.text.text, 'Open', `${command} ${user}`);
-        assert.ok(['Ask', 'Run', 'View', 'Add', 'Review', 'Request', 'Help'].includes(b.text.text), `${command} ${user}: ${b.text.text}`);
+        // The next-step button (Story 17.4) may also say "Add context" (D6).
+        const words = b.style === 'primary' ? [...VERBS, TEACH_LABEL] : [...VERBS, 'Help'];
+        assert.ok(words.includes(b.text.text), `${command} ${user}: ${b.text.text}`);
       }
       assert.ok(!/press Open/i.test(JSON.stringify(view)), `${command} ${user}`);
     }
@@ -318,7 +322,12 @@ test('two hubs in one process: each menu\'s counts and statuses come from its ow
     assert.equal(rowOf(seen['/full'], 'full-sources').text.text, '*Data sources*\n✓ Done');
     assert.equal(progressOf(seen['/blank']), '✓ 1 of 2 tools ready');
     assert.equal(progressOf(seen['/full']), '✓ 10 of 10 tools ready');
+    // Story 17.4: each hub's next step from its own summary. Blank is taught
+    // and has only the template tools; full has its own tools.
+    assert.equal(block(seen['/blank'], 'next').text.text, '*Next:* request your first tool', order.join());
+    assert.equal(block(seen['/full'], 'next'), undefined, order.join());
   }
+  // The "New" record per hub is tested in hub-status-next.test.js.
 });
 
 // --- over 100 blocks (D1, architect P3-10) ------------------------------------------------------
@@ -344,8 +353,8 @@ test('over 100 blocks: 120 tools in eight groups cut whole groups only, keep the
   assert.ok(view.blocks.length <= 100, `${view.blocks.length}`);
   assert.ok(block(view, 'strip:knows') && block(view, 'strip:progress'));
   const groups = groupsOf(view);
-  // Header, two strip lines, welcome (4) + divider and Help (2) + the more
-  // line (1) + Setup (3) leave 90: five groups of 1 + 15.
+  // Header, two strip lines, welcome, next step (5) + divider and Help (2)
+  // + the more line (1) + Setup (3) leave 89: five groups of 1 + 15.
   assert.deepEqual(groups, ['Group 1', 'Group 2', 'Group 3', 'Group 4', 'Group 5', '🔒 Setup · admins']);
   const rows = rowsOf(view).map((r) => r.id);
   assert.equal(rows.length, 5 * 15 + 2, 'every kept group is whole');
