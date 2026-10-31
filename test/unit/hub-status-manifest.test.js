@@ -88,6 +88,8 @@ test('a group or label saying "Setup" or "Set up", in any case, is refused namin
   const cases = [
     ['group', 'Setup'], ['group', 'Admin setup'], ['group', 'SET UP'], ['group', 'set-up tools'],
     ['label', 'Set up the bot'], ['label', 'setup'], ['label', 'Quick SETUP'],
+    // The Setup group's own header, now with no mark (subtle health).
+    ['group', 'Setup · admins only'], ['label', 'Setup · admins only'],
   ];
   for (const [field, value] of cases) {
     const { registry, problems } = editModule('full-tool-a', (m) => { m[field] = value; });
@@ -102,7 +104,10 @@ test('a group or label saying "Setup" or "Set up", in any case, is refused namin
 });
 
 test('a group or label holding a menu status mark is refused naming the file, the field and the mark', () => {
-  for (const glyph of ['✓', '◐', '◌', '○', '🔒', '▰', '▱', '⏳', '⚠']) {
+  // The subtle-health dots and their Slack shortcodes (2026-10-31), and the
+  // marks the menu showed before them.
+  const dots = ['🟢', '🟡', '⚪', '🔴', ':large_green_circle:', ':large_yellow_circle:', ':white_circle:', ':red_circle:'];
+  for (const glyph of [...dots, '✓', '◐', '◌', '○', '🔒', '▰', '▱', '⏳', '⚠']) {
     for (const field of ['group', 'label']) {
       const { registry, problems } = editModule('full-tool-a', (m) => { m[field] = `${glyph} Ready`; });
       assert.equal(registry, null);

@@ -29,9 +29,10 @@
 //   data-sources     of the counted steps data, truths and rules: done when
 //                    all are; not-started when none is; else partly · needs
 //                    <what>. A hub that counts none (its sees leaves out
-//                    data and rules): context-only · N notes when it has
-//                    notes; else done · no data on this hub (no notes, or
-//                    they couldn't be listed).
+//                    data and rules): context-only · no data on this hub
+//                    when it has notes (the menu says "notes only · no data
+//                    on this hub", subtle health); else done · no data on
+//                    this hub (no notes, or they couldn't be listed).
 //   build-request    ready when requests.available; else waiting · needs a
 //                    channel or waiting · not on this hub.
 //   scoped-pull,     ready when the hub's data is connected; else waiting ·
@@ -79,7 +80,7 @@ function dataSourcesStatus(facts) {
   const steps = Object.keys(names).map((name) => ({ name, ...stepOf(facts.summary, name) })).filter((s) => s.counted);
   if (!steps.length) {
     const notes = facts.summary && facts.summary.counts ? facts.summary.counts.notes : null;
-    if (Number.isSafeInteger(notes) && notes > 0) return status('context-only', plural(notes, 'note', 'notes'));
+    if (Number.isSafeInteger(notes) && notes > 0) return status('context-only', 'no data on this hub');
     return status('done', 'no data on this hub');
   }
   const missing = steps.filter((s) => !s.done);

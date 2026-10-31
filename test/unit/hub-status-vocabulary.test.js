@@ -1,82 +1,122 @@
 'use strict';
 
-// Plan hub-status-menu, Story 17.1 (D2, D10): the menu's vocabulary
-// (kit/runtime/registry/vocabulary). Every status has a word, a glyph never
-// stands alone, the bar is one cell per counted step, the two deferred
-// statuses are absent, an unknown key throws, and no other runtime file
-// writes a menu glyph (architect P1-2).
+// Plan hub-status-menu, Story 17.1 (D2, D10) and the 2026-10-31 decision
+// "subtle health": the menu's vocabulary (kit/runtime/registry/vocabulary).
+// A healthy tool has no status line, a setup fact has no dot, a tool that
+// needs attention has a dot and words (never a colour alone), the strip's
+// lines have no dots, the two deferred statuses are absent, an unknown key
+// throws, and no other runtime file writes a menu mark (architect P1-2).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
-  statusText, setupBar, toolsReady, menuVerbOf, STATUSES, VERBS, DEFAULT_VERBS, GLYPHS, RESERVED_GLYPHS, SETUP_GROUP,
+  statusText, needsAttention, toolsWorking, setupProgress, menuVerbOf, STATUSES, VERBS, DEFAULT_VERBS, GLYPHS, SHORTCODES, RESERVED_GLYPHS, SETUP_GROUP,
 } = require('../../kit/runtime/registry/vocabulary');
 
-const MENU_GLYPHS = ['✓', '◐', '◌', '○', '🔒', '▰', '▱'];
+const DOTS = ['🟢', '🟡', '⚪', '🔴'];
+const DOT_CODES = [':large_green_circle:', ':large_yellow_circle:', ':white_circle:', ':red_circle:'];
+const OLD_MARKS = ['✓', '◐', '◌', '○', '🔒', '▰', '▱'];
 const RUNTIME = path.join(__dirname, '../../kit/runtime');
 const VOCABULARY = path.join(RUNTIME, 'registry/vocabulary.js');
 
-test('every status has a glyph and a non-empty word', () => {
-  assert.deepEqual(Object.keys(STATUSES).sort(), ['admin', 'context-only', 'done', 'not-started', 'partly', 'ready', 'waiting']);
-  for (const [key, s] of Object.entries(STATUSES)) {
-    assert.ok(MENU_GLYPHS.includes(s.glyph), key);
-    assert.ok(typeof s.word === 'string' && s.word.trim().length > 0, key);
+test('the statuses are D2\'s, less the deferred two and the old admin mark', () => {
+  assert.deepEqual(Object.keys(STATUSES).sort(), ['context-only', 'done', 'not-started', 'partly', 'ready', 'waiting']);
+});
+
+test('a healthy tool has no status line: ready, and done with nothing to add', () => {
+  assert.equal(statusText({ key: 'ready' }), null);
+  assert.equal(statusText({ key: 'ready', detail: null }), null);
+  assert.equal(statusText({ key: 'done' }), null);
+  assert.equal(needsAttention({ key: 'ready' }), false);
+  assert.equal(needsAttention({ key: 'done' }), false);
+});
+
+test('a setup fact with no problem is plain text with no dot', () => {
+  assert.equal(statusText({ key: 'done', detail: '2 notes' }), '2 notes');
+  assert.equal(statusText({ key: 'done', detail: 'no data on this hub' }), 'no data on this hub');
+  assert.equal(statusText({ key: 'context-only', detail: 'no data on this hub' }), 'notes only · no data on this hub');
+  assert.equal(needsAttention({ key: 'context-only', detail: 'no data on this hub' }), false);
+  for (const line of ['2 notes', 'notes only · no data on this hub']) {
+    for (const dot of [...DOTS, ...OLD_MARKS]) assert.ok(!line.includes(dot), line);
   }
 });
 
-test('statusText never returns a glyph without its word, with or without a detail', () => {
-  assert.equal(statusText({ key: 'ready' }), '✓ Ready');
-  assert.equal(statusText({ key: 'done', detail: '3 notes' }), '✓ Done · 3 notes');
-  assert.equal(statusText({ key: 'partly', detail: 'nothing taught yet' }), '◐ Partly ready · nothing taught yet');
-  assert.equal(statusText({ key: 'waiting', detail: 'needs data' }), '◌ Waiting · needs data');
-  assert.equal(statusText({ key: 'not-started', detail: 'no notes yet' }), '○ Not started · no notes yet');
-  assert.equal(statusText({ key: 'admin' }), '🔒 Admin only');
-  assert.equal(statusText({ key: 'context-only', detail: '1 note' }), '✓ Context only · 1 note');
+test('each attention state is a dot then a few lower-case words, never a colour alone', () => {
+  assert.equal(statusText({ key: 'partly', detail: 'no data yet' }), '🟡 no data yet');
+  assert.equal(statusText({ key: 'partly', detail: 'nothing taught yet' }), '🟡 nothing taught yet');
+  assert.equal(statusText({ key: 'partly' }), '🟡 partly ready');
+  assert.equal(statusText({ key: 'waiting', detail: 'needs data' }), '⚪ needs data');
+  assert.equal(statusText({ key: 'waiting', detail: 'needs the AI' }), '⚪ needs the AI');
+  assert.equal(statusText({ key: 'waiting' }), '⚪ waiting');
+  assert.equal(statusText({ key: 'not-started' }), '⚪ not started');
+  assert.equal(statusText({ key: 'not-started', detail: 'no notes yet' }), '⚪ not started');
+  for (const key of ['partly', 'waiting', 'not-started']) {
+    assert.equal(needsAttention({ key }), true, key);
+    for (const detail of [null, 'needs x']) {
+      const line = statusText({ key, detail });
+      const [dot, ...rest] = line.split(' ');
+      assert.ok(['🟡', '⚪'].includes(dot), line);
+      const words = rest.join(' ');
+      assert.ok(words.trim().length > 0, `${line}: words follow the dot`);
+      assert.equal(words[0], words[0].toLowerCase(), `${line}: lower case after the dot`);
+    }
+  }
+  // 🔴 is reserved for a failure, unused for now; 🟢 is never shown.
   for (const key of Object.keys(STATUSES)) {
     for (const detail of [null, 'x']) {
-      const line = statusText({ key, detail });
-      const [glyph, ...rest] = line.split(' ');
-      assert.ok(MENU_GLYPHS.includes(glyph), line);
-      assert.ok(rest.join(' ').startsWith(STATUSES[key].word), `${line}: the word follows the glyph`);
+      const line = statusText({ key, detail }) || '';
+      assert.ok(!line.includes('🔴') && !line.includes('🟢'), line);
+      for (const mark of OLD_MARKS) assert.ok(!line.includes(mark), line);
     }
   }
 });
 
 test('the deferred statuses (requested, late) are not in the table, and an unknown key throws', () => {
-  for (const key of ['requested', 'late', 'checking', 'open', '', undefined, 'toString', '__proto__']) {
+  for (const key of ['requested', 'late', 'checking', 'open', 'admin', '', undefined, 'toString', '__proto__']) {
     assert.throws(() => statusText({ key }), TypeError, String(key));
+    assert.throws(() => needsAttention({ key }), TypeError, String(key));
   }
   assert.throws(() => statusText(), TypeError);
   assert.throws(() => statusText({ key: 'ready', detail: '  ' }), TypeError);
   assert.throws(() => statusText({ key: 'ready', detail: 3 }), TypeError);
-  const words = Object.values(STATUSES).map((s) => s.word).join(' ');
-  assert.ok(!/Requested|late/i.test(words));
-  assert.ok(!Object.values(STATUSES).some((s) => s.glyph === '⏳' || s.glyph === '⚠'));
+  const words = Object.values(STATUSES).map((s) => s.words || '').join(' ');
+  assert.ok(!/requested|late/i.test(words));
 });
 
-test('the bar is one cell per counted step, ▰ done and ▱ not done, then "Setup N of M"', () => {
-  assert.equal(setupBar(0, 1), '▱ Setup 0 of 1');
-  assert.equal(setupBar(1, 1), '▰ Setup 1 of 1');
-  assert.equal(setupBar(1, 2), '▰▱ Setup 1 of 2');
-  assert.equal(setupBar(2, 4), '▰▰▱▱ Setup 2 of 4');
-  assert.equal(setupBar(1, 4), '▰▱▱▱ Setup 1 of 4');
-  for (let of = 1; of <= 4; of += 1) {
-    for (let done = 0; done <= of; done += 1) {
-      const cells = setupBar(done, of).split(' ')[0];
-      assert.equal([...cells].length, of);
-      assert.equal([...cells].filter((c) => c === '▰').length, done);
-    }
+test('setup progress is "Setup N of M · X of Y tools working", no bar and no dot', () => {
+  assert.equal(setupProgress(0, 1, 1, 2), 'Setup 0 of 1 · 1 of 2 tools working');
+  assert.equal(setupProgress(2, 4, 3, 3), 'Setup 2 of 4 · 3 of 3 tools working');
+  assert.equal(setupProgress(1, 2, 1, 1), 'Setup 1 of 2 · 1 of 1 tool working');
+  // A hub with no tools: the setup count only.
+  assert.equal(setupProgress(2, 4, 0, 0), 'Setup 2 of 4');
+  for (const [d, o] of [[0, 0], [2, 1], [-1, 2], [1.5, 2], ['1', 2], [1, null]]) assert.throws(() => setupProgress(d, o, 0, 0), RangeError);
+  assert.throws(() => setupProgress(0, 1, 3, 2), RangeError);
+});
+
+test('tools working: "All Y tools working" when every tool works, else the counts that are not, honestly', () => {
+  assert.equal(toolsWorking(2, 2), 'All 2 tools working');
+  assert.equal(toolsWorking(10, 10), 'All 10 tools working');
+  assert.equal(toolsWorking(1, 1), '1 tool working');
+  assert.equal(toolsWorking(0, 0), 'No tools yet');
+  assert.equal(toolsWorking(1, 2, { limited: 1 }), '1 of 2 tools working · 1 limited');
+  assert.equal(toolsWorking(1, 2, { needSetup: 1 }), '1 of 2 tools working · 1 needs setup');
+  assert.equal(toolsWorking(1, 4, { limited: 1, needSetup: 2 }), '1 of 4 tools working · 1 limited · 2 need setup');
+  assert.equal(toolsWorking(0, 1, { limited: 1 }), '0 of 1 tool working · 1 limited');
+  // A row with no status line (a guard caught it) is in neither count.
+  assert.equal(toolsWorking(1, 2), '1 of 2 tools working');
+  assert.throws(() => toolsWorking(3, 2), RangeError);
+  assert.throws(() => toolsWorking(1, 2, { limited: 1, needSetup: 1 }), RangeError, 'never more than Y in all');
+  assert.throws(() => toolsWorking(1, 2, { limited: -1 }), RangeError);
+});
+
+test('the strip lines and the Setup group header hold no dot and no old mark; the header is "Setup · admins only"', () => {
+  assert.equal(SETUP_GROUP, 'Setup · admins only');
+  const lines = [SETUP_GROUP, setupProgress(1, 4, 1, 3), toolsWorking(1, 3, { limited: 1, needSetup: 1 }), toolsWorking(3, 3)];
+  for (const line of lines) {
+    for (const mark of [...DOTS, ...DOT_CODES, ...OLD_MARKS]) assert.ok(!line.includes(mark), `${line}: ${mark}`);
   }
-  for (const [d, o] of [[0, 0], [2, 1], [-1, 2], [1.5, 2], ['1', 2], [1, null]]) assert.throws(() => setupBar(d, o), RangeError);
-});
-
-test('tools ready reads "✓ N of M tools ready"; the Setup group header is "🔒 Setup · admins"', () => {
-  assert.equal(toolsReady(1, 2), '✓ 1 of 2 tools ready');
-  assert.equal(toolsReady(0, 0), '✓ 0 of 0 tools ready');
-  assert.throws(() => toolsReady(3, 2), RangeError);
-  assert.equal(SETUP_GROUP, '🔒 Setup · admins');
 });
 
 test('menuVerbOf: each archetype\'s default (D10), a manifest verb overrides it, "Open" and "Why?" are never verbs', () => {
@@ -103,9 +143,10 @@ test('menuVerbOf: each archetype\'s default (D10), a manifest verb overrides it,
   assert.throws(() => menuVerbOf(null), TypeError);
 });
 
-test('the reserved glyphs are the menu glyphs plus the two deferred statuses\' marks', () => {
-  assert.deepEqual([...GLYPHS].sort(), [...MENU_GLYPHS].sort());
-  assert.deepEqual([...RESERVED_GLYPHS].sort(), [...MENU_GLYPHS, '⏳', '⚠'].sort());
+test('the reserved marks: the four dots, their Slack shortcodes, and the menu\'s old marks', () => {
+  assert.deepEqual([...GLYPHS].sort(), [...DOTS].sort());
+  assert.deepEqual([...SHORTCODES].sort(), [...DOT_CODES].sort());
+  assert.deepEqual([...RESERVED_GLYPHS].sort(), [...DOTS, ...DOT_CODES, ...OLD_MARKS, '⏳', '⚠'].sort());
 });
 
 function filesUnder(dir) {
@@ -116,14 +157,17 @@ function filesUnder(dir) {
   });
 }
 
-test('no runtime file but vocabulary.js writes a menu glyph (✓ ◐ ◌ ○ 🔒 ▰ ▱)', () => {
+// 🔴 is excluded: the routing-map editor already uses it for a hard rule
+// break (as ⚠ was excluded before), and this change does not touch it.
+test('no runtime file but vocabulary.js writes a menu mark (🟢 🟡 ⚪, their shortcodes, and ✓ ◐ ◌ ○ 🔒 ▰ ▱)', () => {
+  const marks = [...DOTS.filter((d) => d !== '🔴'), ...DOT_CODES.filter((c) => c !== ':red_circle:'), ...OLD_MARKS];
   const offenders = [];
   for (const file of filesUnder(RUNTIME)) {
     if (file === VOCABULARY) continue;
     const text = fs.readFileSync(file, 'utf8');
-    for (const g of MENU_GLYPHS) if (text.includes(g)) offenders.push(`${path.relative(RUNTIME, file)}: ${g}`);
+    for (const g of marks) if (text.includes(g)) offenders.push(`${path.relative(RUNTIME, file)}: ${g}`);
   }
   assert.deepEqual(offenders, []);
   const own = fs.readFileSync(VOCABULARY, 'utf8');
-  for (const g of MENU_GLYPHS) assert.ok(own.includes(g), g);
+  for (const g of [...DOTS, ...DOT_CODES]) assert.ok(own.includes(g), g);
 });

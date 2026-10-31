@@ -138,6 +138,8 @@ function setup({
 const calls = (app, method) => app.views.filter((v) => v.method === method).map((v) => v.args);
 const block = (view, id) => view.blocks.find((b) => b.block_id === id);
 const rowOf = (view, id) => block(view, `entry:${id}`);
+// A row's status line: the context block under it (subtle health), or null.
+const statusOf = (view, id) => { const b = block(view, `status:${id}`); return b ? b.elements[0].text : null; };
 const textOf = (view) => view.blocks.map((b) => (b.text ? b.text.text : '')).join('\n');
 const buttonsOf = (view) => view.blocks.flatMap((b) => [b.accessory, ...(b.elements || [])]).filter((e) => e && e.type === 'button');
 const settle = async (n = 5) => { for (let i = 0; i < n; i += 1) await new Promise((r) => { setImmediate(r); }); };
@@ -164,15 +166,15 @@ async function why(s, user, menuView, moduleId) {
 test('a waiting row shows Why? (<id>:why) instead of its verb; every other row keeps its verb and <id>:open', async () => {
   const s = setup();
   const view = await menu(s, ADA, '/wait');
-  const rows = view.blocks.filter((b) => /^entry:/.test(b.block_id || '')).map((b) => [b.block_id.slice(6), b.text.text.split('\n')[1], b.accessory.text.text, b.accessory.action_id]);
+  const rows = view.blocks.filter((b) => /^entry:/.test(b.block_id || '')).map((b) => [b.block_id.slice(6), statusOf(view, b.block_id.slice(6)), b.accessory.text.text, b.accessory.action_id]);
   assert.deepEqual(rows, [
-    ['wait-pull', '◌ Waiting · needs data', WHY, 'wait-pull:why'],
-    ['wait-ask', '◌ Waiting · needs the AI', WHY, 'wait-ask:why'],
-    ['wait-request', '✓ Ready', 'Request', 'wait-request:open'],
-    ['wait-tool', '✓ Ready', 'Run', 'wait-tool:open'],
-    [MAP_CHECK, '◌ Waiting · needs map setup', WHY, `${MAP_CHECK}:why`],
-    ['wait-add', '○ Not started · no notes yet', 'Add', 'wait-add:open'],
-    ['wait-sources', '✓ Done · no data on this hub', 'View', 'wait-sources:open'],
+    ['wait-pull', '⚪ needs data', WHY, 'wait-pull:why'],
+    ['wait-ask', '⚪ needs the AI', WHY, 'wait-ask:why'],
+    ['wait-request', null, 'Request', 'wait-request:open'],
+    ['wait-tool', null, 'Run', 'wait-tool:open'],
+    [MAP_CHECK, '⚪ needs map setup', WHY, `${MAP_CHECK}:why`],
+    ['wait-add', '⚪ not started', 'Add', 'wait-add:open'],
+    ['wait-sources', 'no data on this hub', 'View', 'wait-sources:open'],
   ]);
   // Why? is never a manifest's verb, and its pattern names the module.
   assert.ok(!VERBS.includes(WHY));
@@ -200,7 +202,7 @@ test('Why? pushes a view titled with the tool\'s label: its status line, what is
   const { view } = await why(s, ADA, m, 'wait-pull');
   assert.equal(view.title.text, 'Visits by zone');
   assert.equal(view.close.text, 'Back');
-  assert.equal(block(view, 'why:status').text.text, '*Visits by zone*\n◌ Waiting · needs data');
+  assert.equal(block(view, 'why:status').text.text, '*Visits by zone*\n⚪ needs data');
   assert.equal(block(view, 'why:reason').text.text, ASK_WORDS.noDataNoRules());
   const request = block(view, 'why:request');
   assert.equal(request.accessory.action_id, 'wait-request:open');
@@ -356,7 +358,7 @@ test('never more than the person could see: Why? shows the status line their row
   const s = setup({ notes: async () => [{ id: '0'.repeat(32), kind: 'text', title: NOTE, text: NOTE, addedBy: ADA, addedAt: 0 }] });
   const m = await menu(s, ADA, '/wait');
   const { view } = await why(s, ADA, m, 'wait-pull');
-  assert.equal(block(view, 'why:status').text.text, rowOf(m, 'wait-pull').text.text);
+  assert.equal(block(view, 'why:status').text.text, `${rowOf(m, 'wait-pull').text.text}\n${statusOf(m, 'wait-pull')}`);
   assert.ok(!JSON.stringify(view).includes(NOTE));
   // Pure: nothing in readiness's detail reaches the screen.
   const ready = { data: false, rules: false, detail: { rules: { truths: [{ name: 'RULE_TEXT_NEVER_SHOWN' }] } } };
@@ -398,7 +400,7 @@ test('way out, a click from an old message menu: the words as a private reply, w
   assert.equal(reply.response_type, 'ephemeral');
   assert.equal(reply.blocks, undefined);
   assert.equal(reply.text, [
-    'Visits by zone: ◌ Waiting · needs data', ASK_WORDS.noDataNoRules(), WHY_WORDS.requestInWindow('Request a tool'),
+    'Visits by zone: ⚪ needs data', ASK_WORDS.noDataNoRules(), WHY_WORDS.requestInWindow('Request a tool'),
   ].join('\n'));
   assert.ok(!/button/.test(JSON.stringify(reply)));
 });

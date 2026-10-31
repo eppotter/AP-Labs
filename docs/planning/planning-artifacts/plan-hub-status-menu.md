@@ -19,6 +19,19 @@ Status: **approved.** Ely wrote `approve plan hub-status-menu` on 2026-10-31, af
 - [x] No separate phone spike. The phone check is part of your final live check: iOS, plus Android if you have one. Glyphs must render and buttons must stay beside their rows. If a glyph fails, the fix is a one-line swap, so the whole vocabulary lives in one module (D2).
 - [x] The menu answers within Slack's 3-second window. Readiness and counts are a local read with no AI call. If they are slow, the menu opens first and the strip follows by `views.update` (D8).
 
+### 2026-10-31 decision: subtle health (supersedes the status vocabulary's per-row marks)
+
+Ely approved this on 2026-10-31 ("go"), after seeing mockups. Branch `feat/hub-subtle-health`. It replaces every row's mark-and-word status (D2's `✓ ◐ ◌ ○` and the `🔒` and `▰▱` marks) with a status line that shows only when something is not right. Where D1, D2, D4, D5, the acceptance criteria or the live check below quote the old marks, this decision wins.
+
+- **A healthy tool** (ready, or a complete setup step) has **no status line**: the label and the verb button only.
+- **A tool that needs attention** gets one small grey line under its name, a `context` block (`block_id: status:<id>`), starting with a coloured dot and a few lower-case words, never a colour alone: `🟡 <detail>` for partly ready (`🟡 no data yet`, `🟡 nothing taught yet`), `⚪ <detail>` for waiting (`⚪ needs data`; the button stays **Why?**), `⚪ not started` for a setup tool with nothing in it. 🔴 is reserved for a future failure ("data late", DEP-038), unused for now.
+- **A setup row with a useful fact and no problem** shows the fact as plain small grey text with no dot: Add context `2 notes`; Data sources on a hub that can't see data `notes only · no data on this hub` (replacing "✓ Context only · N notes"), or `no data on this hub` with no notes.
+- **The strip.** Line 1: `Knows:` with every 0 count left off (`Knows: 2 notes`, `Knows: 1 source · 7 truths`), or `Knows: nothing yet` when every count is 0; "couldn't check just now" is unchanged. Line 2, small grey text: `Setup N of M · X of Y tools working` while setup is incomplete (no ▰▱ bar); once complete, `All Y tools working`, or `X of Y tools working · N limited · N needs setup` (limited: partly ready; needs setup: waiting or not started). No dots in the strip.
+- **The Setup group header** is `Setup · admins only`, with no 🔒.
+- **The guard.** Status marks are still written only in `kit/runtime/registry/vocabulary.js`. A module label or group may not hold 🟢 🟡 ⚪ 🔴 or their shortcodes (`:large_green_circle:`, `:large_yellow_circle:`, `:white_circle:`, `:red_circle:`); the old marks stay refused too, so a label still can't read as a status.
+- **Unchanged:** the Why? screen (its status line now reads `⚪ needs data`), the next-step line and its single green button, the 100-block limit (each status line is one more block, counted when whole groups are cut), and every way out.
+- **Defaults the builder chose (reversible):** `⚪ not started` drops the old detail ("no notes yet", "no data, no rules"); one tool reads `1 tool working`, not "All 1 tools"; a hub with no tools outside Setup reads `No tools yet`, and while setup is incomplete it shows `Setup N of M` alone; "Checking…" (D8) is also a small grey line under each row.
+
 ## What the code has today
 
 Read on `main` at `f520d25`. The plan builds on these and adds no new store, scope or outbound call.
@@ -73,21 +86,23 @@ The two hubs today: `/brightside-v0` (`sees: []`) has the four v0 tools, all adm
 
 New `kit/runtime/registry/vocabulary.js` holds every glyph and every status word. Nothing else in the engine writes a glyph. If a glyph fails on the phone check, the fix is one line here.
 
+As built after the 2026-10-31 subtle-health decision (above). The status line is a small grey `context` block under the row, shown only when there is something to say.
+
 | Status key | Shown | Computable now? | Used for |
 |---|---|---|---|
-| `ready` | ✓ Ready | yes | a tool that works fully |
-| `done` | ✓ Done | yes | a setup step or setup tool that is complete |
-| `context-only` | ✓ Context only | yes | Data sources on a hub that doesn't connect to data but has notes (fix/data-sources-wording) |
-| `partly` | ◐ Partly ready | yes | works with limits (Ask before data and rules) |
-| `waiting` | ◌ Waiting · needs X | yes | can't work yet; the button becomes **Why?** |
-| `not-started` | ○ Not started | yes | a setup tool with nothing in it yet |
-| `admin` | 🔒 Admin only | yes | the Setup group's header, "🔒 Setup · admins" |
-| `requested` | ⏳ Requested · in build | **no**: nothing records a request | deferred, DEP row |
-| `late` | ⚠ Data late · as of date | **no**: no cheap data date | deferred, DEP row |
+| `ready` | no line | yes | a tool that works fully |
+| `done` | no line, or the detail as a plain fact (`2 notes`, `no data on this hub`) | yes | a setup step or setup tool that is complete |
+| `context-only` | `notes only · no data on this hub` | yes | Data sources on a hub that doesn't connect to data but has notes (fix/data-sources-wording) |
+| `partly` | `🟡 <detail>` (`🟡 no data yet`) | yes | works with limits (Ask before data and rules) |
+| `waiting` | `⚪ <detail>` (`⚪ needs data`) | yes | can't work yet; the button becomes **Why?** |
+| `not-started` | `⚪ not started` | yes | a setup tool with nothing in it yet |
+| `requested` | not decided | **no**: nothing records a request | deferred, DEP-039 |
+| `late` | `🔴 …` (reserved) | **no**: no cheap data date | deferred, DEP-038 |
 
-- **Every status carries a word.** The glyph never stands alone. A status may add a short detail after a middle dot: `✓ Done · 3 notes`, `◌ Waiting · needs data`.
+- **Never a colour alone.** Every dot is followed by a few lower-case words. A healthy tool has no line at all.
 - **The deferred two are not in the module** until a source exists, so no screen can show a status the code can't back.
-- **The bar** has one cell per setup step the hub counts (D4: one to four), `▰` done and `▱` not done, followed by words (`Setup 2 of 4`). It is in the same module.
+- **No bar.** Setup progress is words only (`Setup 2 of 4`), in the strip (D4, as amended).
+- **The Setup group header** is `Setup · admins only` (the old `admin` status key and its 🔒 are gone).
 - **The verbs**: Ask, Run, View, Add, Review, Request, and Why?. "Open" is not one of them.
 
 ### D3. What the Knows line counts
@@ -397,21 +412,21 @@ Ely runs it in Slack, from Ely's own account (an admin in the profile), in `/bri
 **Epic 17.**
 
 14. Type `/brightside-v0` and read the line that starts with "Knows:". Note the number of notes it shows.
-15. Add one typed note in Add context, then close the window and type `/brightside-v0` again. The "Knows:" line should show one more note than in step 14, the Add context row should say "✓ Done" with the number of notes, and the Data sources row should say "✓ Context only" with the same number.
-16. In Add context, remove every entry, then close the window and type `/brightside-v0` again. The line under "Knows:" should start with "▱ Setup 0 of 1".
+15. Add one typed note in Add context, then close the window and type `/brightside-v0` again. The "Knows:" line should show one more note than in step 14, the Add context row should have a small grey line with the number of notes (for example "2 notes", no dot), and the Data sources row should say "notes only · no data on this hub" in small grey text.
+16. In Add context, remove every entry, then close the window and type `/brightside-v0` again. The top line should say "Knows: nothing yet", the line under it should start with "Setup 0 of 1", and Add context should say "⚪ not started".
 17. Look just under those two lines. You should see "Next: teach it the business" with a green **Add context** button, and it should be the only green button in the window.
 18. Press the green **Add context** button. Add context should open, ready for a note.
-19. Add a typed note, then close the window and type `/brightside-v0` again. The setup bar should be gone, replaced by a line like "✓ 1 of 2 tools ready", and the next step should say "Next: request your first tool" (when Request a tool shows "✓ Ready").
-20. Look at each tool row in the `/brightside-v0` menu. Every row should have a status that is a mark and a word (for example "✓ Ready" or "◐ Partly ready"), and every button should be a verb (Ask, Add, View, Request or Why?). No button should say "Open".
-21. Type `/brightside`. You should see the tools under the headers "Lists", "Routing" and "Tools", buttons that say **Run**, **Review** or **View** (or **Why?** on a tool that is waiting), and no "Open" anywhere. The setup bar there is not full yet, because `guardrails.md` is not signed off: that is expected.
-22. In either menu, find a row marked "◌ Waiting" with a **Why?** button. If there isn't one, stop and ask the Orchestrator how to make one wait (for example by unsetting the build request channel on your machine); it is your call whether to do that.
-23. Press **Why?** on that row. A screen titled with the tool's name should say what the tool is missing, and either offer **Request** or say to ask the admin.
+19. Add a typed note, then close the window and type `/brightside-v0` again. "Setup 0 of 1" should be gone, replaced by a line like "1 of 2 tools working · 1 limited", and the next step should say "Next: request your first tool" (when Request a tool has no status line).
+20. Look at each tool row in the `/brightside-v0` menu. A tool that works (Request a tool) should have no status line at all. A tool that needs attention should have one small grey line under its name that starts with a coloured dot and a few words (for example "🟡 no data yet" on Ask). There should be no ✓, ◐, ◌, ○, 🔒, ▰ or ▱ anywhere, the Setup header should read "Setup · admins only", and every button should be a verb (Ask, Add, View, Request or Why?). No button should say "Open".
+21. Type `/brightside`. You should see the tools under the headers "Lists", "Routing" and "Tools", buttons that say **Run**, **Review** or **View** (or **Why?** on a tool that is waiting), and no "Open" anywhere. The second line still says "Setup N of 4", because `guardrails.md` is not signed off: that is expected.
+22. In either menu, find a row with a small grey "⚪ needs …" line and a **Why?** button. If there isn't one, stop and ask the Orchestrator how to make one wait (for example by unsetting the build request channel on your machine); it is your call whether to do that.
+23. Press **Why?** on that row. A screen titled with the tool's name should show the same "⚪ needs …" line, say what the tool is missing, and either offer **Request** or say to ask the admin.
 24. Press **Back**. You should be back on the menu.
-25. On an iPhone, open the Slack app and type `/brightside-v0`, then `/brightside`. Every mark (✓ ◐ ◌ ○ 🔒 ▰ ▱) should show as a symbol, not as an empty box or a question mark, and always next to its word.
+25. On an iPhone, open the Slack app and type `/brightside-v0`, then `/brightside`. Every dot (🟡 ⚪) should show in colour, not as an empty box or a question mark, always followed by its words, and each status line should be small grey text under its row.
 26. On the same iPhone, look at each tool row. Each button should sit beside its row, not on a line of its own.
 27. If you have an Android phone, repeat steps 25 and 26 on it. If you don't, write "Android not checked" in your reply.
 
-If a mark fails on a phone, tell the Orchestrator which one: the fix is a one-line swap in `kit/runtime/registry/vocabulary.js`.
+If a dot fails on a phone, tell the Orchestrator which one: the fix is a one-line swap in `kit/runtime/registry/vocabulary.js`.
 
 Not checked live, by design: what a member sees (the example's only member, Marcus, is fictional). The tests cover it.
 
