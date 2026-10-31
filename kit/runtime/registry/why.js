@@ -40,7 +40,8 @@
 // menu).
 //
 // Never more than the person could already see: the status line is the
-// one their menu row showed, and the words name only whether the hub's
+// one their menu row showed (vocabulary statusText: the white dot and
+// "needs data", subtle health), and the words name only whether the hub's
 // data and rules are set up (the strip's counts, as yes or no), never a
 // note, truth, rule or row. The listener shows it only to a person in the
 // profile who has the row in their menu (the strip's audience, P1-1).

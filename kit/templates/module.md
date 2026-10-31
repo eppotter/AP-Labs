@@ -28,7 +28,7 @@ The manifest is JSON, checked against `kit/runtime/schema/module.schema.json`. U
 |---|---|---|
 | `id` | yes | Lower-case slug (`weekly-report`). Must equal the folder name, so two modules can never share an id. |
 | `hub` | yes | The id of the hub whose menu lists it: a file `app/hubs/<hub>.json` must exist. What the module can reach is what that hub's `sees` lists: on a hub without `"data"`, `ctx.data.run` refuses ("no data source"), a `scoped-pull`, `approval-write` or `routing-map` module stops startup, and `npm run check` fails a module file there that imports `kit/runtime/data`. On a hub without `"context"`, it fails one that imports `kit/runtime/llm` or `kit/runtime/knowledge`, or names the profile's context files (`.aplabs/context`, or `org.md`, `data.md`, `guardrails.md` or `connectors.md` under a `context/` folder). |
-| `label` | yes | The tool's name on the menu, up to 60 characters. It may not say "Setup" or "Set up", or hold a menu status mark (✓ ◐ ◌ ○ 🔒 ▰ ▱ ⏳ ⚠): startup fails naming the file and the field. |
+| `label` | yes | The tool's name on the menu, up to 60 characters. It may not say "Setup" or "Set up", or hold a menu status mark (🟢 🟡 ⚪ 🔴, or their Slack shortcodes such as `:red_circle:`, or the older marks ✓ ◐ ◌ ○ 🔒 ▰ ▱ ⏳ ⚠): startup fails naming the file and the field. |
 | `description` | yes | One line, up to 200 characters, shown beside the tool in the hub's Help. Say what it does for the person. |
 | `resource` | yes | The profile resource key that grants it (`WEEKLY_REPORT`). It must be declared in the profile, or startup fails: a missing key is a setup fault, never shown to a person as a denial. |
 | `archetype` | yes | `handler` (your code replies), `scoped-pull` (a list with a typed form, no code: see below), `approval-write` (a scoped pull whose list can be pushed to another system after the person previews and approves it: see below), `routing-map` (the routing map), or one of the four starter tools the engine shows itself: `data-sources`, `add-context`, `ask` and `build-request` (see "The four starter tools" below). |
@@ -56,14 +56,14 @@ Every hub file (`app/hubs/<id>.json`) has a required `sees`: what the hub, and e
 
 ## The four starter tools
 
-Four archetypes are tools the engine shows itself. Their manifest is the required fields only: no `handler`, `query`, `parameters`, `scoring` or `row_id` (startup stops on any of them). The template's example client has one of each to copy, and the fork guide (`docs/fork-guide.md`, step 8) says how. Each opens in the module's own view, whose Back returns to the hub's menu. Data sources and Add context always sit in the menu's **🔒 Setup · admins** group, which only a person whose profile role is `admin` sees: granting their keys to anyone else by name does not show it to them. The example labels its build request tool **Request a tool**.
+Four archetypes are tools the engine shows itself. Their manifest is the required fields only: no `handler`, `query`, `parameters`, `scoring` or `row_id` (startup stops on any of them). The template's example client has one of each to copy, and the fork guide (`docs/fork-guide.md`, step 8) says how. Each opens in the module's own view, whose Back returns to the hub's menu. Data sources and Add context always sit in the menu's **Setup · admins only** group, which only a person whose profile role is `admin` sees: granting their keys to anyone else by name does not show it to them. The example labels its build request tool **Request a tool**.
 
 | Archetype | Button | Status on the menu | What a person sees |
 |---|---|---|---|
-| `data-sources` | View | `✓ Done` when the data, known truths and rules the hub can reach are all set up (on a hub that sees neither data nor rules: `✓ Context only · N notes` once it has notes, else `✓ Done · no data on this hub`); `○ Not started · no data, no rules`; else `◐ Partly ready · needs <what>` | What the hub has: its connected data (available or not, never a table or row count), whether `data.md` and `guardrails.md` are signed off and each known truth with its owner and last check, and the titles of its added context. With no data connected, a line on top: "Answers from the added context below. No data is connected, so it can't answer questions about numbers yet." when it has added context, else "Nothing yet: no added context and no data connected." On a hub whose `sees` leaves out data, "This hub doesn't connect to data" replaces "No data is connected" / "no data connected", and the line drops "yet". A hub whose `sees` leaves out rules never mentions known truths or rules. |
-| `add-context` | Add | `✓ Done · N notes`; `○ Not started · no notes yet`; `◌ Waiting · needs storage` with no knowledge store | A title and a text box (at most 3,000 characters), or one uploaded file (PDF, image, `.txt` or `.md`), for Ask to use on this hub, and the hub's entries, each with Remove. An entry is live at once. A PDF or image is read once through the AI; only the text is kept, and the file stays in the uploader's Slack files. |
-| `ask` | Ask | `✓ Ready` with data and rules set up; else `◐ Partly ready · nothing taught yet`, `· no data yet` or `· no rules yet`; `◌ Waiting · needs the AI` with no AI service | A question in the person's own words (at most 500 characters). Ask points to a tool on this hub the person can open, says what is missing when a data question comes before the hub's data and rules are set up, or answers from the hub's prompt. It never writes or runs SQL. |
-| `build-request` | Request | `✓ Ready`; `◌ Waiting · needs a channel` while `slack.build_requests_channel` is unset; `◌ Waiting · not on this hub` on a hub that sees context or data | What the person needs (at most 500 characters), summarised by the AI, previewed exactly as it will post, then posted to the profile's `slack.build_requests_channel` with a mention of the person. Only a hub that sees neither `"context"` nor `"data"` may post. |
+| `data-sources` | View | No line when the data, known truths and rules the hub can reach are all set up (on a hub that sees neither data nor rules: `notes only · no data on this hub` once it has notes, else `no data on this hub`); `⚪ not started` when none is; else `🟡 needs <what>` | What the hub has: its connected data (available or not, never a table or row count), whether `data.md` and `guardrails.md` are signed off and each known truth with its owner and last check, and the titles of its added context. With no data connected, a line on top: "Answers from the added context below. No data is connected, so it can't answer questions about numbers yet." when it has added context, else "Nothing yet: no added context and no data connected." On a hub whose `sees` leaves out data, "This hub doesn't connect to data" replaces "No data is connected" / "no data connected", and the line drops "yet". A hub whose `sees` leaves out rules never mentions known truths or rules. |
+| `add-context` | Add | `N notes`; `⚪ not started` with none; `⚪ needs storage` with no knowledge store | A title and a text box (at most 3,000 characters), or one uploaded file (PDF, image, `.txt` or `.md`), for Ask to use on this hub, and the hub's entries, each with Remove. An entry is live at once. A PDF or image is read once through the AI; only the text is kept, and the file stays in the uploader's Slack files. |
+| `ask` | Ask | No line with data and rules set up; else `🟡 nothing taught yet`, `🟡 no data yet` or `🟡 no rules yet`; `⚪ needs the AI` with no AI service | A question in the person's own words (at most 500 characters). Ask points to a tool on this hub the person can open, says what is missing when a data question comes before the hub's data and rules are set up, or answers from the hub's prompt. It never writes or runs SQL. |
+| `build-request` | Request | No line when it can post; `⚪ needs a channel` while `slack.build_requests_channel` is unset; `⚪ not on this hub` on a hub that sees context or data | What the person needs (at most 500 characters), summarised by the AI, previewed exactly as it will post, then posted to the profile's `slack.build_requests_channel` with a mention of the person. Only a hub that sees neither `"context"` nor `"data"` may post. |
 
 Their resources:
 
@@ -73,21 +73,23 @@ Their resources:
 
 ## What the menu shows
 
-A hub's menu lists each tool a person may open as one row: the label, then its status, with the verb as the button beside it. A manifest never sets a status: the engine works it out from what the hub has (`kit/runtime/registry/status.js`). Every status is a mark and a word, sometimes with a detail after a middle dot:
+A hub's menu lists each tool a person may open as one row: the label, with the verb as the button beside it. A manifest never sets a status: the engine works it out from what the hub has (`kit/runtime/registry/status.js`). Health shows only when something isn't right (subtle health): a status line, in small grey text under the row, starts with a coloured dot and a few lower-case words, never a colour alone.
 
-| Status | Means |
-|---|---|
-| `✓ Ready` | The tool works fully. |
-| `✓ Done` | A setup tool whose step is complete (`✓ Done · 3 notes`). |
-| `◐ Partly ready` | It works, with limits (`◐ Partly ready · no data yet`). |
-| `◌ Waiting` | It can't work yet (`◌ Waiting · needs data`). The button is **Why?** instead of the verb. |
-| `○ Not started` | A setup tool with nothing in it yet. |
+| Status | Line | Means |
+|---|---|---|
+| Ready | none | The tool works fully. |
+| Done | none, or a plain fact with no dot (`3 notes`) | A setup tool whose step is complete. |
+| Partly ready | `🟡 no data yet` | It works, with limits. |
+| Waiting | `⚪ needs data` | It can't work yet. The button is **Why?** instead of the verb. |
+| Not started | `⚪ not started` | A setup tool with nothing in it yet. |
+
+🔴 is kept for a future failure (late data) and is not used yet.
 
 What a fork's own modules show:
 
-- **`handler`:** `✓ Ready`. A module that uploads map images waits while the map files aren't set up (`◌ Waiting · needs map setup`).
-- **`scoped-pull` and `approval-write`:** `✓ Ready` when the hub's data is connected, else `◌ Waiting · needs data`.
-- **`routing-map`:** `✓ Ready` when the data is connected and the map is set up, else `◌ Waiting · needs data` or `◌ Waiting · needs map setup`.
+- **`handler`:** no line. A module that uploads map images waits while the map files aren't set up (`⚪ needs map setup`).
+- **`scoped-pull` and `approval-write`:** no line when the hub's data is connected, else `⚪ needs data`.
+- **`routing-map`:** no line when the data is connected and the map is set up, else `⚪ needs data` or `⚪ needs map setup`.
 
 **Why?** opens a screen titled with the tool's label. It says what is missing, in the bot's own words; offers **Request** when the person has the build request tool on the same hub and it is ready, otherwise says to ask the admin; and Back returns to the menu. If the tool became ready since the menu opened, it says so.
 

@@ -9,14 +9,17 @@
 // The menu, top to bottom (D1):
 //   header           the hub's name
 //   not set up       a context line, for a person the profile doesn't name
-//   strip:knows      "Knows: 2 notes · 0 sources · 0 truths · 0 rules", or
-//                    "Knows: checking…" (the notes are still being read, D8),
-//                    or "Knows: couldn't check just now"
-//   strip:progress   an admin: the setup bar and how many tools are ready
-//                    while setup is not done, else "N of M tools ready" with
-//                    the tick; a member: "Your admin is setting this up." on
-//                    a blank hub (plus " You can still ask questions." with
-//                    an Ask row), else "N of M tools ready" (D4)
+//   strip:knows      "Knows: 2 notes", "Knows: 1 source · 7 truths" (a count
+//                    of 0 is left off), "Knows: nothing yet" (every count
+//                    0), "Knows: checking…" (the notes are still being read,
+//                    D8), or "Knows: couldn't check just now"
+//   strip:progress   small grey text, no dots. An admin: "Setup N of M · X
+//                    of Y tools working" while setup is not done, else
+//                    "All Y tools working" or "X of Y tools working · N
+//                    limited · N needs setup"; a member: "Your admin is
+//                    setting this up." on a blank hub (plus " You can still
+//                    ask questions." with an Ask row), else the tools line
+//                    (D4)
 //   welcome          first visit only, one sentence (D9)
 //   next             the next step (D6, Story 17.4), when the rule in
 //                    ./next-step finds one: "*Next:* teach it the business",
@@ -30,8 +33,13 @@
 //                    the manifests' groups in order of their first module,
 //                    then the ungrouped tools under "Tools", then the Setup
 //                    group (add-context and data-sources, for an admin only)
-//   entry:<id>       "*<label>*" and the status line under it; the verb as
-//                    the button (D2, D10). The button still sends
+//   entry:<id>       "*<label>*"; the verb as the button (D2, D10). Under
+//                    it, status:<id>, a context block (small grey text) with
+//                    the row's status line, only when there is one (subtle
+//                    health, 2026-10-31): none for a healthy tool, a plain
+//                    fact for a setup row ("2 notes"), a dot and a few words
+//                    for a tool that needs attention (the yellow dot, "no
+//                    data yet"), or "Checking…". The button still sends
 //                    <module-id>:open, so the dispatcher and its re-check
 //                    are unchanged. The description lives in Help.
 //                    A row whose status is waiting shows "Why?" instead
@@ -41,8 +49,9 @@
 //                    (./why).
 //   divider, help    as before (modalView keepTail: 2)
 //
-// "Tools ready" counts the rows outside the Setup group whose status is
-// ready; M is the number of those rows.
+// "Tools working" counts the rows outside the Setup group whose status is
+// ready; Y is the number of those rows. "Limited" counts the partly ready
+// ones, "needs setup" the waiting and not-started ones.
 //
 // The strip shows only when the caller says the person may see it (in the
 // profile, architect P1-1) and they have at least one row. Counts are
@@ -52,7 +61,8 @@
 // Never blocks the menu (D1, architect P2-5): a status the vocabulary can't
 // word gives that row its verb and no status line, logged with the module id
 // and the function's name only. Over Slack's 100 blocks (P3-10) whole groups
-// are dropped from the end, never half a group; the first group, the Setup
+// are dropped from the end (each status line is one more block), never half
+// a group; the first group, the Setup
 // group, a "More tools than fit here: see Help." line, the divider and Help
 // are kept. A first group too big on its own is left to modalView's generic
 // cut ("more… N more not shown here."), the backstop.
@@ -62,7 +72,7 @@
 // notice.
 
 const {
-  statusText, toolsReady, setupProgress, menuVerbOf, SETUP_GROUP, UNGROUPED, SEP, CHECKING, WHY,
+  statusText, toolsWorking, setupProgress, menuVerbOf, SETUP_GROUP, UNGROUPED, SEP, CHECKING, WHY,
 } = require('./vocabulary');
 
 const OPEN_VERB = 'open';
@@ -77,6 +87,7 @@ const NOTHING_HERE = 'Nothing is available to you here yet.';
 const MORE_TOOLS = 'More tools than fit here: see Help.';
 const KNOWS_CHECKING = 'Knows: checking…';
 const KNOWS_UNCHECKED = "Knows: couldn't check just now";
+const KNOWS_NOTHING = 'Knows: nothing yet';
 const SETTING_UP = 'Your admin is setting this up.';
 const STILL_ASK = ' You can still ask questions.';
 
@@ -130,15 +141,17 @@ function verbFor(entry, log = NO_LOG) {
   }
 }
 
-// "Knows: 2 notes · 0 sources · 0 truths · 0 rules" (D3), or "couldn't
-// check just now" when something could not be read: never a 0 that hides it.
+// "Knows: 2 notes · 1 source" (D3, a count of 0 left off), "Knows: nothing
+// yet" when every count is 0, or "couldn't check just now" when something
+// could not be read: never a 0 (or a "nothing") that hides it.
 function knowsLine(summary) {
   const c = summary && summary.counts;
   if (!c || summary.problem || !Number.isSafeInteger(c.notes)) return KNOWS_UNCHECKED;
-  return `Knows: ${[
-    plural(c.notes, 'note', 'notes'), plural(c.sources, 'source', 'sources'),
-    plural(c.truths, 'truth', 'truths'), plural(c.rules, 'rule', 'rules'),
-  ].join(SEP)}`;
+  const parts = [
+    [c.notes, 'note', 'notes'], [c.sources, 'source', 'sources'],
+    [c.truths, 'truth', 'truths'], [c.rules, 'rule', 'rules'],
+  ].filter(([n]) => Number.isSafeInteger(n) && n > 0).map(([n, one, many]) => plural(n, one, many));
+  return parts.length ? `Knows: ${parts.join(SEP)}` : KNOWS_NOTHING;
 }
 
 const stepDone = (summary, name) => summary.steps.some((s) => s.step === name && s.counted && s.done);
@@ -147,19 +160,21 @@ const stepDone = (summary, name) => summary.steps.some((s) => s.step === name &&
 function progressLine(summary, rows, admin) {
   if (!summary || summary.problem || !Array.isArray(summary.steps)) return null;
   const tools = rows.filter((r) => !isSetup(r.entry));
-  const ready = tools.filter((r) => r.status && r.status.key === 'ready').length;
+  const keyed = (...keys) => tools.filter((r) => r.status && keys.includes(r.status.key)).length;
+  const working = keyed('ready');
+  const counts = { limited: keyed('partly'), needSetup: keyed('waiting', 'not-started') };
   if (admin) {
-    if (summary.of > 0 && summary.done < summary.of) return setupProgress(summary.done, summary.of, ready, tools.length);
-    return toolsReady(ready, tools.length);
+    if (summary.of > 0 && summary.done < summary.of) return setupProgress(summary.done, summary.of, working, tools.length);
+    return toolsWorking(working, tools.length, counts);
   }
   if (!stepDone(summary, 'taught') && !stepDone(summary, 'data')) {
     return rows.some((r) => r.entry.archetype === 'ask') ? `${SETTING_UP}${STILL_ASK}` : SETTING_UP;
   }
-  return toolsReady(ready, tools.length);
+  return toolsWorking(working, tools.length, counts);
 }
 
-// The row's status line, or null (no status, or one the vocabulary refuses:
-// logged with the module id and the function's name only).
+// The row's status line, or null (healthy, no status, or one the vocabulary
+// refuses: logged with the module id and the function's name only).
 function statusLine(row, { checking, log }) {
   if (checking) return CHECKING;
   if (!row.status) return null;
@@ -175,21 +190,25 @@ function statusLine(row, { checking, log }) {
 // status is worded: a row with no status line, or "Checking…", keeps its verb.
 const isWaiting = (row, line, { checking }) => !checking && Boolean(line) && row.status.key === 'waiting';
 
-function rowBlock(row, opts) {
+// A row's blocks: its section (label and button), then its status line as
+// a context block (Slack's small grey text) when it has one.
+function rowBlocks(row, opts) {
   const { entry } = row;
   const line = statusLine(row, opts);
   const why = isWaiting(row, line, opts);
-  return {
+  const blocks = [{
     type: 'section',
     block_id: `entry:${entry.id}`,
-    text: { type: 'mrkdwn', text: `*${escapeText(entry.label)}*${line ? `\n${line}` : ''}` },
+    text: { type: 'mrkdwn', text: `*${escapeText(entry.label)}*` },
     accessory: {
       type: 'button',
       action_id: why ? whyActionId(entry.id) : openActionId(entry.id),
       value: entry.id,
       text: { type: 'plain_text', text: why ? WHY : (row.verb || verbFor(entry, opts.log)), emoji: false },
     },
-  };
+  }];
+  if (line) blocks.push({ type: 'context', block_id: `status:${entry.id}`, elements: [{ type: 'mrkdwn', text: line }] });
+  return blocks;
 }
 
 // The rows in groups (D5): the manifests' groups in order of first
@@ -266,9 +285,9 @@ function buildMenu(hub, rows, {
     },
   ];
   // Whole groups only (P3-10): drop the last tool group until the menu fits.
-  let groups = groupsOf(shown, admin);
+  let groups = groupsOf(shown, admin).map((g) => ({ ...g, blocks: g.rows.flatMap((row) => rowBlocks(row, opts)) }));
   let cut = false;
-  const size = () => head.length + tail.length + (cut ? 1 : 0) + groups.reduce((n, g) => n + 1 + g.rows.length, 0);
+  const size = () => head.length + tail.length + (cut ? 1 : 0) + groups.reduce((n, g) => n + 1 + g.blocks.length, 0);
   // The first tool group is always kept: one group too big on its own is
   // left to modalView's generic cut, the backstop.
   while (size() > MAX_BLOCKS && groups.filter((g) => !g.setup).length > 1) {
@@ -280,7 +299,7 @@ function buildMenu(hub, rows, {
   groups.forEach((g, i) => {
     if (g.setup && cut) body.push(moreLine());
     body.push({ type: 'header', block_id: `group:${i}`, text: { type: 'plain_text', text: g.name, emoji: false } });
-    for (const row of g.rows) body.push(rowBlock(row, opts));
+    body.push(...g.blocks);
   });
   if (cut && !groups.some((g) => g.setup)) body.push(moreLine());
   const blocks = [...head, ...body, ...tail];
@@ -330,5 +349,5 @@ function buildHelp(hub, entries, { feedback, notice } = {}) {
 
 module.exports = {
   buildMenu, buildHelp, openActionId, moduleIdFromAction, whyActionId, moduleIdFromWhy, helpActionId, hubIdFromHelpAction, verbFor, isSetup,
-  OPEN_ACTION, WHY_ACTION, HELP_ACTION, SETUP_ARCHETYPES, NOTHING_HERE, MORE_TOOLS, KNOWS_CHECKING, KNOWS_UNCHECKED, SETTING_UP, STILL_ASK,
+  OPEN_ACTION, WHY_ACTION, HELP_ACTION, SETUP_ARCHETYPES, NOTHING_HERE, MORE_TOOLS, KNOWS_CHECKING, KNOWS_UNCHECKED, KNOWS_NOTHING, SETTING_UP, STILL_ASK,
 };

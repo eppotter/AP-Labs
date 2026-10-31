@@ -44,80 +44,80 @@ function factsFor(hubId, {
 const shown = (s) => (s ? statusText(s) : null);
 
 test('ask: ready with data and rules; partly before them; waiting only for the AI, never for data', () => {
-  assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full'))), '✓ Ready');
-  assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank'))), '◐ Partly ready · nothing taught yet');
-  assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank', { notes: 2 }))), '◐ Partly ready · no data yet');
+  assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full'))), null);
+  assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank'))), '🟡 nothing taught yet');
+  assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank', { notes: 2 }))), '🟡 no data yet');
   // A hub that sees context has been taught even with no notes.
-  assert.equal(shown(toolStatus(mod('onboarded-ask'), factsFor('onboarded'))), '◐ Partly ready · no data yet');
+  assert.equal(shown(toolStatus(mod('onboarded-ask'), factsFor('onboarded'))), '🟡 no data yet');
   // The full hub with its data off: partly, never waiting for data.
-  assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full', { available: false }))), '◐ Partly ready · no data yet');
+  assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full', { available: false }))), '🟡 no data yet');
   // Data connected, rules not set up.
   const noRules = { read: () => ({ ...rules.read(), truths: [] }) };
-  assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full', { reader: noRules }))), '◐ Partly ready · no rules yet');
-  assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank', { llm: false }))), '◌ Waiting · needs the AI');
-  assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full', { llm: false }))), '◌ Waiting · needs the AI');
+  assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full', { reader: noRules }))), '🟡 no rules yet');
+  assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank', { llm: false }))), '⚪ needs the AI');
+  assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full', { llm: false }))), '⚪ needs the AI');
 });
 
 test('add-context: done with N notes, not started with none, waiting with no store, no status when notes couldn\'t be listed', () => {
-  assert.equal(shown(toolStatus(mod('blank-add'), factsFor('blank'))), '○ Not started · no notes yet');
-  assert.equal(shown(toolStatus(mod('blank-add'), factsFor('blank', { notes: 1 }))), '✓ Done · 1 note');
-  assert.equal(shown(toolStatus(mod('blank-add'), factsFor('blank', { notes: 3 }))), '✓ Done · 3 notes');
-  assert.equal(shown(toolStatus(mod('blank-add'), factsFor('blank', { knowledge: false }))), '◌ Waiting · needs storage');
+  assert.equal(shown(toolStatus(mod('blank-add'), factsFor('blank'))), '⚪ not started');
+  assert.equal(shown(toolStatus(mod('blank-add'), factsFor('blank', { notes: 1 }))), '1 note');
+  assert.equal(shown(toolStatus(mod('blank-add'), factsFor('blank', { notes: 3 }))), '3 notes');
+  assert.equal(shown(toolStatus(mod('blank-add'), factsFor('blank', { knowledge: false }))), '⚪ needs storage');
   assert.equal(toolStatus(mod('blank-add'), factsFor('blank', { entriesProblem: true })), null);
 });
 
 test('data-sources: on a hub that counts none of data, truths or rules, context only with notes, else done; otherwise by the counted steps', () => {
-  assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank'))), '✓ Done · no data on this hub');
-  assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank', { notes: 1 }))), '✓ Context only · 1 note');
-  assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank', { notes: 3 }))), '✓ Context only · 3 notes');
-  assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank', { entriesProblem: true }))), '✓ Done · no data on this hub');
+  assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank'))), 'no data on this hub');
+  assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank', { notes: 1 }))), 'notes only · no data on this hub');
+  assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank', { notes: 3 }))), 'notes only · no data on this hub');
+  assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank', { entriesProblem: true }))), 'no data on this hub');
   // A hub that counts data keeps its steps' wording, notes or not.
-  assert.equal(shown(toolStatus(mod('first-sources'), factsFor('first-tool', { available: false, notes: 2 }))), '○ Not started · no data');
+  assert.equal(shown(toolStatus(mod('first-sources'), factsFor('first-tool', { available: false, notes: 2 }))), '⚪ not started');
   // first-tool sees data only: one counted step.
-  assert.equal(shown(toolStatus(mod('first-sources'), factsFor('first-tool'))), '✓ Done');
-  assert.equal(shown(toolStatus(mod('first-sources'), factsFor('first-tool', { available: false }))), '○ Not started · no data');
+  assert.equal(shown(toolStatus(mod('first-sources'), factsFor('first-tool'))), null);
+  assert.equal(shown(toolStatus(mod('first-sources'), factsFor('first-tool', { available: false }))), '⚪ not started');
   // full counts data, truths and rules.
-  assert.equal(shown(toolStatus(mod('full-sources'), factsFor('full'))), '✓ Done');
-  assert.equal(shown(toolStatus(mod('full-sources'), factsFor('full', { available: false }))), '◐ Partly ready · needs data');
+  assert.equal(shown(toolStatus(mod('full-sources'), factsFor('full'))), null);
+  assert.equal(shown(toolStatus(mod('full-sources'), factsFor('full', { available: false }))), '🟡 needs data');
   const none = { read: () => ({ ...rules.read(), truths: [], files: [] }) };
-  assert.equal(shown(toolStatus(mod('full-sources'), factsFor('full', { available: false, reader: none }))), '○ Not started · no data, no rules');
-  assert.equal(shown(toolStatus(mod('full-sources'), factsFor('full', { reader: none }))), '◐ Partly ready · needs truths, rules');
+  assert.equal(shown(toolStatus(mod('full-sources'), factsFor('full', { available: false, reader: none }))), '⚪ not started');
+  assert.equal(shown(toolStatus(mod('full-sources'), factsFor('full', { reader: none }))), '🟡 needs truths, rules');
 });
 
 test('build-request: ready when available on the hub; else waiting for a channel or not on this hub, from its own check', () => {
-  assert.equal(shown(toolStatus(mod('blank-request'), factsFor('blank'))), '✓ Ready');
-  assert.equal(shown(toolStatus(mod('blank-request'), factsFor('blank', { requests: { available: false, reason: 'channel' } }))), '◌ Waiting · needs a channel');
-  assert.equal(shown(toolStatus(mod('blank-request'), factsFor('blank', { requests: { available: false, reason: 'hub' } }))), '◌ Waiting · not on this hub');
+  assert.equal(shown(toolStatus(mod('blank-request'), factsFor('blank'))), null);
+  assert.equal(shown(toolStatus(mod('blank-request'), factsFor('blank', { requests: { available: false, reason: 'channel' } }))), '⚪ needs a channel');
+  assert.equal(shown(toolStatus(mod('blank-request'), factsFor('blank', { requests: { available: false, reason: 'hub' } }))), '⚪ not on this hub');
   // No answer from the check is not ready (fail closed).
-  assert.equal(shown(toolStatus(mod('blank-request'), factsFor('blank', { requests: null }))), '◌ Waiting · needs a channel');
+  assert.equal(shown(toolStatus(mod('blank-request'), factsFor('blank', { requests: null }))), '⚪ needs a channel');
 });
 
 test('scoped-pull and approval-write: ready when the hub\'s data is connected, else waiting for data', () => {
-  assert.equal(shown(toolStatus(mod('first-pull'), factsFor('first-tool'))), '✓ Ready');
-  assert.equal(shown(toolStatus(mod('first-pull'), factsFor('first-tool', { available: false }))), '◌ Waiting · needs data');
+  assert.equal(shown(toolStatus(mod('first-pull'), factsFor('first-tool'))), null);
+  assert.equal(shown(toolStatus(mod('first-pull'), factsFor('first-tool', { available: false }))), '⚪ needs data');
   const write = { ...mod('full-list-b'), archetype: 'approval-write' };
-  assert.equal(shown(toolStatus(write, factsFor('full'))), '✓ Ready');
-  assert.equal(shown(toolStatus(write, factsFor('full', { available: false }))), '◌ Waiting · needs data');
+  assert.equal(shown(toolStatus(write, factsFor('full'))), null);
+  assert.equal(shown(toolStatus(write, factsFor('full', { available: false }))), '⚪ needs data');
 });
 
 test('routing-map: ready with data, the map files ready and the module not unready; else waiting for data or map setup', () => {
   const map = {
     id: 'map', hub: 'full', label: 'Map', archetype: 'routing-map', environments: ['dev'],
   };
-  assert.equal(shown(toolStatus(map, factsFor('full'))), '✓ Ready');
-  assert.equal(shown(toolStatus(map, factsFor('full', { available: false }))), '◌ Waiting · needs data');
-  assert.equal(shown(toolStatus(map, factsFor('full', { mapReady: false }))), '◌ Waiting · needs map setup');
-  assert.equal(shown(toolStatus(map, factsFor('full', { unready: true }))), '◌ Waiting · needs map setup');
+  assert.equal(shown(toolStatus(map, factsFor('full'))), null);
+  assert.equal(shown(toolStatus(map, factsFor('full', { available: false }))), '⚪ needs data');
+  assert.equal(shown(toolStatus(map, factsFor('full', { mapReady: false }))), '⚪ needs map setup');
+  assert.equal(shown(toolStatus(map, factsFor('full', { unready: true }))), '⚪ needs map setup');
 });
 
 test('handler: ready, except a map module (the dev-only map check) while the map files aren\'t ready', () => {
-  assert.equal(shown(toolStatus(mod('full-tool-a'), factsFor('full'))), '✓ Ready');
-  assert.equal(shown(toolStatus(mod('full-tool-a'), factsFor('full', { available: false, mapReady: false }))), '✓ Ready');
+  assert.equal(shown(toolStatus(mod('full-tool-a'), factsFor('full'))), null);
+  assert.equal(shown(toolStatus(mod('full-tool-a'), factsFor('full', { available: false, mapReady: false }))), null);
   const mapCheck = {
     id: 'map-check', hub: 'full', label: 'Map check', archetype: 'handler', environments: ['dev'],
   };
-  assert.equal(shown(toolStatus(mapCheck, factsFor('full', { mapReady: false }))), '◌ Waiting · needs map setup');
-  assert.equal(shown(toolStatus(mapCheck, factsFor('full'))), '✓ Ready');
+  assert.equal(shown(toolStatus(mapCheck, factsFor('full', { mapReady: false }))), '⚪ needs map setup');
+  assert.equal(shown(toolStatus(mapCheck, factsFor('full'))), null);
 });
 
 test('an unknown archetype is refused (throws); only handler is ready by default', () => {

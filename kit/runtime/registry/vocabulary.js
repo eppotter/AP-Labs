@@ -1,32 +1,44 @@
 'use strict';
 
-// The hub menu's vocabulary (plan hub-status-menu, D2 and D10, Story 17.1):
-// every status mark, status word, verb and the setup bar, in one place.
-// Nothing else in the engine writes a menu glyph (a test checks), so a glyph
-// that fails on a phone is a one-line swap here.
+// The hub menu's vocabulary (plan hub-status-menu, D2 and D10, Story 17.1,
+// and the 2026-10-31 decision "subtle health"): every status mark, status
+// word, verb and strip line, in one place. Nothing else in the engine writes
+// a menu mark (a test checks), so a mark that fails on a phone is a one-line
+// swap here.
 //
-//   statusText({ key, detail })  ->  "✓ Done · 3 notes"
-//   setupBar(done, of)           ->  "▰▰▱▱ Setup 2 of 4"
-//   toolsReady(n, m)             ->  "✓ 1 of 2 tools ready"
-//   setupProgress(d, o, n, m)    ->  "▱ Setup 0 of 1 · 1 of 2 tools ready"
+//   statusText({ key, detail })  ->  null (healthy: no line), "2 notes" (a
+//                                    fact, no dot) or "🟡 no data yet" (a
+//                                    tool that needs attention)
+//   needsAttention({ key })      ->  true for partly, waiting and not-started
+//   setupProgress(d, o, n, m)    ->  "Setup 0 of 1 · 1 of 2 tools working"
+//   toolsWorking(n, m, counts)   ->  "All 2 tools working", or
+//                                    "1 of 3 tools working · 1 limited · 1 needs setup"
 //   menuVerbOf(mod)              ->  "Ask" | "Run" | "View" | "Add" | "Review" | "Request"
-//   SETUP_GROUP                  ->  "🔒 Setup · admins"
+//   SETUP_GROUP                  ->  "Setup · admins only"
 //   CHECKING                     ->  "Checking…"
 //   WHY                          ->  "Why?" (a waiting row's button, Story 17.3)
 //
-// Every status carries a word: a glyph never stands alone. A status may add
-// a short detail after a middle dot. An unknown status key throws (the
-// menu's guard catches it and shows the row with its verb only, D1).
+// Subtle health: a healthy tool (ready, or a complete setup step) shows no
+// status line at all. A setup row with a useful fact and no problem shows
+// the fact with no dot ("2 notes"). A tool that needs attention shows a
+// coloured dot and a few lower-case words, never a colour alone: 🟡 for a
+// tool that works with limits, ⚪ for one that is waiting or not started.
+// 🔴 is reserved for a failure (DEP-038's "data late"), unused for now. The
+// menu shows the line as small grey text (a context block under the row).
+// The strip has no dots.
+//
+// An unknown status key throws (the menu's guard catches it and shows the
+// row with its verb only, D1).
 //
 // CHECKING (Story 17.2, D8) is not a status: it is the line every row shows
 // while the menu's notes are still being read (the menu opened before its
-// summary), so it has no glyph and no key. statusText still refuses
+// summary), so it has no dot and no key. statusText still refuses
 // "checking", so no tool can claim it.
 //
 // Two statuses are deferred until the code has a source for them, so no
-// screen can show a status the code can't back: "Requested · in build"
-// (nothing records a request) and "Data late · as of <date>" (no cheap data
-// date). They are not in STATUSES.
+// screen can show a status the code can't back: "requested" (nothing
+// records a request, DEP-039) and "data late" (no cheap data date,
+// DEP-038). They are not in STATUSES.
 //
 // menuVerbOf is the button's text only: the button still sends
 // <module id>:open. It is not verbOf, which the scoped-pull, approval-write
@@ -34,27 +46,36 @@
 // manifest's verb: it comes from a waiting status (Story 17.3: the row's
 // button says WHY and sends <module id>:why). "Open" is not a verb.
 
-// The marks. GLYPHS are the ones a status or the bar shows; RESERVED_GLYPHS
-// adds the two the deferred statuses will use. The registry refuses a
-// module label or group holding any of them (D5), so no manifest can fake a
-// status or the Setup group.
-const MARK = Object.freeze({
-  done: '✓', partly: '◐', waiting: '◌', notStarted: '○', admin: '🔒', filled: '▰', empty: '▱',
+// The dots. GLYPHS are the marks a status line shows or may show (🟢 is
+// reserved, unused: a label holding it would pass for a healthy status), and
+// SHORTCODES their Slack names, which Slack draws as the same dots in a
+// label's mrkdwn. RESERVED_GLYPHS adds the marks the menu showed before
+// subtle health, so a label still can't read as a status. The registry
+// refuses a module label or group holding any of them (D5), so no manifest
+// can fake a status or the Setup group.
+const DOT = Object.freeze({
+  working: '🟢', limited: '🟡', waiting: '⚪', failing: '🔴',
 });
-const GLYPHS = Object.freeze(Object.values(MARK));
-const RESERVED_GLYPHS = Object.freeze([...GLYPHS, '⏳', '⚠']);
+const GLYPHS = Object.freeze(Object.values(DOT));
+const SHORTCODES = Object.freeze([':large_green_circle:', ':large_yellow_circle:', ':white_circle:', ':red_circle:']);
+const OLD_MARKS = Object.freeze(['✓', '◐', '◌', '○', '🔒', '▰', '▱', '⏳', '⚠']);
+const RESERVED_GLYPHS = Object.freeze([...GLYPHS, ...SHORTCODES, ...OLD_MARKS]);
 
-// D2's table, less the two deferred rows, plus "Context only" (the Data
-// sources row on a hub that can't see data, fix/data-sources-wording).
+// D2's table, worded the subtle-health way. kind:
+//   healthy    no line; a detail, when there is one, as a plain fact
+//   fact       the words, then the detail, with no dot
+//   attention  a dot, then the detail (else the words); "fixed": the words only
 const STATUSES = Object.freeze({
-  ready: Object.freeze({ glyph: MARK.done, word: 'Ready' }),
-  done: Object.freeze({ glyph: MARK.done, word: 'Done' }),
+  ready: Object.freeze({ kind: 'healthy' }),
+  // A setup tool whose step is complete: "2 notes", "no data on this hub".
+  done: Object.freeze({ kind: 'healthy' }),
   // Data sources on a hub that doesn't connect to data but has notes.
-  'context-only': Object.freeze({ glyph: MARK.done, word: 'Context only' }),
-  partly: Object.freeze({ glyph: MARK.partly, word: 'Partly ready' }),
-  waiting: Object.freeze({ glyph: MARK.waiting, word: 'Waiting' }),
-  'not-started': Object.freeze({ glyph: MARK.notStarted, word: 'Not started' }),
-  admin: Object.freeze({ glyph: MARK.admin, word: 'Admin only' }),
+  'context-only': Object.freeze({ kind: 'fact', words: 'notes only' }),
+  partly: Object.freeze({ kind: 'attention', dot: DOT.limited, words: 'partly ready' }),
+  waiting: Object.freeze({ kind: 'attention', dot: DOT.waiting, words: 'waiting' }),
+  'not-started': Object.freeze({
+    kind: 'attention', dot: DOT.waiting, words: 'not started', fixed: true,
+  }),
 });
 
 // The menu's verbs (D10). The manifest's optional "verb" is one of these.
@@ -74,7 +95,7 @@ const DEFAULT_VERBS = Object.freeze({
 });
 
 // The Setup group's header (D5): admins only.
-const SETUP_GROUP = `${MARK.admin} Setup · admins`;
+const SETUP_GROUP = 'Setup · admins only';
 // The name the ungrouped tools sit under (D5).
 const UNGROUPED = 'Tools';
 
@@ -83,34 +104,53 @@ const SEP = ' · ';
 // A row's line while the menu waits for its summary (D8).
 const CHECKING = 'Checking…';
 
-// One line for a status: its glyph, its word and an optional detail.
-// Throws for an unknown key or a detail that is not text.
-function statusText({ key, detail = null } = {}) {
+function statusOf(status) {
+  const { key, detail = null } = status || {};
   if (typeof key !== 'string' || !Object.hasOwn(STATUSES, key)) throw new TypeError(`unknown status key: ${String(key)}`);
   if (detail !== null && detail !== undefined && (typeof detail !== 'string' || !detail.trim())) throw new TypeError('a status detail is text');
-  const s = STATUSES[key];
-  return `${s.glyph} ${s.word}${detail ? `${SEP}${detail.trim()}` : ''}`;
+  return { s: STATUSES[key], detail: detail ? detail.trim() : null };
+}
+
+// A status's line, or null when the tool is healthy with nothing to say.
+// Throws for an unknown key or a detail that is not text.
+function statusText(status) {
+  const { s, detail } = statusOf(status);
+  if (s.kind === 'healthy') return detail;
+  if (s.kind === 'fact') return detail ? `${s.words}${SEP}${detail}` : s.words;
+  return `${s.dot} ${s.fixed || !detail ? s.words : detail}`;
+}
+
+// True when the status's line starts with a dot. Throws as statusText does.
+function needsAttention(status) {
+  return statusOf(status).s.kind === 'attention';
 }
 
 const count = (n, max = Infinity) => Number.isSafeInteger(n) && n >= 0 && n <= max;
+const tools = (m) => (m === 1 ? 'tool' : 'tools');
 
-// The setup bar (D4): one cell per counted step, done first, then the words.
-function setupBar(done, of) {
-  if (!count(of) || of < 1 || !count(done, of)) throw new RangeError('setupBar needs 0 <= done <= of, and of >= 1');
-  return `${MARK.filled.repeat(done)}${MARK.empty.repeat(of - done)} Setup ${done} of ${of}`;
+// "N of M tools working" (D4), once setup is complete or for a member. With
+// every tool working: "All M tools working" ("1 tool working" for one).
+// Otherwise the ones that aren't, by kind: limited (works with limits) and
+// needs setup (waiting or not started). A hub with no tools: "No tools yet".
+function toolsWorking(n, m, { limited = 0, needSetup = 0 } = {}) {
+  if (!count(m) || !count(n, m) || !count(limited, m) || !count(needSetup, m) || n + limited + needSetup > m) {
+    throw new RangeError('toolsWorking needs 0 <= n, and n + limited + needSetup <= m');
+  }
+  if (m === 0) return 'No tools yet';
+  if (n === m) return m === 1 ? '1 tool working' : `All ${m} tools working`;
+  const parts = [`${n} of ${m} ${tools(m)} working`];
+  if (limited) parts.push(`${limited} limited`);
+  if (needSetup) parts.push(`${needSetup} ${needSetup === 1 ? 'needs' : 'need'} setup`);
+  return parts.join(SEP);
 }
 
-// "✓ N of M tools ready" (D4), once setup is complete or for a member.
-function toolsReady(n, m) {
-  if (!count(m) || !count(n, m)) throw new RangeError('toolsReady needs 0 <= n <= m');
-  return `${MARK.done} ${n} of ${m} tools ready`;
-}
-
-// An admin's progress line while setup is not complete (D4): the bar, then
-// how many tools are ready, with no tick (the tick means "all set").
+// An admin's progress line while setup is not complete (D4): the setup
+// count, then how many tools are working (left off on a hub with no tools).
 function setupProgress(done, of, n, m) {
+  if (!count(of) || of < 1 || !count(done, of)) throw new RangeError('setupProgress needs 0 <= done <= of, and of >= 1');
   if (!count(m) || !count(n, m)) throw new RangeError('setupProgress needs 0 <= n <= m');
-  return `${setupBar(done, of)}${SEP}${n} of ${m} tools ready`;
+  const setup = `Setup ${done} of ${of}`;
+  return m ? `${setup}${SEP}${n} of ${m} ${tools(m)} working` : setup;
 }
 
 // The button's text for a module: its manifest verb, else its archetype's.
@@ -122,5 +162,22 @@ function menuVerbOf(mod) {
 }
 
 module.exports = {
-  statusText, setupBar, toolsReady, setupProgress, menuVerbOf, STATUSES, VERBS, DEFAULT_VERBS, GLYPHS, RESERVED_GLYPHS, SETUP_GROUP, UNGROUPED, SEP, CHECKING, WHY,
+  statusText,
+  needsAttention,
+  toolsWorking,
+  setupProgress,
+  menuVerbOf,
+  STATUSES,
+  VERBS,
+  DEFAULT_VERBS,
+  DOT,
+  GLYPHS,
+  SHORTCODES,
+  OLD_MARKS,
+  RESERVED_GLYPHS,
+  SETUP_GROUP,
+  UNGROUPED,
+  SEP,
+  CHECKING,
+  WHY,
 };

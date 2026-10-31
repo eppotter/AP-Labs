@@ -56,7 +56,7 @@ test('/brightside-v0 lists Ask (Story 16.7) and Request a tool (Story 16.6), the
   const [admin, stranger] = app.responded;
   // Tools first, then the Setup group (plan hub-status-menu, D5).
   assert.deepEqual(openIds(admin), ['v0-ask:open', 'v0-build-request:open', 'v0-add-context:open', 'v0-data-sources:open']);
-  assert.ok(admin.blocks.some((b) => b.type === 'header' && /Setup · admins$/.test(b.text.text)));
+  assert.ok(admin.blocks.some((b) => b.type === 'header' && /^Setup · admins only$/.test(b.text.text)));
   assert.deepEqual(openIds(stranger), []);
   // The blank hub's next step (plan hub-status-menu, D6): teach it the business.
   const next = admin.blocks.find((b) => b.block_id === 'next');
