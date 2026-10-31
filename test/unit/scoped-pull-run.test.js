@@ -415,6 +415,9 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
     'const { llm } = viewOf(mod.hub);',
     "if (!llm) throw new LlmUnavailable('off');",
     '({ text } = await llm.readFile({',
+    // Story 16.7: Ask uses its own hub's bound service (archetypes/ask); it
+    // reads readiness only (the runner's describe()), never a row.
+    'return { llm: hubView.llm, ready: () => readiness(hubView, { rules }) };',
   ]);
   const app = fs.readFileSync(path.join(ROOT, 'kit/runtime/app/index.js'), 'utf8');
   assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, forHub, connectors, mapFiles, rules, slackFiles \}\)/);

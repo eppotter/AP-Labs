@@ -369,7 +369,13 @@ function createBuildRequest({
     await show(WORDS.posted(), { force: true });
   }
 
-  return Object.freeze({ open, submit, click });
+  // True when this hub could take a build request now (Ask's Build request
+  // button shows only then, review B9): a channel is set and the hub may post.
+  const available = (hub) => blockedOn(hub) === null;
+
+  return Object.freeze({
+    open, submit, click, available,
+  });
 }
 
 module.exports = {

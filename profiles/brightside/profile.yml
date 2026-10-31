@@ -101,6 +101,12 @@ resources:
   # slack.build_requests_channel below naming them. The admin role confers it.
   - key: BUILD_REQUEST
     label: Build request
+  # Runtime: Ask on /brightside-v0 (plan brightside-v0, Story 16.7, D10, gate item 4): answers
+  # from the hub's added context, routes data questions by readiness and points to tools the
+  # person can open. The admin role confers it; grant it to anyone else by name. Never
+  # open_access (boot refuses that: it would include people the profile doesn't name).
+  - key: ASK
+    label: Ask
 
 users:
   - id: dana

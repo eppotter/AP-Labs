@@ -1,0 +1,12 @@
+{
+  "id": "rules-ask",
+  "hub": "rules",
+  "label": "Ask",
+  "description": "Ask a question in your own words.",
+  "resource": "ASK",
+  "archetype": "ask",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

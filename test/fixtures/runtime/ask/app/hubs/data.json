@@ -1,0 +1,9 @@
+{
+  "id": "data",
+  "command": "/data",
+  "name": "Data tools",
+  "description": "Open the Data tools menu",
+  "sees": [
+    "data"
+  ]
+}

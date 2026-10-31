@@ -18,6 +18,7 @@ resources:
   - { key: DATA_SOURCES, label: Data sources }
   - { key: ADD_CONTEXT, label: Add context }
   - { key: BUILD_REQUEST, label: Build request }
+  - { key: ASK, label: Ask }
 users:
   - { id: ada, name: Ada Admin, role: admin, identities: { slack: U0FIXTUREADA }, grants: [WIN_BACK] }
   - { id: max, name: Max Member, role: member, identities: { slack: U0FIXTUREMAX } }

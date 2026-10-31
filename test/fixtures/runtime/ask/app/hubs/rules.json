@@ -1,0 +1,9 @@
+{
+  "id": "rules",
+  "command": "/rules",
+  "name": "Rules tools",
+  "description": "Open the Rules tools menu",
+  "sees": [
+    "rules"
+  ]
+}
