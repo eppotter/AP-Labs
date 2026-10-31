@@ -31,6 +31,7 @@ Ely approved this on 2026-10-31 ("go"), after seeing mockups. Branch `feat/hub-s
 - **The guard.** Status marks are still written only in `kit/runtime/registry/vocabulary.js`. A module label or group may not hold 🟢 🟡 ⚪ 🔴 or their shortcodes (`:large_green_circle:`, `:large_yellow_circle:`, `:white_circle:`, `:red_circle:`); the old marks stay refused too, so a label still can't read as a status.
 - **Unchanged:** the Why? screen (its status line now reads `⚪ needs data`), the next-step line and its single green button, the 100-block limit (each status line is one more block, counted when whole groups are cut), and every way out.
 - **Defaults the builder chose (reversible):** `⚪ not started` drops the old detail ("no notes yet", "no data, no rules"); one tool reads `1 tool working`, not "All 1 tools"; a hub with no tools outside Setup reads `No tools yet`, and while setup is incomplete it shows `Setup N of M` alone; "Checking…" (D8) is also a small grey line under each row.
+- **Amended the same day, after the iPhone live check (branch `fix/hub-status-inline`): the status is inline, not a line below.** On the Slack iPhone app a section's button renders full width under the section text, so a context block after the section showed below the button, and "🟡 no data yet" under Ask's button read as belonging to Request a tool. The status now sits in the row's own section, on the label's line, after a middle dot, its words in italics: `*Ask* · 🟡 _no data yet_`, `*Route map* · ⚪ _needs map setup_`, `*Add context* · _2 notes_`, `*Data sources* · _notes only · no data on this hub_`. A healthy tool shows `*<label>*` alone. There is no `status:<id>` block; a row is one block, so a status no longer costs one in the 100-block budget. "Checking…" is inline too, lower case: `*<label>* · _checking…_`. Label and words are escaped with `messages.js` `escapeName`, so neither can end the bold or the italics. Where the bullets above (or D2, the acceptance criteria and the live check below) say "small grey line under its name", "context block" or "one more block", this amendment wins. The strip, the next-step line, the vocabulary-only marks rule and the Why? button are unchanged; the Why? screen still shows the status on its own line, not in italics.
 
 ## What the code has today
 
@@ -71,7 +72,7 @@ The two hubs today: `/brightside-v0` (`sees: []`) has the four v0 tools, all adm
 | Welcome | `section`, `block_id: welcome` | first visit only, as today | the hub file's welcome, now one sentence (D9) |
 | Next step | `section`, `block_id: next` | when the rule finds one (D6) | `*Next:* teach it the business` with a **primary** button |
 | Group header | `header`, `block_id: group:<n>` | each group with a row this person sees | the group's name (D5) |
-| Tool row | `section`, `block_id: entry:<id>` (kept) | each tool this person may open (access unchanged) | `*<label>*` then the status line on the next line; the verb button as the accessory (D2) |
+| Tool row | `section`, `block_id: entry:<id>` (kept) | each tool this person may open (access unchanged) | `*<label>*`, then ` · ` and the status (dot, italic words) on the same line when there is one (2026-10-31 amendment); the verb button as the accessory (D2) |
 | Divider, Help | as today | everyone | as today (`keepTail: 2` keeps them at the end) |
 
 - **The row's description moves to Help.** A row is the label and the status only, so rows stay short on a phone and the button stays beside them. Help already lists every tool with its description (`buildHelp`). Reversible: the description can come back as a third line.
@@ -80,13 +81,13 @@ The two hubs today: `/brightside-v0` (`sees: []`) has the four v0 tools, all adm
 - **The plain-text fallback** (`text`, the ephemeral reply when the modal can't open) gains the Knows line and the progress line.
 - **Block budget.** Header, two strip blocks, welcome, next step, divider and Help are 7. Each group adds one header and each tool one row. `/brightside` for an admin is about 18 blocks; a 12-module hub in four groups is about 23; the 100-block cut (`modalView` `keepTail`) stays as a backstop. A test pins `/brightside`'s count under 30.
 - **Over 100 blocks** (architect P3-10): `buildMenu` cuts whole groups, never half a group. It drops the last non-Setup groups until the menu fits, adds one context line ("More tools than fit here: see Help"), and always keeps the Setup group, the divider and Help. `modalView`'s generic cut never has to act on a menu. Test: a 60-module fixture in eight groups keeps the strip, the first whole groups, the Setup group and Help.
-- **Never blocks the menu** (architect P2-5): `summarize`, `toolStatus`, `statusText` and the next-step rule each run inside a guard. The whole summary is one `try`. A throw there, or an unknown status key, gives that row its verb and no status line (or the menu no strip, or no next step), logs the module id and the function's name only, and the menu still opens.
+- **Never blocks the menu** (architect P2-5): `summarize`, `toolStatus`, `statusText` (as built, `statusParts`) and the next-step rule each run inside a guard. The whole summary is one `try`. A throw there, or an unknown status key, gives that row its verb and no status line (or the menu no strip, or no next step), logs the module id and the function's name only, and the menu still opens.
 
 ### D2. One vocabulary module: statuses, verbs, the bar
 
 New `kit/runtime/registry/vocabulary.js` holds every glyph and every status word. Nothing else in the engine writes a glyph. If a glyph fails on the phone check, the fix is one line here.
 
-As built after the 2026-10-31 subtle-health decision (above). The status line is a small grey `context` block under the row, shown only when there is something to say.
+As built after the 2026-10-31 subtle-health decision and its same-day amendment (above). The status follows the label inline in the row's section, after a middle dot, its words in italics, shown only when there is something to say.
 
 | Status key | Shown | Computable now? | Used for |
 |---|---|---|---|
@@ -412,17 +413,17 @@ Ely runs it in Slack, from Ely's own account (an admin in the profile), in `/bri
 **Epic 17.**
 
 14. Type `/brightside-v0` and read the line that starts with "Knows:". Note the number of notes it shows.
-15. Add one typed note in Add context, then close the window and type `/brightside-v0` again. The "Knows:" line should show one more note than in step 14, the Add context row should have a small grey line with the number of notes (for example "2 notes", no dot), and the Data sources row should say "notes only · no data on this hub" in small grey text.
+15. Add one typed note in Add context, then close the window and type `/brightside-v0` again. The "Knows:" line should show one more note than in step 14, the Add context row should show the number of notes on its own line, after a middle dot, in italics (for example "Add context · _2 notes_", no dot), and the Data sources row should read "Data sources · _notes only · no data on this hub_".
 16. In Add context, remove every entry, then close the window and type `/brightside-v0` again. The top line should say "Knows: nothing yet", the line under it should start with "Setup 0 of 1", and Add context should say "⚪ not started".
 17. Look just under those two lines. You should see "Next: teach it the business" with a green **Add context** button, and it should be the only green button in the window.
 18. Press the green **Add context** button. Add context should open, ready for a note.
 19. Add a typed note, then close the window and type `/brightside-v0` again. "Setup 0 of 1" should be gone, replaced by a line like "1 of 2 tools working · 1 limited", and the next step should say "Next: request your first tool" (when Request a tool has no status line).
-20. Look at each tool row in the `/brightside-v0` menu. A tool that works (Request a tool) should have no status line at all. A tool that needs attention should have one small grey line under its name that starts with a coloured dot and a few words (for example "🟡 no data yet" on Ask). There should be no ✓, ◐, ◌, ○, 🔒, ▰ or ▱ anywhere, the Setup header should read "Setup · admins only", and every button should be a verb (Ask, Add, View, Request or Why?). No button should say "Open".
+20. Look at each tool row in the `/brightside-v0` menu. A tool that works (Request a tool) should show its name alone. A tool that needs attention should show, on the same line as its name, a middle dot, a coloured dot and a few words in italics (for example "Ask · 🟡 _no data yet_"). There should be no ✓, ◐, ◌, ○, 🔒, ▰ or ▱ anywhere, the Setup header should read "Setup · admins only", and every button should be a verb (Ask, Add, View, Request or Why?). No button should say "Open".
 21. Type `/brightside`. You should see the tools under the headers "Lists", "Routing" and "Tools", buttons that say **Run**, **Review** or **View** (or **Why?** on a tool that is waiting), and no "Open" anywhere. The second line still says "Setup N of 4", because `guardrails.md` is not signed off: that is expected.
-22. In either menu, find a row with a small grey "⚪ needs …" line and a **Why?** button. If there isn't one, stop and ask the Orchestrator how to make one wait (for example by unsetting the build request channel on your machine); it is your call whether to do that.
+22. In either menu, find a row whose name is followed by "· ⚪ _needs …_" and that has a **Why?** button. If there isn't one, stop and ask the Orchestrator how to make one wait (for example by unsetting the build request channel on your machine); it is your call whether to do that.
 23. Press **Why?** on that row. A screen titled with the tool's name should show the same "⚪ needs …" line, say what the tool is missing, and either offer **Request** or say to ask the admin.
 24. Press **Back**. You should be back on the menu.
-25. On an iPhone, open the Slack app and type `/brightside-v0`, then `/brightside`. Every dot (🟡 ⚪) should show in colour, not as an empty box or a question mark, always followed by its words, and each status line should be small grey text under its row.
+25. On an iPhone, open the Slack app and type `/brightside-v0`, then `/brightside`. Every dot (🟡 ⚪) should show in colour, not as an empty box or a question mark, always followed by its words, and each status should sit on its tool's own line, above that tool's button, never under a button where it could read as the next tool's.
 26. On the same iPhone, look at each tool row. Each button should sit beside its row, not on a line of its own.
 27. If you have an Android phone, repeat steps 25 and 26 on it. If you don't, write "Android not checked" in your reply.
 

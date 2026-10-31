@@ -139,7 +139,13 @@ const calls = (app, method) => app.views.filter((v) => v.method === method).map(
 const block = (view, id) => view.blocks.find((b) => b.block_id === id);
 const rowOf = (view, id) => block(view, `entry:${id}`);
 // A row's status line: the context block under it (subtle health), or null.
-const statusOf = (view, id) => { const b = block(view, `status:${id}`); return b ? b.elements[0].text : null; };
+// A row's status: the mrkdwn after "*<label>* · " in the row's own section
+// (inline, 2026-10-31 live check), or null for a healthy row.
+const statusOf = (view, id) => {
+  const b = block(view, `entry:${id}`);
+  const m = b ? /^\*[^*]*\*( · (.+))?$/s.exec(b.text.text) : null;
+  return m && m[2] ? m[2] : null;
+};
 const textOf = (view) => view.blocks.map((b) => (b.text ? b.text.text : '')).join('\n');
 const buttonsOf = (view) => view.blocks.flatMap((b) => [b.accessory, ...(b.elements || [])]).filter((e) => e && e.type === 'button');
 const settle = async (n = 5) => { for (let i = 0; i < n; i += 1) await new Promise((r) => { setImmediate(r); }); };
@@ -168,13 +174,13 @@ test('a waiting row shows Why? (<id>:why) instead of its verb; every other row k
   const view = await menu(s, ADA, '/wait');
   const rows = view.blocks.filter((b) => /^entry:/.test(b.block_id || '')).map((b) => [b.block_id.slice(6), statusOf(view, b.block_id.slice(6)), b.accessory.text.text, b.accessory.action_id]);
   assert.deepEqual(rows, [
-    ['wait-pull', '⚪ needs data', WHY, 'wait-pull:why'],
-    ['wait-ask', '⚪ needs the AI', WHY, 'wait-ask:why'],
+    ['wait-pull', '⚪ _needs data_', WHY, 'wait-pull:why'],
+    ['wait-ask', '⚪ _needs the AI_', WHY, 'wait-ask:why'],
     ['wait-request', null, 'Request', 'wait-request:open'],
     ['wait-tool', null, 'Run', 'wait-tool:open'],
-    [MAP_CHECK, '⚪ needs map setup', WHY, `${MAP_CHECK}:why`],
-    ['wait-add', '⚪ not started', 'Add', 'wait-add:open'],
-    ['wait-sources', 'no data on this hub', 'View', 'wait-sources:open'],
+    [MAP_CHECK, '⚪ _needs map setup_', WHY, `${MAP_CHECK}:why`],
+    ['wait-add', '⚪ _not started_', 'Add', 'wait-add:open'],
+    ['wait-sources', '_no data on this hub_', 'View', 'wait-sources:open'],
   ]);
   // Why? is never a manifest's verb, and its pattern names the module.
   assert.ok(!VERBS.includes(WHY));
@@ -358,7 +364,10 @@ test('never more than the person could see: Why? shows the status line their row
   const s = setup({ notes: async () => [{ id: '0'.repeat(32), kind: 'text', title: NOTE, text: NOTE, addedBy: ADA, addedAt: 0 }] });
   const m = await menu(s, ADA, '/wait');
   const { view } = await why(s, ADA, m, 'wait-pull');
-  assert.equal(block(view, 'why:status').text.text, `${rowOf(m, 'wait-pull').text.text}\n${statusOf(m, 'wait-pull')}`);
+  // The same label and status as the row (the row has them inline, the
+  // screen on two lines, the words not in italics).
+  assert.equal(rowOf(m, 'wait-pull').text.text, '*Visits by zone* · ⚪ _needs data_');
+  assert.equal(block(view, 'why:status').text.text, '*Visits by zone*\n⚪ needs data');
   assert.ok(!JSON.stringify(view).includes(NOTE));
   // Pure: nothing in readiness's detail reaches the screen.
   const ready = { data: false, rules: false, detail: { rules: { truths: [{ name: 'RULE_TEXT_NEVER_SHOWN' }] } } };

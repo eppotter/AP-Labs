@@ -9,13 +9,16 @@
 //   statusText({ key, detail })  ->  null (healthy: no line), "2 notes" (a
 //                                    fact, no dot) or "🟡 no data yet" (a
 //                                    tool that needs attention)
+//   statusParts({ key, detail }) ->  the same, split: null, or { dot, words }
+//                                    (dot null for a fact), for the menu's
+//                                    inline status (it italicises the words)
 //   needsAttention({ key })      ->  true for partly, waiting and not-started
 //   setupProgress(d, o, n, m)    ->  "Setup 0 of 1 · 1 of 2 tools working"
 //   toolsWorking(n, m, counts)   ->  "All 2 tools working", or
 //                                    "1 of 3 tools working · 1 limited · 1 needs setup"
 //   menuVerbOf(mod)              ->  "Ask" | "Run" | "View" | "Add" | "Review" | "Request"
 //   SETUP_GROUP                  ->  "Setup · admins only"
-//   CHECKING                     ->  "Checking…"
+//   CHECKING                     ->  "checking…"
 //   WHY                          ->  "Why?" (a waiting row's button, Story 17.3)
 //
 // Subtle health: a healthy tool (ready, or a complete setup step) shows no
@@ -24,13 +27,16 @@
 // coloured dot and a few lower-case words, never a colour alone: 🟡 for a
 // tool that works with limits, ⚪ for one that is waiting or not started.
 // 🔴 is reserved for a failure (DEP-038's "data late"), unused for now. The
-// menu shows the line as small grey text (a context block under the row).
+// menu shows the status inline in the row's section, after the label and a
+// middle dot, with the words in italics ("*Ask* · 🟡 _no data yet_"): on a
+// phone the button sits under the section text, so a line below it would
+// read as the next row's (2026-10-31 live check).
 // The strip has no dots.
 //
 // An unknown status key throws (the menu's guard catches it and shows the
 // row with its verb only, D1).
 //
-// CHECKING (Story 17.2, D8) is not a status: it is the line every row shows
+// CHECKING (Story 17.2, D8) is not a status: it is the words every row shows
 // while the menu's notes are still being read (the menu opened before its
 // summary), so it has no dot and no key. statusText still refuses
 // "checking", so no tool can claim it.
@@ -101,8 +107,9 @@ const UNGROUPED = 'Tools';
 
 const SEP = ' · ';
 
-// A row's line while the menu waits for its summary (D8).
-const CHECKING = 'Checking…';
+// A row's words while the menu waits for its summary (D8): lower case, as
+// they follow the label inline ("*Ask* · _checking…_").
+const CHECKING = 'checking…';
 
 function statusOf(status) {
   const { key, detail = null } = status || {};
@@ -111,13 +118,22 @@ function statusOf(status) {
   return { s: STATUSES[key], detail: detail ? detail.trim() : null };
 }
 
-// A status's line, or null when the tool is healthy with nothing to say.
-// Throws for an unknown key or a detail that is not text.
-function statusText(status) {
+// A status's dot (null for a fact) and words, or null when the tool is
+// healthy with nothing to say. Throws for an unknown key or a detail that
+// is not text.
+function statusParts(status) {
   const { s, detail } = statusOf(status);
-  if (s.kind === 'healthy') return detail;
-  if (s.kind === 'fact') return detail ? `${s.words}${SEP}${detail}` : s.words;
-  return `${s.dot} ${s.fixed || !detail ? s.words : detail}`;
+  if (s.kind === 'healthy') return detail ? { dot: null, words: detail } : null;
+  if (s.kind === 'fact') return { dot: null, words: detail ? `${s.words}${SEP}${detail}` : s.words };
+  return { dot: s.dot, words: s.fixed || !detail ? s.words : detail };
+}
+
+// A status's line, or null when the tool is healthy with nothing to say.
+// Throws as statusParts does.
+function statusText(status) {
+  const parts = statusParts(status);
+  if (!parts) return null;
+  return parts.dot ? `${parts.dot} ${parts.words}` : parts.words;
 }
 
 // True when the status's line starts with a dot. Throws as statusText does.
@@ -163,6 +179,7 @@ function menuVerbOf(mod) {
 
 module.exports = {
   statusText,
+  statusParts,
   needsAttention,
   toolsWorking,
   setupProgress,

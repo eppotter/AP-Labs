@@ -42,13 +42,19 @@
 //                    the manifests' groups in order of their first module,
 //                    then the ungrouped tools under "Tools", then the Setup
 //                    group (add-context and data-sources, for an admin only)
-//   entry:<id>       "*<label>*"; the verb as the button (D2, D10). Under
-//                    it, status:<id>, a context block (small grey text) with
-//                    the row's status line, only when there is one (subtle
-//                    health, 2026-10-31): none for a healthy tool, a plain
-//                    fact for a setup row ("2 notes"), a dot and a few words
-//                    for a tool that needs attention (the yellow dot, "no
-//                    data yet"), or "Checking…". The button still sends
+//   entry:<id>       "*<label>*"; the verb as the button (D2, D10). The
+//                    row's status, only when there is one (subtle health,
+//                    2026-10-31), sits inline in the same section text,
+//                    after a middle dot, its words in italics: none for a
+//                    healthy tool, a plain fact for a setup row
+//                    ("*Add context* · _2 notes_"), a dot and a few words
+//                    for a tool that needs attention ("*Ask* · <the yellow
+//                    dot> _no data yet_"), or "*Ask* · _checking…_". Not a
+//                    block of its own: on a phone the button renders full
+//                    width under the section text, so a line after the
+//                    section read as the next row's (2026-10-31 live check). Label and
+//                    words are escaped with escapeName, so neither can end
+//                    the bold or the italics early. The button still sends
 //                    <module-id>:open, so the dispatcher and its re-check
 //                    are unchanged. The description lives in Help.
 //                    A row whose status is waiting shows "Why?" instead
@@ -68,10 +74,10 @@
 // here yet." and Help, with no strip.
 //
 // Never blocks the menu (D1, architect P2-5): a status the vocabulary can't
-// word gives that row its verb and no status line, logged with the module id
+// word gives that row its verb and no status, logged with the module id
 // and the function's name only. Over Slack's 100 blocks (P3-10) whole groups
-// are dropped from the end (each status line is one more block), never half
-// a group; the first group, the Setup
+// are dropped from the end (a row is one block, its status inline), never
+// half a group; the first group, the Setup
 // group, a "More tools than fit here: see Help." line, the divider and Help
 // are kept. A first group too big on its own is left to modalView's generic
 // cut ("more… N more not shown here."), the backstop.
@@ -80,8 +86,9 @@
 // open) carries the welcome, the tool list, the strip's two lines and the
 // notice.
 
+const { escapeText, escapeName } = require('../messages');
 const {
-  statusText, toolsWorking, setupProgress, menuVerbOf, SETUP_GROUP, UNGROUPED, SEP, CHECKING, WHY,
+  statusParts, toolsWorking, setupProgress, menuVerbOf, SETUP_GROUP, UNGROUPED, SEP, CHECKING, WHY,
 } = require('./vocabulary');
 
 const OPEN_VERB = 'open';
@@ -130,11 +137,6 @@ function helpActionId(hubId) {
 function hubIdFromHelpAction(actionId) {
   const m = typeof actionId === 'string' ? HELP_ACTION.exec(actionId) : null;
   return m ? m[1] : null;
-}
-
-// Slack mrkdwn treats &, < and > as control characters.
-function escapeText(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 const isSetup = (entry) => SETUP_ARCHETYPES.includes(entry && entry.archetype);
@@ -191,33 +193,43 @@ function progressLine(summary, rows, admin) {
   return toolsWorking(working, tools.length, counts);
 }
 
-// The row's status line, or null (healthy, no status, or one the vocabulary
-// refuses: logged with the module id and the function's name only).
-function statusLine(row, { checking, log }) {
-  if (checking) return CHECKING;
+// The row's status as { dot, words }, or null (healthy, no status, or one
+// the vocabulary refuses: logged with the module id and the function's name
+// only).
+function statusOfRow(row, { checking, log }) {
+  if (checking) return { dot: null, words: CHECKING };
   if (!row.status) return null;
   try {
-    return statusText(row.status);
+    return statusParts(row.status);
   } catch {
-    log.warn('menu fact skipped', { module: row.entry.id, fn: 'statusText' });
+    log.warn('menu fact skipped', { module: row.entry.id, fn: 'statusParts' });
     return null;
   }
 }
 
 // A waiting row (D7): its button is Why?, never its verb. Only once its
-// status is worded: a row with no status line, or "Checking…", keeps its verb.
-const isWaiting = (row, line, { checking }) => !checking && Boolean(line) && row.status.key === 'waiting';
+// status is worded: a row with no status, or "checking…", keeps its verb.
+const isWaiting = (row, parts, { checking }) => !checking && Boolean(parts) && row.status.key === 'waiting';
 
-// A row's blocks: its section (label and button), then its status line as
-// a context block (Slack's small grey text) when it has one.
+// A row's mrkdwn: "*<label>*", then " · ", the dot and the italic words when
+// it has a status. escapeName swaps * _ ~ ` for look-alikes, so neither the
+// label nor the words can end the bold or the italics early.
+function rowText(label, parts) {
+  const head = `*${escapeName(label)}*`;
+  if (!parts) return head;
+  return `${head}${SEP}${parts.dot ? `${parts.dot} ` : ''}_${escapeName(parts.words)}_`;
+}
+
+// A row's one block: its section, the label with its status inline, and the
+// button (the button sits under the text on a phone, so nothing follows).
 function rowBlocks(row, opts) {
   const { entry } = row;
-  const line = statusLine(row, opts);
-  const why = isWaiting(row, line, opts);
+  const parts = statusOfRow(row, opts);
+  const why = isWaiting(row, parts, opts);
   const blocks = [{
     type: 'section',
     block_id: `entry:${entry.id}`,
-    text: { type: 'mrkdwn', text: `*${escapeText(entry.label)}*` },
+    text: { type: 'mrkdwn', text: rowText(entry.label, parts) },
     accessory: {
       type: 'button',
       action_id: why ? whyActionId(entry.id) : openActionId(entry.id),
@@ -225,7 +237,6 @@ function rowBlocks(row, opts) {
       text: { type: 'plain_text', text: why ? WHY : (row.verb || verbFor(entry, opts.log)), emoji: false },
     },
   }];
-  if (line) blocks.push({ type: 'context', block_id: `status:${entry.id}`, elements: [{ type: 'mrkdwn', text: line }] });
   return blocks;
 }
 
@@ -266,7 +277,7 @@ const moreLine = () => ({ type: 'context', block_id: 'more', elements: [{ type: 
 //   strip     the person may see the strip (in the profile, P1-1)
 //   summary   summarize() for the hub, or null ("couldn't check just now")
 //   checking  the notes are still being read (D8): "Knows: checking…", no
-//             progress line, no next step, and each row says "Checking…"
+//             progress line, no next step, and each row says "checking…"
 //   next      nextStep() for this person (./next-step), or null
 //   log       for the guard's lines
 // Returns { text, blocks }: the blocks are the hub modal's
