@@ -133,7 +133,9 @@
 //     this.downloadAs[id] changes how one file is served: { redirect: url },
 //     { status }, { html: true }, { noLength: true } (no Content-Length),
 //     { slowMs } (the rest of the body after slowMs), { length } (a
-//     Content-Length that lies).
+//     Content-Length that lies), { contentType } (another Content-Type), and
+//     { body, okStatus } (another body, sent with a 2xx status: what a
+//     server error page in JSON looks like when it comes back with 200).
 //   - a file_input element, refused as Slack refuses it (invalid_blocks):
 //     outside an input block; max_files not an integer from 1 to 10;
 //     filetypes not a non-empty list of file extensions (lowercase letters
@@ -396,7 +398,11 @@ class FakeSlackApp {
     if (how.html || headers.Authorization !== `Bearer ${this.botToken}`) {
       return new Response('<!DOCTYPE html><html><body>Sign in to Slack</body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
-    const out = { 'content-type': held.file.mimetype };
+    const out = { 'content-type': how.contentType || held.file.mimetype };
+    if (how.body !== undefined) {
+      const body = Buffer.from(how.body);
+      return new Response(bodyStream(body, { signal }), { status: how.okStatus || 200, headers: { ...out, 'content-length': String(body.length) } });
+    }
     if (!how.noLength) out['content-length'] = String(how.length === undefined ? held.bytes.length : how.length);
     return new Response(bodyStream(held.bytes, { slowMs: how.slowMs, signal }), { status: 200, headers: out });
   }

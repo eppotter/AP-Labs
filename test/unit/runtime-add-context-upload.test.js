@@ -125,9 +125,15 @@ async function openForm(app, { user = ADA } = {}) {
   return calls(app, 'push').at(-1).view;
 }
 
+// The mimetype Slack gives a file by its name.
+const MIMETYPES = {
+  pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', txt: 'text/plain', md: 'text/markdown',
+};
+const mimetypeOf = (name) => MIMETYPES[String(name).split('.').pop().toLowerCase()] || 'application/octet-stream';
+
 // Ada uploads a file into Slack through the form's file_input.
 function upload(app, {
-  id = 'F0PRICES', name = 'Price list.pdf', bytes = pdf({ pages: 2 }), user = ADA.id, mimetype = 'application/pdf', size,
+  id = 'F0PRICES', name = 'Price list.pdf', bytes = pdf({ pages: 2 }), user = ADA.id, mimetype = mimetypeOf(name), size,
 } = {}) {
   return app.addSlackFile({
     id, name, user, mimetype, bytes, size,
@@ -518,4 +524,15 @@ test('way out, an expired trigger: the form with its file field replaces the men
   assert.equal(update.view_id, 'VMENU');
   assert.equal(fileBlock(update.view).element.type, 'file_input');
   assert.deepEqual(ctx.app.responded, []);
+});
+
+test('a file name over 255 characters is stored shortened, extension kept (never the generic error)', async (t) => {
+  const ctx = setup(t);
+  const name = `${'Our full price list for every kind of clean '.repeat(8)}.pdf`;
+  assert.ok(name.length > 255);
+  const update = await submitFile(ctx, upload(ctx.app, { name }));
+  assert.equal(update.view.blocks[0].text.text, "Here's what I took from *Price list*:");
+  const [entry] = await ctx.knowledge.list('blank');
+  assert.ok(entry.file.name.length <= 255 && entry.file.name.endsWith('….pdf'));
+  assert.ok(!ctx.log.lines.some((l) => l.level === 'error'));
 });

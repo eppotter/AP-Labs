@@ -9,7 +9,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  createSlackFiles, download, readText, typeOf, FILETYPES, FILES_HOST, DOWNLOAD_TIMEOUT_MS, MAX_FILE_BYTES,
+  createSlackFiles, download, readText, typeOf, fileName, FILETYPES, FILES_HOST, DOWNLOAD_TIMEOUT_MS, MAX_FILE_BYTES, MAX_NAME_CHARS,
 } = require('../../kit/runtime/slack/files');
 const { FileRefused } = require('../../kit/runtime/errors');
 const { messageFor } = require('../../kit/runtime/messages');
@@ -286,4 +286,73 @@ test('the Slack fake: file_input outside an input block, max_files over 10, unkn
   app.scopes.add('files:read');
   await assert.rejects(app.client.files.info({ file: 'F1' }), (err) => err.data.error === 'file_not_found');
   await assert.rejects(app.client.files.info({}), (err) => err.data.error === 'invalid_arguments');
+});
+
+// --- Fail closed (PR #274 review) -------------------------------------------------------------
+
+test('a .txt download answered with a JSON error body (content type application/json, status 200) is refused, never stored as text', async () => {
+  const { app, files } = setup();
+  const json = '{"ok":false,"error":"file_not_found"}';
+  app.addSlackFile({
+    id: 'F0JSON', name: 'notes.txt', user: ADA, mimetype: 'text/plain', bytes: Buffer.from(json),
+  });
+  app.downloadAs.F0JSON = { contentType: 'application/json; charset=utf-8' };
+  await assert.rejects(fetchFile(files, app, 'F0JSON'), refusedAs('download_failed'));
+  // text/* and application/octet-stream are what a text file may come as.
+  for (const contentType of ['text/plain; charset=utf-8', 'text/markdown', 'application/octet-stream']) {
+    app.downloadAs.F0JSON = { contentType };
+    assert.equal((await fetchFile(files, app, 'F0JSON')).bytes.toString(), json, contentType);
+  }
+  // No content type at all: refused.
+  app.downloadAs.F0JSON = { contentType: ' ' };
+  await assert.rejects(fetchFile(files, app, 'F0JSON'), refusedAs('download_failed'));
+});
+
+test('a body whose length is not the size files.info reported is refused (a short or a different body, with a 2xx status)', async () => {
+  const { app, files } = setup();
+  const bytes = Buffer.from('Opening hours: 8 to 6.');
+  app.addSlackFile({
+    id: 'F0LEN2', name: 'hours.txt', user: ADA, mimetype: 'text/plain', bytes,
+  });
+  app.downloadAs.F0LEN2 = { body: 'Opening hours' };
+  await assert.rejects(fetchFile(files, app, 'F0LEN2'), refusedAs('download_failed'));
+  app.downloadAs.F0LEN2 = { body: '{"error":"internal"}', okStatus: 203 };
+  await assert.rejects(fetchFile(files, app, 'F0LEN2'), refusedAs('download_failed'));
+  // files.info saying a different size than what is served.
+  app.addSlackFile({
+    id: 'F0SIZE', name: 'p.pdf', user: ADA, bytes: pdf(), size: 10,
+  });
+  await assert.rejects(fetchFile(files, app, 'F0SIZE'), refusedAs('download_failed'));
+  // The body at the reported size is read.
+  delete app.downloadAs.F0LEN2;
+  assert.ok((await fetchFile(files, app, 'F0LEN2')).bytes.equals(bytes));
+});
+
+test('a status other than 2xx is refused (a 3xx, 4xx or 5xx)', async () => {
+  const { app, files } = setup();
+  app.addSlackFile({
+    id: 'F0ST', name: 'n.txt', user: ADA, mimetype: 'text/plain', bytes: Buffer.from('x'),
+  });
+  for (const status of [304, 404, 500]) {
+    app.downloadAs.F0ST = { status };
+    await assert.rejects(fetchFile(files, app, 'F0ST'), refusedAs('download_failed'), String(status));
+  }
+});
+
+test('a file name over 255 characters is shortened with its extension kept; a short one is kept as it is', async () => {
+  assert.equal(MAX_NAME_CHARS, 255);
+  assert.equal(fileName('Prices.pdf', 'pdf'), 'Prices.pdf');
+  const long = `${'Prices for 2026 '.repeat(30)}.pdf`;
+  const short = fileName(long, 'pdf');
+  assert.ok(short.length <= 255);
+  assert.ok(short.endsWith('….pdf'));
+  assert.ok(long.startsWith(short.slice(0, -5)));
+  // Never cuts an emoji (two UTF-16 units) in half.
+  const emoji = fileName(`${'😀'.repeat(200)}.png`, 'png');
+  assert.ok(emoji.length <= 255 && !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(emoji));
+  const { app, files } = setup();
+  app.addSlackFile({
+    id: 'F0LONG', name: long, user: ADA, bytes: pdf(),
+  });
+  assert.equal((await fetchFile(files, app, 'F0LONG')).name, short);
 });

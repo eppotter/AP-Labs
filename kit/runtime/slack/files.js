@@ -24,11 +24,18 @@
 //      Authorization header, only to that host. redirect: 'error', so a
 //      redirect is refused, never followed (review A7). The body is cut off
 //      past 5 MB, whatever Content-Length says (size), and the whole download
-//      has 20 seconds (download_failed). A web page instead of the file (what
-//      Slack answers a token it won't accept) is download_failed.
+//      has 20 seconds (download_failed). It fails closed (PR #274 review): a
+//      status other than 2xx, a web page instead of the file (what Slack
+//      answers a token it won't accept), a body whose length is not the size
+//      files.info reported, or, for a .txt or .md file, a content type other
+//      than text/* or application/octet-stream (an error body in JSON, say)
+//      is download_failed.
 //   6. The signature: a PDF or an image's first bytes must match the type its
 //      name says (signature; kit/runtime/llm/file-check sniff). The file's
 //      pages and pixels are checked by the AI service itself (readFile).
+//   7. The name kept with the entry (fileName): at most MAX_NAME_CHARS (255,
+//      the knowledge store's cap), a longer one shortened with its extension
+//      kept (PR #274 review). Never sent to the AI and never logged.
 // readText(bytes) reads a .txt or .md file: UTF-8 only (fatal decoding), no
 // NUL byte (encoding).
 //
@@ -41,6 +48,25 @@ const { sniff, MAX_FILE_BYTES } = require('../llm/file-check');
 
 const FILES_HOST = 'files.slack.com';
 const DOWNLOAD_TIMEOUT_MS = 20 * 1000;
+// The knowledge store's cap on a file name (MAX_FILE_NAME_CHARS there).
+const MAX_NAME_CHARS = 255;
+// What a text file may be served as (PR #274 review): anything else, an error
+// body in JSON for one, is refused rather than stored as context.
+const TEXT_CONTENT_TYPE = /^\s*(text\/[a-z0-9.+-]+|application\/octet-stream)\s*(;|$)/i;
+
+// A file name of at most MAX_NAME_CHARS: a longer one keeps its extension and
+// loses the end of its stem, cut on a whole character.
+function fileName(name, ext) {
+  const full = String(name);
+  if (full.length <= MAX_NAME_CHARS) return full;
+  const tail = `….${ext}`;
+  let stem = '';
+  for (const ch of Array.from(full.slice(0, full.length - ext.length - 1))) {
+    if (stem.length + ch.length + tail.length > MAX_NAME_CHARS) break;
+    stem += ch;
+  }
+  return `${stem}${tail}`;
+}
 
 // What each extension is read as. format: what its first bytes must be.
 const READABLE = Object.freeze({
@@ -75,8 +101,11 @@ function typeOf(name) {
 const slackCode = (err) => (err && err.data && typeof err.data.error === 'string' ? err.data.error : null);
 
 // Downloads url with the bot token (see the header, step 5). Returns a Buffer.
+// expectedBytes: the size files.info reported (the body must be exactly
+// that long), or null. text: a .txt or .md file, whose content type must be
+// text/* or application/octet-stream.
 async function download(url, {
-  token, fetch = globalThis.fetch, timeoutMs = DOWNLOAD_TIMEOUT_MS, maxBytes = MAX_FILE_BYTES, log,
+  token, fetch = globalThis.fetch, timeoutMs = DOWNLOAD_TIMEOUT_MS, maxBytes = MAX_FILE_BYTES, log, expectedBytes = null, text = false,
 }) {
   const refuse = (why, reason = 'download_failed', max = null) => {
     log.info('file download refused', { reason: why });
@@ -105,13 +134,18 @@ async function download(url, {
     } catch {
       throw refuse(timedOut ? 'timeout' : 'fetch');
     }
-    if (res.status !== 200) {
+    if (!(res.status >= 200 && res.status <= 299)) {
       controller.abort();
       throw refuse(`status ${res.status}`);
     }
-    if (/^\s*text\/html/i.test(res.headers.get('content-type') || '')) {
+    const contentType = res.headers.get('content-type') || '';
+    if (/^\s*text\/html/i.test(contentType)) {
       controller.abort();
       throw refuse('html');
+    }
+    if (text && !TEXT_CONTENT_TYPE.test(contentType)) {
+      controller.abort();
+      throw refuse('content type');
     }
     const declared = Number(res.headers.get('content-length'));
     if (Number.isFinite(declared) && declared > maxBytes) {
@@ -138,6 +172,7 @@ async function download(url, {
         chunks.push(Buffer.from(step.value));
       }
     }
+    if (expectedBytes !== null && total !== expectedBytes) throw refuse('length');
     return Buffer.concat(chunks, total);
   } finally {
     clearTimeout(timer);
@@ -188,7 +223,7 @@ function createSlackFiles({
     if (!Number.isSafeInteger(file.size) || file.size < 0) throw new FileRefused('info_failed');
     if (file.size > MAX_FILE_BYTES) throw new FileRefused('size', MAX_FILE_BYTES);
     const bytes = await download(file.url_private_download, {
-      token, fetch, timeoutMs, log,
+      token, fetch, timeoutMs, log, expectedBytes: file.size, text: type.kind === 'text',
     });
     if (!bytes.length) throw new FileRefused('empty');
     if (type.format && sniff(bytes) !== type.format) {
@@ -196,7 +231,7 @@ function createSlackFiles({
       throw new FileRefused('signature');
     }
     return Object.freeze({
-      name: String(file.name), ext: type.ext, kind: type.kind, mediaType: type.mediaType, bytes,
+      name: fileName(file.name, type.ext), ext: type.ext, kind: type.kind, mediaType: type.mediaType, bytes,
     });
   }
 
@@ -204,5 +239,5 @@ function createSlackFiles({
 }
 
 module.exports = {
-  createSlackFiles, download, readText, typeOf, extOf, FILETYPES, READABLE, OFFICE, FILES_HOST, DOWNLOAD_TIMEOUT_MS, MAX_FILE_BYTES,
+  createSlackFiles, download, readText, typeOf, extOf, fileName, MAX_NAME_CHARS, FILETYPES, READABLE, OFFICE, FILES_HOST, DOWNLOAD_TIMEOUT_MS, MAX_FILE_BYTES,
 };
