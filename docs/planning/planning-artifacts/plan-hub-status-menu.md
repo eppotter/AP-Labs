@@ -337,7 +337,7 @@ Every story, in addition to what is listed:
 - `docs/fork-guide.md`: what the menu shows; `verb` and `group` in a manifest; the Setup group (admins only, even for a member granted a setup key by name); "Request a tool"; the starter tools' table updated; the welcome as one sentence.
 - `kit/templates/module.md`: the starter tools' table names each one's verb and the statuses a fork's people will see; the line "presses **Open** on the entry" says the verb instead.
 - The structural test of the fork guide passes.
-- The live check list (below) is in the PR body, and the result is recorded as "live-checked" or not in the epic report.
+- The live check list ("The live check", below) is in the PR body, and the result is recorded as "live-checked" or not in the epic report.
 
 ## Build order and shared files
 
@@ -369,26 +369,50 @@ If a later builder finds `main` has moved, it merges `main` and resolves the con
 ## Steps only you can do
 
 1. **Nothing before the build.** The plan is approved; no install, scope, channel or reinstall is needed. The bot scopes do not change.
-2. **The live check, after 17.5 merges.** It finishes the open Epic 16 live check and adds Epic 17's. Drive it as Dana (an admin) in `/brightside-v0` unless a step says otherwise. Restart the bot once first, from `main`.
+2. **The live check, after 17.5 merges.** It finishes the open Epic 16 live check and adds Epic 17's. The list is below, under "The live check".
 
-   **Epic 16, carried over** (step 1 passed: the four tools show):
-   1. Data sources says no data and no rules.
-   2. Ask a data question: the answer is "no data and no rules yet".
-   3. Add a typed note, then ask about it: Ask answers from it.
-   4. Upload a PDF, then a photo: each shows what the bot took from it.
-   5. Remove an entry: it is gone from Data sources.
-   6. Post a build request (now **Request a tool**): it appears in `#ai-build-requests` with your name.
-   7. `/brightside` still works: open two of its tools.
-   8. The Slack app's settings match `examples/brightside/app/slack-manifest.json` (the commands and the seven scopes).
-   9. Restart the bot: the added context is still there (local `var/`).
+### The live check
 
-   **Epic 17:**
-   10. Before any note (or after removing them all), the strip says `0 notes` and `Setup 0 of 1` (the blank hub counts only the step it can reach, D4), and the next step says "teach it the business". Add a note: reopen the menu and it says `1 note`, the progress line becomes `✓ N of M tools ready`, and Add context is `✓ Done · 1 note`.
-   11. **Why?**: on a hub where a tool is waiting, press Why?, read what is missing, press Request if it shows, then Back to the menu. (If no tool is waiting on either hub, the Orchestrator tells you how to make one wait, for example by unsetting the channel locally. Your call whether to run that.)
-   12. **The phone check**, on iOS, plus Android if you have one: open both menus. Every glyph (✓ ◐ ◌ ○ 🔒 ▰ ▱) renders, no row shows a bare glyph, and each button sits beside its row. A glyph that fails is a one-line swap in `vocabulary.js`; tell the Orchestrator which.
-   13. `/brightside` as Dana: the groups (Lists, Routing, Tools), the verbs (Run, Review, View), no "Open" anywhere.
+Do it in Slack as Dana (an admin), in `/brightside-v0` unless a step says otherwise. Each step is one thing to do and what you should see. If what you see is different, stop and tell the Orchestrator the step number and what you saw.
 
-   Untested live by design: the member's view (the example's only member, Marcus, is fictional). Tests cover it.
+**Before you start:** update the bot to the latest `main`, then stop it and start it again.
+
+**Epic 16, carried over.** Step 1 of Epic 16 has passed: the four tools show. These are the steps still to run.
+
+1. Type `/brightside-v0`, then press **View** on Data sources. You should see that no data is connected and there are no known truths or rules yet.
+2. Press **Ask**, type "How many cleans did we do last week?" and send it. The answer should say it can't answer data questions yet: no data is connected and there are no rules yet.
+3. Press **Add** on Add context, type a title ("Opening hours") and a note ("We open at 7am on weekdays."), and press **Add**. The note should appear in the list of entries.
+4. Press **Ask** and ask "What time do we open on weekdays?". The answer should say 7am, taken from your note.
+5. In Add context, upload a PDF and press **Add**. You should see what the bot read from the PDF.
+6. In Add context, upload a photo (for example a picture of a price list) and press **Add**. You should see what the bot read from the photo.
+7. In Add context, press **Remove** on one entry and confirm. It should disappear from the list.
+8. Go back to the menu and press **View** on Data sources. The entry you removed should not be listed.
+9. Press **Request** on Request a tool, type a short request, and press **Preview**. You should see the exact text that will post, with **Post**, **Edit** and **Cancel**.
+10. Press **Post**. The request should appear in `#ai-build-requests` with your name.
+11. Type `/brightside` and press the button on any two of its tools. Each should open and work as before.
+12. Open the Brightside app's settings on the Slack website and look at its slash commands and its bot permissions (scopes). They should match `examples/brightside/app/slack-manifest.json`: the commands `/brightside-v0` and `/brightside`, and seven scopes (`commands`, `chat:write`, `im:write`, `im:history`, `files:read`, `files:write`, `users:read`).
+13. Stop the bot and start it again, then open Add context. Every entry you added (and did not remove) should still be listed.
+
+**Epic 17.**
+
+14. Type `/brightside-v0` and read the line that starts with "Knows:". Note the number of notes it shows.
+15. Add one typed note in Add context, then close the window and type `/brightside-v0` again. The "Knows:" line should show one more note than in step 14, and the Add context row should say "✓ Done" with the number of notes.
+16. In Add context, remove every entry, then close the window and type `/brightside-v0` again. The line under "Knows:" should start with "▱ Setup 0 of 1".
+17. Look just under those two lines. You should see "Next: teach it the business" with a green **Add context** button, and it should be the only green button in the window.
+18. Press the green **Add context** button. Add context should open, ready for a note.
+19. Add a typed note, then close the window and type `/brightside-v0` again. The setup bar should be gone, replaced by a line like "✓ 1 of 2 tools ready", and the next step should say "Next: request your first tool" (when Request a tool shows "✓ Ready").
+20. Look at each tool row in the `/brightside-v0` menu. Every row should have a status that is a mark and a word (for example "✓ Ready" or "◐ Partly ready"), and every button should be a verb (Ask, Add, View, Request or Why?). No button should say "Open".
+21. Type `/brightside`. You should see the tools under the headers "Lists", "Routing" and "Tools", buttons that say **Run**, **Review** or **View** (or **Why?** on a tool that is waiting), and no "Open" anywhere. The setup bar there is not full yet, because `guardrails.md` is not signed off: that is expected.
+22. In either menu, find a row marked "◌ Waiting" with a **Why?** button. If there isn't one, stop and ask the Orchestrator how to make one wait (for example by unsetting the build request channel on your machine); it is your call whether to do that.
+23. Press **Why?** on that row. A screen titled with the tool's name should say what the tool is missing, and either offer **Request** or say to ask the admin.
+24. Press **Back**. You should be back on the menu.
+25. On an iPhone, open the Slack app and type `/brightside-v0`, then `/brightside`. Every mark (✓ ◐ ◌ ○ 🔒 ▰ ▱) should show as a symbol, not as an empty box or a question mark, and always next to its word.
+26. On the same iPhone, look at each tool row. Each button should sit beside its row, not on a line of its own.
+27. If you have an Android phone, repeat steps 25 and 26 on it. If you don't, write "Android not checked" in your reply.
+
+If a mark fails on a phone, tell the Orchestrator which one: the fix is a one-line swap in `kit/runtime/registry/vocabulary.js`.
+
+Not checked live, by design: what a member sees (the example's only member, Marcus, is fictional). The tests cover it.
 
 ## New ledger items (proposed)
 
@@ -411,7 +435,7 @@ The Orchestrator assigns the next free DEP ids when the stories open them (DEP-0
 - **P2-3**: the race covers only the async notes read; the synchronous rules reads are bounded (256 KB a file) and stated in AD-6. D8, 17.1, 17.2.
 - **P2-4**: `list()` reports an unreadable folder, so the strip says "couldn't check just now" instead of "0 notes". D3, 17.1, 17.2.
 - **P2-5**: a throw or unknown key in `summarize`, `toolStatus`, `statusText` or the next-step rule leaves that row its verb with no status (or no strip, or no next step), is logged, and never blocks the menu; the summary is one `try`. D1, 17.1, 17.2, 17.4.
-- **P2-6**: setup counts only the steps the hub's `sees` allows; the blank hub shows `Setup 0 of 1`, then is complete after one note. D2, D4, D11, 17.1, 17.2, live check step 10.
+- **P2-6**: setup counts only the steps the hub's `sees` allows; the blank hub shows `Setup 0 of 1`, then is complete after one note. D2, D4, D11, 17.1, 17.2, live check steps 16 to 19.
 - **P2-7**: a two-hub isolation test for the counts and statuses (17.2), extended to the next step and the "New" record (17.4).
 - **P2-8**: 17.3 raised to T2, with an architect review.
 - **P2-9**: every map module uses `uploadsMapImages(mod)` with `mapFiles.ready()`. D11.

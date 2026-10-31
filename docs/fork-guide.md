@@ -133,7 +133,7 @@ It writes `.aplabs/template-version` (the version and a fingerprint of `kit/` an
 The runtime bot is its own Slack app. It is separate from any app you use for an incoming webhook (such as the one `npm run notify` posts through): never add bot scopes to that one.
 
 1. Write `app/slack-manifest.json` with what a person sets once: `display_information` (the app's name and description), `features.bot_user` and `features.app_home`. Copy the shape from the example's `examples/brightside/app/slack-manifest.json` before you delete it, and change the names.
-2. Add the first hub, `app/hubs/acme.json` (an `id`, its slash `command`, a `name`, a `description`, a `welcome` and `sees`), as in the example's `examples/brightside/app/hubs/`. `sees` is required: it lists what the hub may see, any of `"context"` (the profile's context files in the AI's prompt), `"data"` (the query runner) and `"rules"` (the truths and guardrails), or `[]` for none. Every hub file needs it: one without it stops boot. A data tool (a `scoped-pull`, `approval-write` or `routing-map` module) stops boot on a hub that does not see `"data"`. A fork taking the template update that brings `sees` adds it to every hub file; `["context", "data", "rules"]` keeps a hub as it was.
+2. Add the first hub, `app/hubs/acme.json` (an `id`, its slash `command`, a `name`, a `description`, a `welcome` and `sees`), as in the example's `examples/brightside/app/hubs/`. Keep the `welcome` to one sentence: it shows once, on a person's first visit, under the menu's readiness lines, which already say what is set up (step 8, "What the menu shows"). `sees` is required: it lists what the hub may see, any of `"context"` (the profile's context files in the AI's prompt), `"data"` (the query runner) and `"rules"` (the truths and guardrails), or `[]` for none. Every hub file needs it: one without it stops boot. A data tool (a `scoped-pull`, `approval-write` or `routing-map` module) stops boot on a hub that does not see `"data"`. A fork taking the template update that brings `sees` adds it to every hub file; `["context", "data", "rules"]` keeps a hub as it was.
 3. Generate the rest of the manifest (one slash command per hub, the bot scopes, Socket Mode):
 
    ```bash
@@ -168,12 +168,12 @@ Every addition is a folder in the app dir, `app/`. No engine file changes.
 
 - **The four starter tools** come with the template: a manifest each, no code. Step 3 copied them into `app/modules/`. They work on a blank hub (`"sees": []`) before any data is connected:
 
-  | Folder | Archetype | Resource | What it does |
-  |---|---|---|---|
-  | `v0-data-sources` | `data-sources` | `DATA_SOURCES` | Shows what data, known truths, rules and added context the hub has. |
-  | `v0-add-context` | `add-context` | `ADD_CONTEXT` | An admin types something about the business, or uploads a file, for Ask to use on this hub. |
-  | `v0-ask` | `ask` | `ASK` | A person asks a question in their own words. |
-  | `v0-build-request` | `build-request` | `BUILD_REQUEST` | A person asks the AP Labs team for a new tool or change, sees a preview, then it posts to a channel. |
+  | Folder | Menu label | Archetype | Resource | Button | Where it sits | What it does |
+  |---|---|---|---|---|---|---|
+  | `v0-data-sources` | Data sources | `data-sources` | `DATA_SOURCES` | View | 🔒 Setup · admins | Shows what data, known truths, rules and added context the hub has. |
+  | `v0-add-context` | Add context | `add-context` | `ADD_CONTEXT` | Add | 🔒 Setup · admins | An admin types something about the business, or uploads a file, for Ask to use on this hub. |
+  | `v0-ask` | Ask | `ask` | `ASK` | Ask | Tools | A person asks a question in their own words. |
+  | `v0-build-request` | Request a tool | `build-request` | `BUILD_REQUEST` | Request | Tools | A person asks the AP Labs team for a new tool or change, sees a preview, then it posts to a channel. |
 
   In each manifest, set `hub` to the fork's hub id (step 5). A module's `id` must equal its folder name, so a tool sits on one hub; to put Ask on a second hub, copy the folder again under a new name and set its `id` and `hub`. `kit/templates/module.md` describes the four archetypes.
 
@@ -201,6 +201,18 @@ Every addition is a folder in the app dir, `app/`. No engine file changes.
 
   **Tell the client who reads what is added.** Everyone who can use Ask on a hub can read the context added there: Ask answers from it. So grant `ASK` only to people who may see everything an admin adds on that hub. An uploaded file stays in the uploader's Slack files: the bot keeps only the text it read from it, and they can delete it there.
 
+  **What the menu shows.** A person types the hub's slash command and gets one private window, top to bottom:
+
+  1. **The readiness lines.** `Knows:` counts what the hub has, as numbers only (notes, data sources, signed-off known truths, approved rules in a signed-off `guardrails.md`). The second line, for an admin, is the setup bar while setup is unfinished (`▰▰▱▱ Setup 2 of 4 · 3 of 5 tools ready`), then `✓ N of M tools ready`. The bar counts only the setup steps the hub's `sees` lets it reach, so a blank hub (`"sees": []`) shows `Setup 0 of 1` until its first note. A member sees `✓ N of M tools ready`, or `Your admin is setting this up.` on a hub nobody has taught yet. These lines show only to a person who is in the profile and has at least one tool on the hub. A person not in the profile gets the "not set up" notice only; a person with no tools gets "Nothing is available to you here yet." and Help.
+  2. **The welcome**, on a first visit only (one sentence, step 5).
+  3. **One next step**, at most, with the window's only green button: `Next: teach it the business` (an admin, before the first note), `New: <tool>` (a ready tool that wasn't in their last menu), or `Next: request your first tool` (an admin, once taught, while the hub has only the four starter tools).
+  4. **The tools, under headers.** Groups from the manifests' `group` field, in the order their first module appears, then the ungrouped tools under **Tools**, then **🔒 Setup · admins**. Each row is the tool's label and its status; the button beside it is the tool's verb (`kit/templates/module.md`, the `verb` field). A tool's description is in Help.
+  5. **Help**, as before.
+
+  Every status is a mark and a word, sometimes with a detail after a middle dot: `✓ Ready`, `✓ Done · 3 notes`, `◐ Partly ready · no data yet`, `◌ Waiting · needs data`, `○ Not started · no notes yet`. A manifest can't set a status: the engine works it out from what the hub has. A waiting tool's button is **Why?** instead of its verb: it says what the tool is missing, offers **Request** when the person has Request a tool on that hub and it is ready (otherwise it says to ask the admin), and Back returns to the menu.
+
+  **The Setup group is for admins only.** Data sources and Add context always sit in it, and only a person whose profile role is `admin` sees it. Granting `DATA_SOURCES` or `ADD_CONTEXT` to anyone else by name does not show it to them (it fails closed). Who may open a tool is unchanged: the profile's grants decide, and every click is checked again.
+
   Added context is stored under the var dir (`APLABS_VAR_DIR`, else a `var` folder in the repo), one folder per client and hub, so on a host it needs a lasting volume (step 10).
 - **A module** is one entry on a hub's menu. Copy the template and follow `kit/templates/module.md`:
 
@@ -208,7 +220,7 @@ Every addition is a folder in the app dir, `app/`. No engine file changes.
   cp -r kit/templates/module app/modules/weekly-report
   ```
 
-  Declare its resource in the profile and grant it, then run `npm test` and restart the app.
+  Give it a `verb` (the button's word) if its archetype's default doesn't fit, and a `group` to put it under a header with related tools. Declare its resource in the profile and grant it, then run `npm test` and restart the app.
 - **A connector** reaches an external system (a CRM, an email tool). Follow `kit/templates/connector.md`:
 
   ```bash
