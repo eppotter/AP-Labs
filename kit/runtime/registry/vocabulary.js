@@ -44,10 +44,13 @@ const MARK = Object.freeze({
 const GLYPHS = Object.freeze(Object.values(MARK));
 const RESERVED_GLYPHS = Object.freeze([...GLYPHS, '⏳', '⚠']);
 
-// D2's table, less the two deferred rows.
+// D2's table, less the two deferred rows, plus "Context only" (the Data
+// sources row on a hub that can't see data, fix/data-sources-wording).
 const STATUSES = Object.freeze({
   ready: Object.freeze({ glyph: MARK.done, word: 'Ready' }),
   done: Object.freeze({ glyph: MARK.done, word: 'Done' }),
+  // Data sources on a hub that doesn't connect to data but has notes.
+  'context-only': Object.freeze({ glyph: MARK.done, word: 'Context only' }),
   partly: Object.freeze({ glyph: MARK.partly, word: 'Partly ready' }),
   waiting: Object.freeze({ glyph: MARK.waiting, word: 'Waiting' }),
   'not-started': Object.freeze({ glyph: MARK.notStarted, word: 'Not started' }),

@@ -226,10 +226,82 @@ test('readiness: no profile path is "not set up" with a problem flag', () => {
 
 // --- the view ---------------------------------------------------------------------
 
-test('render: the blank (v0) hub reads "No data connected yet. No known truths or rules yet." and "None yet." for added context', () => {
+test('render: the blank (v0) hub reads "Nothing yet", saying it doesn\'t connect to data, and "None yet." for added context', () => {
   const msg = dataSources.render({ ready: readiness(view([]), { rules: reader() }) });
-  assert.deepEqual(blockTexts(msg.blocks), ['No data connected yet. No known truths or rules yet.', '*Added context*\nNone yet.']);
-  assert.equal(msg.text, 'No data connected yet. No known truths or rules yet.');
+  assert.deepEqual(blockTexts(msg.blocks), ["Nothing yet: no added context, and this hub doesn't connect to data.", '*Added context*\nNone yet.']);
+  assert.equal(msg.text, "Nothing yet: no added context, and this hub doesn't connect to data.");
+});
+
+// The wording in each state (fix/data-sources-wording).
+const noRunner = (sees) => ({ id: 'h', sees, data: null, rules: sees.includes('rules') });
+const NOTE = [{ title: 'Prices', added_by: 'UADA', added_at: '2026-10-30T10:00:00.000Z' }];
+
+test('wording: a v0 hub with added context answers from it and says it doesn\'t connect to data, never truths or rules', () => {
+  const msg = dataSources.render({ ready: readiness(view([]), { rules: reader() }), entries: NOTE });
+  assert.equal(dataSources.CONTEXT_ONLY_NO_DATA_HUB, "Answers from the added context below. This hub doesn't connect to data, so it can't answer questions about numbers.");
+  assert.deepEqual(blockTexts(msg.blocks), [dataSources.CONTEXT_ONLY_NO_DATA_HUB, '*Added context*\n• Prices by <@UADA> on 2026-10-30']);
+  assert.equal(msg.text, dataSources.CONTEXT_ONLY_NO_DATA_HUB);
+  assert.doesNotMatch(allText(msg.blocks), /truth|rule|No data|not connected/i);
+});
+
+test('wording: a v0 hub with nothing reads "Nothing yet", never truths or rules', () => {
+  const msg = dataSources.render({ ready: readiness(view([]), { rules: reader() }) });
+  assert.equal(dataSources.NOTHING_YET_NO_DATA_HUB, "Nothing yet: no added context, and this hub doesn't connect to data.");
+  assert.doesNotMatch(allText(msg.blocks), /truth|rule/i);
+});
+
+test('wording: a v0 hub whose context can\'t be listed still says it doesn\'t connect to data', () => {
+  const msg = dataSources.render({ ready: readiness(view([]), { rules: reader() }), contextProblem: true, admin: '<@UADA>' });
+  assert.deepEqual(blockTexts(msg.blocks).slice(1), ["This hub doesn't connect to data.", '*Added context*\nNone yet.']);
+});
+
+test('wording: a hub that sees data, with added context and no data connected, answers from the context "yet"', () => {
+  const msg = dataSources.render({ ready: readiness(noRunner(['data']), { rules: reader() }), entries: NOTE });
+  assert.equal(dataSources.CONTEXT_ONLY, "Answers from the added context below. No data is connected, so it can't answer questions about numbers yet.");
+  assert.deepEqual(blockTexts(msg.blocks), [dataSources.CONTEXT_ONLY, '*Connected data*\nNo data connected yet.', '*Added context*\n• Prices by <@UADA> on 2026-10-30']);
+  assert.doesNotMatch(allText(msg.blocks), /truth|rule/i);
+});
+
+test('wording: a hub that sees data, with nothing at all, reads "Nothing yet: no added context and no data connected."', () => {
+  const msg = dataSources.render({ ready: readiness(noRunner(['data']), { rules: reader() }) });
+  assert.equal(dataSources.NOTHING_YET, 'Nothing yet: no added context and no data connected.');
+  assert.deepEqual(blockTexts(msg.blocks), [dataSources.NOTHING_YET, '*Connected data*\nNo data connected yet.', '*Added context*\nNone yet.']);
+});
+
+test('wording: a hub that sees data and rules keeps its truths and rules lines under the lead line', (t) => {
+  const withRules = dataSources.render({ ready: readiness(noRunner(FULL), { rules: reader() }), entries: NOTE });
+  const text = allText(withRules.blocks);
+  assert.equal(withRules.text, dataSources.CONTEXT_ONLY);
+  assert.match(text, /\*Known truths and rules\*\n• data\.md: signed off/);
+  assert.match(text, /The rules are set up\./);
+  // Nothing set up at all: the lead line, then each section says so.
+  const profilePath = copied(t, (dir) => {
+    for (const f of ['data.md', 'guardrails.md']) fs.rmSync(path.join(dir, f));
+  });
+  const empty = dataSources.render({ ready: readiness(noRunner(FULL), { rules: createRulesReader({ profile, profilePath, readLast: () => null }) }) });
+  assert.equal(empty.text, dataSources.NOTHING_YET);
+  assert.match(allText(empty.blocks), /• data\.md: missing\n• guardrails\.md: missing\n.*\n\nNo known truths yet\./s);
+  // Rules but no context and no data: no lead line (it would not be "nothing").
+  const rulesOnly = dataSources.render({ ready: readiness(noRunner(FULL), { rules: reader() }) });
+  assert.equal(rulesOnly.text, '*Connected data*\nNo data connected yet.');
+});
+
+test('wording: a hub that sees rules but not data says it doesn\'t connect to data, with its rules and no Connected data section', () => {
+  const msg = dataSources.render({ ready: readiness(noRunner(['rules']), { rules: reader() }), entries: NOTE });
+  const texts = blockTexts(msg.blocks);
+  assert.equal(texts[0], dataSources.CONTEXT_ONLY_NO_DATA_HUB);
+  assert.ok(!texts.some((x) => x.startsWith('*Connected data*')));
+  assert.ok(texts.some((x) => x.startsWith('*Known truths and rules*')));
+});
+
+test('wording: a hub with a data source, available or not, keeps the current wording and has no lead line', () => {
+  for (const available of [true, false]) {
+    const msg = dataSources.render({ ready: readiness(view(['data'], fakeData({ available })), { rules: reader() }), entries: NOTE });
+    assert.deepEqual(blockTexts(msg.blocks), [
+      `*Connected data*\n• local fixture: tiny.duckdb, ${available ? 'available' : 'not available right now'}`,
+      '*Added context*\n• Prices by <@UADA> on 2026-10-30',
+    ]);
+  }
 });
 
 test('render: a full hub shows its source, both files, the column count and each truth, never an expect value or command', () => {
@@ -338,7 +410,7 @@ test('the menu shows Data sources to the admin (the role confers the key), not t
   assert.deepEqual(ids(member), []);
 });
 
-test('Open on the blank hub pushes a Back view reading "No data connected yet. No known truths or rules yet.", reading nothing', async () => {
+test('Open on the blank hub pushes a Back view reading "Nothing yet: ... this hub doesn\'t connect to data.", reading nothing', async () => {
   const rules = spyReader(reader());
   const { app, log, data } = setup({ rules });
   await app.dispatchAction('blank-sources:open', { user: ADMIN, view: MENU('blank') });
@@ -348,7 +420,7 @@ test('Open on the blank hub pushes a Back view reading "No data connected yet. N
   assert.equal(push.view.title.text, 'Data sources');
   assert.equal(push.view.close.text, 'Back');
   assert.equal(push.view.submit, undefined);
-  assert.deepEqual(blockTexts(push.view.blocks), ['No data connected yet. No known truths or rules yet.', '*Added context*\nNone yet.']);
+  assert.deepEqual(blockTexts(push.view.blocks), ["Nothing yet: no added context, and this hub doesn't connect to data.", '*Added context*\nNone yet.']);
   assert.equal(rules.reads, 0);
   assert.equal(data.calls.describe, 0);
   assert.equal(data.calls.run, 0);
@@ -436,7 +508,7 @@ test('way out, an expired trigger: the view goes in place on the menu, logged; n
   const [update] = calls(app, 'update');
   assert.equal(update.view_id, 'VMENU');
   assert.equal(update.view.close.text, 'Back');
-  assert.deepEqual(blockTexts(update.view.blocks), ['No data connected yet. No known truths or rules yet.', '*Added context*\nNone yet.']);
+  assert.deepEqual(blockTexts(update.view.blocks), ["Nothing yet: no added context, and this hub doesn't connect to data.", '*Added context*\nNone yet.']);
   assert.deepEqual(log.lines.filter((l) => l.msg === 'hub modal fallback').map((l) => l.fields), [
     { where: 'open', reason: 'expired_trigger_id', hub: 'blank', via: 'views.update' },
   ]);
@@ -447,8 +519,8 @@ test('way out, a click from an old message menu (the ephemeral fallback): the sa
   await app.dispatchAction('blank-sources:open', { user: ADMIN });
   assert.equal(app.responded.length, 1);
   assert.equal(app.responded[0].response_type, 'ephemeral');
-  assert.equal(app.responded[0].text, 'No data connected yet. No known truths or rules yet.');
-  assert.deepEqual(blockTexts(app.responded[0].blocks), ['No data connected yet. No known truths or rules yet.', '*Added context*\nNone yet.']);
+  assert.equal(app.responded[0].text, "Nothing yet: no added context, and this hub doesn't connect to data.");
+  assert.deepEqual(blockTexts(app.responded[0].blocks), ["Nothing yet: no added context, and this hub doesn't connect to data.", '*Added context*\nNone yet.']);
 });
 
 test('way out, a person without the key: the existing refusal; nothing is read', async () => {
@@ -498,7 +570,7 @@ test('at boot the app reads the rules beside the profile: Data sources on the fu
   assert.match(full, /• data\.md: signed off 2026-10-20 by Ada Owner/);
   assert.match(full, /\*active-people\*: There are this many active people\./);
   assert.match(full, /The rules are set up\./);
-  assert.match(blank, /^No data connected yet\. No known truths or rules yet\./);
+  assert.equal(blank.split('\n')[0], "Nothing yet: no added context, and this hub doesn't connect to data.");
   for (const s of NEVER) assert.ok(!JSON.stringify(res.app.responded).includes(s), s);
   res.engineJobs.stop();
   res.jobs.stop();
@@ -518,7 +590,7 @@ test('Data sources lists the hub\'s own added context (title, who, when), never 
   await app.dispatchAction('blank-sources:open', { user: ADMIN, view: MENU('blank') });
   const [push] = calls(app, 'push');
   assert.deepEqual(blockTexts(push.view.blocks), [
-    'No data connected yet. No known truths or rules yet.',
+    "Answers from the added context below. This hub doesn't connect to data, so it can't answer questions about numbers.",
     '*Added context*\n• Prices &amp; &lt;hours&gt; by <@UADA> on 2026-10-30',
   ]);
   const json = JSON.stringify(app.views);

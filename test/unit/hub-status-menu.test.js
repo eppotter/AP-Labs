@@ -254,7 +254,7 @@ test('a member granted the setup tools by name still sees no Setup group, in the
   assert.doesNotMatch(JSON.stringify(help), /Add context|Data sources/);
   // Access is unchanged: the grant still opens Data sources at the click.
   await s.app.dispatchAction('blank-sources:open', { user: { id: BO }, view: MENU_VIEW('blank') });
-  assert.match(JSON.stringify(calls(s.app, 'push').at(-1).view), /No data connected yet/);
+  assert.match(JSON.stringify(calls(s.app, 'push').at(-1).view), /Nothing yet: no added context, and this hub doesn't connect to data\./);
 });
 
 // --- the guards (D1, architect P2-5) ----------------------------------------------------------
@@ -318,7 +318,7 @@ test('two hubs in one process: each menu\'s counts and statuses come from its ow
     assert.equal(knowsOf(seen['/full']), 'Knows: 3 notes · 1 source · 1 truth · 2 rules', order.join());
     assert.equal(rowOf(seen['/blank'], 'blank-add').text.text, '*Add context*\n✓ Done · 1 note');
     assert.equal(rowOf(seen['/full'], 'full-add').text.text, '*Add context*\n✓ Done · 3 notes');
-    assert.equal(rowOf(seen['/blank'], 'blank-sources').text.text, '*Data sources*\n✓ Done · no data on this hub');
+    assert.equal(rowOf(seen['/blank'], 'blank-sources').text.text, '*Data sources*\n✓ Context only · 1 note');
     assert.equal(rowOf(seen['/full'], 'full-sources').text.text, '*Data sources*\n✓ Done');
     assert.equal(progressOf(seen['/blank']), '✓ 1 of 2 tools ready');
     assert.equal(progressOf(seen['/full']), '✓ 10 of 10 tools ready');
@@ -507,7 +507,7 @@ test('way out, a click on an old message menu: dispatch is unchanged (a private 
   const s = setup();
   assert.equal(await s.app.dispatchAction('blank-sources:open', { user: { id: ADA } }), 1);
   assert.equal(calls(s.app, 'push').length, 0);
-  assert.match(JSON.stringify(s.app.responded.at(-1)), /No data connected yet/);
+  assert.match(JSON.stringify(s.app.responded.at(-1)), /Nothing yet: no added context, and this hub doesn't connect to data\./);
   // A form tool from a message is told to use the hub window, without "Open".
   await s.app.dispatchAction('blank-ask:open', { user: { id: ADA } });
   assert.equal(s.app.responded.at(-1).text, FORM_NEEDS_WINDOW);

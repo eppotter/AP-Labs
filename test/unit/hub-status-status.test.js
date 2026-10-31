@@ -66,8 +66,13 @@ test('add-context: done with N notes, not started with none, waiting with no sto
   assert.equal(toolStatus(mod('blank-add'), factsFor('blank', { entriesProblem: true })), null);
 });
 
-test('data-sources: done on a hub that counts none of data, truths or rules; otherwise by the counted steps', () => {
+test('data-sources: on a hub that counts none of data, truths or rules, context only with notes, else done; otherwise by the counted steps', () => {
   assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank'))), '✓ Done · no data on this hub');
+  assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank', { notes: 1 }))), '✓ Context only · 1 note');
+  assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank', { notes: 3 }))), '✓ Context only · 3 notes');
+  assert.equal(shown(toolStatus(mod('blank-sources'), factsFor('blank', { entriesProblem: true }))), '✓ Done · no data on this hub');
+  // A hub that counts data keeps its steps' wording, notes or not.
+  assert.equal(shown(toolStatus(mod('first-sources'), factsFor('first-tool', { available: false, notes: 2 }))), '○ Not started · no data');
   // first-tool sees data only: one counted step.
   assert.equal(shown(toolStatus(mod('first-sources'), factsFor('first-tool'))), '✓ Done');
   assert.equal(shown(toolStatus(mod('first-sources'), factsFor('first-tool', { available: false }))), '○ Not started · no data');

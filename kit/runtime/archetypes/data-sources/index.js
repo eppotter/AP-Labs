@@ -15,8 +15,18 @@
 //                           from the hub view's knowledge store (Story 16.4;
 //                           entriesOf), else "None yet." Never an entry's text.
 //
-// A hub that sees neither data nor rules (the v0 hub) reads: "No data
-// connected yet. No known truths or rules yet." then its added context.
+// A lead line says what the hub can answer from when it has no data:
+//   added context, no data   "Answers from the added context below. No data
+//                            is connected, so it can't answer questions
+//                            about numbers yet."
+//   nothing at all           "Nothing yet: no added context and no data
+//                            connected."
+// On a hub whose sees leaves out data (the v0 hub), "No data is connected"
+// becomes "This hub doesn't connect to data" (and the lines drop "yet"), and
+// there is no Connected data section. A hub whose sees leaves out rules has
+// no Known truths and rules section: it never mentions them. A hub with a
+// data source (available or not), or whose data couldn't be checked, gets no
+// lead line.
 //
 // Everything comes from kit/runtime/knowledge/readiness, which reads only
 // what the hub sees; this file only words it. Every value from a file or the
@@ -31,9 +41,12 @@
 const { escapeText, escapeName } = require('../../messages');
 const { textBlocks } = require('../../slack/format');
 
-const NOTHING_YET = 'No data connected yet. No known truths or rules yet.';
+const CONTEXT_ONLY = 'Answers from the added context below. No data is connected, so it can\'t answer questions about numbers yet.';
+const CONTEXT_ONLY_NO_DATA_HUB = 'Answers from the added context below. This hub doesn\'t connect to data, so it can\'t answer questions about numbers.';
+const NOTHING_YET = 'Nothing yet: no added context and no data connected.';
+const NOTHING_YET_NO_DATA_HUB = 'Nothing yet: no added context, and this hub doesn\'t connect to data.';
 const NO_DATA = 'No data connected yet.';
-const NO_RULES = 'No known truths or rules yet.';
+const NO_DATA_HUB = 'This hub doesn\'t connect to data.';
 const NO_TRUTHS = 'No known truths yet.';
 const NO_CONTEXT = 'None yet.';
 const NOT_CHECKED = 'Not checked on this machine';
@@ -52,7 +65,7 @@ const shown = (s) => {
 const heading = (s) => `*${s}*`;
 
 function dataLines(data) {
-  if (!data.seen) return [NO_DATA];
+  if (!data.seen) return [NO_DATA_HUB];
   if (!data.source && !data.label) return [data.problem ? 'The data could not be checked just now.' : NO_DATA];
   const name = [data.source, data.label].filter(Boolean).map(shown).join(': ');
   return [`• ${name}, ${data.connected ? 'available' : 'not available right now'}`];
@@ -73,7 +86,6 @@ function truthLine(t, checkedAt) {
 }
 
 function rulesLines(rules, ready) {
-  if (!rules.seen) return [NO_RULES];
   const cols = rules.forbiddenColumns;
   return [
     ...rules.files.map(fileLine),
@@ -111,6 +123,22 @@ async function entriesOf(view, log) {
   }
 }
 
+// The line above the sections when the hub has no data: null when it has a
+// source (available or not) or its data couldn't be checked, or when the
+// rules show something and there is no context (nothing to sum up). When
+// the added context couldn't be listed, a hub that doesn't connect to data
+// still says so, and any other hub gets no lead line.
+function leadLine(data, rules, entries, contextProblem) {
+  if (data.problem) return null;
+  if (contextProblem) return data.seen ? null : NO_DATA_HUB;
+  if (data.seen && (data.source || data.label)) return null;
+  const hasContext = Array.isArray(entries) && entries.length > 0;
+  if (hasContext) return data.seen ? CONTEXT_ONLY : CONTEXT_ONLY_NO_DATA_HUB;
+  const hasRules = rules.seen && (rules.problem || rules.files.some((f) => f.present) || rules.truths.length > 0);
+  if (hasRules) return null;
+  return data.seen ? NOTHING_YET : NOTHING_YET_NO_DATA_HUB;
+}
+
 // The view's message: { text, blocks }. ready: readiness() for the hub.
 // entries: the hub's added context (entriesOf). contextProblem: the list
 // could not be read. admin: who to ask, as Slack mrkdwn (kit/runtime/access
@@ -123,16 +151,23 @@ function render({
   if (data.problem || rules.problem || contextProblem) {
     sections.push(`Some of this couldn't be read just now, so it may show less than is set up. Press Back and try again in a minute, or ask ${admin}.`);
   }
-  if (!data.seen && !rules.seen) {
-    sections.push(NOTHING_YET);
-  } else {
-    sections.push([heading('Connected data'), ...dataLines(data)].join('\n'));
-    sections.push([heading('Known truths and rules'), ...rulesLines(rules, ready.rules)].join('\n'));
-  }
+  const lead = leadLine(data, rules, entries, contextProblem);
+  if (lead) sections.push(lead);
+  if (data.seen) sections.push([heading('Connected data'), ...dataLines(data)].join('\n'));
+  if (rules.seen) sections.push([heading('Known truths and rules'), ...rulesLines(rules, ready.rules)].join('\n'));
   sections.push([heading('Added context'), ...contextLines(entries)].join('\n'));
   return { text: sections[0], blocks: sections.flatMap(textBlocks) };
 }
 
 module.exports = {
-  render, entriesOf, NOTHING_YET, NO_DATA, NO_RULES, NO_CONTEXT, NOT_CHECKED,
+  render,
+  entriesOf,
+  CONTEXT_ONLY,
+  CONTEXT_ONLY_NO_DATA_HUB,
+  NOTHING_YET,
+  NOTHING_YET_NO_DATA_HUB,
+  NO_DATA,
+  NO_DATA_HUB,
+  NO_CONTEXT,
+  NOT_CHECKED,
 };

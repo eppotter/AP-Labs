@@ -136,7 +136,7 @@ New engine folder `kit/runtime/knowledge/`, a new T3 engine floor.
 ### D9. Data sources: a new template tool, with Dataset kept as it is
 
 - **Data sources** (template) shows three sections: **Connected data** (from the runner's `describe()`: source, label, available or not, never a table name or row count), **Known truths and rules** (each truth's id and statement, owner, sign-off and last verify result if one is recorded; whether `data.md` and `guardrails.md` are signed off; how many columns are forbidden), and **Added context** (titles, who added them, when).
-- In v0 it reads: "No data connected yet. No known truths or rules yet." plus the added context list.
+- In v0 it reads: "Nothing yet: no added context, and this hub doesn't connect to data." With added context: "Answers from the added context below. This hub doesn't connect to data, so it can't answer questions about numbers." plus the added context list. It never mentions known truths or rules on a hub that can't have them (wording fix after the live check, fix/data-sources-wording).
 - **Why not extend Dataset.** Dataset reads Brightside's fixture tables (`fixture_meta`), which a real fork does not have. Its row counts are business data. It stays as the Brightside example's detail view on `/brightside`.
 - Truth figures (`expect`) are never shown. They are client numbers.
 - The readiness checks live in `kit/runtime/knowledge/readiness.js`, shared with Ask (D10).
@@ -199,7 +199,7 @@ Epic 16. Stories are PRs. Estimates: **S** about half a day, **M** about a day, 
 |---|---|---|---|---|
 | 16.1 Each hub says what it sees | L | **T3** | `hub.schema.json`, `registry`, `slack/hubs.js` (now fed by the new `slack/hub-view.js`), `llm/index.js`, `llm/context.js`, `app/index.js`, `kit/lib/tier`, `scripts/check-job-imports.js` as the model for the import check | Nothing new in Slack. `/brightside` works as before. Tests show a hub with `"sees": []` gets no data and no context |
 | 16.2 The v0 hub and the Slack mirror | S | T2 (computes T1; raised for the new scope) | `hubs/`, `slack/scopes.js`, `slack-manifest.json` | `/brightside-v0` opens a menu with only Help, and a welcome saying it is a blank bot |
-| 16.3 Data sources and readiness | M | **T3** | `data.describe()`, `kit/lib/onboard`, `kit/lib/truths`, `kit/lib/verify/last` | Data sources in v0: "No data connected yet. No known truths or rules yet." |
+| 16.3 Data sources and readiness | M | **T3** | `data.describe()`, `kit/lib/onboard`, `kit/lib/truths`, `kit/lib/verify/last` | Data sources in v0: "Nothing yet: no added context, and this hub doesn't connect to data." (wording as fixed in fix/data-sources-wording) |
 | 16.4 The added-context store | M | **T3** | `llm/context.js` escaping and caps, the var dir convention | Nothing in Slack. Tests show added text reaching the right hub's prompt and no other |
 | 16.5 Add context: type it in | M | **T3** | the hub modal, `messages.js`, access | Admins add and remove typed context in v0; Data sources lists it; others don't see the tool |
 | 16.6 Build request | M | **T3** | `slack/channel.js`, `llm.structured`, the store's `session` namespace | A preview, then a post in `#ai-build-requests` naming you |
@@ -275,7 +275,7 @@ Every story, in addition to what is listed:
 - The profile adds `DATA_SOURCES` (admin role confers it). New manifest `examples/brightside/app/modules/v0-data-sources/manifest.json`.
 - Ways out, each tested: Back, the X, an error reading the runner or a context file (a plain message in the view, with Back), an expired trigger (ephemeral fallback), a person without the key (the existing refusal).
 - Tests:
-  - v0 shows the "No data connected yet. No known truths or rules yet." text;
+  - v0 shows the "Nothing yet: no added context, and this hub doesn't connect to data." text (wording as fixed in fix/data-sources-wording);
   - a fixture full hub shows its source and its truths;
   - a truth's `expect` value never appears in any rendered block.
 
@@ -451,7 +451,7 @@ If a later builder finds `main` has moved, it merges `main` and resolves the con
 3. **Nothing else before the build.** The command, the scope and the reinstall are done.
 4. **The live check, after 16.8 merges.** The Orchestrator gives you the list:
    - `/brightside-v0` shows four tools;
-   - Data sources says no data and no rules;
+   - Data sources says there is nothing yet and this hub doesn't connect to data;
    - Ask with a data question gets "no data and no rules yet";
    - add a typed note, then ask about it;
    - upload a PDF and a photo;

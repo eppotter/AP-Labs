@@ -19,7 +19,7 @@ const RUNTIME = path.join(__dirname, '../../kit/runtime');
 const VOCABULARY = path.join(RUNTIME, 'registry/vocabulary.js');
 
 test('every status has a glyph and a non-empty word', () => {
-  assert.deepEqual(Object.keys(STATUSES).sort(), ['admin', 'done', 'not-started', 'partly', 'ready', 'waiting']);
+  assert.deepEqual(Object.keys(STATUSES).sort(), ['admin', 'context-only', 'done', 'not-started', 'partly', 'ready', 'waiting']);
   for (const [key, s] of Object.entries(STATUSES)) {
     assert.ok(MENU_GLYPHS.includes(s.glyph), key);
     assert.ok(typeof s.word === 'string' && s.word.trim().length > 0, key);
@@ -33,6 +33,7 @@ test('statusText never returns a glyph without its word, with or without a detai
   assert.equal(statusText({ key: 'waiting', detail: 'needs data' }), '◌ Waiting · needs data');
   assert.equal(statusText({ key: 'not-started', detail: 'no notes yet' }), '○ Not started · no notes yet');
   assert.equal(statusText({ key: 'admin' }), '🔒 Admin only');
+  assert.equal(statusText({ key: 'context-only', detail: '1 note' }), '✓ Context only · 1 note');
   for (const key of Object.keys(STATUSES)) {
     for (const detail of [null, 'x']) {
       const line = statusText({ key, detail });
