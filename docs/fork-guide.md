@@ -205,7 +205,12 @@ Every addition is a folder in the app dir, `app/`. No engine file changes.
 
   1. **The readiness lines.** `Knows:` counts what the hub has, as numbers only (notes, data sources, signed-off known truths, approved rules in a signed-off `guardrails.md`). The second line, for an admin, is the setup bar while setup is unfinished (`▰▰▱▱ Setup 2 of 4 · 3 of 5 tools ready`), then `✓ N of M tools ready`. The bar counts only the setup steps the hub's `sees` lets it reach, so a blank hub (`"sees": []`) shows `Setup 0 of 1` until its first note. A member sees `✓ N of M tools ready`, or `Your admin is setting this up.` on a hub nobody has taught yet. These lines show only to a person who is in the profile and has at least one tool on the hub. A person not in the profile gets the "not set up" notice only; a person with no tools gets "Nothing is available to you here yet." and Help.
   2. **The welcome**, on a first visit only (one sentence, step 5).
-  3. **One next step**, at most, with the window's only green button: `Next: teach it the business` (an admin, before the first note), `New: <tool>` (a ready tool that wasn't in their last menu), or `Next: request your first tool` (an admin, once taught, while the hub has only the four starter tools).
+  3. **One next step**, at most, with the window's only green button. The first that fits wins:
+     - `Next: teach it the business`, with an **Add context** button: an admin, on a hub not yet taught (no note, and it doesn't see `"context"`).
+     - `New: <tool>`, with the tool's verb: anyone, for the first tool in menu order that is ready or partly ready and wasn't in the last menu they opened on this hub. Nothing is new on a first visit. The record is kept in memory for 7 days, so after a restart nothing reads as new until the next open (DEP-040).
+     - `Next: request your first tool`, with a **Request** button: an admin, once the hub is taught, while the only tools on the hub are the four starter tools and Request a tool is ready.
+
+     No next step shows while the menu's summary can't be read (the strip says "checking…" or "couldn't check just now"); if only the notes couldn't be listed, only a `New:` line can show.
   4. **The tools, under headers.** Groups from the manifests' `group` field, in the order their first module appears, then the ungrouped tools under **Tools**, then **🔒 Setup · admins**. Each row is the tool's label and its status; the button beside it is the tool's verb (`kit/templates/module.md`, the `verb` field). A tool's description is in Help.
   5. **Help**, as before.
 

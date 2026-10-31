@@ -373,7 +373,7 @@ If a later builder finds `main` has moved, it merges `main` and resolves the con
 
 ### The live check
 
-Do it in Slack as Dana (an admin), in `/brightside-v0` unless a step says otherwise. Each step is one thing to do and what you should see. If what you see is different, stop and tell the Orchestrator the step number and what you saw.
+Ely runs it in Slack, from Ely's own account (an admin in the profile), in `/brightside-v0` unless a step says otherwise. Each step is one thing to do and what you should see. If what you see is different, stop and tell the Orchestrator the step number and what you saw.
 
 **Before you start:** update the bot to the latest `main`, then stop it and start it again.
 
