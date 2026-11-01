@@ -52,8 +52,10 @@ function quietLog() {
 // A request with tools (the route) answers with route_question's input
 // (route: an object, or null for a reply that calls no tool); a plain one
 // answers with text. gate: a promise every answer waits for.
+// notes: answer_from_notes's input (Story 18.3), or null for a reply that
+// calls no tool; notesFail: an error for that call only.
 function fakeModel({
-  route = { kind: 'context' }, text = 'Cleanings run Monday to Friday.', fail = null, gate = null,
+  route = { kind: 'context' }, text = 'Cleanings run Monday to Friday.', fail = null, gate = null, notes = { covered: false }, notesFail = null,
 } = {}) {
   const calls = [];
   return {
@@ -65,6 +67,11 @@ function fakeModel({
         if (gate) await gate;
         if (fail) throw fail;
         const usage = { input_tokens: 100, output_tokens: 20 };
+        if (params.tools && params.tools[0].name === askTool.NOTES_TOOL_NAME) {
+          if (notesFail) throw notesFail;
+          const content = notes ? [{ type: 'tool_use', id: 'tu_2', name: askTool.NOTES_TOOL_NAME, input: notes }] : [{ type: 'text', text: 'Hmm.' }];
+          return { content, stop_reason: notes ? 'tool_use' : 'end_turn', usage };
+        }
         if (params.tools) {
           const content = route ? [{ type: 'tool_use', id: 'tu_1', name: askTool.TOOL_NAME, input: route }] : [{ type: 'text', text: 'Hmm.' }];
           return { content, stop_reason: route ? 'tool_use' : 'end_turn', usage };
@@ -95,8 +102,11 @@ const RULES_SET_UP = Object.freeze({
   }),
 });
 
+// knowledge: an added-context store (Story 18.3's notes-first tests), given
+// to the AI service and the hub views; views: a different store for the
+// views alone (a list that fails). None by default, as before.
 function setup({
-  prof = profile, model = fakeModel(), llm = 'real', env = {}, runner = fakeRunner(),
+  prof = profile, model = fakeModel(), llm = 'real', env = {}, runner = fakeRunner(), knowledge = null, views = knowledge,
 } = {}) {
   const clock = { t: T0 };
   const now = () => clock.t;
@@ -104,11 +114,13 @@ function setup({
   const log = quietLog();
   const service = llm === 'real'
     ? createLlm({
-      apiKey: KEY, profile: prof, profilePath: PROFILE_PATH, store, log, env, now, deps: { createClient: () => model },
+      apiKey: KEY, profile: prof, profilePath: PROFILE_PATH, store, log, env, now, deps: { createClient: () => model }, knowledge,
     })
     : llm;
   const app = new FakeSlackApp({ views: true, channels: [CHANNEL] });
-  const hubViews = createHubViews({ hubs: registry.hubs, llm: service, data: runner });
+  const hubViews = createHubViews({
+    hubs: registry.hubs, llm: service, data: runner, knowledge: views,
+  });
   registerHubs(app, {
     registry, profile: prof, env: 'dev', log, store, forHub: hubViews.forHub, rules: RULES_SET_UP, buildRequest: { now },
   });
@@ -355,6 +367,134 @@ test('data, rules but no data: its own message', async () => {
   const shown = await ask(ctx, 'How many cleanings?', { hub: 'rules' });
   assert.equal(texts(shown.blocks)[0], 'The rules are set up, but no data is connected yet.');
   assert.deepEqual(ctx.runner.runs, []);
+});
+
+// --- data on a hub with notes (Story 18.3, review R1-1) ----------------------------------
+
+const { createKnowledgeStore } = require('../../kit/runtime/knowledge/store');
+
+const NOTE = 'Zone billing, September: South billed $91,558.00, the most of any zone.';
+// A knowledge store in a fresh var dir on the test clock, with NOTE on hub
+// (none when hub is null).
+async function notesStore(t, hub = 'blank') {
+  const varDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-ask-notes-')));
+  t.after(() => fs.rmSync(varDir, { recursive: true, force: true }));
+  const knowledge = createKnowledgeStore({
+    clientId: 'tiny', varDir, log: quietLog(), now: () => T0,
+  });
+  if (hub) {
+    await knowledge.add({
+      hub, kind: 'text', title: 'Billing by zone', text: NOTE, addedBy: ADA.id,
+    });
+  }
+  return knowledge;
+}
+const notesCalls = (model) => model.calls.filter((c) => c.tools && c.tools[0].name === askTool.NOTES_TOOL_NAME);
+
+test('data, no data, notes that cover it: the answer from the notes, as a context answer; one notes call on the hub\'s own prompt', async (t) => {
+  const knowledge = await notesStore(t);
+  const ctx = setup({
+    knowledge,
+    model: fakeModel({ route: { kind: 'data' }, notes: { covered: true, answer: 'South, with **$91,558.00** <!here>.' } }),
+  });
+  const shown = await ask(ctx, 'Which zone billed the most in September?');
+  const [answer, tail] = texts(shown.blocks);
+  assert.equal(answer, 'South, with *$91,558.00* &lt;!here&gt;.');
+  assert.equal(tail, 'Not what you needed?');
+  assert.deepEqual(buttonIds(shown), [askTool.ACTIONS.buildRequest, askTool.ACTIONS.again]);
+  assert.equal(ctx.model.calls.length, 2);
+  const [call] = notesCalls(ctx.model);
+  assert.deepEqual(call.tools.map((x) => x.name), [askTool.NOTES_TOOL_NAME]);
+  assert.deepEqual(call.tool_choice, { type: 'auto', disable_parallel_tool_use: true });
+  // The hub's own prompt: its notes, and (a blank hub) no profile context.
+  assert.ok(call.system.includes(NOTE));
+  assert.ok(call.system.includes(askTool.NOTES_INSTRUCTIONS));
+  assert.ok(!call.system.includes('<client_context file='));
+  assert.match(call.messages[0].content, /Which zone billed the most in September\?/);
+  assert.deepEqual(ctx.runner.runs, []);
+  const logged = ctx.log.lines.find((l) => l.msg === 'ask data from notes');
+  assert.deepEqual(logged.fields, { module: 'blank-ask', covered: true });
+});
+
+test('data, no data, notes that don\'t cover it: the readiness message unchanged, whatever shape the reply has', async (t) => {
+  const knowledge = await notesStore(t);
+  const replies = [
+    { covered: false }, { covered: false, answer: 'South, probably.' }, { covered: true }, { covered: true, answer: '   ' },
+    { covered: 'true', answer: 'South.' }, null,
+  ];
+  for (const notes of replies) {
+    const ctx = setup({ knowledge, model: fakeModel({ route: { kind: 'data' }, notes }) });
+    const shown = await ask(ctx, 'How many cleanings last week?');
+    assert.equal(texts(shown.blocks)[0], WORDS.noDataNoRules(), JSON.stringify(notes));
+    assert.deepEqual(buttonIds(shown), [askTool.ACTIONS.buildRequest, askTool.ACTIONS.again]);
+    assert.equal(notesCalls(ctx.model).length, 1);
+    assert.deepEqual(ctx.runner.runs, []);
+  }
+});
+
+test('data, no data, no notes: the readiness message, with no notes call', async (t) => {
+  const empty = await notesStore(t, null);
+  for (const knowledge of [null, empty]) {
+    const ctx = setup({ knowledge, model: fakeModel({ route: { kind: 'data' }, notes: { covered: true, answer: 'never asked' } }) });
+    const shown = await ask(ctx, 'How many cleanings last week?');
+    assert.equal(texts(shown.blocks)[0], WORDS.noDataNoRules());
+    assert.equal(ctx.model.calls.length, 1);
+  }
+  // Notes on another hub don't count.
+  const other = await notesStore(t, 'ctx');
+  const ctx = setup({ knowledge: other, model: fakeModel({ route: { kind: 'data' }, notes: { covered: true, answer: 'never asked' } }) });
+  assert.equal(texts((await ask(ctx, 'How many?')).blocks)[0], WORDS.noDataNoRules());
+  assert.equal(ctx.model.calls.length, 1);
+});
+
+test('data, no data: a notes list that can\'t be read is no notes (the readiness message, no notes call)', async (t) => {
+  const knowledge = await notesStore(t);
+  const broken = {
+    forHub: (id) => ({ ...knowledge.forHub(id), list: async () => { throw new Error('EACCES'); } }),
+  };
+  const ctx = setup({ knowledge, views: broken, model: fakeModel({ route: { kind: 'data' }, notes: { covered: true, answer: 'never asked' } }) });
+  const shown = await ask(ctx, 'How many cleanings last week?');
+  assert.equal(texts(shown.blocks)[0], WORDS.noDataNoRules());
+  assert.equal(ctx.model.calls.length, 1);
+});
+
+test('data, rules but no data, notes that cover it: the notes answer; data connected: never a notes call', async (t) => {
+  const onRules = await notesStore(t, 'rules');
+  const covered = { covered: true, answer: 'South.' };
+  let ctx = setup({ knowledge: onRules, model: fakeModel({ route: { kind: 'data' }, notes: covered }) });
+  assert.equal(texts((await ask(ctx, 'Which zone?', { hub: 'rules' })).blocks)[0], 'South.');
+  // Data but no rules: the readiness message, no notes call.
+  const onData = await notesStore(t, 'data');
+  ctx = setup({ knowledge: onData, model: fakeModel({ route: { kind: 'data' }, notes: covered }) });
+  assert.equal(texts((await ask(ctx, 'Which zone?', { hub: 'data' })).blocks)[0], WORDS.dataNoRules());
+  assert.equal(ctx.model.calls.length, 1);
+  // Data and rules both set up (the query path's hub, plan brightside-v1 D10): unchanged.
+  const onFull = await notesStore(t, 'full');
+  ctx = setup({ knowledge: onFull, model: fakeModel({ route: { kind: 'data' }, notes: covered }) });
+  assert.equal(texts((await ask(ctx, 'Which zone?', { hub: 'full' })).blocks)[0], WORDS.noToolYet());
+  assert.equal(ctx.model.calls.length, 1);
+  assert.deepEqual(ctx.runner.runs, []);
+});
+
+test('data, no data, notes: the notes call failing shows the existing "failed" words, with Back and Ask another', async (t) => {
+  const knowledge = await notesStore(t);
+  const fail = Object.assign(new Error('overloaded'), { status: 529 });
+  const ctx = setup({ knowledge, model: fakeModel({ route: { kind: 'data' }, notesFail: fail }) });
+  const shown = await ask(ctx, 'Which zone billed the most?');
+  assert.equal(texts(shown.blocks)[0], messageFor(new LlmUnavailable('failed'), { admin: 'your admin' }));
+  assert.deepEqual(buttonIds(shown), [askTool.ACTIONS.again]);
+  assert.equal(shown.close.text, 'Back');
+});
+
+test('context, with notes: unchanged, a plain ask and no notes call', async (t) => {
+  const knowledge = await notesStore(t);
+  const ctx = setup({ knowledge, model: fakeModel({ route: { kind: 'context' }, text: 'From the notes.' }) });
+  const shown = await ask(ctx, 'What do we charge?');
+  assert.equal(texts(shown.blocks)[0], 'From the notes.');
+  assert.equal(notesCalls(ctx.model).length, 0);
+  const [, plainCall] = ctx.model.calls;
+  assert.equal(plainCall.tools, undefined);
+  assert.ok(plainCall.system.includes(NOTE));
 });
 
 test('data, both: the scoped pull the AI named, with its verb, or "There\'s no tool for that yet"; the runner is never called', async () => {

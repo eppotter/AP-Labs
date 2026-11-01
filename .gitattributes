@@ -1,3 +1,5 @@
 # Fixture seed files must stay byte-identical to the generator output on every OS.
 examples/brightside/fixture/seeds/*.csv text eol=lf
 examples/brightside/fixture/schema.sql text eol=lf
+examples/brightside/demo-pack/*.csv text eol=lf
+examples/brightside/demo-pack/*.pdf binary

@@ -1806,7 +1806,18 @@ function registerHubs(app, {
       resolve: resolveAsk(person, askTool.FORM_CALLBACK, hubId),
       hubOf: (id) => {
         const hubView = viewOf(id);
-        return { llm: hubView.llm, ready: () => readiness(hubView, { rules }) };
+        // hasNotes (Story 18.3, review R1-1): whether the notes this hub
+        // reads (its own, or the shared store) hold any entry. A list that
+        // can't be read is no notes, so Ask keeps the readiness message.
+        const hasNotes = async () => {
+          if (!hubView.knowledge) return false;
+          try {
+            return (await hubView.knowledge.list()).length > 0;
+          } catch {
+            return false;
+          }
+        };
+        return { llm: hubView.llm, ready: () => readiness(hubView, { rules }), hasNotes };
       },
       toolsFor: (id) => visibleEntries(id, person),
       offerFor: (id) => buildRequestFor(person, id),
