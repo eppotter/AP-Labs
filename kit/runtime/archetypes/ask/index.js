@@ -30,6 +30,17 @@
 //      that the AI named, with its button, or "There's no tool for that
 //      yet". The runner is never called (readiness reads only its
 //      describe()).
+//      Notes first (Story 18.3, review R1-1): when readiness says no data
+//      is connected and the hub has notes (hub.hasNotes(), the hub's own or
+//      the shared store it reads), one structured call (answer_from_notes,
+//      effects "none", the hub's usual prompt: its sees and its notes, as
+//      a context answer gets) asks whether the notes hold the answer. Only
+//      covered: true with a non-empty answer is shown, as a context answer;
+//      anything else (covered false, no tool call, a malformed reply) shows
+//      the readiness message unchanged. No notes, or a notes list that can't
+//      be read: the readiness message, with no second call. With data
+//      connected this step never runs, so a hub that sees data (and Ask's
+//      query path, plan brightside-v1 D10) is unchanged.
 //   4. context or other: a plain ask on the hub's own service answers from
 //      the hub's prompt (D2), shown escaped through toMrkdwn. It always ends
 //      with "Not what you needed?" and Request a tool (review B8).
@@ -85,6 +96,39 @@ const ROUTE_TOOL = Object.freeze({
   },
   effects: 'none',
 });
+
+// A data question on a hub with no data connected, answered from its notes
+// when they hold the answer (see the header, step 3).
+const NOTES_TOOL_NAME = 'answer_from_notes';
+const MAX_NOTES_ANSWER = 3000;
+const NOTES_TOOL = Object.freeze({
+  name: NOTES_TOOL_NAME,
+  description: 'Record whether the added context answers the question, and the answer when it does.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      covered: { type: 'boolean', description: 'true only when the added context states what the answer needs.' },
+      answer: { type: 'string', maxLength: MAX_NOTES_ANSWER, description: 'The answer, from the added context only. Empty when covered is false.' },
+    },
+    required: ['covered'],
+    additionalProperties: false,
+  },
+  effects: 'none',
+});
+const NOTES_INSTRUCTIONS = [
+  `Call ${NOTES_TOOL_NAME} once.`,
+  'Set covered to true only when the added context (inside the <added_context> tags) states the facts the answer needs; then give the answer in a few plain sentences, using only those facts, and name the note it came from.',
+  'Never guess, estimate or work from anything else. When the added context does not hold the answer, set covered to false and leave answer empty.',
+].join('\n');
+
+// The notes call's reply, checked: the answer text, or null when the notes
+// don't cover the question (or the reply is not a well-formed covered one).
+function notesAnswerOf(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  if (input.covered !== true || typeof input.answer !== 'string') return null;
+  const text = input.answer.trim();
+  return text ? cut(text, MAX_NOTES_ANSWER) : null;
+}
 
 // Fixed engine text, then the person's tools as escaped data (their ids are
 // registry slugs; labels and descriptions come from reviewed manifests).
@@ -232,7 +276,21 @@ function createAsk({ log, admin = 'your admin' }) {
     }
     if (kind === 'data') {
       const said = notReady();
-      if (said) return said;
+      if (said) {
+        if (hub.ready().data || typeof hub.hasNotes !== 'function' || !(await hub.hasNotes())) return said;
+        let input;
+        try {
+          const res = await hub.llm.structured({
+            person, resource: mod.resource, request: question, tool: NOTES_TOOL, instructions: NOTES_INSTRUCTIONS,
+          });
+          input = res && res.toolInput;
+        } catch (err) {
+          return words(err);
+        }
+        const fromNotes = notesAnswerOf(input);
+        log.info('ask data from notes', { module: mod.id, covered: Boolean(fromNotes) });
+        return fromNotes ? result({ ...base, text: toMrkdwn(fromNotes), offer: offer(true) }) : said;
+      }
       // Both: only a data tool from the person's own list, through Open.
       if (isDataTool) return result({ ...base, text: WORDS.tool(named.label, verbFor(named, log)), open: named });
       return result({ ...base, text: WORDS.noToolYet(), offer: offer(false) });
@@ -286,5 +344,6 @@ function createAsk({ log, admin = 'your admin' }) {
 
 module.exports = {
   createAsk, form, result, parseMetadata, verbOf, routeOf, routeInstructions, ROUTE_TOOL, TOOL_NAME, KINDS,
+  NOTES_TOOL, NOTES_TOOL_NAME, NOTES_INSTRUCTIONS, notesAnswerOf,
   FORM_CALLBACK, RESULT_CALLBACK, QUESTION_BLOCK, QUESTION_ACTION, ACTIONS, ACTION_PATTERN, MAX_QUESTION,
 };

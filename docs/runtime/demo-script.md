@@ -105,7 +105,7 @@ All four together are about 4,200 characters as notes, well under the hub's 15,0
 
 The runners-up, if someone asks: North billed $86,608.00 (second); West crew A and North crew B had 4 late-arrival complaints each.
 
-**Not live-checked yet.** Ask sorts each question before answering it, and a question about figures ("which zone billed the most") may be sorted as a data question, which on v0 gets the "I can't answer data questions yet" reply even after the CSVs are uploaded. If questions 3 to 5 get that reply at step 9, stop and tell the Orchestrator: it is a known open point from Story 18.3, not a step you did wrong.
+Questions 3 to 5 ask for figures, which Ask sorts as data questions. On v0 no data is connected, so Ask first checks the notes: when they hold the answer it answers from them; when they don't, it says "I can't answer data questions yet" as in step 3.
 
 ### Resetting v0
 

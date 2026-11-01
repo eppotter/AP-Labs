@@ -419,8 +419,10 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
     // (a boolean for Ask's status); the service itself goes nowhere.
     'llm: Boolean(view.llm),',
     // Story 16.7: Ask uses its own hub's bound service (archetypes/ask); it
-    // reads readiness only (the runner's describe()), never a row.
-    'return { llm: hubView.llm, ready: () => readiness(hubView, { rules }) };',
+    // reads readiness only (the runner's describe()), never a row. Story
+    // 18.3 (review R1-1): hasNotes reads only whether the hub's notes store
+    // has an entry, so the notes-first answer sees notes, never a row.
+    'return { llm: hubView.llm, ready: () => readiness(hubView, { rules }), hasNotes };',
   ]);
   const app = fs.readFileSync(path.join(ROOT, 'kit/runtime/app/index.js'), 'utf8');
   assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, forHub, connectors, mapFiles, rules, slackFiles \}\)/);
