@@ -4,9 +4,9 @@
 // hub may reach, built once at boot from the hub file's sees. This file is
 // the one seam: no module, archetype or button decides what a hub sees.
 //
-//   const views = createHubViews({ hubs, data, llm, knowledge });
+//   const views = createHubViews({ hubs, data, llm, knowledge, askData });
 //   const view = views.forHub('brightside');
-//   // { id, sees, data, llm, rules, knowledge, notes, sharedWith }
+//   // { id, sees, data, llm, rules, knowledge, notes, sharedWith, askData }
 //
 //   data       the query runner (kit/runtime/data) when sees lists "data",
 //              else null: a handler's ctx.data.run then rejects with "no data
@@ -24,6 +24,9 @@
 //   sharedWith the names of the other hubs that use the same notes, in file
 //              order ([] for a hub whose notes are its own alone), for the
 //              Add context and Data sources screens to say so.
+//   askData    Ask's own read-only connection (kit/runtime/data/ask, plan
+//              brightside-v1, D10, Story 19.8) when the hub sees both "data"
+//              and "rules", else null: Ask runs a query only on such a hub.
 //
 // Shared notes (plan brightside-v1, D6, Story 19.1): a hub file may name
 // another hub in "notes". Its knowledge store is then that hub's
@@ -169,7 +172,7 @@ function seesOf(hub) {
 }
 
 function viewOf({
-  id, sees, data, llm, knowledge = null, notes = id, sharedWith = [],
+  id, sees, data, llm, knowledge = null, notes = id, sharedWith = [], askData = null,
 }) {
   return Object.freeze({
     id,
@@ -180,6 +183,7 @@ function viewOf({
     knowledge,
     notes,
     sharedWith: Object.freeze([...sharedWith]),
+    askData: sees.includes('data') && sees.includes('rules') ? askData || null : null,
   });
 }
 
@@ -189,10 +193,10 @@ const BLANK_VIEW = viewOf({ id: null, sees: Object.freeze([]), data: null, llm: 
 
 // hubs: the registry's hubs. data: the app's query runner, or null. llm: the
 // AI service (kit/runtime/llm createLlm), or null. knowledge: the
-// added-context store (kit/runtime/knowledge/store), or null. Each view is
-// built once.
+// added-context store (kit/runtime/knowledge/store), or null. askData:
+// Ask's connection (kit/runtime/data/ask), or null. Each view is built once.
 function createHubViews({
-  hubs, data = null, llm = null, knowledge = null,
+  hubs, data = null, llm = null, knowledge = null, askData = null,
 }) {
   // A notes link boot would refuse stops here too (fail closed).
   const bad = linkProblems(hubs);
@@ -211,6 +215,7 @@ function createHubViews({
       knowledge: knowledge ? knowledge.forHub(notes) : null,
       notes,
       sharedWith,
+      askData,
     }));
   }
   return Object.freeze({
@@ -230,17 +235,19 @@ function boundLater(llm, id, sees) {
     if (!bound) bound = llm.forHub({ id, sees: [...sees] });
     return bound;
   };
-  return Object.freeze({ ask: (args) => get().ask(args), structured: (args) => get().structured(args), readFile: (args) => get().readFile(args) });
+  return Object.freeze({
+    ask: (args) => get().ask(args), structured: (args) => get().structured(args), readFile: (args) => get().readFile(args), writeQuery: (args) => get().writeQuery(args),
+  });
 }
 
 // registerHubs' test seam (see the header): every hub sees everything.
-function everyHubSeesAll({ data = null, llm = null }) {
+function everyHubSeesAll({ data = null, llm = null, askData = null }) {
   const views = new Map();
   return Object.freeze({
     forHub: (hubId) => {
       if (!views.has(hubId)) {
         views.set(hubId, viewOf({
-          id: hubId, sees: HUB_SEES, data, llm: llm ? boundLater(llm, hubId, HUB_SEES) : null,
+          id: hubId, sees: HUB_SEES, data, llm: llm ? boundLater(llm, hubId, HUB_SEES) : null, askData,
         }));
       }
       return views.get(hubId);

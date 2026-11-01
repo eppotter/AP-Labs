@@ -96,8 +96,12 @@
 // doesn't have, or a bare-name clash with a hidden column, refuses to start,
 // naming each. Data that can't be read yet is logged, as for the tools'
 // runner, and the check runs again on Ask's first query. MotherDuck data:
-// Ask's queries stay off (logged). Nothing calls Ask's connection until
-// Story 19.8; shutdown closes it.
+// Ask's queries stay off (logged). Shutdown closes it.
+//
+// Story 19.8: Ask's connection goes into the hub views (createHubViews
+// askData; only a hub that sees data and rules gets it), and boot makes the
+// review queue (kit/runtime/knowledge/ask-queue, under the var dir; no file
+// until the first declined question) for the hubs, with the clock.
 //
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
@@ -121,6 +125,7 @@ const { createAskData } = require('../data/ask');
 const md = require('../data/motherduck');
 const llm = require('../llm');
 const { createKnowledgeStore, varDirFor } = require('../knowledge/store');
+const { createAskQueue } = require('../knowledge/ask-queue');
 const jobs = require('../jobs');
 const health = require('./health');
 const { createConnectors } = require('../archetypes/approval-write');
@@ -260,7 +265,7 @@ function checkConfig({ env, cwd, deps = {}, register = () => {} }) {
 // the app-wide runner or AI service. profilePath: where Data sources reads
 // the client files beside the profile (kit/runtime/knowledge/readiness).
 function createApp({
-  tokens, profile, profilePath = null, registry, env, store, forHub, log, App, connectors = null, sweeping = () => false,
+  tokens, profile, profilePath = null, registry, env, store, forHub, log, App, connectors = null, sweeping = () => false, ask = {},
 }) {
   const AppClass = App || require('@slack/bolt').App;
   const app = new AppClass({
@@ -281,7 +286,9 @@ function createApp({
   const rules = createRulesReader({ profile, profilePath });
   // Reading uploaded files (Story 16.8): the bot token, only to files.slack.com.
   const slackFiles = createSlackFiles({ token: tokens.SLACK_BOT_TOKEN, log });
-  registerHubs(app, { registry, profile, env, log, store, forHub, connectors, mapFiles, rules, slackFiles });
+  registerHubs(app, {
+    registry, profile, env, log, store, forHub, connectors, mapFiles, rules, slackFiles, ask,
+  });
   return app;
 }
 
@@ -335,7 +342,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     throw err;
   }
   const {
-    remote, data, connecting, store, ai, aiStatus, knowledge, askData, askProblems,
+    remote, data, connecting, store, ai, aiStatus, knowledge, askData, askProblems, askQueue,
   } = setup;
   // Ask's tables must fit the data (Story 19.7): a misfit refuses to start.
   if (askProblems.length) {
@@ -352,10 +359,17 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   try {
     // Each hub's view, once (plan brightside-v0, D1): the hubs get only these.
     const views = createHubViews({
-      hubs: cfg.registry.hubs, data, llm: ai, knowledge,
+      hubs: cfg.registry.hubs, data, llm: ai, knowledge, askData,
     });
     app = createApp({
-      ...cfg, store, forHub: views.forHub, log, App: deps.App, connectors, sweeping: (name) => Boolean(engineJobs && engineJobs.running(name)),
+      ...cfg,
+      store,
+      forHub: views.forHub,
+      log,
+      App: deps.App,
+      connectors,
+      sweeping: (name) => Boolean(engineJobs && engineJobs.running(name)),
+      ask: { queue: askQueue, ...(deps.now ? { now: deps.now } : {}) },
     });
     // The kit's own jobs, whatever the jobs switch says (Story 15.1).
     engineJobs = jobs.createEngineJobs({
@@ -452,8 +466,13 @@ async function setUp({ cfg, deps, log, env }) {
   const aiStatus = ai.status();
   if (aiStatus.reason === 'config') log.error('AI helper off: configuration fault', { problem: aiStatus.problem });
   if (aiStatus.contextProblem) log.error('AI context unusable: hubs that see context refuse AI calls', { problem: aiStatus.contextProblem });
+  // The review queue (Story 19.8): the data questions Ask declined. No file
+  // is touched until the first one.
+  const askQueue = ask.askData ? createAskQueue({
+    clientId: cfg.profile.client.id, varDir: varDirFor(env), log, ...(deps.now ? { now: deps.now } : {}),
+  }) : null;
   return {
-    remote, data, connecting, store, ai, aiStatus, knowledge, askData: ask.askData, askProblems: ask.problems,
+    remote, data, connecting, store, ai, aiStatus, knowledge, askData: ask.askData, askProblems: ask.problems, askQueue,
   };
 }
 

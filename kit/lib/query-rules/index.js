@@ -53,6 +53,10 @@
 // The verify check also runs the rule's SQL through Ask's own guard
 // (kit/runtime/sql checkSql with allowedTables, and checkParsed), so a signed
 // rule is one Ask's connection will run.
+//
+// writerCanon (Story 19.8) is what Ask's query writer reads of data.md's
+// prose: the Terminology bullets and approved metric rule lines, any
+// sentence holding a number dropped (numberFree). See its own comment.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -633,7 +637,91 @@ function insertBlock(text, block) {
   return `${before}\n\n${block}${after ? `\n${after}` : ''}`;
 }
 
+// What Ask's query writer is told from data.md's prose (plan brightside-v1,
+// D10, SQLsmith P1-3, Story 19.8): the Terminology bullets and each approved
+// metric card's rule line (its definition and formula), and nothing else of
+// the file. No figure: a sentence holding a number is dropped whole, after
+// rule ids (MET-001, QR-006) and ISO dates are set aside, so "815 plans are
+// active" or "$1.00 is 100" never reach the prompt. HTML comments and fenced
+// blocks (truths, query rules) are never read here.
+const CANON_ID = /\b[A-Z]{2,6}-\d{3}\b/g;
+const ISO_DATE = /\b\d{4}-\d{2}-\d{2}\b/g;
+
+// The sentences of text that hold no number (see above), joined.
+function numberFree(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => sentence && !/\d/.test(sentence.replace(CANON_ID, '').replace(ISO_DATE, '')))
+    .join(' ')
+    .trim();
+}
+
+// The lines of a "## <name>" section: outside HTML comments and fenced
+// blocks, up to the next level-1 or level-2 heading.
+function proseOf(text, name) {
+  const lines = String(text).replace(/<!--[\s\S]*?(?:-->|$)/g, '').split(/\r?\n/);
+  const heading = new RegExp(`^##\\s+${name}\\s*#*\\s*$`, 'i');
+  const start = lines.findIndex((l) => heading.test(l));
+  if (start === -1) return [];
+  const out = [];
+  let fence = null;
+  for (const line of lines.slice(start + 1)) {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.trim().slice(f[1].length)) fence = null;
+      continue;
+    }
+    if (f) { [, fence] = f; continue; }
+    if (/^#{1,2}\s/.test(line)) break;
+    out.push(line);
+  }
+  return out;
+}
+
+// Bullet items ("- text" and its indented continuation lines) in lines.
+function itemsOf(lines) {
+  const items = [];
+  let item = null;
+  for (const line of lines) {
+    const m = /^[-*]\s+(.*)$/.exec(line);
+    if (m) { item = [m[1]]; items.push(item); continue; }
+    if (item && /^\s+\S/.test(line)) item.push(line.trim());
+    else item = null;
+  }
+  return items.map((parts) => parts.join(' '));
+}
+
+// { terminology: [text], metrics: [{ id, name, rule }] } from data.md's text.
+function writerCanon(text) {
+  const terminology = itemsOf(proseOf(text, 'Terminology')).map(numberFree).filter(Boolean);
+  const metrics = [];
+  let card = null;
+  const flush = () => {
+    if (!card) return;
+    const items = itemsOf(card.lines);
+    const field = (key) => {
+      const hit = items.find((i) => i.toLowerCase().startsWith(`${key}:`));
+      return hit ? hit.slice(key.length + 1).trim() : '';
+    };
+    const rule = numberFree(field('rule'));
+    if (/^approved\b/.test(field('status')) && rule) metrics.push(Object.freeze({ id: card.id, name: numberFree(card.name), rule }));
+    card = null;
+  };
+  for (const line of proseOf(text, 'Metric definitions')) {
+    const m = /^###\s+(MET-\d{3}):\s*(.+?)\s*$/.exec(line);
+    if (m) { flush(); card = { id: m[1], name: m[2], lines: [] }; continue; }
+    if (/^#{3,6}\s/.test(line)) { flush(); continue; }
+    if (card) card.lines.push(line);
+  }
+  flush();
+  return Object.freeze({ terminology: Object.freeze(terminology), metrics: Object.freeze(metrics) });
+}
+
 module.exports = {
+  numberFree,
+  writerCanon,
   SECTION,
   INFO,
   KINDS,

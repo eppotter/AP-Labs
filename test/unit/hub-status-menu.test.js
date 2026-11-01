@@ -629,7 +629,14 @@ test('no header repeats the modal title: the hub\'s name is the title only', asy
 test('no bot text says "Build request" or "press Open"', () => {
   const said = [
     ...Object.values(BUILD_REQUEST_WORDS).map((f) => f('<@UADA>', 5)),
-    ...Object.values(ASK_WORDS).map((f) => f('Tool', 'Run')),
+    // Each Ask word with sample arguments; the two query-answer words that
+    // take a list or an object (Story 19.8) get one.
+    ...Object.entries(ASK_WORDS).map(([k, f]) => ({
+      composed: () => f(['QR-001', 'QR-006']),
+      source: () => f({
+        label: 'Data', asOf: '2026-09-30', rows: 2, tables: ['plans'],
+      }),
+    }[k] || (() => f('Tool', 'Run')))()),
     FORM_NEEDS_WINDOW, MAP_NEEDS_WINDOW, welcomeText({ name: 'Hub' }), REQUEST_A_TOOL,
   ];
   for (const s of said) {

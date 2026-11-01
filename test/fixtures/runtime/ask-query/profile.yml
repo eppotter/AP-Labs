@@ -1,0 +1,25 @@
+# Ask's query answers (plan brightside-v1, D10, D11, Story 19.8): a made-up
+# client. Ada is an admin granted ASK_DATA by name; Bo is a member granted
+# ASK only (no ASK_DATA, no Request a tool). clients.first_name and
+# clients.email are hidden from Ask: the ask block doesn't list them.
+schema_version: 1
+client: { id: askq, name: Ask Query Co }
+resources:
+  - { key: ASK, label: Ask }
+  - { key: ASK_DATA, label: Ask's data answers, admin_grantable: false }
+  - { key: BUILD_REQUEST, label: Request a tool }
+users:
+  - { id: ada, name: Ada Admin, role: admin, identities: { slack: UADA }, grants: [ASK_DATA] }
+  - { id: bo, name: Bo Member, role: member, identities: { slack: UBO }, grants: [ASK] }
+slack: { build_requests_channel: C0BUILDREQ1 }
+sql:
+  forbidden_columns:
+    - clients.email
+ask:
+  queries_per_hour: 3
+  tables:
+    zones: [zone_id, name]
+    clients: [client_id, zone_id]
+    invoices: [invoice_id, client_id, issued_on, total_cents]
+    payments: [payment_id, invoice_id, paid_on, amount_cents]
+    fixture_meta: [key, value]

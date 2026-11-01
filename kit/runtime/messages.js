@@ -455,7 +455,47 @@ const ASK_WORDS = Object.freeze({
   notWhatYouNeeded: () => 'Not what you needed?',
   // When the Request a tool button is hidden (review B9).
   askAdmin: (admin) => `Not what you needed? Tell ${admin} what you were looking for.`,
+  // Ask's query answers (plan brightside-v1, D10, Story 19.8). The one
+  // refusal text, for every data question Ask won't answer by query on a hub
+  // whose data and rules are ready; without the Request a tool button its
+  // last sentence names the admin instead.
+  noQueryRule: (requestable, admin) => "The data and rules are ready, but no signed query rule covers that yet, so I won't guess. I've noted the question for the team. "
+    + (requestable ? 'Press Request a tool if you need it sooner.' : `Tell ${admin} if you need it sooner.`),
+  // The truth gate (architect P2-6, SQLsmith P2-9): the one other text.
+  truthGate: () => "The data and rules are set up, but not every known truth has passed its check on this machine in the last 7 days, so I won't run a query. Run `npm run verify`, then ask again.",
+  queryLimit: (perHour) => `You've had ${perHour} query answers in the last hour, the most allowed. Try again later.`,
+  // Provenance (D10): under every query answer.
+  fromRule: (id) => `From signed rule ${escapeText(id)} (reviewed query).`,
+  composed: (ids) => `Composed from ${listOf(ids)} (AI-written, checked); not itself a signed rule.`,
+  source: ({
+    label, asOf, rows, tables,
+  }) => `Source: ${escapeText(label)}${asOf ? `, as of ${escapeText(asOf)}` : ''}. ${rows === 1 ? '1 row' : `${rows} rows`}. Tables: ${tables.map(escapeText).join(', ')}.`,
+  // Ranking (SQLsmith P2-12), for a table.
+  notRanked: () => 'Not ranked: the rows are in no particular order.',
+  notRankedMore: (shown) => `Showing ${shown} rows of more than ${shown}, not ranked: the rows are in no particular order.`,
+  firstByOrder: (shown) => `Showing the first ${shown} by its order; there are more.`,
+  moreColumns: (shown, total) => `Showing ${shown} of ${total} columns.`,
+  noRows: (label) => `*${escapeName(label)}:* no rows matched.`,
+  // Truth figures (SQLsmith P1-4): the AI's own query beside the signed rule's.
+  aiAgreed: (value) => `The AI's own query agreed: ${value}.`,
+  aiDisagreed: () => "The AI's own query disagreed; the figure shown is from the signed rule.",
+  aiGave: (value) => `It gave ${value}.`,
+  // Show the query.
+  showQuery: () => 'Show the query',
+  backToAnswer: () => 'Back to the answer',
+  ruleQuery: (id) => `*The signed rule's query (${escapeText(id)}, reviewed):*`,
+  aiQuery: () => "*The AI's own query (checked, shown beside the signed rule's figure):*",
+  composedQuery: () => '*The AI-written query (checked):*',
+  params: (list) => `Parameters: ${list}.`,
+  answerGone: () => "That answer is no longer kept (answers are kept for 30 minutes), so I can't show its query. Ask again to see it.",
+  answerNotYours: () => "That answer belongs to someone else's question, so I can't show its query. Ask it yourself to see one.",
 });
+
+// "A", "A and B", "A, B and C", each escaped.
+function listOf(items) {
+  const list = items.map((i) => escapeText(i));
+  return list.length < 2 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`;
+}
 
 // Why? (plan hub-status-menu, D7, Story 17.3): the words a waiting tool's
 // Why? screen adds to the existing ones (ASK_WORDS' readiness lines,

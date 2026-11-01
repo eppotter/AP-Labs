@@ -332,6 +332,7 @@ const { readiness } = require('../knowledge/readiness');
 const addContext = require('../archetypes/add-context');
 const buildRequest = require('../archetypes/build-request');
 const askTool = require('../archetypes/ask');
+const { ASK_DATA_KEY } = require('../../lib/profile');
 const {
   ContextRefused, FileRefused, LlmUnavailable, RuntimeRefusal,
 } = require('../errors');
@@ -443,10 +444,10 @@ function moduleData(data, mod) {
 function registerHubs(app, {
   registry, profile, env, log, store, forHub = null, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),
   mapFiles = null, routingMap: routingMapOptions = {}, rules = null, buildRequest: buildRequestOptions = {}, slackFiles = null,
-  menuBudgetMs = MENU_BUDGET_MS,
+  menuBudgetMs = MENU_BUDGET_MS, ask: askOptions = {},
 }) {
   if (forHub && (data || llm)) throw new TypeError('registerHubs takes forHub, or (a test seam) data and llm, never both');
-  const viewFor = forHub || everyHubSeesAll({ data, llm }).forHub;
+  const viewFor = forHub || everyHubSeesAll({ data, llm, askData: askOptions.askData || null }).forHub;
   // Each hub's view, once, at setup: a hub with no view stops it here.
   const views = new Map(registry.hubs.map((h) => [h.id, viewFor(h.id)]));
   // A hub not in the registry (a hand-made payload) sees nothing.
@@ -1806,7 +1807,32 @@ function registerHubs(app, {
       ...(err instanceof RuntimeRefusal ? { message: err.message } : {}),
     };
   };
-  const asks = askTool.createAsk({ log, admin });
+  // Ask's query path (Story 19.8): its clock, the review queue and the store
+  // (the hourly limit and the kept answers).
+  const asks = askTool.createAsk({
+    log, admin, store, queue: askOptions.queue || null, ...(askOptions.now ? { now: askOptions.now } : {}),
+  });
+  // The hub's query path, or null: the profile's ask block and Ask's own
+  // connection on a hub that sees data and rules (the hub view decides),
+  // and a rules reader that lists the signed query rules. mayQuery is
+  // ASK_DATA from the profile, asked at submit and again before the run.
+  const queryFor = (hubView, person) => {
+    if (!profile.ask || !hubView.askData || !rules || typeof rules.forQueries !== 'function') return null;
+    return {
+      askData: hubView.askData,
+      rules,
+      perHour: profile.ask.queries_per_hour,
+      mayQuery: () => access.decide(profile, access.personFor(profile, person), ASK_DATA_KEY) === 'allowed',
+      dataLabel: () => {
+        try {
+          const d = hubView.data && hubView.data.describe();
+          return d && typeof d.label === 'string' ? d.label : null;
+        } catch {
+          return null;
+        }
+      },
+    };
+  };
   const resolveAsk = (person, actionId, hubId) => (moduleId) => {
     const found = resolveModule(person, actionId, ASKS)(moduleId);
     if (found.refusal || found.mod.hub === hubId) return found;
@@ -1849,7 +1875,9 @@ function registerHubs(app, {
             return false;
           }
         };
-        return { llm: hubView.llm, ready: () => readiness(hubView, { rules }), hasNotes };
+        return {
+          llm: hubView.llm, ready: () => readiness(hubView, { rules }), hasNotes, query: queryFor(hubView, person.id),
+        };
       },
       toolsFor: (id) => visibleEntries(id, person),
       offerFor: (id) => buildRequestFor(person, id),
@@ -1907,6 +1935,14 @@ function registerHubs(app, {
       const { mod } = found;
       if (verb === 'again') {
         await show(askTool.form({ hubId: mod.hub, moduleId: mod.id }));
+        return;
+      }
+      // Show the query, Back to the answer (Story 19.8): a kept answer of
+      // this person's, in place.
+      if (verb === 'query' || verb === 'answer') {
+        await show(asks.kept({
+          verb, id: action.value, person: person.id, hubId: mod.hub, moduleId: mod.id,
+        }));
         return;
       }
       const target = visibleEntries(mod.hub, person).find((m) => m.archetype === 'build-request');

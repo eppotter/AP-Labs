@@ -10,7 +10,8 @@
 // question points to its route skill with Run, whether the AI sorts it as a
 // tool or as data; a person without the routing key never sees the skill and
 // gets "There's no tool for that yet"; a data question no skill fits gets
-// the same line until Ask writes queries (Story 19.8). Request a tool posts
+// the same line on this profile, which has no ask block (with one, Ask
+// answers by query: v1-ask-queries.test.js, Story 19.8). Request a tool posts
 // from v1 (D12). Data sources counts the approved rule cards.
 //
 // Ways out, each tested (architect P2-12): Ask's Run into a route skill,
@@ -227,7 +228,7 @@ test('an admin without the routing key never sees the route skills: the route qu
   }
 });
 
-test('a data question no route skill fits gets "There\'s no tool for that yet" with Request a tool; nothing is queried (Ask writes no query until Story 19.8)', async (t) => {
+test('a data question no route skill fits gets "There\'s no tool for that yet" with Request a tool; nothing is queried (this profile has no ask block)', async (t) => {
   const { app, model, lines } = await boot(t, { model: fakeModel({ route: { kind: 'data' } }) });
   const { answer } = await askOnV1(app, 'What was paid revenue in September 2026?');
   assert.equal(texts(answer)[0], ASK_WORDS.noToolYet());

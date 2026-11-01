@@ -10,7 +10,8 @@
 //             3-second deadline); the answer replaces it by views.update.
 //   Answer    one of the routes below, with Ask another and Back.
 //
-// Routing (D10), in three steps. Ask never writes or runs SQL:
+// Routing (D10), in three steps. Ask writes and runs SQL only through its
+// query path (./query, Story 19.8), from signed query rules:
 //   1. One structured call (route_question, effects "none", no business
 //      context in its prompt) sorts the question: module (with a module id),
 //      data, context or other. The tools it sees are only the modules on this
@@ -29,11 +30,15 @@
 //      AI call: no data and no rules, data but no rules, rules but no data
 //      each get their own plain message (kit/runtime/messages ASK_WORDS);
 //      with both, a data tool from the person's list that the AI named
-//      (DATA_TOOL_ARCHETYPES), with its button, or "There's no tool for that
-//      yet" (Ask writes no query until plan brightside-v1's Story 19.8). A
-//      person without a tool's key never has it in their list, so a route
-//      question from someone without the routing key gets that line too.
-//      The runner is never called (readiness reads only its describe()).
+//      (DATA_TOOL_ARCHETYPES), with its button. Else, on a hub with a query
+//      path (hubOf().query: the profile's ask block and Ask's own
+//      connection on a hub that sees data and rules), Ask answers it by
+//      query from signed rules (./query, plan brightside-v1, D10, D11,
+//      Story 19.8: a second AI call, write_query; the AI never sees a row);
+//      without one, "There's no tool for that yet". A person without a
+//      tool's key never has it in their list, so a route question from
+//      someone without the routing key goes the same way. The tools' runner
+//      is never called (readiness reads only its describe()).
 //      Notes first (Story 18.3, review R1-1): when readiness says no data
 //      is connected and the hub has notes (hub.hasNotes(), the hub's own or
 //      the shared store it reads), one structured call (answer_from_notes,
@@ -67,6 +72,10 @@
 // answer, logged at info with Slack's code only; the AI off, rate-limited,
 // over budget or failing shows the existing LlmUnavailable words; the route
 // tool not called shows "I couldn't sort that question" with Request a tool.
+// A query answer's own ways out (the refusal text, the truth gate, the
+// hourly limit, a second question while one runs, the data unavailable, a
+// failure, a timeout, Show the query and Back to the answer, an answer kept
+// no longer or someone else's) are listed in ./query.
 //
 // Never logged: the question, the AI's reply or a module id it named. Each
 // AI call is logged by the service (model, tokens, cost) with no text.
@@ -79,14 +88,17 @@ const { textBlocks, toMrkdwn } = require('../../slack/format');
 const { failureReason } = require('../../slack/modal');
 const { openActionId, verbFor } = require('../../registry/menu');
 const { QUERY_ARCHETYPES } = require('../../registry');
+const { createQueryPath } = require('./query');
 
 const MAX_QUESTION = 500;
 const FORM_CALLBACK = 'ask:form';
 const RESULT_CALLBACK = 'ask:result';
 const QUESTION_BLOCK = 'ask-question';
 const QUESTION_ACTION = 'ask-question-value';
-const ACTIONS = Object.freeze({ again: 'ask:again', buildRequest: 'ask:build-request' });
-const ACTION_PATTERN = /^ask:(again|build-request)$/;
+const ACTIONS = Object.freeze({
+  again: 'ask:again', buildRequest: 'ask:build-request', query: 'ask:query', answer: 'ask:answer',
+});
+const ACTION_PATTERN = /^ask:(again|build-request|query|answer)$/;
 const SLUG = /^[a-z][a-z0-9-]{0,63}$/;
 const KINDS = Object.freeze(['module', 'data', 'context', 'other']);
 // The tools a data question may be pointed to, each gated by readiness: the
@@ -196,15 +208,17 @@ function form({ hubId, moduleId, initial = '' }) {
 
 // An answer screen: the text (mrkdwn, already escaped), then the buttons:
 // the tool that fits, with its menu verb (Run, View…: plan hub-status-menu,
-// D10), Request a tool (when offered), Ask another.
+// D10), any extra (Show the query, Back to the answer: Story 19.8, each
+// { text, actionId, value }), Request a tool (when offered), Ask another.
 // offer: { buildRequest: bool, question, admin, tail: bool } adds the
 // "Not what you needed?" line.
 function result({
-  hubId, moduleId, text, open = null, offer = null,
+  hubId, moduleId, text, open = null, offer = null, extra = [],
 }) {
   const blocks = [...textBlocks(text)];
   const elements = [];
   if (open) elements.push(button(verbFor(open), openActionId(open.id), open.id, 'primary'));
+  for (const x of extra) elements.push(button(x.text, x.actionId, x.value));
   if (offer) {
     if (offer.buildRequest) {
       if (offer.tail) blocks.push(...textBlocks(WORDS.notWhatYouNeeded()));
@@ -236,8 +250,14 @@ function routeOf(input) {
   return { kind: input.kind, moduleId };
 }
 
-// log, admin (mrkdwn: who to ask).
-function createAsk({ log, admin = 'your admin' }) {
+// log, admin (mrkdwn: who to ask). store, now and queue: the query path's
+// (./query: the hourly limit and kept answers, the clock, the review queue).
+function createAsk({
+  log, admin = 'your admin', store = null, now = () => Date.now(), queue = null,
+}) {
+  const queries = store ? createQueryPath({
+    log, store, now, queue, admin, result, actions: ACTIONS,
+  }) : null;
   // The answer to question, as a result message. hub: { llm, ready() };
   // tools: the person's openable modules on this hub (not Ask); offered:
   // whether Build request is offered. Throws only what messageFor can't word.
@@ -304,8 +324,14 @@ function createAsk({ log, admin = 'your admin' }) {
         log.info('ask data from notes', { module: mod.id, covered: Boolean(fromNotes) });
         return fromNotes ? result({ ...base, text: toMrkdwn(fromNotes), offer: offer(true) }) : said;
       }
-      // Both: only a data tool from the person's own list, through Open.
+      // Both: a data tool from the person's own list, through Open.
       if (isDataTool) return result({ ...base, text: WORDS.tool(named.label, verbFor(named, log)), open: named });
+      // Else a query from signed rules (Story 19.8), where the hub has one.
+      if (queries && hub.query) {
+        return queries.answer({
+          hub, person, mod, question, base, offer: { buildRequest: offered, question, admin },
+        });
+      }
       return result({ ...base, text: WORDS.noToolYet(), offer: offer(false) });
     }
     let reply;
@@ -352,7 +378,20 @@ function createAsk({ log, admin = 'your admin' }) {
     return { thinking: WORDS.thinking(), later };
   }
 
-  return Object.freeze({ submit, answer });
+  // Show the query and Back to the answer (Story 19.8): a kept answer's
+  // screen, for the person whose answer it is. The caller re-checks access
+  // to Ask first.
+  function kept({
+    verb, id, person, hubId, moduleId,
+  }) {
+    const base = { hubId, moduleId };
+    if (!queries) return result({ ...base, text: WORDS.answerGone() });
+    return queries.stored({
+      verb, id, person, base,
+    });
+  }
+
+  return Object.freeze({ submit, answer, kept });
 }
 
 module.exports = {

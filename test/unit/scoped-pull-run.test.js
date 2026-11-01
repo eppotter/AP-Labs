@@ -405,7 +405,8 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
   assert.deepEqual(uses, [
     'registry, profile, env, log, store, forHub = null, data = null, llm = null, connectors = null, canUse = defaultCanUse(profile),',
     "if (forHub && (data || llm)) throw new TypeError('registerHubs takes forHub, or (a test seam) data and llm, never both');",
-    'const viewFor = forHub || everyHubSeesAll({ data, llm }).forHub;',
+    // Story 19.8: the test seam also takes Ask's connection (askOptions.askData).
+    'const viewFor = forHub || everyHubSeesAll({ data, llm, askData: askOptions.askData || null }).forHub;',
     'store, log, run: createRunner({ data: view.data, log, admin, store, hooks }), read: view.llm ? createReader({ llm: view.llm, log }) : null,',
     // Story 16.6: a build request's summary uses its own hub's bound service
     // (archetypes/build-request); it reads no data, so no row can reach it.
@@ -422,10 +423,16 @@ test('rows never reach the AI: the scoped-pull engine does not import the AI ser
     // reads readiness only (the runner's describe()), never a row. Story
     // 18.3 (review R1-1): hasNotes reads only whether the hub's notes store
     // has an entry, so the notes-first answer sees notes, never a row.
-    'return { llm: hubView.llm, ready: () => readiness(hubView, { rules }), hasNotes };',
+    // Story 19.8 (plan brightside-v1, D10): query (queryFor) hands Ask's
+    // query path its own connection (kit/runtime/data/ask) beside the AI
+    // service. The path (archetypes/ask/query) renders every row itself and
+    // sends the AI only the question and a reference built from the schema
+    // and the signed rules; runtime-ask-query.test.js checks that no row,
+    // figure, note or org.md text is in any request.
+    'llm: hubView.llm, ready: () => readiness(hubView, { rules }), hasNotes, query: queryFor(hubView, person.id),',
   ]);
   const app = fs.readFileSync(path.join(ROOT, 'kit/runtime/app/index.js'), 'utf8');
-  assert.match(app, /registerHubs\(app, \{ registry, profile, env, log, store, forHub, connectors, mapFiles, rules, slackFiles \}\)/);
+  assert.match(app, /registerHubs\(app, \{\s*registry, profile, env, log, store, forHub, connectors, mapFiles, rules, slackFiles, ask,\s*\}\)/);
   // The approval-write archetype (Story 10.2) shows rows too: none of its files reaches or names the AI.
   const writeDir = path.join(ROOT, 'kit/runtime/archetypes/approval-write');
   for (const f of fs.readdirSync(writeDir)) {

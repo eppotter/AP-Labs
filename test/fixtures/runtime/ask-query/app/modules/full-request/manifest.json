@@ -1,0 +1,12 @@
+{
+  "id": "full-request",
+  "hub": "full",
+  "label": "Request a tool",
+  "description": "Ask for a new tool or change.",
+  "resource": "BUILD_REQUEST",
+  "archetype": "build-request",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}
