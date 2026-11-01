@@ -28,7 +28,9 @@ npm run verify
 ```
 
 and any query or assertion the Orchestrator hands you from SQLsmith, run read-only, exactly as
-written. If it needs a credential you do not already have in the environment, do not look for
+written. `npm run verify` runs each query rule in `data.md` as `query-rule:<id>`; for a rule
+SQLsmith drafted, also run `npm run query-rules -- --check QR-NNN --rows` and return its lines for
+the PR. If it needs a credential you do not already have in the environment, do not look for
 one: report it `SKIPPED: needs <what>`, with the exact command for a human to run.
 
 ## Hard rules

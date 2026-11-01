@@ -7,7 +7,8 @@
 // Reads verify.checks from .aplabs/profile.yml (or APLABS_PROFILE), then the
 // known truths in context/data.md beside it, .aplabs/context/data.md in a fork
 // (Story 4.2, run as checks `truth:<id>` and judged on
-// the number they print), and spawns each argv in order,
+// the number they print) and the query rules there (plan brightside-v1, D11,
+// run as checks `query-rule:<id>` by kit/query-rules/cli.js --check), and spawns each argv in order,
 // without a shell, from the repo root (cwd), stdin ignored. A check sees only
 // the fixed env allowlist plus verify.env_allow, and the profile's path as
 // APLABS_GOVERNING_PROFILE (kit/lib/verify checkEnv), and its whole process group
@@ -34,6 +35,7 @@ const { findProfilePath, loadProfile, PROFILE_REL } = require('../lib/profile');
 const { USAGE, parseArgs, checkEnv, tail, checkLine, summarize, exitCode } = require('../lib/verify');
 const { runChecks, installSignalCleanup } = require('../lib/verify/runner');
 const { truthChecksFor } = require('../lib/truths');
+const { queryRuleChecksFor } = require('../lib/query-rules');
 const { writeLastResult } = require('../lib/verify/last');
 const { runBuiltins } = require('./builtins');
 
@@ -70,8 +72,9 @@ async function main(argv, env = process.env, cwd = process.cwd()) {
     return 2;
   }
 
-  // The profile's checks, then the known truths in context/data.md beside it.
-  const checks = [...profile.verify.checks, ...truthChecksFor(profileFile)];
+  // The profile's checks, then the known truths and the query rules in
+  // context/data.md beside it (query-rule:<id>, plan brightside-v1 D11).
+  const checks = [...profile.verify.checks, ...truthChecksFor(profileFile), ...queryRuleChecksFor(profileFile)];
   const envAllow = profile.verify.env_allow;
   if (!checks.length) console.log('verify: SKIPPED (0 checks)');
   installSignalCleanup();

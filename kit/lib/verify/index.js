@@ -18,8 +18,9 @@ const LABEL = Object.freeze({ pass: 'PASS', fail: 'FAIL', skip: 'SKIP', timeout:
 const SKIP_CODES = new Set(['ENOENT', 'EACCES']);
 
 const USAGE = `usage: npm run verify [-- --strict]
-  Runs the checks in the profile's verify.checks, then the known truths in
-  context/data.md beside the profile (as truth:<id>), in order, from the repo root.
+  Runs the checks in the profile's verify.checks, then the known truths and
+  query rules in context/data.md beside the profile (as truth:<id> and
+  query-rule:<id>), in order, from the repo root.
   --strict  also exit 1 when a check is skipped or timed out, or none ran.
 Exit: 0 no check failed, 1 a check failed, 2 usage or profile error.`;
 

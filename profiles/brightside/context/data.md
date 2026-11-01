@@ -394,3 +394,277 @@ tolerance: 0
 owner: Ely Potter
 signed_off: pending
 ```
+
+## Query rules
+
+SQLsmith's signed canon of reviewed queries (plan brightside-v1, D11, Story 19.6). Each rule is a
+fenced block with the info string `query-rule`, holding YAML. Ask uses only **signed** rules
+(Stories 19.7 and 19.8): `status: approved`, `signed_off` a date, `signed_off_by` named, and its
+last `npm run verify` check passed. The context prompt never holds these blocks
+(`kit/runtime/llm/context.js` strips them, as it strips truths).
+
+`npm run verify` (and the end-of-turn hook) runs each rule as the check `query-rule:<id>`
+(`npm run query-rules -- --check <id>`): it checks the rule's fields, checks that every table and
+column its SQL names (DuckDB's own parse) is in the rule's `reads` and that `reads` is inside the
+allow-list (`ask-tables.yml` beside this file, until Story 19.7 moves it into the profile's `ask`
+block), runs the SQL with `check.params` through the query runner, and passes when the figure
+equals the linked signed truth's `expect` within its tolerance (or `check.expect`). A rule linked
+to a pending truth can't pass.
+
+- `id`: QR-NNN. `kind`: `metric`, or `traps` (QR-000 only holds the traps every query avoids).
+- `metric`: the signed MET rule or Terminology term it restates. `question_patterns`: what it
+  answers. `definition`: what the number means. `grain` and `unit` (`cents`, `count` or `number`).
+- `sql`: the reviewed, read-only SQL. Parameters are `$name`, each declared in `params` with a type
+  (`date`, `integer`, `zone`, or `enum` with `values`).
+- `reads`: every table and column the SQL reads. `traps`: the traps it avoids.
+- `check`: `truth` (a signed known truth above) or `expect` (a stated figure), with `params`. By
+  default one row and one number; `sum: <column>` adds a column over the rows and `rows: N` requires
+  N rows.
+- `owner`, `status` (`draft`, `approved`, `retired`), `signed_off` (`pending` or the date),
+  `signed_off_by` (`pending` or who signed). In a fork the signer is a named client person.
+
+New rules come from the review queue (the questions Ask declined): `npm run query-rules -- --queue`,
+then `--new QR-NNN --from <queue id>` drafts one here for SQLsmith, the Verifier pastes its
+`query-rule:QR-NNN` result in the PR, Ely Potter or Steven Auslander signs it in the PR, and
+`--done <queue id>` clears the question. `npm run query-rules -- --status` lists every rule, its
+sign-off and its last check.
+
+The seven rules below restate the signed MET rules and Terminology above. Drafted by SQLsmith,
+each is checked against a signed truth. They were signed by the plan's gate approval (Ely Potter,
+`approve plan brightside-v1`, 2026-10-31, gate item 8).
+
+```query-rule
+id: QR-000
+kind: traps
+traps:
+  - "visits holds history up to as_of; scheduled_visits holds the dates after as_of."
+  - "Count completed visits only (visits.status = 'completed') unless the question says otherwise."
+  - "Count clients with COUNT(DISTINCT client_id)."
+  - "Never join payments to invoice_lines: one invoice has many lines, so the sum multiplies."
+  - "For outstanding, sum payments per invoice first, then compare with the invoice total."
+  - "Today is fixture_meta's as_of (key = 'as_of'), never the clock (CURRENT_DATE, now())."
+owner: Ely Potter
+status: approved
+signed_off: 2026-10-31
+signed_off_by: "Ely Potter"
+```
+
+```query-rule
+id: QR-001
+kind: metric
+metric: MET-001
+question_patterns:
+  - "how many plans are active today"
+  - "active plans at as_of"
+  - "how many plans are running"
+definition: "Plans running on as_of: start_date on or before as_of and no end_date, or an end_date on or after it. A plan that ends on as_of still counts. Not status = 'active', which gives 814 because one plan ends on as_of."
+sql: |
+  WITH meta AS (
+    SELECT CAST(m.value AS DATE) AS as_of FROM fixture_meta m WHERE m.key = 'as_of'
+  )
+  SELECT COUNT(pl.plan_id) AS active_plans
+  FROM plans pl, meta
+  WHERE pl.start_date <= meta.as_of
+    AND (pl.end_date IS NULL OR pl.end_date >= meta.as_of)
+params: {}
+grain: "one row, one number: a count of plans"
+unit: count
+traps:
+  - "not status = 'active'"
+  - "today is fixture_meta's as_of"
+reads:
+  fixture_meta: [key, value]
+  plans: [plan_id, start_date, end_date]
+check:
+  truth: active-plans-at-as-of
+  params: {}
+owner: Ely Potter
+status: approved
+signed_off: 2026-10-31
+signed_off_by: "Ely Potter"
+```
+
+```query-rule
+id: QR-002
+kind: metric
+metric: "Client (Terminology)"
+question_patterns:
+  - "how many clients do we have"
+  - "total clients"
+definition: "Clients at as_of: every client account created on or before as_of. One row per client in clients, so no DISTINCT is needed."
+sql: |
+  WITH meta AS (
+    SELECT CAST(m.value AS DATE) AS as_of FROM fixture_meta m WHERE m.key = 'as_of'
+  )
+  SELECT COUNT(c.client_id) AS clients
+  FROM clients c, meta
+  WHERE c.created_on <= meta.as_of
+params: {}
+grain: "one row, one number: a count of clients"
+unit: count
+traps:
+  - "today is fixture_meta's as_of"
+reads:
+  fixture_meta: [key, value]
+  clients: [client_id, created_on]
+check:
+  truth: clients-total
+  params: {}
+owner: Ely Potter
+status: approved
+signed_off: 2026-10-31
+signed_off_by: "Ely Potter"
+```
+
+```query-rule
+id: QR-003
+kind: metric
+metric: MET-003
+question_patterns:
+  - "paid revenue in <month>"
+  - "cash received in <month>"
+  - "how much did we collect in <month>"
+definition: "Cash received in the month: payments by paid_on, from the first day of the month up to but not including the first day of the next. Never billed revenue."
+sql: |
+  SELECT COALESCE(SUM(p.amount_cents), 0) AS paid_cents
+  FROM payments p
+  WHERE p.paid_on >= CAST($month_start AS DATE)
+    AND p.paid_on < CAST($month_end AS DATE)
+params:
+  month_start: { type: date }
+  month_end: { type: date }
+grain: "one row, one number: cents"
+unit: cents
+traps:
+  - "never join payments to invoice_lines"
+  - "not billed revenue (invoices by issued_on)"
+reads:
+  payments: [amount_cents, paid_on]
+check:
+  truth: paid-revenue-2026-09
+  params: { month_start: "2026-09-01", month_end: "2026-10-01" }
+owner: Ely Potter
+status: approved
+signed_off: 2026-10-31
+signed_off_by: "Ely Potter"
+```
+
+```query-rule
+id: QR-004
+kind: metric
+metric: MET-004
+question_patterns:
+  - "billed revenue in <month>"
+  - "how much did we invoice in <month>"
+definition: "What was invoiced in the month: invoice totals by issued_on, from the first day of the month up to but not including the first day of the next. One invoice per completed visit. Never cash received."
+sql: |
+  SELECT COALESCE(SUM(i.total_cents), 0) AS billed_cents
+  FROM invoices i
+  WHERE i.issued_on >= CAST($month_start AS DATE)
+    AND i.issued_on < CAST($month_end AS DATE)
+params:
+  month_start: { type: date }
+  month_end: { type: date }
+grain: "one row, one number: cents"
+unit: cents
+traps:
+  - "not paid revenue (payments by paid_on)"
+  - "invoices.total_cents, never a sum over invoice_lines joined to payments"
+reads:
+  invoices: [total_cents, issued_on]
+check:
+  truth: billed-revenue-2026-09
+  params: { month_start: "2026-09-01", month_end: "2026-10-01" }
+owner: Ely Potter
+status: approved
+signed_off: 2026-10-31
+signed_off_by: "Ely Potter"
+```
+
+```query-rule
+id: QR-005
+kind: metric
+metric: MET-005
+question_patterns:
+  - "what do clients owe us right now"
+  - "outstanding balance at as_of"
+  - "how much is unpaid"
+definition: "What clients still owe at as_of. Per invoice: the total minus its payments made on or before as_of, counted only when above zero; then summed. Payments are summed per invoice first. Not overdue: due_on plays no part."
+sql: |
+  WITH meta AS (
+    SELECT CAST(m.value AS DATE) AS as_of FROM fixture_meta m WHERE m.key = 'as_of'
+  ),
+  paid AS (
+    SELECT y.invoice_id, SUM(y.amount_cents) AS paid_cents
+    FROM payments y, meta
+    WHERE y.paid_on <= meta.as_of
+    GROUP BY y.invoice_id
+  )
+  SELECT COALESCE(SUM(GREATEST(i.total_cents - COALESCE(paid.paid_cents, 0), 0)), 0) AS outstanding_cents
+  FROM invoices i
+  LEFT JOIN paid ON paid.invoice_id = i.invoice_id
+params: {}
+grain: "one row, one number: cents"
+unit: cents
+traps:
+  - "sum payments per invoice first"
+  - "an overpaid invoice does not reduce the total"
+  - "today is fixture_meta's as_of"
+reads:
+  fixture_meta: [key, value]
+  payments: [invoice_id, amount_cents, paid_on]
+  invoices: [invoice_id, total_cents]
+check:
+  truth: outstanding-at-as-of
+  params: {}
+owner: Ely Potter
+status: approved
+signed_off: 2026-10-31
+signed_off_by: "Ely Potter"
+```
+
+```query-rule
+id: QR-006
+kind: metric
+metric: MET-001
+question_patterns:
+  - "active plans by zone"
+  - "how many plans are active today, by zone"
+definition: "Plans active at as_of (MET-001), by the zone of the plan's client: plans to properties on property_id, properties to clients on client_id, clients.zone_id to zones. Each join is to a unique key, so nothing multiplies; the zones' counts sum to QR-001's figure."
+sql: |
+  WITH meta AS (
+    SELECT CAST(m.value AS DATE) AS as_of FROM fixture_meta m WHERE m.key = 'as_of'
+  )
+  SELECT z.zone_id, z.name AS zone, COUNT(pl.plan_id) AS active_plans
+  FROM plans pl
+  JOIN properties p ON p.property_id = pl.property_id
+  JOIN clients c ON c.client_id = p.client_id
+  JOIN zones z ON z.zone_id = c.zone_id
+  CROSS JOIN meta
+  WHERE pl.start_date <= meta.as_of
+    AND (pl.end_date IS NULL OR pl.end_date >= meta.as_of)
+  GROUP BY z.zone_id, z.name
+  ORDER BY z.zone_id
+params: {}
+grain: "one row per zone: the zone and its count of active plans"
+unit: count
+traps:
+  - "not status = 'active'"
+  - "a client's zone is clients.zone_id; properties has no zone"
+  - "today is fixture_meta's as_of"
+reads:
+  fixture_meta: [key, value]
+  plans: [plan_id, property_id, start_date, end_date]
+  properties: [property_id, client_id]
+  clients: [client_id, zone_id]
+  zones: [zone_id, name]
+check:
+  truth: active-plans-at-as-of
+  params: {}
+  rows: 5
+  sum: active_plans
+owner: Ely Potter
+status: approved
+signed_off: 2026-10-31
+signed_off_by: "Ely Potter"
+```

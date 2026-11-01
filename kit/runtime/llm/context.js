@@ -5,10 +5,12 @@
 // org.md and data.md are ever read; guardrails.md and connectors.md never are.
 //
 // Before a file is used it loses its YAML header block, every fenced `truth`
-// block (truth SQL and expected figures never reach the AI), and every HTML
+// block (truth SQL and expected figures never reach the AI), every fenced
+// `query-rule` block (plan brightside-v1, D11, Story 19.6: a rule's SQL and
+// its check figures reach only Ask's query writer, Story 19.8), and every HTML
 // comment (template guidance, which can hold a commented-out truth). Stripping
-// fails closed: an unclosed truth fence or comment drops the rest of the file,
-// and any other fence whose body holds a truth fence is dropped whole.
+// fails closed: an unclosed truth or query-rule fence or comment drops the
+// rest of the file, and any other fence whose body holds one is dropped whole.
 //
 // The instructions are fixed text. The client name (control characters
 // removed, at most 100 characters) and the files follow as data, inside
@@ -30,9 +32,10 @@ const MAX_CONTEXT_CHARS = 40000;
 
 const FRONTMATTER = /^﻿?---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-const TRUTH_INFO = /^\s*truth(?:\s|$)/i;
-// A line that would open a truth fence, at any indent (so a nested one counts).
-const TRUTH_LINE = /^\s*(?:`{3,}|~{3,})\s*truth(?:\s|$)/i;
+// The fences that never reach the prompt: known truths and query rules.
+const TRUTH_INFO = /^\s*(?:truth|query-rule)(?:\s|$)/i;
+// A line that would open one of them, at any indent (so a nested one counts).
+const TRUTH_LINE = /^\s*(?:`{3,}|~{3,})\s*(?:truth|query-rule)(?:\s|$)/i;
 
 function stripFrontmatter(text) {
   const m = FRONTMATTER.exec(text);
@@ -46,8 +49,8 @@ function isClose(line, marker) {
   return Boolean(m && m[1][0] === marker[0] && m[1].length >= marker.length);
 }
 
-// Drops every truth fence, and any other fence that holds one. Other fences
-// are kept as they are.
+// Drops every truth and query-rule fence, and any other fence that holds
+// one. Other fences are kept as they are.
 function stripTruthFences(text) {
   const lines = text.split(/\r?\n/);
   const out = [];

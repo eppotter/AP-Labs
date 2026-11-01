@@ -26,7 +26,7 @@
 //   rules: { seen, files: [{ file, present, signed, owner, signedOff }],
 //            truths: [{ id, statement, owner, signedOff, valid, last }],
 //            forbiddenColumns (a count), approvedRules (a count),
-//            checkedAt, problem }
+//            signedQueryRules (a count), checkedAt, problem }
 //
 // Never in detail: a truth's expect (the client's number) or run (its
 // command), a table name, a row count, a column name, a file's text or why a
@@ -40,6 +40,11 @@
 // A card inside an HTML comment or a fenced code block is not a card, and
 // "draft (approved ...)" is not approved. A number only: no rule's id, name
 // or text reaches detail.
+//
+// signedQueryRules (plan brightside-v1, D11, Story 19.6): the query rules in
+// data.md's "## Query rules" section that are signed (kit/lib/query-rules
+// isSigned: valid, approved, dated, named, and their query-rule:<id> check
+// passed at the last verify on this machine). A number only.
 //
 // Who may see the counts (plan hub-status-menu, D4, architect P1-1): the hub
 // menu's strip (kit/runtime/knowledge/summary) shows the number of notes,
@@ -59,6 +64,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { contextDirFor, fileStatus } = require('../../lib/onboard');
 const { loadTruths } = require('../../lib/truths');
+const { parseRules, countSigned } = require('../../lib/query-rules');
 const { gitDirOf, readLastResult, lastFile } = require('../../lib/verify/last');
 const { forbiddenColumnsOf } = require('../sql');
 
@@ -74,7 +80,7 @@ const NO_DATA = Object.freeze({
   seen: false, connected: false, source: null, label: null, problem: false,
 });
 const NO_RULES = Object.freeze({
-  seen: false, files: Object.freeze([]), truths: Object.freeze([]), forbiddenColumns: 0, approvedRules: 0, checkedAt: null, problem: false,
+  seen: false, files: Object.freeze([]), truths: Object.freeze([]), forbiddenColumns: 0, approvedRules: 0, signedQueryRules: 0, checkedAt: null, problem: false,
 });
 
 // The data half: read only when the hub sees data.
@@ -238,6 +244,16 @@ function approvedRulesIn(contextDir, guardrails) {
   }
 }
 
+// data.md's query rules (D11), or none when it can't be read: the truths'
+// read already reports that as a problem.
+function queryRulesIn(contextDir) {
+  try {
+    return parseRules(fs.readFileSync(path.join(contextDir, 'data.md'), 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
 // The code a verify record over the bound is refused with, inside the reader.
 const OVER_BOUND = 'APLABS_OVER_BOUND';
 
@@ -261,6 +277,7 @@ function createRulesReader({
       const files = RULE_FILES.map((f) => fileDetail(contextDir, f));
       const dataMd = files.find((f) => f.file === 'data.md');
       const entries = dataMd.over ? [] : loadTruths(contextDir);
+      const queryRules = dataMd.over ? [] : queryRulesIn(contextDir);
       let record = null;
       let recordOver = false;
       try {
@@ -274,6 +291,7 @@ function createRulesReader({
         truths: truthDetail(entries, record),
         forbiddenColumns: forbiddenColumnsOf(profile).length,
         approvedRules: approvedRulesIn(contextDir, files.find((f) => f.file === 'guardrails.md')),
+        signedQueryRules: countSigned(queryRules, record),
         checkedAt: record && typeof record.at === 'string' ? record.at : null,
         problem: files.some((f) => f.problem) || entries.some((e) => e.index === 0) || recordOver,
       };

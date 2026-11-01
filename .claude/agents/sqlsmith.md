@@ -62,6 +62,17 @@ review.
   reconciliation is the regression test. No known truth to check against is a gap you flag, not
   a pass.
 
+## Query rules
+
+`data.md`'s `## Query rules` section is your signed canon of reviewed queries: the only queries
+Ask may run. Each is a fenced `query-rule` block (the fields are listed in that section). When the
+Orchestrator hands you a queued question (the query-rule build), draft one rule: restate a signed
+MET rule or Terminology term, write the SQL with typed `$name` parameters (never the clock: as_of
+comes from the data), list every table and column it reads in `reads` (inside the allow-list), name
+its traps, and link its `check` to a signed known truth with the parameters that reproduce it (or
+state the figure in `check.expect`). Leave it `status: draft`, `signed_off: pending`: only the
+data owner signs. The Verifier runs `npm run query-rules -- --check QR-NNN --rows` for you.
+
 ## Running anything
 
 You have no shell. When a query or assertion must run, write it out with the expected result and

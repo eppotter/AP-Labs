@@ -9,7 +9,9 @@
 //                           how many columns are kept out of every query, how
 //                           many rule cards are approved (readiness's
 //                           approvedRules: 0 while guardrails.md is unsigned;
-//                           plan brightside-v1, D7, Story 19.3), and
+//                           plan brightside-v1, D7, Story 19.3), how
+//                           many query rules are signed (D11, Story 19.6),
+//                           and
 //                           each known truth: id, statement, owner, sign-off
 //                           and its last verify result on this machine ("not
 //                           checked on this machine" without one). Never a
@@ -97,6 +99,7 @@ function rulesLines(rules, ready) {
     ...rules.files.map(fileLine),
     `• Columns kept out of every query: ${cols}`,
     `• Rule cards approved: ${Number.isSafeInteger(rules.approvedRules) && rules.approvedRules > 0 ? rules.approvedRules : 0}`,
+    `• Query rules signed: ${Number.isSafeInteger(rules.signedQueryRules) && rules.signedQueryRules > 0 ? rules.signedQueryRules : 0}`,
     '',
     ...(rules.truths.length ? rules.truths.map((t) => truthLine(t, rules.checkedAt)) : [NO_TRUTHS]),
     '',
