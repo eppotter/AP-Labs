@@ -26,9 +26,15 @@
 //                      shown to the person first (the preview is this same
 //                      text, buildRequestText). fields: { hub: { name, sees },
 //                      requester, title, summary, need, summarised, at }.
-//                      Refused from a hub whose sees includes context or data
-//                      (mayPostBuildRequest): there the AI's summary could
-//                      repeat business context into the channel. Every free
+//                      Any hub may post, including one that sees context or
+//                      data (plan brightside-v1, D12, gate item 2): the
+//                      summary call sends no business context (withContext:
+//                      false, which the build-request archetype asserts at
+//                      call time), so the summary can only restate the
+//                      person's own previewed words. Until then a hub that
+//                      saw context or data was refused. A hub whose sees is
+//                      not a list of known values is still refused
+//                      (mayPostBuildRequest, fail closed). Every free
 //                      field is untrusted: escaped (&, < and >, so <!here>,
 //                      <!channel>, <@U…> and <url|text> show as plain text),
 //                      with a bare @here, @channel or @everyone broken by a
@@ -43,6 +49,7 @@
 // logs it and the person's reply is unaffected.
 
 const { escapeText, escapeName } = require('../messages');
+const { HUB_SEES } = require('../sees');
 
 const CHANNEL_ID = /^[CG][A-Z0-9]{8,}$/;
 const MODULE_ID = /^[a-z][a-z0-9-]{0,63}$/;
@@ -94,13 +101,13 @@ function escalationText({ module, reason, counts } = {}) {
 const BUILD_REQUEST_LIMITS = Object.freeze({
   need: 500, title: 80, summary: 600, hubName: 80,
 });
-// What a hub may not see and still post a build request (D11, until v1).
-const BUILD_REQUEST_BLOCKED_SEES = Object.freeze(['context', 'data']);
 const ZWJ = '\u200D';
 
-// True when a hub with this sees list may post a build request.
+// True when a hub with this sees list may post a build request: any list of
+// known values (kit/runtime/sees), whatever the hub sees (plan brightside-v1,
+// D12, gate item 2). Anything else (no list, an unknown value) is refused.
 function mayPostBuildRequest(sees) {
-  return Array.isArray(sees) && !sees.some((s) => BUILD_REQUEST_BLOCKED_SEES.includes(s));
+  return Array.isArray(sees) && sees.every((s) => HUB_SEES.includes(s));
 }
 
 // Untrusted text as plain mrkdwn: &, < and > escaped, and a bare @here,
@@ -134,7 +141,7 @@ function buildRequestText({
   hub, requester, title, summary, need, summarised, at,
 } = {}) {
   if (!hub || typeof hub !== 'object') throw new ChannelPostRefused('build-request: hub must be the hub');
-  if (!mayPostBuildRequest(hub.sees)) throw new ChannelPostRefused('build-request: this hub sees context or data, so it may not post build requests yet');
+  if (!mayPostBuildRequest(hub.sees)) throw new ChannelPostRefused('build-request: the hub\'s sees must be a list of known values');
   const hubName = freeText('hub name', hub.name, BUILD_REQUEST_LIMITS.hubName, { single: true });
   if (typeof requester !== 'string' || !SLACK_USER.test(requester)) throw new ChannelPostRefused('build-request: requester must be a Slack user id');
   if (typeof summarised !== 'boolean') throw new ChannelPostRefused('build-request: summarised must be true or false');
@@ -172,5 +179,5 @@ async function postToChannel({
 
 module.exports = {
   postToChannel, escalationText, buildRequestText, mayPostBuildRequest, untrusted, EXCEPTIONS, ESCALATION_REASONS, COUNT_WORDS, CHANNEL_ID,
-  BUILD_REQUEST_LIMITS, BUILD_REQUEST_BLOCKED_SEES, ChannelPostRefused,
+  BUILD_REQUEST_LIMITS, ChannelPostRefused,
 };

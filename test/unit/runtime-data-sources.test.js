@@ -609,3 +609,42 @@ test('way out, the added context can\'t be listed: "None yet." with the plain no
   assert.ok(!JSON.stringify(app.views).includes('SECRET_CAUSE'));
   assert.deepEqual(hubLog.lines.find((l) => l.msg === 'added context not listed').fields, { hub: 'blank', reason: 'EACCES' });
 });
+
+// --- plan brightside-v1, D7, Story 19.3: the approved rule cards ------------------
+
+const CARD = (id, status) => `\n### ${id}: A rule\n- type: access_rule\n- rule: x\n- status: ${status}\n`;
+const rulesText = (msg) => allText(msg.blocks);
+
+test('19.3: Known truths and rules counts the approved rule cards, right under the columns kept out', (t) => {
+  // The fixture's guardrails.md is signed and has no cards: 0.
+  const none = dataSources.render({ ready: readiness(view(FULL), { rules: reader() }) });
+  assert.match(rulesText(none), /• Columns kept out of every query: 2\n• Rule cards approved: 0\n/);
+  // Three approved cards and one draft: 3.
+  const profilePath = copied(t, (dir) => {
+    fs.appendFileSync(path.join(dir, 'guardrails.md'), CARD('GRD-001', 'approved') + CARD('GRD-002', 'approved') + CARD('GRD-003', 'draft') + CARD('GRD-004', 'approved'));
+  });
+  const three = dataSources.render({ ready: readiness(view(FULL), { rules: createRulesReader({ profile, profilePath, readLast: () => null }) }) });
+  assert.match(rulesText(three), /• Columns kept out of every query: 2\n• Rule cards approved: 3\n/);
+});
+
+test('19.3: while guardrails.md is unsigned, its approved cards count 0', (t) => {
+  const profilePath = copied(t, (dir) => {
+    const f = path.join(dir, 'guardrails.md');
+    const text = fs.readFileSync(f, 'utf8').replace(/^signed_off: .*$/m, 'signed_off: pending').replace(/^signed_off_by: .*$/m, 'signed_off_by: pending');
+    fs.writeFileSync(f, text + CARD('GRD-001', 'approved') + CARD('GRD-002', 'approved'));
+  });
+  const msg = dataSources.render({ ready: readiness(view(FULL), { rules: createRulesReader({ profile, profilePath, readLast: () => null }) }) });
+  const text = rulesText(msg);
+  assert.match(text, /• guardrails\.md: awaiting sign-off/);
+  assert.match(text, /• Rule cards approved: 0\n/);
+});
+
+test('19.3: a hub that does not see rules has no rule-card line; a count that is not a whole number shows 0', () => {
+  const noRules = dataSources.render({ ready: readiness(view(['data']), { rules: reader() }) });
+  assert.doesNotMatch(rulesText(noRules), /Rule cards approved/);
+  const ready = readiness(view(FULL), { rules: reader() });
+  for (const bad of [undefined, -1, 1.5, '8', null]) {
+    const odd = { ...ready, detail: { ...ready.detail, rules: { ...ready.detail.rules, approvedRules: bad } } };
+    assert.match(rulesText(dataSources.render({ ready: odd })), /• Rule cards approved: 0\n/, String(bad));
+  }
+});

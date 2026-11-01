@@ -25,10 +25,13 @@ A fork records the release it is built from in `.aplabs/template-version`
 - `THIRD_PARTY_NOTICES.md` carries BMAD-METHOD's MIT licence, which the bundled `_bmad/` copy needs in every copy, and points to p3-stack's.
 - Ledger rows without merge conflicts: each PR adds its one ledger row in its own build file, `docs/ledger/builds/<branch>.md` (`docs/ledger/README.md` says what it holds), so two open PRs no longer conflict over `docs/ledger.md`. DEP rows stay in `docs/ledger.md`. `scripts/ledger-check.js` fails a PR that deletes a build file, edits another PR's, reuses a branch name or adds a row in two places, and `npm test` checks every row together. A template update keeps the fork's `docs/ledger/` as it is (fork-owned), and no build file ships.
 - CI runs every job on every push to `main` again.
+- Request a tool posts from any hub, including one that sees business context or data (plan brightside-v1, D12, gate item 7; on by default). Its summary call still sends no business context (`withContext: false`, now asserted at call time), so the post holds only the person's previewed words, the AI's summary of them, the hub's name and the requester. Before, a hub that saw context or data said "not available on this hub yet".
+- Ask points a route question to a routing-map tool on the hub (Run), once the hub's data and rules are set up, and Data sources says how many rule cards are approved.
 
 ### What a fork must do
 
 - Keep `THIRD_PARTY_NOTICES.md` in the fork.
+- Before taking this release, check who reads the fork's `slack.build_requests_channel`: a hub that sees data or context with a Request a tool module can now post there. To keep such a hub from posting, take its Request a tool module off it.
 - Nothing for the ledger: a fork made before `docs/ledger/` keeps adding rows to `docs/ledger.md`, which still passes `ledger-check`, and the update adds no `docs/ledger/` to it. To switch to build files (no ledger conflicts between the fork's own PRs), copy the README in from the release, `git checkout vX.Y.Z -- docs/ledger/README.md`, and put each new PR's row in `docs/ledger/builds/<branch>.md`.
 ## v0.2.0
 

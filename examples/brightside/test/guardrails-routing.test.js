@@ -182,3 +182,19 @@ test('GRD-007 says the coordinates are random Columbus points, none from a real 
   ]) assert.match(grd, words);
   assert.match(grd, /- status: approved\b/);
 });
+
+// Plan brightside-v1, D7, Story 19.3: Data sources on a hub that sees rules
+// (/brightside-v1, /brightside) reads Brightside's own files and says
+// "Rule cards approved: 8".
+test('Data sources on Brightside\'s files: "Rule cards approved: 8"', () => {
+  const { loadProfile } = require('../../../kit/lib/profile');
+  const { readiness, createRulesReader } = require('../../../kit/runtime/knowledge/readiness');
+  const dataSources = require('../../../kit/runtime/archetypes/data-sources');
+  const profilePath = path.join(CONTEXT, '../profile.yml');
+  const rules = createRulesReader({ profile: loadProfile(profilePath), profilePath, readLast: () => null });
+  const view = {
+    id: 'brightside-v1', sees: ['context', 'data', 'rules'], data: null, rules: true,
+  };
+  const text = dataSources.render({ ready: readiness(view, { rules }) }).blocks.map((b) => (b.text && b.text.text) || '').join('\n');
+  assert.match(text, /\n• Rule cards approved: 8\n/);
+});
