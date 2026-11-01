@@ -9,8 +9,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  createSlackFiles, download, readText, typeOf, fileName, FILETYPES, FILES_HOST, DOWNLOAD_TIMEOUT_MS, MAX_FILE_BYTES, MAX_NAME_CHARS,
+  createSlackFiles, download, readText, readCsv, typeOf, fileName, FILETYPES, FILES_HOST, DOWNLOAD_TIMEOUT_MS, MAX_FILE_BYTES, MAX_NAME_CHARS,
+  MAX_CSV_ROWS, MAX_CSV_COLUMNS, MAX_CSV_CHARS,
 } = require('../../kit/runtime/slack/files');
+const { promptChars } = require('../../kit/runtime/knowledge/store');
 const { FileRefused } = require('../../kit/runtime/errors');
 const { messageFor } = require('../../kit/runtime/messages');
 const { FakeSlackApp, invalidElements } = require('../fixtures/fake-slack');
@@ -60,13 +62,13 @@ test('a PDF Ada uploaded: files.info, then the download with the bot token to fi
   assert.ok(!JSON.stringify(log.lines).includes(app.botToken));
 });
 
-test('each type is read by its name: PDF, PNG, JPG/JPEG, GIF, WebP, .txt and .md; the filetypes offered are exactly these', async () => {
-  assert.deepEqual(FILETYPES, ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'txt', 'md']);
+test('each type is read by its name: PDF, PNG, JPG/JPEG, GIF, WebP, .txt, .md and .csv; the filetypes offered are exactly these', async () => {
+  assert.deepEqual(FILETYPES, ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'txt', 'md', 'csv']);
   const { app, files } = setup();
   const cases = [
     ['a.png', png(), 'image', 'image/png'], ['b.JPG', jpeg(), 'image', 'image/jpeg'], ['c.jpeg', jpeg(), 'image', 'image/jpeg'],
     ['d.gif', gif(), 'image', 'image/gif'], ['e.webp', webp(), 'image', 'image/webp'], ['f.txt', Buffer.from('hello'), 'text', 'text/plain'],
-    ['g.md', Buffer.from('# hi'), 'text', 'text/markdown'],
+    ['g.md', Buffer.from('# hi'), 'text', 'text/markdown'], ['h.CSV', Buffer.from('a,b\n1,2\n'), 'csv', 'text/csv'],
   ];
   for (const [i, [name, bytes, kind, mediaType]] of cases.entries()) {
     app.addSlackFile({
@@ -81,6 +83,9 @@ test('typeOf: an office file is "save it as a PDF first"; any other unknown exte
   for (const name of ['notes.docx', 'old.DOC', 'sheet.xlsx', 'deck.pptx']) assert.equal(typeOf(name).reason, 'docx', name);
   for (const name of ['run.exe', 'archive.zip', 'noext', 'page.html', '']) assert.equal(typeOf(name).reason, 'type', name);
   assert.match(messageFor(new FileRefused('docx')), /Save it as a PDF first/);
+  // Story 18.2: .xlsx stays refused, and the words point a sheet to .csv.
+  assert.match(messageFor(new FileRefused('docx')), /For a sheet, you can save it as a \.csv instead\./);
+  assert.match(messageFor(new FileRefused('type')), /\.csv files/);
 });
 
 test('a file owned by someone else is refused before any download', async () => {
@@ -265,6 +270,87 @@ test('readText: UTF-8 is read as it is (a BOM dropped); invalid UTF-8 or a NUL b
   assert.throws(() => readText(png()), refusedAs('encoding'));
 });
 
+// --- CSV files (plan brightside-v1, D3, Story 18.2) -------------------------------------------
+
+// A CSV of `rows` data rows and `cols` columns, each cell `cell`.
+const csvOf = ({ rows = 1, cols = 2, cell = 'x' } = {}) => {
+  const line = (v) => Array.from({ length: cols }, () => v).join(',');
+  const header = Array.from({ length: cols }, (_, i) => `c${i}`).join(',');
+  return Buffer.from([header, ...Array.from({ length: rows }, () => line(cell))].join('\n'));
+};
+const csvTooBig = refusedAs('csv_too_big');
+
+test('readCsv: a header and rows come back as LF text, with the data rows and the columns counted', () => {
+  const got = readCsv(Buffer.from('zone,billed\r\nNorth,120\r\nSouth,95\r\n'));
+  assert.deepEqual({ ...got }, { text: 'zone,billed\nNorth,120\nSouth,95', rows: 2, columns: 2 });
+  assert.ok(Object.isFrozen(got));
+});
+
+test('readCsv: 200 data rows are read; 201 are too big', () => {
+  assert.equal(readCsv(csvOf({ rows: MAX_CSV_ROWS })).rows, 200);
+  assert.equal(MAX_CSV_ROWS, 200);
+  assert.throws(() => readCsv(csvOf({ rows: MAX_CSV_ROWS + 1 })), csvTooBig);
+});
+
+test('readCsv: 30 columns are read; 31 are too big', () => {
+  assert.equal(readCsv(csvOf({ cols: MAX_CSV_COLUMNS })).columns, 30);
+  assert.equal(MAX_CSV_COLUMNS, 30);
+  assert.throws(() => readCsv(csvOf({ cols: MAX_CSV_COLUMNS + 1 })), csvTooBig);
+});
+
+test('readCsv: 6,000 escaped characters are read; 6,001 are too big, and a < counts 4', () => {
+  assert.equal(MAX_CSV_CHARS, 6000);
+  // "a\n<" is 3 characters and 6 escaped ("a\n&lt;"); pad the cell with "y".
+  const at = (escaped) => Buffer.from(`a\n<${'y'.repeat(escaped - 6)}`);
+  const ok = readCsv(at(6000));
+  assert.equal(ok.text.length, 5997);
+  assert.equal(promptChars(ok.text), 6000);
+  assert.throws(() => readCsv(at(6001)), csvTooBig);
+  assert.equal(messageFor(new FileRefused('csv_too_big')), 'That CSV is too big for a note: at most 200 rows, 30 columns and about 6,000 characters. Keep the rows you need, or split it.');
+});
+
+test('readCsv: a ragged row, an unterminated quote or a quote out of place is refused', () => {
+  assert.throws(() => readCsv(Buffer.from('a,b\n1,2\n3\n')), refusedAs('csv_ragged'));
+  assert.throws(() => readCsv(Buffer.from('a,b\n1,2,3\n')), refusedAs('csv_ragged'));
+  assert.throws(() => readCsv(Buffer.from('a,b\n1,"open\n2,3\n')), refusedAs('csv_quote'));
+  assert.throws(() => readCsv(Buffer.from('a,b\n"x"y,2\n')), refusedAs('csv_quote'));
+  assert.throws(() => readCsv(Buffer.from('a,b\nx"y,2\n')), refusedAs('csv_quote'));
+});
+
+test('readCsv: quoted commas, quotes and line breaks are kept (a CRLF inside a quote as LF)', () => {
+  const got = readCsv(Buffer.from('name,note\r\n"Smith, J","said ""hi""\r\nthen left"\r\nplain,""\r\n'));
+  assert.equal(got.rows, 2);
+  assert.equal(got.text, 'name,note\n"Smith, J","said ""hi""\nthen left"\nplain,');
+});
+
+test('readCsv: a BOM is dropped; CRLF and a lone CR are stored as LF; blank lines skipped', () => {
+  const bom = Buffer.from([0xef, 0xbb, 0xbf]);
+  assert.equal(readCsv(Buffer.concat([bom, Buffer.from('zone,n\r\nNorth,1\r\n')])).text, 'zone,n\nNorth,1');
+  assert.equal(readCsv(Buffer.from('zone,n\rNorth,1\r\n\r\nSouth,2\n\n')).text, 'zone,n\nNorth,1\nSouth,2');
+});
+
+test('readCsv: invalid UTF-8 or a NUL byte is encoding; header only is csv_no_rows; nothing at all is empty', () => {
+  assert.throws(() => readCsv(Buffer.from([0x61, 0x2c, 0x62, 0x0a, 0xff, 0x2c, 0x31])), refusedAs('encoding'));
+  assert.throws(() => readCsv(Buffer.from('a,b\n1,\0\n')), refusedAs('encoding'));
+  assert.throws(() => readCsv(Buffer.from('a,b\r\n')), refusedAs('csv_no_rows'));
+  assert.throws(() => readCsv(Buffer.from('\r\n\n')), refusedAs('empty'));
+  for (const reason of ['csv_ragged', 'csv_quote', 'csv_no_rows']) assert.match(messageFor(new FileRefused(reason)), /nothing was added/i, reason);
+});
+
+test('a .csv download is checked as text: a JSON content type is refused; text/csv, text/plain and octet-stream are read', async () => {
+  const { app, files } = setup();
+  const body = 'zone,n\nNorth,1\n';
+  app.addSlackFile({
+    id: 'F0CSV', name: 'zones.csv', user: ADA, mimetype: 'text/csv', bytes: Buffer.from(body),
+  });
+  app.downloadAs.F0CSV = { contentType: 'application/json; charset=utf-8' };
+  await assert.rejects(fetchFile(files, app, 'F0CSV'), refusedAs('download_failed'));
+  for (const contentType of ['text/csv', 'text/plain; charset=utf-8', 'application/octet-stream']) {
+    app.downloadAs.F0CSV = { contentType };
+    assert.equal((await fetchFile(files, app, 'F0CSV')).bytes.toString(), body, contentType);
+  }
+});
+
 // --- The fake refuses what Slack refuses ------------------------------------------------------
 
 test('the Slack fake: file_input outside an input block, max_files over 10, unknown filetypes; a file_input view without files:read', async () => {
@@ -272,6 +358,8 @@ test('the Slack fake: file_input outside an input block, max_files over 10, unkn
     type: 'modal', title: { type: 'plain_text', text: 'Add context' }, submit: { type: 'plain_text', text: 'Add' }, blocks: [{ type: 'input', block_id: 'f', label: { type: 'plain_text', text: 'File' }, element }],
   });
   assert.equal(invalidElements(input({ type: 'file_input', action_id: 'v', max_files: 1, filetypes: FILETYPES })), null);
+  // Story 18.2: the fake takes csv, as Slack does (filetypes are extensions).
+  assert.equal(invalidElements(input({ type: 'file_input', action_id: 'v', max_files: 1, filetypes: ['csv'] })), null);
   assert.match(invalidElements(input({ type: 'file_input', action_id: 'v', max_files: 11 })), /max_files is 1 to 10/);
   assert.match(invalidElements(input({ type: 'file_input', action_id: 'v', max_files: 0 })), /max_files/);
   assert.match(invalidElements(input({ type: 'file_input', action_id: 'v', filetypes: ['application/pdf'] })), /filetypes/);

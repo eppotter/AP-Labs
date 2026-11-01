@@ -252,11 +252,14 @@
 // After the ack, slackFiles (kit/runtime/slack/files, built by app/index with
 // the bot token; none: "reading files isn't set up") fetches the file:
 // files.info, the owner, type and size checks, the download and the
-// signature. A .txt or .md file is read as UTF-8; a PDF or an image goes to
+// signature. A .txt or .md file is read as UTF-8; a .csv file is read as
+// text by readCsv (plan brightside-v1, D3, Story 18.2: never summarised, no
+// AI call, its row, column and size caps); a PDF or an image goes to
 // the hub view's AI (readFile, with the module's resource for its access
 // check). The text is stored as a "file" entry (its name, type and size kept
 // with it, never the file), and the view is updated to "Here's what I took
-// from <title>:" with Remove, or to why nothing was added, with Back: a
+// from <title>:" (for a CSV, with its rows and columns) with Remove, or to
+// why nothing was added, with Back: a
 // refused file (kit/runtime/messages FILE_WORDS), the AI off, limited or
 // failing (readFileAiText), the hub's context full. Closing the view while it
 // reads stores the entry all the same (not_found logged at info). The file's
@@ -323,7 +326,7 @@ const askTool = require('../archetypes/ask');
 const {
   ContextRefused, FileRefused, LlmUnavailable, RuntimeRefusal,
 } = require('../errors');
-const { readText } = require('./files');
+const { readText, readCsv } = require('./files');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press its button there.";
@@ -935,7 +938,8 @@ function registerHubs(app, {
   };
 
   // Upload a file (Story 16.8): fetch it, read it, store its text. Returns
-  // the stored entry; throws a refusal (FileRefused, ContextRefused,
+  // { entry, table }: the stored entry, and for a CSV { rows, columns }
+  // (else null); throws a refusal (FileRefused, ContextRefused,
   // LlmUnavailable, AccessDenied) or a store failure.
   const readUpload = async ({
     client, mod, knowledge, person, typed,
@@ -943,8 +947,13 @@ function registerHubs(app, {
     if (!slackFiles) throw new FileRefused('not_set_up');
     const file = await slackFiles.fetchFile({ client, fileId: typed.files[0].id, person: person.id });
     let text;
+    let table = null;
     if (file.kind === 'text') {
       text = readText(file.bytes);
+    } else if (file.kind === 'csv') {
+      const csv = readCsv(file.bytes);
+      ({ text } = csv);
+      table = { rows: csv.rows, columns: csv.columns };
     } else {
       const { llm } = viewOf(mod.hub);
       if (!llm) throw new LlmUnavailable('off');
@@ -953,11 +962,13 @@ function registerHubs(app, {
       }));
     }
     try {
-      return await knowledge.add({
+      const entry = await knowledge.add({
         kind: 'file', title: typed.title, text, addedBy: person.id, file: { name: file.name, type: file.mediaType, bytes: file.bytes.length },
       });
+      return { entry, table };
     } catch (err) {
       // A file's own text over the entry cap, or empty: worded for a file.
+      if (err instanceof ContextRefused && err.reason === 'too_long' && table) throw new FileRefused('csv_too_big');
       if (err instanceof ContextRefused && err.reason === 'too_long') throw new FileRefused('too_long', err.details.max);
       if (err instanceof ContextRefused && err.reason === 'empty') throw new FileRefused('empty');
       throw err;
@@ -969,11 +980,12 @@ function registerHubs(app, {
     client, viewId, title, mod, knowledge, person, typed,
   }) => {
     let entry = null;
+    let table = null;
     let note = null;
     try {
-      entry = await readUpload({
+      ({ entry, table } = await readUpload({
         client, mod, knowledge, person, typed,
-      });
+      }));
     } catch (err) {
       if (err instanceof LlmUnavailable) {
         log.info('upload not read', { hub: mod.hub, reason: `ai ${err.reason}` });
@@ -999,7 +1011,7 @@ function registerHubs(app, {
       title,
       hubId: mod.hub,
       where: 'add-context',
-      message: entry ? addContext.fileAdded({ ...shown, entry }) : addContext.result({ ...shown, note }),
+      message: entry ? addContext.fileAdded({ ...shown, entry, table }) : addContext.result({ ...shown, note }),
     });
   };
 
