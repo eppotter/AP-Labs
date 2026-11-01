@@ -81,7 +81,7 @@ const REQUIRED = Object.freeze({
 const CHECK_KEYS = Object.freeze(['truth', 'expect', 'tolerance', 'params', 'rows', 'sum']);
 const ALLOW_FILE = 'ask-tables.yml';
 const MAX_PATTERN_CHARS = 200;
-// The check prints at most this many rows with --rows.
+// The most rows check.rows may require.
 const MAX_SHOWN_ROWS = 50;
 
 const filled = (v) => typeof v === 'string' && /\S/.test(v);
@@ -436,12 +436,81 @@ function readsProblems(rule, parsed, allowed, dataColumns) {
       problems.push(`the SQL reads ${parts.join('.')}, which reads does not list`);
       continue;
     }
+    // A bare name. DuckDB binds a bare table or alias name (`SELECT s FROM
+    // shops s`) to the whole row, hidden columns included, so a bare name
+    // that is any table, alias, CTE or subquery name is refused, even when an
+    // output alias shares it. Otherwise it must be a column the rule's reads
+    // list for a table the SQL reads: never an output alias (qualify those).
+    if (scan.qualifiers.has(col)) { problems.push(`"${col}" names a table or alias, not a column: a whole-row reference`); continue; }
     const hidden = scanned.filter((t) => hiddenIn(t, col));
     if (hidden.length) { problems.push(`the SQL reads ${hidden[0]}.${col}, which reads does not list`); continue; }
-    if (scanned.some((t) => readCols(t).includes(col)) || scan.aliases.has(col)) continue;
+    if (scanned.some((t) => readCols(t).includes(col))) continue;
+    if (scan.aliases.has(col)) { problems.push(`the bare name ${col} is an output alias, not a column the rule reads; qualify it`); continue; }
     problems.push(`the SQL reads ${col}, which reads does not list`);
   }
   return [...new Set(problems)];
+}
+
+// What --rows may print (PR #321 review): aggregates only, so a PR, which in
+// a fork is the client's GitHub, never holds a row of client data. A result
+// column is printable only when DuckDB's parse shows it is a COUNT, SUM or
+// AVG (or an expression whose every column sits inside one: COALESCE(SUM(x),
+// 0)), it has an output alias, and its name is not an id. MIN and MAX are
+// not aggregates here: they return one row's value. Everything else (group
+// keys, names, ids, text) prints as [hidden], and more than MAX_PRINTED_ROWS
+// rows print nothing.
+const AGGREGATES = new Set(['count', 'count_star', 'sum', 'avg', 'mean']);
+const MAX_PRINTED_ROWS = 10;
+const HIDDEN = '[hidden]';
+const ID_NAME = /(^|_)id$/i;
+
+// True when every column under node sits inside an aggregate, and at least
+// one aggregate (or COUNT(*)) is there.
+function isAggregateExpr(node) {
+  let found = false;
+  let bare = false;
+  const walk = (n, inside) => {
+    if (Array.isArray(n)) { n.forEach((x) => walk(x, inside)); return; }
+    if (!isMap(n)) return;
+    if (n.class === 'COLUMN_REF' || n.class === 'STAR' || n.class === 'SUBQUERY') { if (!inside) bare = true; return; }
+    const agg = n.class === 'FUNCTION' && AGGREGATES.has(String(n.function_name).toLowerCase());
+    if (agg) found = true;
+    for (const v of Object.values(n)) if (v && typeof v === 'object') walk(v, inside || agg);
+  };
+  walk(node, false);
+  return found && !bare;
+}
+
+// The output columns of the statement's top SELECT that are aggregates:
+// a Set of names. A set operation, or anything not a plain SELECT, gives none.
+function aggregateColumns(parsed) {
+  const out = new Set();
+  const node = isMap(parsed) && Array.isArray(parsed.statements) && parsed.statements.length === 1 ? parsed.statements[0].node : null;
+  if (!isMap(node) || node.type !== 'SELECT_NODE' || !Array.isArray(node.select_list)) return out;
+  for (const item of node.select_list) {
+    if (filled(item.alias) && !ID_NAME.test(item.alias) && isAggregateExpr(item)) out.add(item.alias);
+  }
+  return out;
+}
+
+const NUMERIC = /^[+-]?\d+(\.\d+)?(e[+-]?\d+)?$/i;
+
+// The rows as --rows prints them: { lines, note }. Aggregate columns keep a
+// numeric value; every other value is [hidden]. Over MAX_PRINTED_ROWS rows:
+// no row at all, only the note.
+function printableRows(rows, aggregates) {
+  if (!Array.isArray(rows)) return { lines: [], note: 'no rows' };
+  if (rows.length > MAX_PRINTED_ROWS) return { lines: [], note: `${rows.length} rows: not printed (more than ${MAX_PRINTED_ROWS}; aggregates only)` };
+  const lines = rows.map((r) => {
+    const shown = {};
+    for (const [k, v] of Object.entries(r)) {
+      const ok = aggregates.has(k) && (typeof v === 'number' || (typeof v === 'string' && NUMERIC.test(v)));
+      shown[k] = ok ? v : HIDDEN;
+    }
+    return JSON.stringify(shown);
+  });
+  const hiddenAny = lines.some((l) => l.includes(HIDDEN));
+  return { lines, note: hiddenAny ? `${HIDDEN}: not an aggregate (group keys, ids and text are never printed)` : null };
 }
 
 // The figure a rule's result gives: { value } or { error }. Rows are the
@@ -587,6 +656,7 @@ module.exports = {
   UNITS,
   PARAM_TYPES,
   MAX_SHOWN_ROWS,
+  MAX_PRINTED_ROWS,
   validate,
   parseRules,
   loadRules,
@@ -597,6 +667,8 @@ module.exports = {
   readsOutside,
   scanParse,
   readsProblems,
+  aggregateColumns,
+  printableRows,
   figureOf,
   targetOf,
   judgeFigure,

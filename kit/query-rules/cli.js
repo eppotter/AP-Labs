@@ -24,7 +24,11 @@
 //            check.params through the query runner (kit/runtime/data, with the
 //            profile's forbidden columns), and compares the figure with the
 //            linked signed truth or the stated figure. --rows also prints the
-//            result rows (at most 50), for the Verifier's PR evidence.
+//            result rows for the Verifier's PR evidence, aggregates only
+//            (kit/lib/query-rules printableRows): a COUNT, SUM or AVG column
+//            keeps its number; group keys, ids and text print as [hidden];
+//            more than 10 rows print nothing. A PR never holds row-level
+//            client data.
 //
 // The profile is the governing one (kit/lib/profile governingProfilePath:
 // the one verify names, else APLABS_PROFILE, else .aplabs/profile.yml above
@@ -160,8 +164,9 @@ async function checkRule(id, { profile, file, env, rows: showRows }) {
     const verdict = rules.judgeFigure(figure.value, target);
     const lines = [`${verdict.outcome === 'pass' ? 'PASS' : 'FAIL'} query-rule:${id}: ${verdict.reason}`];
     if (showRows) {
-      for (const r of result.slice(0, rules.MAX_SHOWN_ROWS)) lines.push(JSON.stringify(r));
-      if (result.length > rules.MAX_SHOWN_ROWS) lines.push(`(${result.length - rules.MAX_SHOWN_ROWS} more rows not shown)`);
+      const printed = rules.printableRows(result, rules.aggregateColumns(tree));
+      lines.push(...printed.lines);
+      if (printed.note) lines.push(`(${printed.note})`);
     }
     return { outcome: verdict.outcome, lines };
   } catch (err) {
@@ -179,13 +184,14 @@ function statusLines(entries, last) {
     const r = e.rule;
     const signed = r.signedOff && r.signedOff !== 'pending' ? `signed ${r.signedOff} by ${r.signedOffBy}` : 'not signed';
     const lastCheck = outcomes.get(`query-rule:${e.id}`);
-    const checked = lastCheck ? `last check: ${lastCheck} (${last.at.slice(0, 10)})` : 'not checked on this machine';
+    const when = last && typeof last.at === 'string' ? ` (${last.at.slice(0, 10)})` : '';
+    const checked = lastCheck ? `last check: ${lastCheck}${when}` : 'not checked on this machine';
     const what = r.kind === 'traps' ? `${r.traps.length} traps` : r.metric;
     return `${e.id}  ${r.kind}  ${r.status}  ${signed}  ${checked}${rules.isSigned(e, last) ? '  SIGNED' : ''}  ${what}`;
   });
 }
 
-const queueLine = (e) => `${e.id}  ${e.at.slice(0, 10)}  ${e.hub}  ${e.reason}  ${e.question}`;
+const queueLine = (e) => `${e.id}  ${String(e.at || '').slice(0, 10)}  ${e.hub}  ${e.reason}  ${e.question}`;
 
 async function main(argv, { env = process.env, cwd = process.cwd(), out = console.log, err = console.error } = {}) {
   const args = parseArgs(argv);

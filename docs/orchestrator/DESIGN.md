@@ -102,7 +102,7 @@ Ask answers a data question by query only from **signed query rules**: fenced `q
 
 1. `npm run query-rules -- --queue` lists the waiting questions (the data owner or the Orchestrator, on the bot's machine).
 2. On a branch, `npm run query-rules -- --new QR-NNN --from <queue id>` scaffolds a draft (`status: draft`, `signed_off: pending`) with the question as its first pattern. The Orchestrator routes it to **SQLsmith**, which writes the definition, SQL, parameters, traps, reads and check (it reads only; the Builder puts its text in the file).
-3. The **Verifier** runs `npm run verify` and pastes the `query-rule:QR-NNN` line in the PR (`npm run query-rules -- --check QR-NNN --rows` shows the rows too). The check proves the SQL reads only what `reads` lists, `reads` sits inside the allow-list, and the figure equals the linked signed truth (a rule linked to a pending truth can't pass).
+3. The **Verifier** runs `npm run verify` and pastes the `query-rule:QR-NNN` line in the PR (`npm run query-rules -- --check QR-NNN --rows` adds the result's aggregate columns, never a group key, id or text value, and nothing over 10 rows: a PR holds aggregates only, never row-level client data). The check proves the SQL reads only what `reads` lists, `reads` sits inside the allow-list, and the figure equals the linked signed truth (a rule linked to a pending truth can't pass).
 4. **The data owner signs it in the PR** (sets `status: approved`, `signed_off`, `signed_off_by`): a named client person in a fork; Ely or Steven for the demo client. The PR is T3 (`.aplabs/**`, or `profiles/**` here) and merges after review.
 5. `npm run query-rules -- --done <queue id>` clears the question. `npm run query-rules -- --status` lists every rule, its sign-off and its last check.
 

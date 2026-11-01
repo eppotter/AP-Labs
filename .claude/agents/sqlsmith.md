@@ -71,7 +71,10 @@ MET rule or Terminology term, write the SQL with typed `$name` parameters (never
 comes from the data), list every table and column it reads in `reads` (inside the allow-list), name
 its traps, and link its `check` to a signed known truth with the parameters that reproduce it (or
 state the figure in `check.expect`). Leave it `status: draft`, `signed_off: pending`: only the
-data owner signs. The Verifier runs `npm run query-rules -- --check QR-NNN --rows` for you.
+data owner signs. The Verifier runs `npm run query-rules -- --check QR-NNN --rows` for you; it
+prints aggregates only (COUNT, SUM, AVG with an output alias). Never ask for row-level client data
+in a PR: reconcile on the aggregate figure. Name every column bare only when the rule reads it
+(qualify CTE and alias columns): a bare table or alias name is a whole-row reference and fails.
 
 ## Running anything
 

@@ -96,9 +96,11 @@ test('on the fixture every seed rule\'s verify check passes; QR-006\'s five zone
     const code = await main(['--check', id, '--rows'], { env, cwd: ROOT, out: (l) => out.push(l), err: (l) => out.push(l) });
     assert.equal(code, 0, `${id}: ${out.join('\n')}`);
     if (id === 'QR-006') {
-      const rows = out.slice(1).map((l) => JSON.parse(l));
+      const rows = out.slice(1).filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
       assert.equal(rows.length, 5);
       assert.equal(rows.reduce((n, r) => n + Number(r.active_plans), 0), 815);
+      // --rows prints aggregates only: the zone id and name are hidden.
+      for (const r of rows) assert.deepEqual([r.zone_id, r.zone], ['[hidden]', '[hidden]']);
     }
   }
 });

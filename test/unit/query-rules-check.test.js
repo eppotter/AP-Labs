@@ -128,7 +128,9 @@ test('a rule with CTEs, joins and a stated figure passes; rows and sum check a b
   const r = await run(t, ['--check', 'QR-001', '--rows'], [breakdown]);
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /^PASS query-rule:QR-001: 3 matches truth shop-count/);
-  assert.match(r.out, /\{"region_id":"hill","region":"Hill","shops":"1"\}/);
+  // --rows prints aggregates only: the group keys (an id and text) are hidden.
+  assert.match(r.out, /\{"region_id":"\[hidden\]","region":"\[hidden\]","shops":"1"\}/);
+  assert.ok(!/hill|Hill|vale|Vale/.test(r.out), 'no group key value is printed');
   const wrongRows = await check(t, [{ ...breakdown, check: { ...breakdown.check, rows: 3 } }]);
   assert.equal(wrongRows.code, 1);
   assert.match(wrongRows.out, /expected 3 rows, got 2/);
@@ -174,6 +176,29 @@ test('SQL that reads a column its reads leave out fails, qualified or bare, even
     assert.equal(r.code, 1, sql);
     assert.match(r.out, /the SQL reads (shops\.)?closed_on, which reads does not list/, sql);
   }
+});
+
+test('a bare table or alias name (a whole-row reference) fails, even behind an output alias of the same name', async (t) => {
+  const cases = [
+    // PR #321 review: the output alias "s" let the bare "s" (the whole row of shops s) through.
+    ['SELECT 1 AS s, s FROM shops s', /"s" names a table or alias, not a column: a whole-row reference/],
+    ['SELECT COUNT(s) AS n FROM shops s', /"s" names a table or alias, not a column/],
+    ['SELECT to_json(shops) AS j FROM shops', /"shops" names a table or alias, not a column/],
+    ['SELECT x AS n FROM (SELECT s.shop_id FROM shops s) x', /"x" names a table or alias, not a column/],
+    ['WITH w AS (SELECT s.shop_id FROM shops s) SELECT COUNT(w) AS n FROM w', /"w" names a table or alias, not a column/],
+  ];
+  for (const [sql, want] of cases) {
+    const r = await check(t, [rule({ sql, params: {}, reads: { shops: ['shop_id'] }, check: { expect: 1, params: {} } })]);
+    assert.equal(r.code, 1, sql);
+    assert.match(r.out, want, sql);
+  }
+});
+
+test('a bare output alias is refused: only a column the rule reads may be named bare', async (t) => {
+  const sql = 'SELECT SUM(s.revenue_cents) AS cents FROM shops s WHERE s.region_id = $region ORDER BY cents';
+  const r = await check(t, [rule({ sql })]);
+  assert.equal(r.code, 1);
+  assert.match(r.out, /the bare name cents is an output alias/);
 });
 
 test('SQL that reads a table its reads leave out fails', async (t) => {
@@ -273,6 +298,35 @@ test('--queue lists the waiting questions; --new drafts a rule from one; --done 
   c = io();
   assert.equal(await main(['--queue'], c.opts), 0);
   assert.match(c.lines.join('\n'), /The review queue is empty/);
+});
+
+test('--status does not crash on a verify record with no date', () => {
+  const { statusLines } = require('../../kit/query-rules/cli');
+  const { parseRules } = require('../../kit/lib/query-rules');
+  const entries = parseRules(`## Query rules\n\n${block(rule())}`);
+  const lines = statusLines(entries, { results: [{ id: 'query-rule:QR-001', outcome: 'pass' }] });
+  assert.match(lines[0], /last check: pass {2}SIGNED/);
+});
+
+test('--rows prints aggregates only: ids, text, MIN and MAX hidden; more than 10 rows print nothing', async (t) => {
+  const sql = [
+    'SELECT s.region_id, COUNT(s.shop_id) AS shops, SUM(s.revenue_cents) AS total_id,',
+    '  MIN(s.opened_on) AS first_opened, COALESCE(SUM(s.revenue_cents), 0) AS cents, COUNT(*) AS n',
+    'FROM shops s WHERE s.region_id = $region GROUP BY s.region_id',
+  ].join('\n');
+  const r = await run(t, ['--check', 'QR-001', '--rows'], [rule({
+    sql, reads: { shops: ['shop_id', 'region_id', 'revenue_cents', 'opened_on'] }, check: { expect: 2, params: { region: 'vale' }, sum: 'shops' },
+  })]);
+  assert.equal(r.code, 0, r.out);
+  const [, row] = r.out.split('\n');
+  assert.deepEqual(JSON.parse(row), {
+    region_id: '[hidden]', shops: '2', total_id: '[hidden]', first_opened: '[hidden]', cents: '125000', n: '2',
+  });
+  const { printableRows } = require('../../kit/lib/query-rules');
+  const many = printableRows(Array.from({ length: 11 }, (_, i) => ({ n: String(i) })), new Set(['n']));
+  assert.deepEqual(many.lines, []);
+  assert.match(many.note, /11 rows: not printed/);
+  assert.deepEqual(printableRows([{ n: 'jo@example.com' }], new Set(['n'])).lines, ['{"n":"[hidden]"}'], 'a non-number is hidden even in an aggregate column');
 });
 
 test('usage: one command, ids in their shapes', () => {
