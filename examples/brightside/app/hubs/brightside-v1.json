@@ -1,0 +1,9 @@
+{
+  "id": "brightside-v1",
+  "command": "/brightside-v1",
+  "name": "Brightside v1",
+  "description": "Open the Brightside v1 menu",
+  "sees": ["context", "data", "rules"],
+  "notes": "brightside-v0",
+  "welcome": "Brightside on your real data: it knows the company, follows its rules, and plans routes."
+}

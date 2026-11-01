@@ -1,0 +1,13 @@
+{
+  "id": "v1-route-crew-out",
+  "hub": "brightside-v1",
+  "label": "Crew out",
+  "description": "If a crew is out for the day, see where its visits could go: suggestions only, nothing is changed",
+  "resource": "ROUTING_ALL_CREWS",
+  "archetype": "routing-map",
+  "verb": "Run",
+  "group": "Routing",
+  "screen": "crew-out",
+  "environments": ["dev"],
+  "adapter": "adapter.js"
+}

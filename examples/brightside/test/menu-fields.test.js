@@ -34,6 +34,15 @@ test('the example\'s verbs and groups are D5\'s and D10\'s', () => {
     'v0-ask': [null, 'Ask'],
     'v0-build-request': [null, 'Request'],
     'v0-data-sources': [null, 'View'],
+    // Plan brightside-v1, D5 (Story 19.2): the route skills say Run; Route map keeps View.
+    'v1-add-context': [null, 'Add'],
+    'v1-ask': [null, 'Ask'],
+    'v1-build-request': [null, 'Request'],
+    'v1-data-sources': [null, 'View'],
+    'v1-route-cancellation': ['Routing', 'Run'],
+    'v1-route-crew-out': ['Routing', 'Run'],
+    'v1-route-map': ['Routing', 'View'],
+    'v1-route-optimize': ['Routing', 'Run'],
     'win-back': ['Lists', 'Review'],
   });
 });

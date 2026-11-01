@@ -130,7 +130,7 @@ Each is scoped like `route()`: a crew lead's crew comes from `scope`, whatever `
 
 **Ways out, each tested:** Back and the X (the map files go; a draw still running shows nothing), **Change crew or day** (from every step, the Fill result too), **Pick another visit**, an error (a plain message, Back), an expired window, an expired trigger, no visits, a crew not working, access withdrawn, a click from another person's window, and the map not ready (Why?).
 
-**Where they run:** dev only until their live check passes, then a one-line PR each turns on production (plan brightside-v1 gate item 5). The `/brightside-v1` folders `v1-route-cancellation` and `v1-route-crew-out` come with the v1 hub (Story 19.2); the `/brightside` copies come with Story 20.3.
+**Where they run:** dev only until their live check passes, then a one-line PR each turns on production (plan brightside-v1 gate item 5). On `/brightside-v1` (Story 19.2) they are the folders `v1-route-cancellation` and `v1-route-crew-out`, beside `v1-route-optimize` (Optimize a route, the route editor) and `v1-route-map` (Route map), all four dev only, with the same key and adapter as `/brightside`'s; the `/brightside` copies come with Story 20.3.
 
 ### Live check (Ely or Steven, dev Slack)
 
