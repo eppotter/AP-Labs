@@ -14,9 +14,10 @@
 // existed; and every way out of the v1 menu: Help then Back, the X, an
 // expired trigger, a person not in the profile, a click from someone without
 // the key, a route row clicked from an old menu once it is hidden in prod, a
-// waiting row's Why?, and Request a tool, which says it is not on this hub
-// until Story 19.3. Then each route skill opens its own screen on v1 for a
-// dispatcher and refuses a person with no routing key.
+// waiting row's Why?, and Request a tool, which opens its form on v1 since
+// Story 19.3 (D12; v1-ask.test.js covers posting from it). Then each route
+// skill opens its own screen on v1 for a dispatcher and refuses a person with
+// no routing key.
 //
 // An example test (architecture carve-out): it reads Brightside's app dir and
 // fixture, and its profiles come from test fixtures (fixtures/demo-profile.yml,
@@ -53,7 +54,7 @@ const STEVEN = slackOf(profile, 'steven');
 const ANN = 'U0FIXTUREANN';
 const V1 = 'brightside-v1';
 const ROUTES = ['v1-route-cancellation', 'v1-route-crew-out', 'v1-route-map', 'v1-route-optimize'];
-const NOT_ON_THIS_HUB = 'Request a tool is not available on this hub yet. Use it from a hub that has no business context or data.';
+const BUILD_REQUEST_FORM = 'build-request:form';
 
 let tmp;
 let FIXTURE;
@@ -341,16 +342,17 @@ test('way out, a route row clicked from an old menu once production hides it: "i
   }
 });
 
-test('way out, a waiting row: Optimize a route without the Office says why (Why?), and Request a tool is not on this hub until Story 19.3', async (t) => {
+test('way out, a waiting row: Optimize a route without the Office says why (Why?); Request a tool is ready on v1 and opens its form (Story 19.3, D12)', async (t) => {
   // The demo profile fixture has no Office (routing.depot), so the editor
   // screens wait; the routing-profile fixture below has one.
   const { app } = await boot(t);
   const view = await menu(app, '/brightside-v1', ELY);
   const row = (id) => view.blocks.find((b) => b.block_id === `entry:${id}`);
   assert.equal(row('v1-route-optimize').accessory.action_id, 'v1-route-optimize:why');
-  assert.equal(row('v1-build-request').accessory.action_id, 'v1-build-request:why');
+  assert.equal(row('v1-build-request').accessory.action_id, 'v1-build-request:open');
+  assert.equal(row('v1-build-request').accessory.text.text, 'Request');
   await app.dispatchAction('v1-build-request:open', { user: { id: ELY }, view: MENU_VIEW });
-  assert.equal(lastView(app).blocks[0].text.text, NOT_ON_THIS_HUB);
+  assert.equal(lastView(app).callback_id, BUILD_REQUEST_FORM);
   await app.dispatchAction('v1-route-optimize:why', { user: { id: ELY }, view: MENU_VIEW });
   assert.equal(app.views.at(-1).method, 'push');
 });

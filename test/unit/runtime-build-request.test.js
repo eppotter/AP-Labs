@@ -4,8 +4,10 @@
 // build-request archetype (kit/runtime/archetypes/build-request) through the
 // hubs, and its channel exception (kit/runtime/slack/channel.js). Fixtures
 // only: test/fixtures/runtime/build-request has a blank hub (sees nothing), a
-// hub that sees context and one that sees data, each with a Build request
-// module, and a profile with a fake channel id (profile-unset.yml has none).
+// hub that sees context, one that sees data and one that sees all three
+// (plan brightside-v1, D12, Story 19.3: every one of them may post), each
+// with a Build request module, and a profile with a fake channel id
+// (profile-unset.yml has none).
 // Every clock the code reads (the store, the AI service, the archetype) is
 // the one test clock.
 
@@ -19,7 +21,7 @@ const { registerHubs, FORM_NEEDS_WINDOW } = require('../../kit/runtime/slack/hub
 const { createStore } = require('../../kit/runtime/store');
 const { PLAIN_ERROR } = require('../../kit/runtime/slack/handle');
 const { createLlm } = require('../../kit/runtime/llm');
-const { LlmUnavailable } = require('../../kit/runtime/errors');
+const { LlmUnavailable, ConfigFault } = require('../../kit/runtime/errors');
 const { BUILD_REQUEST_WORDS: WORDS } = require('../../kit/runtime/messages');
 const channel = require('../../kit/runtime/slack/channel');
 const br = require('../../kit/runtime/archetypes/build-request');
@@ -144,10 +146,11 @@ test('slack.build_requests_channel is optional and must be a channel id; an unkn
   assert.throws(() => validateProfile({ ...base, slack: { build_requests_channel: 'C0BUILDREQ1', build_request_channel: 'C0BUILDREQ1' } }, 't'), /slack has unknown key "build_request_channel"/);
 });
 
-test('the fixture app loads: build-request is a built archetype, on a blank hub and on hubs that see context or data', () => {
+test('the fixture app loads: build-request is a built archetype, on a blank hub and on hubs that see context, data or all three', () => {
   assert.deepEqual(loadProblems, []);
   assert.deepEqual(registry.modules.map((m) => [m.id, m.archetype, m.hub]), [
     ['blank-request', 'build-request', 'blank'], ['ctx-request', 'build-request', 'ctx'], ['data-request', 'build-request', 'data'],
+    ['full-request', 'build-request', 'full'],
   ]);
 });
 
@@ -188,18 +191,28 @@ const FIELDS = {
   hub: { name: 'Blank tools', sees: [] }, requester: 'UADA', title: 'A title', summary: 'A summary.', need: 'My words.', summarised: true, at: T0,
 };
 
-test('channel.js: build-request is the second declared exception, and only a hub that sees neither context nor data may post', async () => {
+test('channel.js: build-request is the second declared exception; any hub whose sees is a list of known values may post (D12), nothing else', async () => {
   assert.deepEqual(Object.keys(channel.EXCEPTIONS), ['write-escalation', 'build-request']);
-  for (const sees of [[], ['rules']]) assert.equal(channel.mayPostBuildRequest(sees), true, JSON.stringify(sees));
-  for (const sees of [['context'], ['data'], ['context', 'data', 'rules'], undefined, 'none']) assert.equal(channel.mayPostBuildRequest(sees), false, JSON.stringify(sees));
+  for (const sees of [[], ['rules'], ['context'], ['data'], ['data', 'rules'], ['context', 'data', 'rules']]) {
+    assert.equal(channel.mayPostBuildRequest(sees), true, JSON.stringify(sees));
+  }
+  for (const sees of [undefined, null, 'none', 'context', ['secrets'], ['context', 'everything'], [1], {}]) {
+    assert.equal(channel.mayPostBuildRequest(sees), false, JSON.stringify(sees));
+  }
   const posted = [];
   const client = { chat: { postMessage: async (a) => { posted.push(a); return { ok: true }; } } };
-  for (const sees of [['context'], ['data'], ['data', 'rules']]) {
+  for (const sees of [undefined, 'context', ['secrets']]) {
     await assert.rejects(channel.postToChannel({
-      client, exception: 'build-request', channel: CHANNEL, fields: { ...FIELDS, hub: { name: 'Full', sees } },
-    }), (err) => err instanceof channel.ChannelPostRefused && /sees context or data/.test(err.message), JSON.stringify(sees));
+      client, exception: 'build-request', channel: CHANNEL, fields: { ...FIELDS, hub: { name: 'Odd', sees } },
+    }), (err) => err instanceof channel.ChannelPostRefused && /sees must be a list of known values/.test(err.message), JSON.stringify(sees));
   }
   assert.deepEqual(posted, []);
+  await channel.postToChannel({
+    client, exception: 'build-request', channel: CHANNEL, fields: { ...FIELDS, hub: { name: 'Full', sees: ['context', 'data', 'rules'] } },
+  });
+  assert.equal(posted.length, 1);
+  assert.match(posted[0].text, /on the Full hub/);
+  posted.length = 0;
   await channel.postToChannel({
     client, exception: 'build-request', channel: CHANNEL, fields: FIELDS,
   });
@@ -269,13 +282,13 @@ test('way out, the channel unset: the tool says it is not set up and names the a
   assert.ok(!shown.blocks.some((b) => b.type === 'input'));
 });
 
-test('a hub that sees context, and one that sees data: the tool says "not available on this hub yet"; no form opens', async () => {
+test('D12: a hub that sees context, one that sees data and one that sees all three each open the form, as the blank hub does', async () => {
   const { app } = setup();
-  for (const hub of ['ctx', 'data']) {
+  for (const hub of ['ctx', 'data', 'full']) {
     const shown = await openForm(app, hub);
-    assert.deepEqual(texts(shown.blocks), [WORDS.notOnThisHub()], hub);
-    assert.match(shown.blocks[0].text.text, /not available on this hub yet/);
-    assert.equal(shown.submit, undefined);
+    assert.equal(shown.callback_id, br.FORM_CALLBACK, hub);
+    assert.equal(shown.submit.text, 'Preview', hub);
+    assert.equal(shown.private_metadata, `${hub}:${hub}-request`);
   }
 });
 
@@ -427,12 +440,23 @@ test('access is re-checked at submit: a person without the key is refused in the
   assert.equal(ctx.model.calls.length, 0);
 });
 
-test('a hand-made submit naming a module on a hub that sees data is refused as not available on this hub; nothing is summarised', async () => {
-  const ctx = setup();
-  const form = await openForm(ctx.app);
-  await ctx.app.dispatchView(br.FORM_CALLBACK, { user: ADMIN, view: { ...submitted(form, 'Need a tool'), private_metadata: 'data:data-request' } });
-  assert.deepEqual(texts(ctx.app.viewAcks.at(-1).view.blocks), [WORDS.notOnThisHub()]);
-  assert.equal(ctx.model.calls.length, 0);
+test('a hub whose sees is not a list of known values may not post: the tool says so; nothing is summarised', async () => {
+  const model = fakeModel();
+  const { app } = setup({ model });
+  // The registry is checked at boot, so only a hub view handed in by the
+  // engine could carry this: the archetype is asked directly.
+  const req = br.createBuildRequest({
+    store: createStore({ now: () => T0 }), log: quietLog(), channel: CHANNEL, now: () => T0,
+  });
+  const mod = registry.module('full-request');
+  for (const sees of [undefined, 'context', ['secrets']]) {
+    assert.equal(req.open({ mod, hub: { id: 'full', sees } }), WORDS.notOnThisHub(), JSON.stringify(sees));
+    assert.equal(req.available({ id: 'full', sees }), false);
+    assert.deepEqual(req.availability({ id: 'full', sees }), { available: false, reason: 'hub' });
+  }
+  assert.equal(req.available({ id: 'full', sees: ['context', 'data', 'rules'] }), true);
+  assert.equal(model.calls.length, 0);
+  assert.deepEqual(app.posted, []);
 });
 
 // --- Post, and exactly once ----------------------------------------------------------
@@ -763,4 +787,95 @@ test('a hash conflict never hides what a click is told: expired, not yours and b
   await first;
   assert.equal(ctx.app.posted.length, 1);
   assert.ok(ctx.log.lines.some((l) => l.msg === 'stale view replaced by a confirmed result'));
+});
+
+// --- plan brightside-v1, D12, Story 19.3: a hub that sees context, data and rules ---
+
+test('D12: from a hub that sees all three, the preview and Post work as on the blank hub; the post names the hub and holds only the person\'s words and their summary', async () => {
+  const ctx = setup();
+  const { preview, id } = await toPreview(ctx, 'A weekly report of late visits.', { hub: 'full' });
+  assert.deepEqual(buttonsOf(preview).map((b) => b.text.text), ['Post', 'Edit', 'Cancel']);
+  await click(ctx, br.ACTIONS.post, id);
+  assert.equal(ctx.app.posted.length, 1);
+  const [post] = ctx.app.posted;
+  assert.equal(post.channel, CHANNEL);
+  assert.equal(post.text.replace(/<!date[^>]*>/, '<date>'), [
+    '*New build request:* A weekly cleaning report',
+    'From <@UADA> on the Full tools hub, <date>',
+    '',
+    'The person wants a weekly report of cleanings.',
+    '',
+    '_In their words:_',
+    '> A weekly report of late visits.',
+  ].join('\n'));
+  assert.deepEqual(texts(lastUpdate(ctx.app).blocks), [WORDS.posted()]);
+  assert.deepEqual(ctx.log.lines.filter((l) => l.msg === 'build request posted').map((l) => l.fields), [{ module: 'full-request', summarised: true }]);
+});
+
+test('D12: the summary call from a hub that sees all three is withContext: false, the one tool and the fixed instructions', async () => {
+  const seen = [];
+  const service = {
+    forHub: () => ({
+      structured: async (args) => {
+        seen.push(args);
+        return { toolInput: { title: 'T', summary: 'S.' } };
+      },
+    }),
+  };
+  const ctx = setup({ llm: service });
+  for (const hub of ['blank', 'ctx', 'data', 'full']) await toPreview(ctx, 'A weekly report.', { hub });
+  assert.equal(seen.length, 4);
+  for (const args of seen) {
+    assert.equal(args.withContext, false);
+    assert.equal(args.tool, br.SUMMARY_TOOL);
+    assert.equal(args.instructions, br.INSTRUCTIONS);
+    assert.equal(args.request, 'A weekly report.');
+  }
+});
+
+test('D12: on a hub that sees all three, the prompt sent for the summary holds none of the profile\'s context files or the added context', async () => {
+  const model = fakeModel();
+  const knowledge = { forHub: () => null, forPrompt: async () => '<added_context>ADDED_NEVER_SENT</added_context>' };
+  const service = createLlm({
+    apiKey: KEY,
+    profile,
+    profilePath: PROFILE_PATH,
+    store: createStore({ now: () => T0 }),
+    log: quietLog(),
+    env: {},
+    now: () => T0,
+    knowledge,
+    deps: { createClient: () => model, readFile: () => 'CONTEXT_FILE_NEVER_SENT' },
+  });
+  // The same service answers a context call on that hub with both.
+  await service.forHub({ id: 'full', sees: ['context', 'data', 'rules'] }).structured({
+    person: 'UADA', resource: 'BUILD_REQUEST', request: 'x', tool: br.SUMMARY_TOOL,
+  });
+  assert.match(model.calls[0].system, /CONTEXT_FILE_NEVER_SENT/);
+  assert.match(model.calls[0].system, /ADDED_NEVER_SENT/);
+  const ctx = setup({ llm: service });
+  const { id } = await toPreview(ctx, 'A weekly report.', { hub: 'full' });
+  assert.equal(model.calls.length, 2);
+  assert.doesNotMatch(JSON.stringify(model.calls[1]), /CONTEXT_FILE_NEVER_SENT|ADDED_NEVER_SENT|added_context/);
+  await click(ctx, br.ACTIONS.post, id);
+  assert.doesNotMatch(ctx.app.posted[0].text, /NEVER_SENT/);
+});
+
+test('D12: the summary call\'s options are fixed at withContext: false, and assertContextFree refuses any call that is not', () => {
+  assert.equal(br.SUMMARY_CALL.withContext, false);
+  assert.ok(Object.isFrozen(br.SUMMARY_CALL));
+  assert.doesNotThrow(() => br.assertContextFree({ request: 'x', ...br.SUMMARY_CALL }));
+  for (const call of [{}, { withContext: true }, { withContext: undefined }, { withContext: 'false' }, { withContext: 0 }, null, undefined]) {
+    assert.throws(() => br.assertContextFree(call), (err) => err instanceof ConfigFault, JSON.stringify(call));
+  }
+});
+
+test('D12: summarise() asserts the call it hands the AI service at call time; a test fails if that changes', () => {
+  const fs = require('node:fs');
+  const src = fs.readFileSync(require.resolve('../../kit/runtime/archetypes/build-request'), 'utf8');
+  const body = src.slice(src.indexOf('async function summarise('), src.indexOf('// The form\'s submit'));
+  assert.match(body, /const call = \{\n\s+person, resource: mod\.resource, request: need, \.\.\.SUMMARY_CALL,\n\s+\};\n\s+assertContextFree\(call\);/);
+  assert.match(body, /await llm\.structured\(call\)/);
+  assert.equal((body.match(/llm\.structured\(/g) || []).length, 1, 'one AI call, and it is the asserted one');
+  assert.match(src, /const SUMMARY_CALL = Object\.freeze\(\{ tool: SUMMARY_TOOL, instructions: INSTRUCTIONS, withContext: false \}\);/);
 });

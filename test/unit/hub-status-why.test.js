@@ -50,7 +50,7 @@ const PARAMS = [{
 // wait: a blank hub (sees nothing) with a waiting scoped pull, Ask (no AI on
 // this hub), Request a tool (ready), the setup tools and the dev-only map
 // check (waiting: no map files). seen: a hub that sees context, where
-// Request a tool may not post. data: a hub that sees data, with no Request a
+// Request a tool may post too (plan brightside-v1, D12). data: a hub that sees data, with no Request a
 // tool, whose runner's availability a test can flip.
 const HUBS = [
   { id: 'wait', command: '/wait', name: 'Wait tools', sees: [] },
@@ -295,15 +295,14 @@ test('Request hidden, no channel: Request a tool itself waits, and Why? on it or
   endsAskingAdmin(onPull.view);
 });
 
-test('Request hidden, a hub that may not post: Why? on Request a tool says it is not on this hub; on Ask it ends "Ask <admin> about it."', async () => {
+test('D12: on a hub that sees context, Request a tool is ready (no Why?), and Why? on a waiting Ask offers it', async () => {
   const s = setup();
   const m = await menu(s, ADA, '/seen');
-  const onRequest = await why(s, ADA, m, 'seen-request');
-  assert.equal(block(onRequest.view, 'why:reason').text.text, BUILD_REQUEST_WORDS.notOnThisHub());
-  endsAskingAdmin(onRequest.view);
+  assert.equal(rowOf(m, 'seen-request').accessory.action_id, 'seen-request:open');
   const onAsk = await why(s, ADA, m, 'seen-ask');
   assert.equal(block(onAsk.view, 'why:reason').text.text, WHY_WORDS.noAi(ADMIN));
-  endsAskingAdmin(onAsk.view);
+  assert.equal(block(onAsk.view, 'why:request').text.text, WHY_WORDS.request('Request a tool'));
+  assert.equal(block(onAsk.view, 'why:ask'), undefined, 'not "Ask <admin> about it."');
 });
 
 // --- recomputed at the click --------------------------------------------------------------

@@ -33,9 +33,16 @@
 // message a click shows replaces the view even on a hash conflict (force).
 // Edit and Cancel consume it too: Edit shows the form with the text kept.
 //
-// Only a hub that sees neither context nor data may post (D11, until v1
-// decides; channel.js refuses the rest). Unset channel: the tool says it is
-// not set up and names the admin, and no form opens. available(hub) is that
+// Any hub may post, including one that sees context or data (plan
+// brightside-v1, D12, gate item 2; until then only a hub that saw neither
+// could). That rests on the summary call sending no business context: its
+// options are SUMMARY_CALL, and summarise() asserts withContext is false at
+// call time (assertContextFree), refusing with a ConfigFault before the AI is
+// called if a change ever drops it. The posted text holds only the person's
+// previewed words, the AI's summary of them, the hub's name and the
+// requester. channel.js still refuses a hub whose sees is not a list of
+// known values. Unset channel: the tool says it is not set up and names the
+// admin, and no form opens. available(hub) is that
 // check as true or false (Ask's button); availability(hub) adds its reason,
 // "channel" or "hub", for the hub menu's status (plan hub-status-menu, D11).
 // The tool's label in the example is "Request a tool" (D10); the archetype
@@ -95,6 +102,18 @@ const SUMMARY_TOOL = Object.freeze({
   },
   effects: 'none',
 });
+
+// The summary call's fixed options (D12): no business context, so nothing
+// the hub sees can be repeated into the channel.
+const SUMMARY_CALL = Object.freeze({ tool: SUMMARY_TOOL, instructions: INSTRUCTIONS, withContext: false });
+
+// Throws a ConfigFault unless the call sends no business context (D12). Run
+// at call time, on the exact options handed to the AI service.
+function assertContextFree(call) {
+  if (!call || typeof call !== 'object' || call.withContext !== false) {
+    throw new ConfigFault({ reason: 'build-request summary call must be withContext: false' });
+  }
+}
 
 const plain = (text) => ({ type: 'plain_text', text, emoji: false });
 const verbOf = (actionId) => {
@@ -206,10 +225,12 @@ function createBuildRequest({
   async function summarise({ llm, person, mod, need }) {
     const own = { title: ownTitle(need), summary: null, summarised: false };
     if (!llm || typeof llm.structured !== 'function') return own;
+    const call = {
+      person, resource: mod.resource, request: need, ...SUMMARY_CALL,
+    };
+    assertContextFree(call);
     try {
-      const res = await llm.structured({
-        person, resource: mod.resource, request: need, tool: SUMMARY_TOOL, instructions: INSTRUCTIONS, withContext: false,
-      });
+      const res = await llm.structured(call);
       const got = summaryOf(res && res.toolInput);
       if (!got) {
         log.warn('ai reply did not summarise the build request', { module: mod.id });
@@ -391,6 +412,6 @@ function createBuildRequest({
 }
 
 module.exports = {
-  createBuildRequest, formMessage, previewMessage, parseMetadata, verbOf, summaryOf, SUMMARY_TOOL, INSTRUCTIONS,
+  createBuildRequest, formMessage, previewMessage, parseMetadata, verbOf, summaryOf, SUMMARY_TOOL, INSTRUCTIONS, SUMMARY_CALL, assertContextFree,
   FORM_CALLBACK, NEED_BLOCK, NEED_ACTION, ACTIONS, ACTION_PATTERN, TOOL_NAME, MAX_NEED, PREVIEW_MS,
 };

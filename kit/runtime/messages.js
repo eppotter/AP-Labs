@@ -388,7 +388,9 @@ const BUILD_REQUEST_WORDS = Object.freeze({
   notYours: () => "This preview belongs to someone else's window, so I can't post it. Press Back and open Request a tool to start your own.",
   refused: (admin) => `Slack didn't take the post, so nothing was posted. Press Try again, or Back to leave it. If it keeps happening, tell ${admin}.`,
   notSetUp: (admin) => `Tool requests aren't set up yet: no channel to post them to. Ask ${admin} to set one up.`,
-  notOnThisHub: () => 'Request a tool is not available on this hub yet. Use it from a hub that has no business context or data.',
+  // A hub whose sees is not a list of known values (fail closed; plan
+  // brightside-v1, D12: any well-formed hub may post).
+  notOnThisHub: () => "Request a tool isn't set up correctly on this hub, so it can't post from here. Use it from another hub.",
 });
 // The tool's name wherever the bot names it (plan hub-status-menu, D10):
 // "Request a tool". The archetype and its resource key keep their names.

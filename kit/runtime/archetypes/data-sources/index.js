@@ -6,7 +6,10 @@
 //   Connected data          the hub runner's source and label, available or
 //                           not (describe()); never a table name or row count.
 //   Known truths and rules  whether data.md and guardrails.md are signed off,
-//                           how many columns are kept out of every query, and
+//                           how many columns are kept out of every query, how
+//                           many rule cards are approved (readiness's
+//                           approvedRules: 0 while guardrails.md is unsigned;
+//                           plan brightside-v1, D7, Story 19.3), and
 //                           each known truth: id, statement, owner, sign-off
 //                           and its last verify result on this machine ("not
 //                           checked on this machine" without one). Never a
@@ -93,6 +96,7 @@ function rulesLines(rules, ready) {
   return [
     ...rules.files.map(fileLine),
     `• Columns kept out of every query: ${cols}`,
+    `• Rule cards approved: ${Number.isSafeInteger(rules.approvedRules) && rules.approvedRules > 0 ? rules.approvedRules : 0}`,
     '',
     ...(rules.truths.length ? rules.truths.map((t) => truthLine(t, rules.checkedAt)) : [NO_TRUTHS]),
     '',

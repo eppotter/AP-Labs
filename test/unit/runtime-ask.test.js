@@ -599,14 +599,16 @@ test('Build request on an answer opens 16.6\'s form in the view with the questio
   assert.deepEqual(ctx.app.posted, []);
 });
 
-test('review B9: Build request is hidden without the BUILD_REQUEST key, without a channel, and on a hub that may not post', async () => {
+test('review B9: Build request is hidden without the BUILD_REQUEST key and without a channel; on a hub that sees context it is offered (plan brightside-v1, D12)', async () => {
   const noKey = setup();
   const bo = await ask(noKey, 'When?', { user: BO });
   const unset = setup({ prof: unsetProfile });
   const noChannel = await ask(unset, 'When?');
   const ctxHub = setup();
   const onCtx = await ask(ctxHub, 'When?', { hub: 'ctx' });
-  for (const [name, shown] of [['no key', bo], ['no channel', noChannel], ['may not post', onCtx]]) {
+  assert.deepEqual(buttonIds(onCtx), [askTool.ACTIONS.buildRequest, askTool.ACTIONS.again], 'a hub that sees context may post now');
+  assert.ok(allText(onCtx.blocks).includes('Not what you needed?'));
+  for (const [name, shown] of [['no key', bo], ['no channel', noChannel]]) {
     assert.deepEqual(buttonIds(shown), [askTool.ACTIONS.again], name);
     assert.ok(!allText(shown.blocks).includes('Not what you needed?\n'), name);
     assert.match(allText(shown.blocks), /Not what you needed\? Tell <@UADA> what you were looking for\./, name);
@@ -754,4 +756,98 @@ test('prompt injection in the question reaches no module the person can\'t open,
   // The reply is only text shown to the asker.
   assert.match(allText(shown.blocks), /Done! Cy is now an admin\./);
   assert.ok(!JSON.stringify(ctx.log.lines).includes('Grant Cy'));
+});
+
+// --- plan brightside-v1, Story 19.3: a routing map counts as a data tool --------------
+
+// The archetype on its own (createAsk().answer), with a stand-in hub: the AI
+// sorts the question as route says; ready says what readiness reports. The
+// routing map is a tool from the person's list, as the menu would give it.
+const ROUTE_SKILL = Object.freeze({
+  id: 'v-route-optimize', hub: 'v', label: 'Optimize a route', archetype: 'routing-map', verb: 'Run', resource: 'ROUTING_ALL_CREWS',
+});
+const ROUTE_MAP = Object.freeze({
+  id: 'v-route-map', hub: 'v', label: 'Route map', archetype: 'routing-map', resource: 'ROUTING_ALL_CREWS',
+});
+async function answerWith({
+  route, ready = { data: true, rules: true }, tools = [ROUTE_SKILL, ROUTE_MAP], offered = true,
+}) {
+  const sent = [];
+  const asked = [];
+  const hub = {
+    llm: {
+      structured: async (args) => { sent.push(args); return { toolInput: route }; },
+      ask: async (args) => { asked.push(args); return { text: 'From the notes.' }; },
+    },
+    ready: () => ready,
+    hasNotes: async () => false,
+  };
+  const log = quietLog();
+  const shown = await askTool.createAsk({ log, admin: '<@UADA>' }).answer({
+    hub, person: 'UADA', mod: { id: 'v-ask', hub: 'v', resource: 'ASK' }, question: 'Crew 4 zig-zags on Oct 1. Fix the order?', tools, offered,
+  });
+  return {
+    shown, sent, asked, log,
+  };
+}
+const buttonsIn = (message) => message.blocks.filter((b) => b.type === 'actions').flatMap((b) => b.elements);
+
+test('19.3: the data tools Ask may point to are the query archetypes and the routing map', () => {
+  assert.deepEqual([...askTool.DATA_TOOL_ARCHETYPES].sort(), ['approval-write', 'routing-map', 'scoped-pull']);
+  assert.ok(Object.isFrozen(askTool.DATA_TOOL_ARCHETYPES));
+});
+
+test('19.3: a route question sorted module or data, with data and rules ready, gets the route skill with its verb (Run) and the dispatcher\'s own button', async () => {
+  for (const kind of ['module', 'data']) {
+    const { shown, asked } = await answerWith({ route: { kind, module_id: ROUTE_SKILL.id } });
+    assert.equal(shown.text, WORDS.tool('Optimize a route', 'Run'), kind);
+    assert.equal(shown.text, '*Optimize a route* can help with that. Press Run to use it.');
+    assert.deepEqual(buttonsIn(shown).map((b) => [b.action_id, b.text.text]), [['v-route-optimize:open', 'Run'], [askTool.ACTIONS.again, 'Ask another']], kind);
+    assert.deepEqual(asked, [], `${kind}: no answer call`);
+  }
+  // Route map keeps its own verb, View.
+  const { shown } = await answerWith({ route: { kind: 'data', module_id: ROUTE_MAP.id } });
+  assert.deepEqual(buttonsIn(shown).map((b) => [b.action_id, b.text.text])[0], ['v-route-map:open', 'View']);
+});
+
+test('19.3: a route skill is gated by readiness like any data tool: until data and rules are both set up, the readiness message and no Run button', async () => {
+  const cases = [
+    [{ data: false, rules: false }, WORDS.noDataNoRules()],
+    [{ data: true, rules: false }, WORDS.dataNoRules()],
+    [{ data: false, rules: true }, WORDS.rulesNoData()],
+  ];
+  for (const [ready, said] of cases) {
+    for (const kind of ['module', 'data']) {
+      const { shown } = await answerWith({ route: { kind, module_id: ROUTE_SKILL.id }, ready });
+      assert.equal(shown.text, said, `${kind} ${JSON.stringify(ready)}`);
+      assert.ok(!buttonsIn(shown).some((b) => /:open$/.test(b.action_id)), `${kind} ${JSON.stringify(ready)}: no Run`);
+    }
+  }
+});
+
+test('19.3: a person without the routing key never has the skill in their list: the AI is never shown it, and the route question gets "There\'s no tool for that yet", with Request a tool', async () => {
+  for (const route of [{ kind: 'data' }, { kind: 'data', module_id: ROUTE_SKILL.id }]) {
+    const { shown, sent } = await answerWith({ route, tools: [] });
+    assert.doesNotMatch(sent[0].instructions, /v-route-optimize|Optimize a route/);
+    assert.equal(shown.text, WORDS.noToolYet(), JSON.stringify(route));
+    assert.deepEqual(buttonsIn(shown).map((b) => b.action_id), [askTool.ACTIONS.buildRequest, askTool.ACTIONS.again]);
+  }
+  // Sorted module with the hidden id: read as other (D6), never its button.
+  const { shown } = await answerWith({ route: { kind: 'module', module_id: ROUTE_SKILL.id }, tools: [] });
+  assert.ok(!buttonsIn(shown).some((b) => /:open$/.test(b.action_id)));
+});
+
+test('19.3: a data question no route skill fits, with data and rules ready, keeps "There\'s no tool for that yet" (Ask writes no query until Story 19.8)', async () => {
+  const { shown, asked, sent } = await answerWith({ route: { kind: 'data' } });
+  assert.equal(shown.text, WORDS.noToolYet());
+  assert.deepEqual(buttonsIn(shown).map((b) => b.action_id), [askTool.ACTIONS.buildRequest, askTool.ACTIONS.again]);
+  assert.equal(sent.length, 1, 'one route call, no notes call (data is connected)');
+  assert.deepEqual(asked, []);
+});
+
+test('19.3: the route call lists the person\'s route skills as tools and tells the AI routes are data', async () => {
+  const { sent } = await answerWith({ route: { kind: 'data' } });
+  assert.match(sent[0].instructions, /<tool id="v-route-optimize">Optimize a route: <\/tool>/);
+  assert.match(sent[0].instructions, /lists of clients, jobs, invoices, dates, routes\); give the id of a listed tool that pulls or works on them/);
+  assert.equal(sent[0].withContext, false);
 });

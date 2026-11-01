@@ -85,16 +85,18 @@ test('kit/runtime/slack/channel.js has exactly one send, guarded by its declared
 
 // Story 16.6 (plan brightside-v0, D11, the AD-14 amendment): the declared
 // exceptions are exactly the write escalation and the build request, and the
-// build request's text refuses a hub that sees context or data before
-// anything else is read.
-test('kit/runtime/slack/channel.js declares exactly two exceptions; build-request is refused from a hub that sees context or data', () => {
+// build request's text checks the hub before anything else is read. Since
+// plan brightside-v1 (D12, Story 19.3) any hub whose sees is a list of known
+// values may post; nothing else may.
+test('kit/runtime/slack/channel.js declares exactly two exceptions; build-request checks the hub\'s sees first, against the known values', () => {
   const channel = require(path.join(ROOT, CHANNEL));
   assert.deepEqual(Object.keys(channel.EXCEPTIONS), ['write-escalation', 'build-request']);
   const src = fs.readFileSync(path.join(ROOT, CHANNEL), 'utf8');
   const body = src.slice(src.indexOf('function buildRequestText('), src.indexOf('// Exception name'));
   assert.match(body, /if \(!mayPostBuildRequest\(hub\.sees\)\) throw new ChannelPostRefused/);
   assert.match(body, /From <@\$\{requester\}>/, 'the one mention is the requester');
-  assert.match(src, /const BUILD_REQUEST_BLOCKED_SEES = Object\.freeze\(\['context', 'data'\]\);/);
+  assert.match(src, /return Array\.isArray\(sees\) && sees\.every\(\(s\) => HUB_SEES\.includes\(s\)\);/);
+  assert.doesNotMatch(src, /BUILD_REQUEST_BLOCKED_SEES/);
 });
 
 // Story 15.1: the image row's guard fails on any way of naming a channel.
