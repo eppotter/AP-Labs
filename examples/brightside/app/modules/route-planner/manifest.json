@@ -7,6 +7,6 @@
   "archetype": "routing-map",
   "group": "Routing",
   "screen": "route-editor",
-  "environments": ["dev"],
+  "environments": ["dev", "prod"],
   "adapter": "adapter.js"
 }

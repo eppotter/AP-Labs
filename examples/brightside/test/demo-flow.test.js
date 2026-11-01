@@ -230,8 +230,8 @@ async function demo(t, { llmOff }) {
   assert.equal(app.views[0].method, 'open');
   // A row's button sends <id>:open, or <id>:why while the tool waits (Story 17.3).
   const entries = (view) => view.blocks.filter((b) => b.accessory && /:(open|why)$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id.replace(/:(open|why)$/, ''));
-  // routing is the dev-only Routing map (Story 15.5) and route-planner the dev-only Plan a
-  // route (Story 15.15), on the same resource: Ely holds ROUTING_ALL_CREWS by name.
+  // routing is the Routing map (Story 15.5) and route-planner Plan a route
+  // (Story 15.15), both in dev and prod since Story 15.6, on the same resource: Ely holds ROUTING_ALL_CREWS by name.
   assert.deepEqual(entries(menuArgs.view).sort(), ['dataset', 'hello-world', 'labour-cost', 'outbox', 'route-planner', 'routing', 'unpaid-invoices', 'win-back']);
   // Plan a route can't open in this boot (its editor is unready: the
   // dispatcher refuses it), so its status is waiting for map setup and its

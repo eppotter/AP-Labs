@@ -196,8 +196,8 @@ exception_workflow and data_quality_guard.
     to the file, but Copy can put the picture itself on the clipboard, and anyone can take a
     screenshot. Once copied or screenshotted, the picture is outside the 20-minute deletion.
   - NOT a change to the forbidden columns: they stay forbidden to every query, and no coordinate
-    goes to the street-map provider. The Routing module runs in dev only until Story 15.6 adds
-    production (unblocked by this sign-off).
+    goes to the street-map provider. The Routing module (Route map) runs in production from
+    Story 15.6 (after this sign-off).
 - the Office and Plan a route (Story 15.15, approved by Ely Potter on 2026-10-31, DEP-032): The
   Office, where every crew starts and ends in Plan a route, is a point in the data's `depots` table.
   Its coordinate columns are forbidden like the others. The map shows it with its own marker. It is
@@ -208,8 +208,8 @@ exception_workflow and data_quality_guard.
   - **Held for the window's life.** So a reorder reads nothing new, the stops' pixel positions are
     kept in the bot's memory while the window is open (15 minutes, longer while in use), and dropped
     when it closes or expires. They are never logged, stored or sent.
-  - NOT a change to who sees it: the same audience as Routing. Plan a route runs in dev only until
-    Story 15.6 adds production (unblocked by DEP-025 and DEP-032).
+  - NOT a change to who sees it: the same audience as Routing. Plan a route runs in production from
+    Story 15.6 (after DEP-025 and DEP-032).
 - owner: Ely Potter
 - evidence: profile `sql.forbidden_columns` and `routing` (`map_grid_e6` 2000, `map_min_span_km`
   5, `audience`, `basemap`, `depot`); `kit/runtime/sql`; `kit/runtime/data/map.js`; `kit/runtime/basemap`;

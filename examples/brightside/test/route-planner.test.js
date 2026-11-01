@@ -50,7 +50,7 @@ const COORDINATES = ['properties.geo_lat_e6', 'properties.geo_lon_e6', 'crews.ba
 
 // ---- the module -------------------------------------------------------------
 
-test('the Plan a route manifest: label, routing-map on the route-editor screen, dev only, the Routing module\'s resource', () => {
+test('the Plan a route manifest: label, routing-map on the route-editor screen, dev and prod (Story 15.6), the Routing module\'s resource', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(APP, 'modules/route-planner/manifest.json'), 'utf8'));
   const routing = JSON.parse(fs.readFileSync(path.join(APP, 'modules/routing/manifest.json'), 'utf8'));
   assert.deepEqual(manifest, {
@@ -62,14 +62,14 @@ test('the Plan a route manifest: label, routing-map on the route-editor screen, 
     archetype: 'routing-map',
     group: 'Routing', // plan hub-status-menu, D5
     screen: 'route-editor',
-    environments: ['dev'],
+    environments: ['dev', 'prod'], // Story 15.6
     adapter: 'adapter.js',
   });
   assert.equal(manifest.resource, profile.routing.audience.all_crews, 'the same audience as Routing');
   // Its adapter is Brightside's routing adapter, as the Routing module's is.
   assert.equal(require('../app/modules/route-planner/adapter').createAdapter, createAdapter);
   assert.equal(require('../app/modules/routing/adapter').createAdapter, createAdapter);
-  // The existing Routing module is unchanged (Story 15.5's manifest), but
+  // The existing Routing module is unchanged (Story 15.5's manifest), but for prod (Story 15.6),
   // for its menu group (plan hub-status-menu, D5) and its label: "Route map",
   // so the tool is not named like its "Routing" group (2026-10-31 live check).
   assert.deepEqual(routing, {
@@ -80,7 +80,7 @@ test('the Plan a route manifest: label, routing-map on the route-editor screen, 
     resource: 'ROUTING_ALL_CREWS',
     archetype: 'routing-map',
     group: 'Routing',
-    environments: ['dev'],
+    environments: ['dev', 'prod'], // Story 15.6
     adapter: 'adapter.js',
   });
 });

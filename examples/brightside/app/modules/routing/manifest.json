@@ -6,6 +6,6 @@
   "resource": "ROUTING_ALL_CREWS",
   "archetype": "routing-map",
   "group": "Routing",
-  "environments": ["dev"],
+  "environments": ["dev", "prod"],
   "adapter": "adapter.js"
 }
