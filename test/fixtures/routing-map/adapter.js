@@ -31,6 +31,19 @@
 //                                visits (booked and cancelled), the gap day
 //                                with one visit taken as cancelled, and the
 //                                day with one crew out (plus day.json "out")
+//   clients({ day, crewId, query, scope })  (Story 19.5) Add a stop's
+//                                search: { clients: [{ node, clientName,
+//                                city }] }, the clients of the crew's zone
+//                                (CLIENT_ZONES below) whose name holds query,
+//                                with no visit booked that day; at most 20
+//   addStop({ day, crewId, depot, scope, node, minutes, window })  (Story
+//                                19.5) { input, travel, distance, stop }: the
+//                                crew's zone (a crew lead: only their crew)
+//                                from the Office with its booked stops, and
+//                                the new stop (stopId "add-<id>", its window a
+//                                hard time-of-day rule split at noon). A node
+//                                the search would not offer is refused
+//                                (RoutingFault node unknown_client)
 //
 // Like an app's adapter it reads only through data.run (so a data outage
 // reaches the archetype as DataUnavailable). fakeData() answers its three
@@ -55,9 +68,35 @@ const SQL = Object.freeze({
     "WHERE list_contains(string_split($node_ids, ','), node)",
     '  AND ($crew_id IS NULL OR crew_id IS NULL OR crew_id = $crew_id)',
   ].join('\n'),
+  clients: [
+    'SELECT node, client_name, city FROM add_clients',
+    "WHERE zone_of_crew = $crew_id AND ($query = '' OR contains(lower(client_name), lower($query)))",
+    "  AND ($node = '' OR node = $node) AND NOT booked_on($day)",
+  ].join('\n'),
 });
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
+
+// Add a stop's clients (Story 19.5): each place's zone, as a client table
+// would hold it. Places booked on the fixture's day are never offered then.
+const CLIENT_ZONES = Object.freeze({
+  'property:s1': 'north',
+  'property:s2': 'north',
+  'property:s3': 'north',
+  'property:s4': 'north',
+  'property:s5': 'north',
+  'property:s6': 'north',
+  'property:s7': 'north',
+  'property:s8': 'south',
+  'property:s9': 'south',
+  'property:x1': 'north',
+  'property:k1': 'north',
+  'property:k2': 'north',
+  'property:k3': 'south',
+  'property:k4': 'north',
+  'property:k5': 'north',
+});
+const NOON = 12 * 60;
 
 function createAdapter({ data } = {}) {
   if (!data || typeof data.run !== 'function') throw new sdk.RoutingFault({ field: 'data', problem: 'data_unavailable' });
@@ -183,8 +222,61 @@ function createAdapter({ data } = {}) {
     };
   }
 
+  // Add a stop (Story 19.5).
+  async function clients({
+    day, crewId, query, scope,
+  }) {
+    const wanted = crewOf(scope, crewId);
+    const rows = await data.run(SQL.clients, {
+      day, crew_id: wanted, query, node: '',
+    }, { declared: ['day', 'crew_id', 'query', 'node'] });
+    return { clients: rows.map((r) => ({ node: r.node, clientName: r.client_name, city: r.city })) };
+  }
+
+  async function addStop({
+    day, crewId, depot, scope, node, minutes, window,
+  }) {
+    const wanted = crewOf(scope, crewId);
+    const lead = scope && scope.all !== true;
+    const offered = await data.run(SQL.clients, {
+      day, crew_id: wanted, query: '', node,
+    }, { declared: ['day', 'crew_id', 'query', 'node'] });
+    if (!offered.length) throw new sdk.RoutingFault({ field: 'node', problem: 'unknown_client' });
+    const rows = await data.run(SQL.day, { day }, { declared: ['day'] });
+    const p = rows[0].payload;
+    const own = p.crews.find((c) => c.crewId === wanted);
+    if (!own) throw new sdk.RoutingFault({ field: 'crewId', problem: 'unknown_crew' });
+    const crews = p.crews.filter((c) => (lead ? c.crewId === wanted : c.zoneId === own.zoneId))
+      .map((c) => ({ ...c, baseNode: depot, ...(p.out.includes(c.crewId) ? { headcountPresent: 0, available: false } : {}) }));
+    const ids = new Set(crews.map((c) => c.crewId));
+    const windows = { morning: { startFrom: p.limits.earliestStart, startBefore: NOON }, afternoon: { startFrom: NOON, startBefore: p.limits.latestFinish } };
+    const stop = {
+      stopId: `add-${node.slice('property:'.length)}`,
+      node,
+      currentCrewId: wanted,
+      labourMinutes: minutes * 2,
+      serviceMinutes: minutes,
+      locked: false,
+      rules: windows[window] ? [{ ruleId: 'time-of-day', value: { ...windows[window] }, strength: 'hard' }] : [],
+    };
+    const km = new Map(p.matrix.map((r) => [`${r.from_node}>${r.to_node}`, r.km_tenths]));
+    const distance = (from, to) => {
+      const d = km.get(`${from}>${to}`);
+      if (d === undefined) throw new sdk.RoutingFault({ field: 'distance', problem: 'no_travel' });
+      return d;
+    };
+    return {
+      input: {
+        day, asOf: p.asOf, limits: p.limits, crews, stops: p.stops.filter((st) => ids.has(st.currentCrewId)),
+      },
+      travel: engine.travel.fromMatrix(p.matrix),
+      distance,
+      stop,
+    };
+  }
+
   return Object.freeze({
-    asOf, input, labels, route, visits, gapFor, crewOut,
+    asOf, input, labels, route, visits, gapFor, crewOut, clients, addStop,
   });
 }
 
@@ -217,6 +309,17 @@ function fakeData({ day = DAY } = {}) {
           }
         }
         return rows;
+      }
+      if (sql === SQL.clients) {
+        const zone = (day.crews.find((c) => c.crewId === params.crew_id) || {}).zoneId;
+        const booked = new Set(params.day === day.day ? day.stops.map((st) => st.node) : []);
+        const q = String(params.query).toLowerCase();
+        return Object.entries(CLIENT_ZONES)
+          .filter(([node, z]) => z === zone && !booked.has(node) && (params.node === '' || node === params.node))
+          .map(([node]) => ({ node, client_name: day.places[node].client_name, city: day.places[node].city }))
+          .filter((r) => q === '' || r.client_name.toLowerCase().includes(q))
+          .sort((a, b) => (a.client_name < b.client_name ? -1 : 1))
+          .slice(0, 20);
       }
       throw new Error('unexpected query');
     },
@@ -257,5 +360,5 @@ function fakeMapPoints({ day = DAY, mosaic = FAKE_MOSAIC } = {}) {
 }
 
 module.exports = {
-  createAdapter, fakeData, fakeMapPoints, FAKE_MOSAIC, SQL, DAY,
+  createAdapter, fakeData, fakeMapPoints, FAKE_MOSAIC, SQL, DAY, CLIENT_ZONES,
 };

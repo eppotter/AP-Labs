@@ -177,7 +177,11 @@ class ScoringFault extends RuntimeRefusal {
 // 256 x 256 PNGs or do not cover the frame (basemap_invalid, Story 15.10),
 // or an evaluateOrder order that leaves out one of the crew's stops
 // (missing_stop), names a stop not in the day (unknown_stop) or one on
-// another crew (other_crew_stop, Story 15.12). A setup fault in the
+// another crew (other_crew_stop, Story 15.12), or a stop insertStop is
+// given that is locked (locked) or on a crew that is not working
+// (not_working), a client Add a stop may not add (unknown_client: not in
+// the crew's zone, or already booked that day) or a day whose bookings
+// changed under the editor (day_changed, Story 19.5). A setup fault in the
 // adapter, so no plan is shown. field is a path like "stops[2].node"; the
 // value itself is never carried. details: { field, problem }, plus { from,
 // to } (node ids) when problem is 'no_travel'. problem is one of
@@ -189,6 +193,7 @@ const ROUTING_PROBLEMS = Object.freeze([
   'routing_off', 'too_many_pairs', 'not_coordinate_column', 'shared_column_name', 'no_position', 'data_unavailable', 'query_refused', 'query_failed',
   'unknown_key', 'renderer_unavailable', 'renderer_failed', 'image_too_large', 'unsafe_svg', 'basemap_invalid',
   'missing_stop', 'unknown_stop', 'other_crew_stop',
+  'locked', 'not_working', 'unknown_client', 'day_changed',
 ]);
 class RoutingFault extends RuntimeRefusal {
   constructor(details) {

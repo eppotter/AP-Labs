@@ -128,6 +128,41 @@ function handleView(name, work, { log, onError }) {
   };
 }
 
+// An options listener (block_suggestion, Story 19.5: Add a stop's client
+// search) answers Slack in its ack, with { options }. work(args) returns the
+// options; Slack wants them within 3 s, so work that takes longer than
+// timeoutMs (2.5 s by default), throws, or returns anything but a list
+// answers no options instead (Slack shows "no results"), logged by reason
+// only. The ack is sent exactly once; work still running after the timeout
+// is left to finish, and its answer is dropped.
+const OPTIONS_TIMEOUT_MS = 2500;
+function handleOptions(name, work, { log, timeoutMs = OPTIONS_TIMEOUT_MS }) {
+  return async (args) => {
+    let options = [];
+    let timer = null;
+    try {
+      const timedOut = new Promise((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), timeoutMs);
+      });
+      const running = Promise.resolve().then(() => work(args));
+      // A late failure, after the timeout answered, is logged, never left unhandled.
+      running.catch((err) => log.warn('options failed after the timeout', { handler: name, reason: (err && err.name) || 'error' }));
+      const got = await Promise.race([running, timedOut]);
+      if (got === 'timeout') log.warn('options too slow', { handler: name });
+      else if (Array.isArray(got)) options = got;
+    } catch (err) {
+      log.error('handler failed', { handler: name, err });
+    } finally {
+      clearTimeout(timer);
+    }
+    try {
+      await args.ack({ options });
+    } catch (ackErr) {
+      log.error('ack failed', { handler: name, err: ackErr });
+    }
+  };
+}
+
 module.exports = {
-  handle, handleView, afterAck, replyPrivately, isDuplicateEvent, PLAIN_ERROR,
+  handle, handleView, handleOptions, afterAck, replyPrivately, isDuplicateEvent, PLAIN_ERROR, OPTIONS_TIMEOUT_MS,
 };

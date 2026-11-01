@@ -66,6 +66,18 @@
 // that stop's row says it moved up ("↩️"). The same list, map and clicks
 // follow; whatif.js takes Change crew or day back to its own first step.
 //
+// Add a stop (Story 19.5, ./addstop.js) is this editor on screen "add-stop",
+// with Add a stop on the list. Its form shows in place of the list's buttons
+// (formBlocks; the ⋯ menus hide while it is open), and its Add calls
+// addStop here: one adapter.addStop read (the crew's zone from the Office
+// with the new stop, travel and distance covering it), labels for the new
+// stop and the other crews, one mapPoints read, then the engine's
+// insertStop into the current order. The stop joins the plan's input and
+// order marked ➕ (and flagged when nothing fits); Reset to booked keeps it
+// where insertStop put it, and removeAdded takes it out again. A client the
+// adapter refuses, a day whose bookings changed, or any other failure on Add
+// is said in the form (the list stays); nothing is ever saved.
+//
 // Exits: Change crew or day (step 1; the hub deletes the files), Back and
 // Close (the hub's view_closed, else the sweep), an expired session ("This
 // plan has expired, go back and open <label> again."), access withdrawn (the
@@ -76,7 +88,7 @@ const engine = require('../../routing');
 const { compareIds } = require('../../scoring');
 const { RoutingFault, ConfigFault } = require('../../errors');
 const {
-  messageFor, escapeText, escapeName, ROUTE_WORDS, MAP_WORDS,
+  messageFor, escapeText, escapeName, ROUTE_WORDS, MAP_WORDS, ADD_WORDS,
 } = require('../../messages');
 const { textBlocks } = require('../../slack/format');
 const { altText } = require('../../slack/image');
@@ -85,6 +97,9 @@ const audience = require('./audience');
 const {
   namer, dayWords, clock, bookedStops, FRAME, ROUTE_LABEL,
 } = require('./views');
+const {
+  formBlocks, addedLines, othersBlock, listButton, SCREEN: ADD_SCREEN,
+} = require('./addstop');
 
 const SCREEN = 'route-editor';
 const ACTIONS = Object.freeze(['crew', 'day', 'show', 'move', 'optimize', 'reset', 'change']);
@@ -553,12 +568,21 @@ function createEditor({
       },
     ];
     if (p.out) head.push({ type: 'section', block_id: id('out'), text: mrkdwn(`*${ROUTE_WORDS.crewOut(escapeName(p.crewName), dayWords(p.day))}*`) });
-    const top = p.out ? [changeButton()] : [
-      { ...button('optimize', 'Optimize', `${v}:optimize`, 'Optimize the order from the Office'), style: 'primary' },
-      button('reset', 'Reset to booked', `${v}:reset`, 'Put the stops back in the booked order'),
-      changeButton(),
-    ];
-    head.push({ type: 'actions', block_id: id('actions'), elements: top });
+    // Add a stop (Story 19.5): its form takes the buttons' place while open.
+    const adding = s.screen === ADD_SCREEN && !p.out;
+    const others = adding ? othersBlock(p) : null;
+    if (others) head.push(others);
+    if (adding && s.form) {
+      head.push(...formBlocks(s));
+    } else {
+      const top = p.out ? [changeButton()] : [
+        { ...button('optimize', 'Optimize', `${v}:optimize`, 'Optimize the order from the Office'), style: 'primary' },
+        button('reset', 'Reset to booked', `${v}:reset`, 'Put the stops back in the booked order'),
+        ...(adding ? [listButton(p)] : []),
+        changeButton(),
+      ];
+      head.push({ type: 'actions', block_id: id('actions'), elements: top });
+    }
     const lines = [p.note && p.note.version === v ? p.note.text : null, status].filter(Boolean);
     if (lines.length) head.push({ type: 'context', block_id: id('status'), elements: [mrkdwn(lines.join('\n'))] });
     head.push({ type: 'context', block_id: id('caption'), elements: [mrkdwn(ROUTE_WORDS.caption(office(), clock(limits.defaultStart)))] });
@@ -575,7 +599,8 @@ function createEditor({
       ];
       if (p.flagged.has(st.stopId)) rowLines.push(`${WARN} ${ROUTE_WORDS.unplaced()}`);
       if (p.filled && p.filled.stopId === st.stopId) rowLines.push(`${FILL_MARK} ${ROUTE_WORDS.filled(escapeText(p.filled.from))}`);
-      const accessory = p.out ? null : menu(v, i, ev.stops.length);
+      rowLines.push(...addedLines(p, st.stopId));
+      const accessory = p.out || (adding && s.form) ? null : menu(v, i, ev.stops.length);
       blocks.push({
         type: 'section', block_id: `routing-map:stop:${k}:${v}`, text: mrkdwn(rowLines.join('\n')), ...(accessory ? { accessory } : {}),
       });
@@ -837,8 +862,141 @@ function createEditor({
   // day with the candidate in the gap. s.picks names the crew and day.
   const showFill = (args) => showStops(args);
 
+  // --- Add a stop (Story 19.5, ./addstop.js) ---------------------------------------------
+
+  // The list again as it now stands (the form opened or closed, a note in
+  // it), under the picture already shown; the map follows only if it is not
+  // of this order already.
+  const relist = (go) => changed(go);
+
+  // Add's read and insertion: the words for the form when the stop can't be
+  // added, else null once the plan holds it.
+  async function placeStop(mod, s, p, { node, minutes, window }) {
+    const adapter = adapterFor(mod);
+    if (typeof adapter.addStop !== 'function') throw fault('adapter.addStop', 'not_function');
+    const got = checkRoute(await adapter.addStop({
+      day: p.day, crewId: p.crewId, depot: depot.node, scope: s.scope, node, minutes, window,
+    }));
+    const { stop } = got;
+    if (!isPlainObject(stop) || typeof stop.stopId !== 'string' || stop.stopId.length > MAX_STOP_ID) throw fault('adapter.addStop.stop', 'not_object');
+    if (stop.currentCrewId !== p.crewId || p.nodeOf.has(stop.stopId)) throw fault('adapter.addStop.stop', 'unknown_crew');
+    engine.validateInput(got.input);
+    const crew = got.input.crews.find((c) => c.crewId === p.crewId);
+    if (!crew || crew.available === false) return ROUTE_WORDS.notWorking(escapeName(p.crewName), dayWords(p.day));
+    // The day the person sees must be the day the stop goes into.
+    const own = got.input.stops.filter((st) => st.currentCrewId === p.crewId).map((st) => st.stopId).sort();
+    const shown = [...p.order].sort();
+    if (own.length !== shown.length || own.some((id, i) => id !== shown[i])) throw fault('adapter.addStop', 'day_changed');
+    const result = engine.insertStop(got.input, stop, { travel: got.travel, returnToBase: true, order: p.order });
+    // Other crews are a dispatcher's to see (AD-R17): a crew lead's are dropped.
+    const others = result.others.filter((o) => audience.visible(s.scope, o.crewId));
+    const nodeOf = new Map([...p.nodeOf, [stop.stopId, stop.node]]);
+    const stopNodes = unique(result.order.map((id) => nodeOf.get(id)));
+    checkLegs(stopNodes, depot.node, got.travel, got.distance);
+    const labelNodes = unique([stop.node, ...others.map((o) => crewNode(o.crewId))]);
+    const labels = checkLabels(await adapter.labels({ day: p.day, nodeIds: labelNodes, scope: s.scope }), labelNodes);
+    const nodes = unique([depot.node, ...stopNodes]);
+    const read = await mapPoints(data, nodes, FRAME);
+    const points = read && Array.isArray(read.points) ? read.points : [];
+    const placed = new Set(points.map((pt) => pt && pt.node));
+    if (!nodes.every((n) => placed.has(n))) throw fault('mapPoints', 'no_position');
+    const named = namer(labels);
+    return {
+      apply() {
+        const one = { ...p.input, stops: [...p.input.stops, { ...stop }] };
+        engine.validateInput(one);
+        p.input = one;
+        p.travel = got.travel;
+        p.distance = got.distance;
+        p.nodeOf = nodeOf;
+        p.places.set(stop.node, placesOf(labels, [stop.node]).get(stop.node));
+        p.points = points;
+        p.mosaic = (read && read.mosaic) || null;
+        p.bookedBase = p.booked;
+        p.booked = result.order.slice();
+        p.order = result.order.slice();
+        p.flagged = new Set();
+        p.added = {
+          stopId: stop.stopId,
+          node: stop.node,
+          fits: result.fits,
+          // A crew lead is shown no other crew, not even "none has room".
+          others: s.scope.all === true ? others.map((o) => ({
+            name: named.crewLabel(o.crewId), position: o.position, start: o.start, drive: o.added.driveMinutes,
+          })) : null,
+        };
+        p.version += 1;
+        p.note = null;
+        s.form = null;
+      },
+    };
+  }
+
+  // Add: "Working out where the stop fits…" in the form at once, then the
+  // read and the engine; the list and the map with the stop, or the form
+  // again with why not. A newer click or a closed view wins: nothing shows.
+  async function addStop({
+    mod, s, show, showMap, showList, recheck, node, minutes, window,
+  }) {
+    const go = {
+      mod, s, show, showMap, showList, recheck,
+    };
+    const p = s.plan;
+    const number = sessions.next(s);
+    const current = () => sessions.isCurrent(s, number);
+    await showList(listMessage(s, evaluate(p), ADD_WORDS.adding()), { current });
+    let placed;
+    try {
+      placed = await placeStop(mod, s, p, { node, minutes, window });
+    } catch (err) {
+      let words;
+      if (err instanceof RoutingFault && err.details.problem === 'unknown_client') {
+        log.info('routing map click refused', { action: 'place', reason: 'client not addable' });
+        words = ADD_WORDS.cannotAdd();
+      } else if (err instanceof RoutingFault && err.details.problem === 'day_changed') {
+        log.info('routing map click refused', { action: 'place', reason: 'day changed' });
+        words = ADD_WORDS.dayChanged();
+      } else {
+        words = failureText(mod, 'route', err);
+      }
+      if (!current() || s.plan !== p || !s.form) return;
+      s.form.note = words;
+      await showList(listMessage(s, evaluate(p), null), { current });
+      return;
+    }
+    if (!current() || s.plan !== p || !s.form) {
+      log.info('map superseded', { module: mod.id, step: 'add stop' });
+      return;
+    }
+    if (typeof placed === 'string') {
+      s.form.note = placed;
+      await showList(listMessage(s, evaluate(p), null), { current });
+      return;
+    }
+    placed.apply();
+    log.info('route stop added', { module: mod.id, fits: p.added.fits, stops: p.order.length });
+    await changed(go);
+  }
+
+  // Remove the added stop: the day as it was before Add. Nothing is read.
+  async function removeAdded(go) {
+    const p = go.s.plan;
+    const { stopId, node } = p.added;
+    p.input = { ...p.input, stops: p.input.stops.filter((st) => st.stopId !== stopId) };
+    p.order = p.order.filter((id) => id !== stopId);
+    p.booked = p.bookedBase;
+    p.bookedBase = null;
+    p.nodeOf.delete(stopId);
+    p.flagged.delete(stopId);
+    if (![...p.nodeOf.values()].includes(node)) p.points = p.points.filter((pt) => pt.node !== node);
+    p.added = null;
+    p.version += 1;
+    p.note = null;
+    return changed(go);
+  }
+
   return {
-    unready, open, click, ACTIONS, crewChoices, takeCrews, showFill,
+    unready, open, click, ACTIONS, crewChoices, takeCrews, showFill, relist, addStop, removeAdded,
   };
 }
 

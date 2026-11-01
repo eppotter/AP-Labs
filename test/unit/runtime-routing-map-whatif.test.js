@@ -171,19 +171,23 @@ test('parsePick reads "<seq>:<index>" and nothing else', () => {
 
 // --- not ready (fail closed) -----------------------------------------------------------------
 
-test('exit, the map not ready: Customer cancellation with no Office, Crew out whose adapter has no crewOut(), and Add a stop (not built) show "not available"; nothing is read', async () => {
+test('exit, the map not ready: Customer cancellation with no Office, Crew out whose adapter has no crewOut(), and Add a stop whose adapter has no addStop() show "not available"; nothing is read', async () => {
   const noCrewOut = moduleOf('crew-out', {
     createAdapter: (args) => { const { crewOut, ...rest } = fx.createAdapter(args); return rest; },
   });
   const noGap = moduleOf('cancellation', {
     createAdapter: (args) => { const { gapFor, ...rest } = fx.createAdapter(args); return rest; },
   });
-  const addStop = moduleOf('add-stop');
+  // Add a stop is built (Story 19.5); its own not-ready cases are in
+  // runtime-routing-map-addstop.test.js.
+  const addStop = moduleOf('add-stop', {
+    createAdapter: (args) => { const { addStop: gone, ...rest } = fx.createAdapter(args); return rest; },
+  });
   const cases = [
     ['no Office', { profile: noDepot, mods: [CANCEL] }, CANCEL, 'no routing.depot in the profile'],
     ['no gapFor()', { mods: [noGap] }, noGap, 'the adapter has no visits or gapFor()'],
     ['no crewOut()', { mods: [noCrewOut] }, noCrewOut, 'the adapter has no crewOut()'],
-    ['add-stop', { mods: [addStop] }, addStop, 'the add-stop screen is not built yet'],
+    ['no addStop()', { mods: [addStop] }, addStop, 'the adapter has no addStop or clients()'],
   ];
   for (const [what, opts, mod, reason] of cases) {
     const ctx = setup(opts);

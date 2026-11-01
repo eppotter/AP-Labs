@@ -205,6 +205,15 @@
 // file each map view shows (shownFiles), forgotten when a plain message
 // replaces the map and on view_closed.
 //
+// Add a stop (Story 19.5, plan brightside-v1 D8): a routing-map module with
+// screen "add-stop" opens and clicks like Plan a route. Its client search is
+// an external_select, so the hub also listens for block_suggestion on
+// routing-map:client (app.options): the archetype instance holding the
+// view's session answers, after the person's access to the module here
+// (grant and environment) and their routing scope are checked again, before
+// any read. The ack carries the options (handle.js handleOptions): anything
+// refused, failing or slower than 2.5 seconds answers none.
+//
 // What each hub sees (plan brightside-v0, D1, Story 16.1): registerHubs gets
 // forHub, the factory of hub views (./hub-view), never the app-wide runner
 // or AI service. Each hub's view is taken once, at setup. A handler's
@@ -286,7 +295,7 @@ const {
   messageFor, welcomeText, feedbackText, joinWelcomeText, readFileAiText,
 } = require('../messages');
 const {
-  handle, handleView, afterAck, PLAIN_ERROR,
+  handle, handleView, handleOptions, afterAck, PLAIN_ERROR,
 } = require('./handle');
 const {
   buildMenu, buildHelp, withTitle, moduleIdFromAction, moduleIdFromWhy, hubIdFromHelpAction, verbFor, isSetup, OPEN_ACTION, WHY_ACTION, HELP_ACTION,
@@ -317,7 +326,7 @@ const {
 } = require('./image');
 const { textBlocks } = require('./format');
 const routingAudience = require('../archetypes/routing-map/audience');
-const { createRoutingMap, LISTEN_PATTERN: ROUTING_MAP_ACTION } = require('../archetypes/routing-map');
+const { createRoutingMap, LISTEN_PATTERN: ROUTING_MAP_ACTION, SEARCH_ACTION: ROUTING_MAP_SEARCH } = require('../archetypes/routing-map');
 const dataSources = require('../archetypes/data-sources');
 const { readiness } = require('../knowledge/readiness');
 const addContext = require('../archetypes/add-context');
@@ -1445,6 +1454,29 @@ function registerHubs(app, {
       }
     }
   }, { log, store }));
+
+  // Add a stop's client search (Story 19.5): Slack asks for the options of
+  // the external_select as the person types (block_suggestion), and the ack
+  // carries them. The archetype instance holding the view's session answers,
+  // after re-checking the person's access to the module here (resolveModule:
+  // grant and environment) and their routing scope, before any read; anything
+  // refused, failing or slower than Slack waits for answers no options.
+  app.options(ROUTING_MAP_SEARCH, handleOptions('hub:routing-map-search', async ({ body }) => {
+    const from = body && body.view;
+    const userId = body && body.user && body.user.id;
+    if (!from || typeof from.id !== 'string' || !from.id || typeof userId !== 'string' || !userId) {
+      log.warn('routing map search refused', { reason: 'not from a modal' });
+      return [];
+    }
+    const person = personOf(userId);
+    return routingMapHolding(from, userId).suggest({
+      actionId: body.action_id,
+      value: body.value,
+      from,
+      person,
+      resolve: resolveModule(person, body.action_id, ROUTING_MAPS),
+    });
+  }, { log, timeoutMs: routingMapOptions.searchTimeoutMs }));
 
   // A scoped-pull form's submit ("Check values"). The answer goes in the ack:
   // errors beside the inputs, or the Confirm screen (or a refusal) in place.

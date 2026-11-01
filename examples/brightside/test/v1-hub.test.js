@@ -2,8 +2,8 @@
 
 // Brightside v1, the hub (plan brightside-v1, D5, D6, D8, D9, Story 19.2):
 // /brightside-v1 sees context, data and rules, shares v0's notes, and lists
-// four route skills (Optimize a route, Customer cancellation, Crew out,
-// Route map; Add a stop comes with Story 19.5), Ask, Request a tool, and Add
+// five route skills (Optimize a route, Customer cancellation, Crew out,
+// Route map, and Add a stop since Story 19.5), Ask, Request a tool, and Add
 // context and Data sources in Setup. Every route skill is dev-only (gate item
 // 5: copies never inherit production).
 //
@@ -53,7 +53,7 @@ const STEVEN = slackOf(profile, 'steven');
 // An admin with no routing key: added to a copy of the demo profile below.
 const ANN = 'U0FIXTUREANN';
 const V1 = 'brightside-v1';
-const ROUTES = ['v1-route-cancellation', 'v1-route-crew-out', 'v1-route-map', 'v1-route-optimize'];
+const ROUTES = ['v1-route-add-stop', 'v1-route-cancellation', 'v1-route-crew-out', 'v1-route-map', 'v1-route-optimize'];
 const BUILD_REQUEST_FORM = 'build-request:form';
 
 let tmp;
@@ -138,7 +138,7 @@ test('the v1 hub file is D5\'s: /brightside-v1 sees context, data and rules and 
   for (const env of ['dev', 'prod']) assert.deepEqual(bootProblems({ hubs: registry.hubs, modules: registry.modules, env }), [], env);
 });
 
-test('the v1 folders are D5\'s: four route skills (dev only, ROUTING_ALL_CREWS, Routing), Ask, Request a tool, Add context and Data sources', () => {
+test('the v1 folders are D5\'s: five route skills (dev only, ROUTING_ALL_CREWS, Routing), Ask, Request a tool, Add context and Data sources', () => {
   const got = Object.fromEntries(registry.entries(V1).map((m) => [m.id, {
     label: m.label, archetype: m.archetype, resource: m.resource, group: m.group || null, screen: m.screen || null, verb: m.verb || null, environments: m.environments,
   }]));
@@ -153,6 +153,7 @@ test('the v1 folders are D5\'s: four route skills (dev only, ROUTING_ALL_CREWS, 
     'v1-ask': tool('Ask', 'ask', 'ASK'),
     'v1-build-request': tool('Request a tool', 'build-request', 'BUILD_REQUEST'),
     'v1-data-sources': tool('Data sources', 'data-sources', 'DATA_SOURCES'),
+    'v1-route-add-stop': route('Add a stop', 'add-stop', 'Run'),
     'v1-route-cancellation': route('Customer cancellation', 'cancellation', 'Run'),
     'v1-route-crew-out': route('Crew out', 'crew-out', 'Run'),
     'v1-route-map': route('Route map', null, null),
@@ -289,7 +290,7 @@ test('way out, Help then Back: Help pushes a view whose close is Back, naming th
   assert.equal(view.submit, undefined);
   assert.equal(view.notify_on_close, undefined);
   const listed = view.blocks.find((b) => b.block_id === 'help:modules').text.text;
-  for (const label of ['Optimize a route', 'Customer cancellation', 'Crew out', 'Route map', 'Ask', 'Request a tool']) assert.ok(listed.includes(label), label);
+  for (const label of ['Optimize a route', 'Customer cancellation', 'Crew out', 'Add a stop', 'Route map', 'Ask', 'Request a tool']) assert.ok(listed.includes(label), label);
 });
 
 test('way out, the X: the v1 menu has Close and no Submit, and asks Slack for no view_closed, so nothing runs', async (t) => {
