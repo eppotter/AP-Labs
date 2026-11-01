@@ -56,7 +56,14 @@
 //   - ask, add-context or data-sources modules (in any environment) on the
 //     hubs that share one set of notes with more than one resource key
 //     between them, so the same people read, add and remove, and list the
-//     shared notes (architect P3-15). A hub without one of them is fine.
+//     shared notes (architect P3-15). A hub without one of them is fine;
+//   - any other module on those hubs whose AI calls carry the hub's prompt,
+//     and so the shared notes (a scoped-pull or approval-write module's
+//     reader, or an archetype added later: fail closed), unless it uses the
+//     key that reads the notes (the ask modules' key, else the add-context
+//     modules'; neither: refused). Exempt, because their AI calls never carry
+//     notes: routing-map (no AI service), handler (its ctx has none),
+//     build-request (withContext: false) (PR #307 review).
 //
 // everyHubSeesAll({ data, llm }): registerHubs' test seam, for tests that
 // hand it a runner and an AI service directly (as before Story 16.1). Every
@@ -78,6 +85,11 @@ const moduleFile = (mod) => mod.file || `modules/${mod.id}/manifest.json`;
 // The archetypes that reach a hub's notes, and what their key lets people
 // do with them (Story 19.1, D6).
 const NOTES_ARCHETYPES = Object.freeze({ ask: 'read', 'add-context': 'add and remove', 'data-sources': 'list' });
+// The other archetypes whose AI calls never carry a hub's notes (PR #307
+// review): routing-map gets no AI service; a handler's ctx has none;
+// build-request's one call is withContext: false. Every other module on
+// hubs that share notes must use the key that reads them.
+const NOTES_FREE = Object.freeze(['routing-map', 'handler', 'build-request']);
 
 // The id of the hub whose notes a hub uses: its "notes" link, else its own.
 const notesOf = (hub) => (typeof hub.notes === 'string' ? hub.notes : hub.id);
@@ -129,6 +141,17 @@ function sharedKeyProblems(hubs, modules) {
       const list = mods.map((m) => `${moduleFile(m)} "resource" ${m.resource}`).join(', ');
       for (const hub of linkers) {
         problems.push(`${hubFile(hub)}: field "notes" shares the notes of ${store}, but the ${archetype} modules on these hubs use different keys (${list}); give them one key, so the same people ${verb} the shared notes`);
+      }
+    }
+    // Who may read the notes: the ask modules' key, else add-context's.
+    const keyOf = (archetype) => [...new Set((modules || []).filter((m) => m.archetype === archetype && members.has(m.hub)).map((m) => m.resource))];
+    const readers = keyOf('ask').length ? keyOf('ask') : keyOf('add-context');
+    for (const m of modules || []) {
+      if (!members.has(m.hub) || NOTES_ARCHETYPES[m.archetype] || NOTES_FREE.includes(m.archetype)) continue;
+      if (readers.length === 1 && m.resource === readers[0]) continue;
+      const want = readers.length === 1 ? `use ${readers[0]}, the key that reads them,` : 'give it the key the hubs\' ask modules use';
+      for (const hub of linkers) {
+        problems.push(`${hubFile(hub)}: field "notes" shares the notes of ${store}, but ${moduleFile(m)} (a${/^[aeiou]/.test(m.archetype) ? 'n' : ''} ${m.archetype} module on ${m.hub}) uses "resource" ${m.resource}, and its AI calls carry the shared notes; ${want} or move it to a hub that keeps its own notes`);
       }
     }
   }
@@ -249,5 +272,5 @@ function bootProblems({ hubs, modules, env }) {
 }
 
 module.exports = {
-  createHubViews, everyHubSeesAll, bootProblems, seesOf, BLANK_VIEW, DATA_ARCHETYPES, ENGINE_JOB_NEEDS, NOTES_ARCHETYPES,
+  createHubViews, everyHubSeesAll, bootProblems, seesOf, BLANK_VIEW, DATA_ARCHETYPES, ENGINE_JOB_NEEDS, NOTES_ARCHETYPES, NOTES_FREE,
 };

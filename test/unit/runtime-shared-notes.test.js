@@ -17,8 +17,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { loadProfile } = require('../../kit/lib/profile');
-const { loadRegistry, loadHubs } = require('../../kit/runtime/registry');
-const { createHubViews, bootProblems, BLANK_VIEW } = require('../../kit/runtime/slack/hub-view');
+const { loadRegistry, loadHubs, createRegistry } = require('../../kit/runtime/registry');
+const {
+  createHubViews, bootProblems, BLANK_VIEW, NOTES_FREE,
+} = require('../../kit/runtime/slack/hub-view');
+const { createSlackFiles } = require('../../kit/runtime/slack/files');
 const { registerHubs } = require('../../kit/runtime/slack/hubs');
 const { createStore } = require('../../kit/runtime/store');
 const { createKnowledgeStore, CAPS } = require('../../kit/runtime/knowledge/store');
@@ -28,7 +31,8 @@ const { systemPrompt } = require('../../kit/runtime/llm/context');
 const { checkConfig } = require('../../kit/runtime/app');
 const addContext = require('../../kit/runtime/archetypes/add-context');
 const dataSources = require('../../kit/runtime/archetypes/data-sources');
-const { FakeSlackApp, invalidView } = require('../fixtures/fake-slack');
+const { FakeSlackApp, invalidView, fileState } = require('../fixtures/fake-slack');
+const { png } = require('../fixtures/upload-files');
 const { checkRequest } = require('../fixtures/fake-anthropic');
 
 const FIX = path.join(__dirname, '../fixtures/runtime/shared-notes');
@@ -93,13 +97,14 @@ function makeLlm(knowledge, { readFile } = {}) {
   return { llm, model };
 }
 
-function setup(t) {
+function setup(t, { reg = registry } = {}) {
   const knowledge = makeKnowledge(t);
   const { llm, model } = makeLlm(knowledge);
-  const views = createHubViews({ hubs: registry.hubs, llm, knowledge });
+  const views = createHubViews({ hubs: reg.hubs, llm, knowledge });
   const app = new FakeSlackApp({ views: true });
+  const log = quietLog();
   registerHubs(app, {
-    registry, profile, env: 'dev', log: quietLog(), store: createStore({ now: () => T0 }), forHub: views.forHub,
+    registry: reg, profile, env: 'dev', log, store: createStore({ now: () => T0 }), forHub: views.forHub, slackFiles: createSlackFiles({ token: app.botToken, fetch: app.fetch, log }),
   });
   return {
     app, knowledge, views, model,
@@ -422,4 +427,124 @@ test('Data sources heads the notes "Added context (shared with <hub>)" on both h
     ready: { rules: false, detail: { data: { seen: false }, rules: { seen: false } } }, entries: [],
   });
   assert.match(allText(plain.blocks), /\*Added context\*\nNone yet\./);
+});
+
+// --- PR #307 review: every other way to the notes -----------------------------------------
+
+// A module as the registry hands it to boot, for bootProblems.
+const modOf = (id, hub, archetype, resource) => ({
+  id, hub, archetype, resource, file: `modules/${id}/manifest.json`,
+});
+const withMods = (...mods) => bootProblems({ hubs: registry.hubs, modules: [...registry.modules, ...mods], env: 'dev' });
+
+test('boot refuses a module on a sharing hub whose AI calls carry the notes (a scoped pull, an approval write, an archetype added later) unless it uses the Ask key', () => {
+  for (const [archetype, hub] of [['scoped-pull', 'full'], ['approval-write', 'full'], ['some-new-archetype', 'teach']]) {
+    const a = /^[aeiou]/.test(archetype) ? 'an' : 'a';
+    assert.deepEqual(withMods(modOf('pull', hub, archetype, 'OTHER_ASK')), [
+      `hubs/full.json: field "notes" shares the notes of teach, but modules/pull/manifest.json (${a} ${archetype} module on ${hub}) uses "resource" OTHER_ASK, and its AI calls carry the shared notes; use ASK, the key that reads them, or move it to a hub that keeps its own notes`,
+    ]);
+    assert.deepEqual(withMods(modOf('pull', hub, archetype, 'ASK')), [], `${archetype} with the Ask key`);
+  }
+  // On the third hub, with its own notes, any key is fine.
+  assert.deepEqual(withMods(modOf('pull', 'third', 'some-new-archetype', 'OTHER_ASK')), []);
+});
+
+test('the modules whose AI calls never carry notes may use any key on a sharing hub: routing-map, handler, build-request', () => {
+  assert.deepEqual([...NOTES_FREE], ['routing-map', 'handler', 'build-request']);
+  const mods = NOTES_FREE.map((archetype, i) => modOf(`free-${i}`, 'full', archetype, 'OTHER_ASK'));
+  assert.deepEqual(withMods(...mods), []);
+});
+
+test('with no Ask on the sharing hubs, the key that reads the notes is Add context\'s; with neither, a notes-reaching module is refused', () => {
+  const noAsk = registry.modules.filter((m) => m.archetype !== 'ask');
+  const run = (mods, extra) => bootProblems({ hubs: registry.hubs, modules: [...mods, extra], env: 'dev' });
+  assert.deepEqual(run(noAsk, modOf('pull', 'full', 'scoped-pull', 'ADD_CONTEXT')), []);
+  assert.match(run(noAsk, modOf('pull', 'full', 'scoped-pull', 'ASK'))[0], /uses "resource" ASK, and its AI calls carry the shared notes; use ADD_CONTEXT, the key that reads them,/);
+  const none = registry.modules.filter((m) => !['ask', 'add-context'].includes(m.archetype));
+  assert.match(run(none, modOf('pull', 'full', 'scoped-pull', 'ASK'))[0], /its AI calls carry the shared notes; give it the key the hubs' ask modules use or move it/);
+});
+
+test('a handler on the sharing hub is never handed an AI service or the notes: its ctx is person, client, module, data and reply', async (t) => {
+  let seen = null;
+  const handler = Object.freeze({
+    id: 'peek', hub: 'full', label: 'Peek', description: 'Peek.', resource: 'OTHER_ASK', archetype: 'handler', environments: ['dev'], file: 'modules/peek/manifest.json',
+    run: async (ctx) => { seen = ctx; await ctx.reply({ text: 'hi' }); },
+  });
+  const reg = createRegistry({ hubs: registry.hubs, modules: [...registry.modules, handler] });
+  assert.deepEqual(bootProblems({ hubs: reg.hubs, modules: reg.modules, env: 'dev' }), []);
+  const s = setup(t, { reg });
+  await s.knowledge.add({
+    hub: 'teach', kind: 'text', title: 'Secret', text: 'HANDLER_MUST_NOT_SEE', addedBy: 'UADA',
+  });
+  await s.app.dispatchAction('peek:open', { user: ADA, view: MENU('full') });
+  assert.ok(seen, 'the handler ran');
+  assert.deepEqual(Object.keys(seen).sort(), ['client', 'data', 'module', 'person', 'reply']);
+  assert.ok(!JSON.stringify(seen).includes('HANDLER_MUST_NOT_SEE'));
+});
+
+test('a build request\'s summary call on the sharing hub sends no notes and no profile context (withContext: false)', async (t) => {
+  const s = setup(t);
+  await s.knowledge.add({
+    hub: 'teach', kind: 'text', title: 'Secret', text: 'BUILD_MUST_NOT_SEE', addedBy: 'UADA',
+  });
+  const tool = { name: 'summarize_request', input_schema: { type: 'object' }, effects: 'none' };
+  await s.views.forHub('full').llm.structured({
+    person: ADA.id, resource: 'ASK', request: 'A tool for rotas', tool, withContext: false,
+  });
+  const { system } = s.model.calls.at(-1);
+  assert.ok(!system.includes('BUILD_MUST_NOT_SEE'));
+  assert.ok(!system.includes('ORG_PROSE_KEPT'));
+});
+
+// --- PR #307 review P2 #2: an upload on the sharing hub saves into the shared folder -----------
+
+async function uploadOn(s, hub, { id, name, bytes, mimetype }) {
+  s.app.addSlackFile({
+    id, name, user: ADA.id, mimetype, bytes,
+  });
+  const form = await openForm(s.app, hub);
+  await s.app.dispatchView(addContext.SUBMIT_CALLBACK, {
+    user: ADA,
+    view: {
+      ...form,
+      id: 'VFORM',
+      hash: 'hform',
+      state: {
+        values: {
+          [addContext.TITLE_BLOCK]: { [addContext.VALUE_ACTION]: { type: 'plain_text_input', value: name } },
+          [addContext.TEXT_BLOCK]: { [addContext.VALUE_ACTION]: { type: 'plain_text_input', value: null } },
+          [addContext.FILE_BLOCK]: { [addContext.VALUE_ACTION]: fileState({ id, name }) },
+        },
+      },
+    },
+  });
+  return calls(s.app, 'update').at(-1).view;
+}
+
+test('a file uploaded on the sharing hub is saved into the shared folder, listed and prompted on both hubs; the photo is read with no notes in its prompt', async (t) => {
+  const s = setup(t);
+  await s.knowledge.add({
+    hub: 'teach', kind: 'text', title: 'Earlier', text: 'EARLIER_NOTE', addedBy: 'UADA',
+  });
+  const csv = await uploadOn(s, 'full', {
+    id: 'F0CSV', name: 'zones.csv', bytes: Buffer.from('zone,billed\nNorth,CSV_CELL_SHARED\n'), mimetype: 'text/csv',
+  });
+  assert.match(csv.blocks[0].text.text, /^Here's what I took from \*zones\.csv\*: 1 row, 2 columns/);
+  assert.ok(allText(csv.blocks).includes('Shared with Teach tools'));
+  const photo = await uploadOn(s, 'full', {
+    id: 'F0PNG', name: 'board.png', bytes: png(), mimetype: 'image/png',
+  });
+  assert.match(photo.blocks[0].text.text, /^Here's what I took from \*board\.png\*/);
+  // The photo's read call: a blank prompt, never the notes or the profile context.
+  const read = s.model.calls.find((c) => Array.isArray(c.messages[0].content) && c.messages[0].content.some((b) => b.type === 'image'));
+  assert.ok(read, 'the photo was read');
+  assert.ok(!read.system.includes('EARLIER_NOTE') && !read.system.includes('ORG_PROSE_KEPT'));
+  // Both saved in the blank hub's folder, nothing in the full hub's own.
+  const stored = await s.knowledge.list('teach');
+  // One fixed clock, so the order is by id: compare as a set.
+  assert.deepEqual(stored.map((e) => [e.title, e.hub, e.kind]).sort(), [['Earlier', 'teach', 'text'], ['board.png', 'teach', 'file'], ['zones.csv', 'teach', 'file']]);
+  assert.deepEqual(await s.knowledge.list('full'), []);
+  const teachList = allText((await openForm(s.app, 'teach')).blocks);
+  assert.ok(teachList.includes('zones.csv') && teachList.includes('board.png'));
+  assert.match(await promptOn(s, 'teach'), /CSV_CELL_SHARED/);
 });
