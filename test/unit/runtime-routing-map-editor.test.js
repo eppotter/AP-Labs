@@ -1004,7 +1004,10 @@ test('no log line, Slack call or error holds a position, an x/y key, the mosaic,
       const text = JSON.stringify(rec);
       for (const m of MICRO) assert.ok(!text.includes(m), `${name} holds a micro-degree value`);
       for (const a of ADDRESSES) assert.ok(!text.includes(a), `${name} holds an address or postal code`);
-      for (const k of [fx.FAKE_MOSAIC.tx0, fx.FAKE_MOSAIC.ty0].map(String)) assert.ok(!text.includes(k), `${name} holds a tile number`);
+      // A tile number as a whole token: a random session id can hold its
+      // digits inside a longer hex run (PR #309's clean-bones CI).
+      const tile = (k) => new RegExp(`(?<![0-9A-Za-z])${k}(?![0-9A-Za-z])`).test(text);
+      for (const k of [fx.FAKE_MOSAIC.tx0, fx.FAKE_MOSAIC.ty0].map(String)) assert.ok(!tile(k), `${name} holds a tile number`);
       for (const leg of legs) assert.ok(!text.includes(leg), `${name} holds a leg's distance`);
     }
     assert.ok(!JSON.stringify(c.log.lines).includes(' km'), 'no distance in any log line');
