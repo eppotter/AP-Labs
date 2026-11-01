@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-10-31 | — | docs | T3 | Plan brightside-v1 (draft, awaiting approval): the three-stage sales demo. Epic 18: Ely Potter replaces the fictional Dana Reyes and signs off every rule card (closes DEP-024, 025, 028, 029, 032), CSV files in Add context, a v0 demo pack. Epic 19: `/brightside-v1` with shared notes from v0, the database, named route skills (Optimize, Customer cancellation, Crew out, Add a stop) and an Ask that runs guarded read-only queries (GRD-009). Epic 20: appointment reminders and change notices on `/brightside` through the approval step (GRD-010). Stories 18.1 to 20.4. | — |
