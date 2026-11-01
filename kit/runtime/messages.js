@@ -132,6 +132,9 @@ const MAP_WORDS = Object.freeze({
   drawFailed: (admin) => `The map couldn't be drawn this time, so nothing is shown. Press Back to return to the menu and try again; if it keeps happening, tell ${admin}.`,
   noCrews: (day) => `No crews are working on ${day}, so there's nothing to draw.`,
   streetsUnavailable: () => 'Street map unavailable, showing the plain map.',
+  // A screen that cannot open (Story 19.4: the hub checks first, so this is
+  // the archetype's own fail-closed line).
+  notReady: () => "This tool isn't set up yet, so nothing was read. Press Back to return to the menu.",
 });
 
 // Plan a route's own words (Story 15.14, AD-R26, AD-R27). The crew, the
@@ -175,6 +178,24 @@ const ROUTE_WORDS = Object.freeze({
   outsideHours: (time) => `outside customer's hours (starts ${time})`,
   wrongDay: () => "not one of the customer's days",
   notPreferred: () => 'not the preferred crew',
+  // Customer cancellation's Fill with #n (Story 19.4): the stop moved up.
+  filled: (from) => `Moved up from ${from} to fill the gap; call to confirm`,
+});
+
+// The two what-if screens (Story 19.4, plan brightside-v1 D8): Customer
+// cancellation and Crew out. Names and days are escaped by the caller.
+const WHATIF_WORDS = Object.freeze({
+  pickVisits: () => 'Pick a crew and a day, then press *Show visits*.',
+  pickOut: () => 'Pick a day and a crew, then press *Mark out for the day*.',
+  pickCrew: (button) => `Pick a crew first, then press *${button}*.`,
+  whichVisit: (crew, day) => `*${crew}, ${day}*\nWhich visit cancels? Pick it to see which visits could fill the gap.`,
+  noVisits: (crew, day) => `${crew} has no visits booked on ${day}, so no visit can cancel.`,
+  cancels: (client, time) => `*What if ${client}'s visit at ${time} cancels?*`,
+  cancelled: (client, time) => `*${client}'s visit at ${time} is cancelled in the data.* These could fill its gap.`,
+  out: (crew, day) => `*What if ${crew} is out on ${day}?*`,
+  alreadyOut: (crew, day) => `*${crew} is out on ${day} in the data,* so this is the plan for it.`,
+  fillHelp: () => 'Press *Fill with #n* to see the day with that visit moved up.',
+  suggestOnly: () => 'Suggestions only: nothing is changed.',
 });
 
 const num = (n) => Number(n).toLocaleString('en-US');
@@ -451,6 +472,6 @@ function messageFor(err, { admin = 'your admin' } = {}) {
 }
 
 module.exports = {
-  messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, FILE_WORDS, READ_FILE_AI_WORDS, readFileAiText, READ_WORDS, MAP_WORDS, ROUTE_WORDS,
+  messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, FILE_WORDS, READ_FILE_AI_WORDS, readFileAiText, READ_WORDS, MAP_WORDS, ROUTE_WORDS, WHATIF_WORDS,
   BUILD_REQUEST_WORDS, ASK_WORDS, REQUEST_A_TOOL, WHY_WORDS,
 };

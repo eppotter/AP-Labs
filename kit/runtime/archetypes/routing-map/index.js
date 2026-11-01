@@ -85,6 +85,18 @@
 // has expired: sessions live in memory, so a modal from before the deploy
 // has none.
 //
+// Customer cancellation and Crew out (Story 19.4, plan brightside-v1 D8): a
+// module with screen "cancellation" or "crew-out" is a what-if screen in
+// ./whatif.js, on the same audience, sessions, hub listener and map
+// lifecycle. Its adapter also gives visits() and gapFor() (Customer
+// cancellation, which also needs Plan a route's Office and route() for Fill
+// with #n) or crewOut() (Crew out); unready says which is missing. Their
+// result is drawn here with the draw's what: Gap fill or Route change on the
+// what-if input, with the screen's own head in place of the view controls.
+// Screen "add-stop" (Story 19.5) is in the schema but not built: unready
+// always, so it never opens. Their own actions (visit, fill, again, out)
+// are refused on the other screens, and the other screens' on them.
+//
 // Exits: Back and Close (view_closed, else the sweep: the hub), an error (a
 // plain message in the view, with Back), an expired trigger (the hub's
 // path), an expired session ("this map has expired"), access withdrawn
@@ -106,19 +118,33 @@ const {
 } = require('./views');
 const { createSessions, STATUS } = require('./session');
 const { createEditor, SCREEN: EDITOR, ACTIONS: EDITOR_ACTIONS } = require('./editor');
+const { createWhatIf, SCREENS: WHATIF_SCREENS, ACTIONS: WHATIF_ACTIONS } = require('./whatif');
 
 const ARCHETYPE = 'routing-map';
 const VIEW_ACTIONS = Object.freeze(['view', 'day', 'crew', 'zone']);
-const ACTIONS = Object.freeze([...new Set([...VIEW_ACTIONS, ...EDITOR_ACTIONS])]);
-const ACTION_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change)$/;
+const ACTIONS = Object.freeze([...new Set([...VIEW_ACTIONS, ...EDITOR_ACTIONS, ...Object.values(WHATIF_ACTIONS).flat()])]);
+const ACTION_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|visit|fill|again|out)$/;
 // Retired action ids (Story 15.16): answered with the expired words only.
 const RETIRED_PATTERN = /^routing-map:(up|down)$/;
 // What the hub listens for: every action, and the retired ones.
-const LISTEN_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|up|down)$/;
-// Which actions each screen takes (AD-R26).
-const SCREEN_ACTIONS = Object.freeze({ views: new Set(VIEW_ACTIONS), [EDITOR]: new Set(EDITOR_ACTIONS) });
+const LISTEN_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|visit|fill|fill-[1-5]|again|out|up|down)$/;
+// Customer cancellation's Fill with #n buttons share one actions block,
+// where Slack needs each action_id unique: fill-1 to fill-5 are fill.
+const FILL_ID = /^routing-map:fill-[1-5]$/;
+// Which actions each screen takes (AD-R26; the what-if screens, Story 19.4).
+const SCREEN_ACTIONS = Object.freeze({
+  views: new Set(VIEW_ACTIONS),
+  [EDITOR]: new Set(EDITOR_ACTIONS),
+  ...Object.fromEntries(WHATIF_SCREENS.map((sc) => [sc, new Set(WHATIF_ACTIONS[sc])])),
+});
 const EDITOR_ONLY = new Set(EDITOR_ACTIONS.filter((a) => !VIEW_ACTIONS.includes(a)));
-const screenOf = (mod) => (mod && mod.screen === EDITOR ? EDITOR : 'views');
+// Add a stop (Story 19.5) is named in the schema but not built yet: it never opens.
+const ADD_STOP = 'add-stop';
+const screenOf = (mod) => {
+  const screen = mod && mod.screen;
+  if (screen === EDITOR || screen === ADD_STOP || WHATIF_SCREENS.includes(screen)) return screen;
+  return 'views';
+};
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PAST_DAYS = 7;
@@ -270,6 +296,8 @@ function createRoutingMap({
   const headOf = (s) => (s && s.options && s.range ? controls({
     picks: s.picks, options: s.options, range: s.range, scope: s.scope, seq: s.seq,
   }) : []);
+  // A draw's head: a what-if's own blocks, else the view controls.
+  const headFor = (st, plan, got) => (st.what ? st.what.head({ plan, seq: st.seq, got }) : headOf(st));
 
   // A render failure's fixed problem code, safe to log.
   const drawProblem = (err) => (err instanceof RoutingFault ? err.details.problem : 'error');
@@ -308,8 +336,18 @@ function createRoutingMap({
   // draw still current when its work is done commits them to the session,
   // so a superseded draw never changes what the next click draws or the
   // selects the next view shows (PR #226 review).
+  //
+  // what (the what-if screens, Story 19.4, ./whatif.js): this draw's own
+  // view and input instead of the session's picks and adapter.input:
+  //   view      'gap' or 'change'
+  //   source(adapter)  { input, travel, ... } (gapFor or crewOut)
+  //   pick(input)      the crew or zone to draw, or null (then missing())
+  //   focus     the gap view's cancelled stop
+  //   head({ plan, seq, got })  the blocks above the map, in place of the
+  //             view controls (plan null on an error or plain message)
+  // A what-if draw commits only the fills it showed (s.fills, s.fillsSeq).
   async function draw({
-    mod, s, number, show, showMap, recheck,
+    mod, s, number, show, showMap, recheck, what = null,
   }) {
     const current = () => sessions.isCurrent(s, number);
     const signal = sessions.signal(s);
@@ -319,7 +357,7 @@ function createRoutingMap({
       return true;
     };
     const st = {
-      picks: { ...s.picks }, options: s.options, range: s.range, scope: s.scope, seq: number,
+      picks: { ...s.picks, ...(what ? { view: what.view } : {}) }, options: s.options, range: s.range, scope: s.scope, seq: number, what,
     };
     // After the tile fetch, before anything is drawn: is this draw still
     // wanted, by someone still allowed to see it?
@@ -335,7 +373,7 @@ function createRoutingMap({
         mod, s, st, signal, checkpoint,
       });
     } catch (err) {
-      shown = { plain: textMessage(s, failureText(mod, st.picks.view, err), headOf(st)) };
+      shown = { plain: textMessage(s, failureText(mod, st.picks.view, err), headFor(st, null, null)) };
     }
     if (shown.expired) {
       sessions.drop(s.id);
@@ -349,9 +387,14 @@ function createRoutingMap({
       await show({ text: shown.refused });
       return;
     }
-    s.picks.crew = st.picks.crew;
-    s.picks.zone = st.picks.zone;
-    s.options = st.options;
+    if (what) {
+      s.fills = st.fills || [];
+      s.fillsSeq = number;
+    } else {
+      s.picks.crew = st.picks.crew;
+      s.picks.zone = st.picks.zone;
+      s.options = st.options;
+    }
     if (shown.plain) {
       await show(shown.plain, { current });
       return;
@@ -366,10 +409,11 @@ function createRoutingMap({
   async function work({
     mod, s, st, signal, checkpoint,
   }) {
-    const { scope } = st;
+    const { scope, what } = st;
     const { view, day } = st.picks;
     const adapter = adapterFor(mod);
-    const { input, travel } = checkInput(await adapter.input({ day, view, scope }));
+    const got = checkInput(await (what ? what.source(adapter) : adapter.input({ day, view, scope })));
+    const { input, travel } = got;
     const opts = choices(input, scope);
     const crewIds = new Set(input.crews.map((c) => c.crewId));
     if (audience.checkScope(scope, crewIds) !== 'ok') {
@@ -377,25 +421,36 @@ function createRoutingMap({
       st.options = null;
       return { plain: textMessage(s, messageFor(new ConfigFault({ admin }))) };
     }
-    const pick = resolvePick(view, scope, st.picks, opts);
-    if (pick.kind === 'zone') st.picks.zone = pick.id; else st.picks.crew = pick.id;
-    if (pick.id === null) {
-      st.options = { crews: [], zones: [] };
-      return { plain: textMessage(s, MAP_WORDS.noCrews(day), headOf(st)) };
+    let pick;
+    if (what) {
+      pick = what.pick(input);
+      if (!pick) return { plain: textMessage(s, what.missing(), headFor(st, null, got)) };
+    } else {
+      pick = resolvePick(view, scope, st.picks, opts);
+      if (pick.kind === 'zone') st.picks.zone = pick.id; else st.picks.crew = pick.id;
+      if (pick.id === null) {
+        st.options = { crews: [], zones: [] };
+        return { plain: textMessage(s, MAP_WORDS.noCrews(day), headOf(st)) };
+      }
     }
     const plan = planView({
-      view, input, travel, scope, pick, gapFill,
+      view, input, travel, scope, pick, gapFill, focus: what ? what.focus : undefined,
     });
-    // Only node ids this scope may see are named (AD-R17).
-    const crewNodes = [...opts.crews, ...(plan.crewIds || [])].map((c) => `crew:${c}`);
+    // Only node ids this scope may see are named (AD-R17). A what-if names
+    // only the crews its view shows (it has no crew select).
+    const crewNodes = [...(what ? [] : opts.crews), ...(plan.crewIds || [])].map((c) => `crew:${c}`);
     const labelNodes = unique([...crewNodes, ...(plan.placeNodes || plan.labelNodes || [])]);
     const labels = checkLabels(await adapter.labels({ day, nodeIds: labelNodes, scope }), labelNodes);
     const n = namer(labels);
-    st.options = {
-      crews: opts.crews.map((c) => ({ value: c, text: n.crewLabel(c) })),
-      zones: opts.zones.map((z) => ({ value: z, text: zoneLabel(z) })),
-    };
-    if (plan.empty) return { plain: textMessage(s, plan.empty(n), headOf(st)) };
+    if (what) {
+      st.fills = plan.fills || [];
+    } else {
+      st.options = {
+        crews: opts.crews.map((c) => ({ value: c, text: n.crewLabel(c) })),
+        zones: opts.zones.map((z) => ({ value: z, text: zoneLabel(z) })),
+      };
+    }
+    if (plan.empty) return { plain: textMessage(s, plan.empty(n), headFor(st, plan, got)) };
     const nodes = unique(plan.nodes);
     // The points go to the renderer; the mosaic only to the tile fetcher (AD-R20).
     const read = await mapPoints(data, nodes, FRAME);
@@ -432,7 +487,7 @@ function createRoutingMap({
     }
     const alt = altText({ view: VIEW_LABELS[view], crew: built.alt.crew, stops: built.alt.stops });
     const caption = streets === 'off' ? [] : [captionBlock(streetSource, streets)];
-    return { map: withModal(s, { head: headOf(st), image: { png, alt }, blocks: [...caption, ...textBlocks(textOf(built))] }) };
+    return { map: withModal(s, { head: headFor(st, plan, got), image: { png, alt }, blocks: [...caption, ...textBlocks(textOf(built))] }) };
   }
 
   // The tiles under a mosaic, or null. fetchMosaic never throws (anything
@@ -507,8 +562,28 @@ function createRoutingMap({
     ...(editorOptions || {}),
   });
 
+  // Customer cancellation and Crew out (Story 19.4).
+  const whatif = createWhatIf({
+    log,
+    admin,
+    sessions,
+    adapterFor,
+    checkLabels,
+    editor,
+    draw: (...args) => draw(...args),
+    withModal,
+    inRange,
+    failureText: (...args) => failureText(...args),
+  });
+
   // Why this module cannot open here (a fixed reason), or false.
-  const unready = (mod) => (screenOf(mod) === EDITOR ? editor.unready(mod) : false);
+  const unready = (mod) => {
+    const screen = screenOf(mod);
+    if (screen === EDITOR) return editor.unready(mod);
+    if (WHATIF_SCREENS.includes(screen)) return whatif.unready(mod);
+    if (screen === ADD_STOP) return 'the add-stop screen is not built yet';
+    return false;
+  };
 
   async function open({
     mod, person, viewId, show, showMap, resolve,
@@ -519,6 +594,13 @@ function createRoutingMap({
       return;
     }
     const screen = screenOf(mod);
+    // Fail closed: a screen that cannot open never gets a session (the hub
+    // checks unready first; this holds if it did not).
+    if ((screen === ADD_STOP || WHATIF_SCREENS.includes(screen)) && unready(mod)) {
+      log.warn('routing map refused', { module: mod.id, reason: 'not ready' });
+      await show({ text: MAP_WORDS.notReady() });
+      return;
+    }
     const s = sessions.open({
       userId: person.id, viewId, moduleId: mod.id, screen, picks: { view: 'compare', day: null, crew: null, zone: null },
     });
@@ -528,6 +610,10 @@ function createRoutingMap({
     if (!await withRange(mod, s, show)) return;
     if (screen === EDITOR) {
       await editor.open({ mod, s, show });
+      return;
+    }
+    if (WHATIF_SCREENS.includes(screen)) {
+      await whatif.open({ mod, s, show });
       return;
     }
     await draw({
@@ -540,7 +626,8 @@ function createRoutingMap({
   async function click({
     actionId, action, from, person, resolve, show, showMap, showList,
   }) {
-    const id = typeof actionId === 'string' ? actionId : '';
+    const raw = typeof actionId === 'string' ? actionId : '';
+    const id = FILL_ID.test(raw) ? 'routing-map:fill' : raw;
     const m = ACTION_PATTERN.exec(id);
     const old = RETIRED_PATTERN.exec(id);
     const which = m ? m[1] : (old ? old[1] : null);
@@ -592,6 +679,12 @@ function createRoutingMap({
     if (!await withRange(mod, s, show)) return;
     if (s.screen === EDITOR) {
       await editor.click({
+        which, action, s, mod, show, showMap, showList, recheck: recheckFor(mod, person, resolve),
+      });
+      return;
+    }
+    if (WHATIF_SCREENS.includes(s.screen)) {
+      await whatif.click({
         which, action, s, mod, show, showMap, showList, recheck: recheckFor(mod, person, resolve),
       });
       return;

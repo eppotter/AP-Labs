@@ -31,6 +31,33 @@
 // and no stops (the archetype says the crew is not working that day). Its
 // SQL is crews.sql and day.sql: no coordinate column.
 //
+// The what-if screens (Story 19.4, plan brightside-v1 D8), each scoped like
+// route() (a crew lead's crew from the scope, whatever crewId says; a
+// missing or malformed scope refused):
+//   visits({ day, crewId, scope })  { known, visits }: whether the crew is in
+//                               the day's data, and its visits that day, each
+//                               { stopId, node, start, cancelled } (booked or
+//                               already cancelled), for Customer
+//                               cancellation's select (the archetype names
+//                               them through labels())
+//   gapFor({ day, crewId, stopId, scope })  { input, travel } for fillGap:
+//                               gapInput for that crew with stopId treated as
+//                               cancelled (a visit the data already shows
+//                               cancelled stays as it is); the candidates are
+//                               read as for any gap
+//   crewOut({ day, crewId, scope })  { input, travel, wasOut }: the day's
+//                               input with that crew out (available false, so
+//                               its stops keep their booked minutes) and the
+//                               orphans' travel read; wasOut says the data
+//                               already had it out
+//   route({ ..., fill: { cancel, add } })  Customer cancellation's Fill with
+//                               #n: the crew's day from the Office with the
+//                               visit cancel left out and candidate add (a
+//                               later booked visit, read as a gap candidate)
+//                               in its place (its route order and start), its
+//                               service time on this crew's headcount
+// None of them runs new SQL: day.sql and candidates.sql, as before.
+//
 // data is a full data object from createData (it has travelMatrix). A
 // module's or job's ctx.data has only run and describe, so it is refused
 // (sdk.travelMatrix rejects with RoutingFault data_unavailable). routing is
@@ -219,10 +246,13 @@ function createAdapter({ data, routing } = {}) {
     };
   }
 
-  async function bookedDay(day) {
+  // out (Crew out, Story 19.4): a crew id taken as out that day, whatever
+  // the data says (available false, so its stops keep their booked minutes).
+  async function bookedDay(day, { out = null } = {}) {
     checkDay(day);
     const as = await asOf();
-    const crews = await crewsOn(day);
+    const read = await crewsOn(day);
+    const crews = out === null ? read : read.map((c) => (c.crewId === out ? { ...c, available: false } : c));
     const rows = await data.run(SQL.day, { day }, { declared: ['day'] });
     const crewById = new Map(crews.map((c) => [c.crewId, c]));
     const stops = [];
@@ -234,7 +264,11 @@ function createAdapter({ data, routing } = {}) {
       if (row.status === 'scheduled') stops.push(stop);
       else cancelled.push({ stopId: stop.stopId, node: stop.node, currentCrewId: stop.currentCrewId, start: stop.start, serviceMinutes: stop.serviceMinutes });
     }
-    return { asOf: as, crews, stops, cancelled };
+    // Each visit's route order (Fill with #n puts its candidate there).
+    const orderOf = new Map(rows.map((r) => [String(r.scheduled_visit_id), r.route_order]));
+    return {
+      asOf: as, crews, stops, cancelled, orderOf, wasOut: out !== null && read.some((c) => c.crewId === out && !c.available),
+    };
   }
 
   // Reads every rectangle, each split to stay within max_pairs, into the
@@ -265,8 +299,10 @@ function createAdapter({ data, routing } = {}) {
 
   // The day's input for optimizeDay and placeOrphans. crewIds (optional)
   // keeps only those crews and their stops.
-  async function dayInput({ day, crewIds } = {}) {
-    const booked = await bookedDay(day);
+  // out (Crew out, Story 19.4): a crew taken as out; the answer then also
+  // says whether the data already had it out (wasOut).
+  async function dayInput({ day, crewIds, out = null } = {}) {
+    const booked = await bookedDay(day, { out });
     let { crews, stops } = booked;
     if (crewIds !== undefined) {
       if (!Array.isArray(crewIds)) throw fault('crewIds', 'not_list');
@@ -291,7 +327,8 @@ function createAdapter({ data, routing } = {}) {
       rects.push([[...crews.map((c) => c.baseNode), ...all], orphans]);
       rects.push([orphans, all]);
     }
-    return { input, travel: await travelFor(rects) };
+    const travel = await travelFor(rects);
+    return out === null ? { input, travel } : { input, travel, wasOut: booked.wasOut };
   }
 
   // A candidate's service time on the gap crews: the gap crew's headcount
@@ -309,8 +346,11 @@ function createAdapter({ data, routing } = {}) {
   // a property visited that day is never offered), the gap crews' cancelled
   // visits, and the candidates. gapCrewIds: the crews whose gaps are filled,
   // or null for every crew with a cancelled visit that day.
-  async function gapDay(day, gapCrewIds) {
+  // whatIf (Customer cancellation, Story 19.4): a stop id of a gap crew's
+  // that day taken as cancelled; one the data already shows cancelled stays.
+  async function gapDay(day, gapCrewIds, { whatIf = null } = {}) {
     const booked = await bookedDay(day);
+    if (whatIf !== null) takeAsCancelled(booked, whatIf, gapCrewIds);
     let gapCrews;
     if (gapCrewIds === null) {
       const withGaps = new Set(booked.cancelled.map((c) => c.currentCrewId));
@@ -374,6 +414,22 @@ function createAdapter({ data, routing } = {}) {
       }
     }
     return { input, travel: await travelFor(rects) };
+  }
+
+  // Moves a booked stop of one of crewIds to the day's cancelled visits.
+  // A stop the data already shows cancelled on those crews is left as it is;
+  // any other id is refused by field name.
+  function takeAsCancelled(booked, stopId, crewIds) {
+    const crews = new Set(crewIds.map(String));
+    const at = booked.stops.findIndex((st) => st.stopId === stopId && crews.has(st.currentCrewId));
+    if (at >= 0) {
+      const [st] = booked.stops.splice(at, 1);
+      booked.cancelled.push({
+        stopId: st.stopId, node: st.node, currentCrewId: st.currentCrewId, start: st.start, serviceMinutes: st.serviceMinutes,
+      });
+      return;
+    }
+    if (!booked.cancelled.some((c) => c.stopId === stopId && crews.has(c.currentCrewId))) throw fault('stopId', 'unknown_stop');
   }
 
   // The gap day's input for one crew's gaps. A candidate's service time uses
@@ -454,22 +510,98 @@ function createAdapter({ data, routing } = {}) {
     return out;
   }
 
+  // The crew a scoped call is about: a crew lead's own (from the scope,
+  // never from the click); only an explicit all-crews scope may pick any.
+  function crewFor(scope, crewId) {
+    const lead = requiredLeadOf(scope);
+    const wanted = lead !== null ? lead : crewId;
+    if (typeof wanted !== 'string' || !DIGITS.test(wanted)) throw fault('crewId', 'bad_id');
+    return wanted;
+  }
+
+  const checkStopId = (v, field) => {
+    if (typeof v !== 'string' || !DIGITS.test(v) || v.length > 20) throw fault(field, 'bad_id');
+    return v;
+  };
+
+  // --- The what-if screens (Story 19.4, D8).
+
+  async function visits({ day, crewId, scope } = {}) {
+    checkDay(day);
+    const wanted = crewFor(scope, crewId);
+    const booked = await bookedDay(day);
+    if (!booked.crews.some((c) => c.crewId === wanted)) return { known: false, visits: [] };
+    const own = (st) => st.currentCrewId === wanted;
+    const visit = (cancelled) => (st) => ({
+      stopId: st.stopId, node: st.node, start: st.start, cancelled,
+    });
+    return {
+      known: true,
+      visits: [...booked.stops.filter(own).map(visit(false)), ...booked.cancelled.filter(own).map(visit(true))],
+    };
+  }
+
+  async function gapFor({
+    day, crewId, stopId, scope,
+  } = {}) {
+    checkDay(day);
+    const wanted = crewFor(scope, crewId);
+    checkStopId(stopId, 'stopId');
+    return gapDay(day, [wanted], { whatIf: stopId });
+  }
+
+  async function crewOut({ day, crewId, scope } = {}) {
+    checkDay(day);
+    return dayInput({ day, out: crewFor(scope, crewId) });
+  }
+
+  // Fill with #n: the candidate add as a stop on crew (its service time on
+  // that crew's headcount), in the place of the visit cancel.
+  async function fillStop(day, booked, crew, fill) {
+    if (fill === null || typeof fill !== 'object' || Array.isArray(fill)) throw fault('fill', 'not_object');
+    const cancel = checkStopId(fill.cancel, 'fill.cancel');
+    const add = checkStopId(fill.add, 'fill.add');
+    const own = (st) => st.stopId === cancel && st.currentCrewId === crew.crewId;
+    const gone = booked.stops.find(own) || booked.cancelled.find(own);
+    if (!gone) throw fault('fill.cancel', 'unknown_stop');
+    const rows = await data.run(SQL.candidates, { day, horizon_days: horizonDays }, { declared: ['day', 'horizon_days'] });
+    const row = rows.find((r) => String(r.scheduled_visit_id) === add);
+    if (!row) throw fault('fill.add', 'unknown_stop');
+    const order = booked.orderOf.get(cancel);
+    return {
+      cancel,
+      stop: {
+        stopId: add,
+        node: propertyNode(row.property_id),
+        currentCrewId: crew.crewId,
+        labourMinutes: row.labour_minutes,
+        serviceMinutes: crew.available ? serviceFor(row.labour_minutes, crew.headcountPresent, slot) : row.scheduled_minutes,
+        locked: false,
+        rules: rulesOf(row, windows),
+        routeOrder: order === undefined ? null : order,
+        start: gone.start,
+      },
+    };
+  }
+
   // --- Plan a route (Story 15.15, AD-R26): one crew's day from the Office.
 
   async function route({
-    day, crewId, depot, scope,
+    day, crewId, depot, scope, fill,
   } = {}) {
     checkDay(day);
     if (typeof depot !== 'string' || !DEPOT_NODE.test(depot)) throw fault('depot', 'bad_node');
     // A crew lead's crew comes from the scope, never from the click; only an
     // explicit all-crews scope may pick any crew.
-    const lead = requiredLeadOf(scope);
-    const wanted = lead !== null ? lead : crewId;
-    if (typeof wanted !== 'string' || !DIGITS.test(wanted)) throw fault('crewId', 'bad_id');
+    const wanted = crewFor(scope, crewId);
     const booked = await bookedDay(day);
     const crews = booked.crews.filter((c) => c.crewId === wanted)
       .map((c) => ({ ...c, baseNode: depot, returnToBase: true }));
-    const stops = crews.length ? booked.stops.filter((s) => s.currentCrewId === wanted) : [];
+    let stops = crews.length ? booked.stops.filter((s) => s.currentCrewId === wanted) : [];
+    if (fill !== undefined && crews.length) {
+      const swap = await fillStop(day, booked, crews[0], fill);
+      stops = [...stops.filter((st) => st.stopId !== swap.cancel), swap.stop];
+    }
     const input = { day, asOf: booked.asOf, limits: { ...limits }, crews, stops };
     engine.validateInput(input);
 
@@ -488,7 +620,7 @@ function createAdapter({ data, routing } = {}) {
   }
 
   return Object.freeze({
-    asOf, input, labels, dayInput, gapInput, route,
+    asOf, input, labels, dayInput, gapInput, route, visits, gapFor, crewOut,
   });
 }
 

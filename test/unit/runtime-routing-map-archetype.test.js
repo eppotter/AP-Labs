@@ -811,6 +811,14 @@ test('no log line, Slack call or error holds the points or an x/y key; none hold
 
 // Every object reachable from v that holds a mosaic key (no cycles followed twice).
 const MOSAIC_KEYS = Object.keys(fx.FAKE_MOSAIC);
+// Whether text holds the tile number n as a whole token, not inside a longer
+// run of letters or digits: a session id (a random UUID in
+// private_metadata) can hold "3068" inside a longer hex run by chance
+// (clean-bones CI on PR #309), while a leaked tile number stands alone
+// ("/2417/3066.png", "tx0":2417), so it still matches (as holdsToken in the
+// Brightside routing tests, PR #239).
+const holdsTileNumber = (text, n) => new RegExp(`(?<![0-9A-Za-z])${n}(?![0-9A-Za-z])`).test(text);
+
 function holdsMosaic(v, seen = new Set()) {
   if (v === null || typeof v !== 'object' || seen.has(v)) return false;
   seen.add(v);
@@ -853,7 +861,7 @@ test('Story 15.8: the renderer gets the points only; the mosaic reaches no rende
     for (const [name, rec] of records) {
       assert.equal(holdsMosaic(rec), false, `${name} holds a mosaic or a tile key`);
       const text = JSON.stringify(rec) + (name === 'errors' ? errors.map((e) => `${e && e.message} ${e && e.stack}`).join('\n') : '');
-      for (const n of big) assert.ok(!text.includes(n), `${name} holds a tile number`);
+      for (const n of big) assert.ok(!holdsTileNumber(text, n), `${name} holds a tile number`);
       assert.ok(!/mosaic|tx0|ty0/.test(text), `${name} names the mosaic`);
     }
   }
@@ -1442,6 +1450,13 @@ test('Story 15.10 exit: access withdrawn during the tile fetch: the refusal in t
   assert.deepEqual(onOpen.app.uploads, []);
 });
 
+test('the tile-number check finds a number standing alone, and not inside a random session id', () => {
+  assert.equal(holdsTileNumber('"private_metadata":"97776f30-2182-465c-8a15-306832575aab"', '3068'), false);
+  for (const leak of ['/13/2417/3066.png', '"tx0":2417', 'tile 3066 failed', '[2417,3066]']) {
+    assert.ok(holdsTileNumber(leak, leak.includes('2417') ? '2417' : '3066'), leak);
+  }
+});
+
 test('Story 15.10: no tile number, mosaic or tile URL in any log line, Slack call or error', async () => {
   const ctxs = [];
   const shown = streetSetup();
@@ -1468,7 +1483,7 @@ test('Story 15.10: no tile number, mosaic or tile URL in any log line, Slack cal
     for (const [name, rec] of records) {
       assert.equal(holdsMosaic(rec), false, `${name} holds a mosaic or a tile key`);
       const text = JSON.stringify(rec) + (name === 'errors' ? errors.map((e) => `${e && e.message} ${e && e.stack}`).join('\n') : '');
-      for (const n of numbers) assert.ok(!text.includes(n), `${name} holds a tile number`);
+      for (const n of numbers) assert.ok(!holdsTileNumber(text, n), `${name} holds a tile number`);
       assert.ok(!/mosaic|tx0|ty0|\{z\}|\/\d+\/\d+\/\d+\.png|tiles\.example\.org\/\d|no-such-tiles/.test(text), `${name} names a tile, the mosaic or a tile URL`);
     }
   }

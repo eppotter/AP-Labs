@@ -60,6 +60,12 @@
 // the list is current." A data or engine fault on Show stops, or a node with
 // no position, is the error exit.
 //
+// Customer cancellation (Story 19.4, ./whatif.js) shows its Fill with #n
+// here: showFill passes { cancel, add } to adapter.route, which gives the
+// crew's day with the cancelled visit out and the candidate in its place;
+// that stop's row says it moved up ("↩️"). The same list, map and clicks
+// follow; whatif.js takes Change crew or day back to its own first step.
+//
 // Exits: Change crew or day (step 1; the hub deletes the files), Back and
 // Close (the hub's view_closed, else the sweep), an expired session ("This
 // plan has expired, go back and open <label> again."), access withdrawn (the
@@ -101,6 +107,7 @@ const MAX_MOVE_VALUE = 32;
 const KEYCAPS = Object.freeze(['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']);
 const STRENGTH_MARK = Object.freeze({ hard: '🔴', soft: '🟠' });
 const DRIVE_MARK = '🚐';
+const FILL_MARK = '↩️';
 
 const fault = (field, problem) => new RoutingFault({ field, problem });
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -401,7 +408,10 @@ function createEditor({
   // --- reading one crew's day (Show stops) ------------------------------------------------
 
   // The plan for the picked crew and day, or { plain } words to show.
-  async function load(mod, s) {
+  // fill (Customer cancellation's Fill with #n, Story 19.4): { cancel, add,
+  // from }, the visit that cancels, the candidate that fills its gap and the
+  // candidate's booked day; the adapter's route() makes the swap.
+  async function load(mod, s, fill = null) {
     const { scope } = s;
     const lead = scope.all !== true;
     const crewId = lead ? scope.crewId : s.picks.crew;
@@ -409,7 +419,7 @@ function createEditor({
     const adapter = adapterFor(mod);
     if (typeof adapter.route !== 'function') throw fault('adapter.route', 'not_function');
     const got = checkRoute(await adapter.route({
-      day, crewId, depot: depot.node, scope,
+      day, crewId, depot: depot.node, scope, ...(fill ? { fill: { cancel: fill.cancel, add: fill.add } } : {}),
     }));
     const { input } = got;
     engine.validateInput(input);
@@ -417,6 +427,11 @@ function createEditor({
     // day: a plain message, never a refusal of access.
     const crew = input.crews.find((c) => c.crewId === crewId);
     const stops = crew ? bookedStops(input, crewId) : [];
+    // The swap is the adapter's: the candidate is on the day, the cancelled
+    // visit is not, or it is the error exit (never a list that hides it).
+    if (fill && crew && (!stops.some((st) => st.stopId === fill.add) || stops.some((st) => st.stopId === fill.cancel))) {
+      throw fault('adapter.route', 'fill_missing');
+    }
     if (stops.some((st) => st.stopId.length > MAX_STOP_ID)) throw fault('stopId', 'too_long');
     const fits = stops.length > 0 && stops.length <= MAX_STOPS;
     const stopNodes = unique(stops.map((st) => st.node));
@@ -460,6 +475,8 @@ function createEditor({
         flagged: new Set(),
         // Optimize's status line, shown while the order is that version.
         note: null,
+        // The stop Fill with #n moved up into the gap, and its booked day.
+        filled: fill ? { stopId: fill.add, from: fill.from } : null,
         out: crew.available === false,
         crewName,
         names: n,
@@ -557,6 +574,7 @@ function createEditor({
         detailLine(st, limits),
       ];
       if (p.flagged.has(st.stopId)) rowLines.push(`${WARN} ${ROUTE_WORDS.unplaced()}`);
+      if (p.filled && p.filled.stopId === st.stopId) rowLines.push(`${FILL_MARK} ${ROUTE_WORDS.filled(escapeText(p.filled.from))}`);
       const accessory = p.out ? null : menu(v, i, ev.stops.length);
       blocks.push({
         type: 'section', block_id: `routing-map:stop:${k}:${v}`, text: mrkdwn(rowLines.join('\n')), ...(accessory ? { accessory } : {}),
@@ -678,7 +696,7 @@ function createEditor({
   }
 
   async function showStops({
-    mod, s, show, showMap, showList, recheck,
+    mod, s, show, showMap, showList, recheck, fill = null,
   }) {
     const number = sessions.next(s);
     const current = () => sessions.isCurrent(s, number);
@@ -691,7 +709,7 @@ function createEditor({
     }
     let loaded;
     try {
-      loaded = await load(mod, s);
+      loaded = await load(mod, s, fill);
     } catch (err) {
       const words = failureText(mod, 'route', err);
       if (!current()) return;
@@ -815,8 +833,12 @@ function createEditor({
     return changed(go);
   }
 
+  // Customer cancellation's Fill with #n (Story 19.4): step 2 on the crew's
+  // day with the candidate in the gap. s.picks names the crew and day.
+  const showFill = (args) => showStops(args);
+
   return {
-    unready, open, click, ACTIONS,
+    unready, open, click, ACTIONS, crewChoices, takeCrews, showFill,
   };
 }
 
