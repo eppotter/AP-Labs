@@ -11,6 +11,11 @@
 //   await knowledge.forPrompt(hub);    // the hub's <added_context> blocks, or ''
 //   const mine = knowledge.forHub(hub);  // the same four, bound to one hub
 //
+// Shared notes (plan brightside-v1, D6, Story 19.1): a hub whose file names
+// another hub in "notes" is bound to that hub's id (kit/runtime/slack/hub-view
+// forHub(notes)), so both hubs use one folder, one queue and one set of caps
+// below. Nothing here changes: the store knows folders, not links.
+//
 // Where: <var dir>/context/<client id>/<hub id>/<entry id>.json. The var dir
 // is APLABS_VAR_DIR, resolved as kit/runtime/data resolves it (a relative one
 // against the working directory), else <repo>/var (varDirFor). Not
