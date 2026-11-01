@@ -11,8 +11,10 @@ Written by the Onboarder for Architect. Most of this mirrors `.aplabs/profile.ym
 profile rather than copy it, and propose profile changes to the Orchestrator instead of editing it.
 
 In this template repo Brightside's profile is `profiles/brightside/profile.yml` (a fork keeps it at
-`.aplabs/profile.yml`). **All eight rule cards (GRD-001 to GRD-008) are approved:** Ely Potter signed
-off this file on 2026-10-31 (plan brightside-v1, Story 18.1).
+`.aplabs/profile.yml`). **All nine rule cards (GRD-001 to GRD-009) are approved:** Ely Potter signed
+off this file on 2026-10-31 (plan brightside-v1, Story 18.1). GRD-009 (Ask's read-only queries) was
+signed by the same plan's gate approval (`approve plan brightside-v1`, 2026-10-31) as worded in its
+D10, and added by Story 19.7, with GRD-005's exceptions.
 
 Until 2026-10-31 these files named a fictional owner, Dana Reyes, played by Ely; lines that say
 "Ely as Dana Reyes" are kept as history. History of this file: it was first signed on 2026-10-25 (Ely
@@ -45,6 +47,9 @@ DEP-032 are closed.
   Approved update (DEP-032): the Office is the one point that is not random.
 - GRD-008: a crew is out for the day when its lead is absent, or nobody on it is present. A stand-in
   lead counts as the lead; a member present for part of the day counts as present.
+- GRD-009: Ask may answer a data question with a read-only query built only from signed query
+  rules, for people granted `ASK_DATA` by name, reading only the profile's `ask` tables and columns.
+  The AI never sees the result.
 
 ## Protected systems
 
@@ -266,9 +271,13 @@ exception_workflow and data_quality_guard.
   only for a person allowed to use the module, behind an off switch (`APLABS_LLM_OFF`), a
   per-person limit and an hourly spend breaker that fails closed. Requests and replies are never
   logged, but they do reach Anthropic. With the AI off, the form still works.
+- exceptions: GRD-009 (Ask's read-only queries): the AI writes or fills in a query; it still never
+  sees a data row. Admin notes, including uploaded PDFs, images and CSVs, are sent to the AI as
+  context on their hub.
 - owner: Ely Potter
 - evidence: `kit/runtime/llm/index.js` and `context.js` (Story 9.1); `docs/runtime/ai-setup.md`;
-  the Epic 9 plan. A grep test keeps the AI off the SDK.
+  the Epic 9 plan. A grep test keeps the AI off the SDK. The exceptions: plan brightside-v1 D10
+  (architect P3-16), added by Story 19.7.
 - status: approved
 
 ### GRD-006: Pay rates and Labour cost
@@ -326,3 +335,22 @@ exception_workflow and data_quality_guard.
 - status: approved
 - approval: approved by Ely Potter on 2026-10-31 (plan brightside-v1, Story 18.1), with its edge
   cases settled; earlier draft: recorded on 2026-10-26 by Story 13.3 (DEP-028).
+
+### GRD-009: Ask's read-only queries
+- type: access_rule
+- rule: on a hub that sees data and rules, Ask may answer a data question from signed query
+  rules: by running a rule's reviewed SQL with parameters the AI fills, or by an AI-written
+  read-only query composed only from signed rules. Only people granted `ASK_DATA` by name get
+  this, and **they must be cleared for every metric the allowed tables expose, including
+  client-level money (invoices, payments, balances): `client_id` is pseudonymous, not
+  anonymous.** The query may read only the tables and columns the profile's `ask` block lists;
+  names, emails, phones, addresses, coordinates, staff and pay are never readable. The SQL guard
+  (GRD-001, GRD-002) and DuckDB's own parse both check it before it runs; it runs for at most 10
+  seconds, one at a time, and returns at most 50 rows. The AI never sees the result. A figure a
+  signed truth covers comes from the rule's reviewed SQL. Not run at all unless every signed truth
+  passed its last check within 7 days. NOT a change to any tool: tools keep their reviewed queries.
+- owner: Ely Potter
+- evidence: plan brightside-v1 D10, D11; `kit/runtime/sql` (`allowedTables`), `kit/runtime/data`
+  (Ask's connection), `kit/runtime/archetypes/ask`; Stories 19.6 to 19.8.
+- status: approved
+- approval: approved by Ely Potter on 2026-10-31 (`approve plan brightside-v1`), added by Story 19.7.

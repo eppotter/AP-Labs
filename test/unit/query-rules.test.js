@@ -148,19 +148,18 @@ function tmp(t) {
   return dir;
 }
 
-test('the allow-list: the profile\'s ask.tables wins, else ask-tables.yml, else none (fail closed)', (t) => {
+test('the allow-list is the profile\'s ask.tables; without the ask block there is none (fail closed)', (t) => {
   const dir = tmp(t);
-  assert.match(qr.allowListFor({}, dir).problem, /no allow-list/);
-  assert.equal(qr.allowListFor({}, dir).tables, null);
+  // Story 19.7 retired the bridge file: one beside data.md is never read.
   fs.writeFileSync(path.join(dir, 'ask-tables.yml'), 'tables:\n  shops: [shop_id, opened_on]\n');
-  assert.deepEqual(qr.allowListFor({}, dir), { tables: { shops: ['shop_id', 'opened_on'] }, problem: null, source: 'ask-tables.yml' });
-  const fromProfile = qr.allowListFor({ ask: { tables: { regions: ['region_id'] } } }, dir);
-  assert.deepEqual(fromProfile.tables, { regions: ['region_id'] });
-  assert.equal(fromProfile.source, 'profile ask.tables');
-  fs.writeFileSync(path.join(dir, 'ask-tables.yml'), 'tables:\n  shops: [shop_id]\nextra: 1\n');
-  assert.equal(qr.allowListFor({}, dir).tables, null);
-  fs.writeFileSync(path.join(dir, 'ask-tables.yml'), 'tables:\n  Shops: [shop_id]\n');
-  assert.equal(qr.allowListFor({}, dir).tables, null);
+  for (const profile of [{}, null, { ask: {} }]) {
+    assert.match(qr.allowListFor(profile, dir).problem, /no allow-list/);
+    assert.equal(qr.allowListFor(profile, dir).tables, null);
+  }
+  const fromProfile = qr.allowListFor({ ask: { tables: { regions: ['region_id'] } } });
+  assert.deepEqual(fromProfile, { tables: { regions: ['region_id'] }, problem: null, source: 'profile ask.tables' });
+  assert.equal(qr.allowListFor({ ask: { tables: { Shops: ['shop_id'] } } }).tables, null);
+  assert.equal(qr.allowListFor({ ask: { tables: { shops: [] } } }).tables, null);
 });
 
 test('reads outside the allow-list are named, table and column', () => {

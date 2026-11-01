@@ -317,7 +317,26 @@ class FileRefused extends RuntimeRefusal {
   }
 }
 
+// Ask's query (plan brightside-v1, D10, Story 19.7; kit/runtime/data/ask)
+// did not run or did not finish. Nothing is shown from it. reason:
+//   guard    the SQL guard or DuckDB's parse refused it (details.rule)
+//   failed   DuckDB failed while running it (details.errorClass)
+//   timeout  it ran past its 10 seconds and was interrupted
+//   busy     another Ask query was running; this one never started
+// rule and errorClass are fixed words for the log. DuckDB's own error text
+// never reaches this error: it can hold a hidden column's name or a value.
+const ASK_QUERY_REASONS = Object.freeze(['guard', 'failed', 'timeout', 'busy']);
+class AskQueryRefused extends RuntimeRefusal {
+  constructor(reason, { rule = null, errorClass = null } = {}) {
+    if (!ASK_QUERY_REASONS.includes(reason)) throw new TypeError(`unknown AskQueryRefused reason "${reason}"`);
+    super(`ask query ${reason}`, { reason, rule, errorClass });
+    this.code = 'ASK_QUERY_REFUSED';
+    this.reason = reason;
+  }
+}
+
 module.exports = {
+  AskQueryRefused, ASK_QUERY_REASONS,
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, LLM_REASONS,
   KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
   SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,

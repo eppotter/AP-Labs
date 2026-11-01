@@ -6,6 +6,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { loadProfile } = require('../../../kit/lib/profile');
 
@@ -41,7 +42,7 @@ test('Ely is the admin user on the same Slack identity, and Steven holds exactly
   assert.equal(ely.identities.github, undefined, 'the fictional github id is dropped');
   assert.equal(steven.name, 'Steven Auslander');
   assert.equal(steven.role, 'admin');
-  assert.deepEqual([...ely.grants].sort(), ['ROUTING_ALL_CREWS', 'TIER3_APPROVE', 'WIN_BACK']);
+  assert.deepEqual([...ely.grants].sort(), ['ASK_DATA', 'ROUTING_ALL_CREWS', 'TIER3_APPROVE', 'WIN_BACK']);
   assert.deepEqual([...(steven.grants || [])].sort(), [...ely.grants].sort());
   assert.equal(p.users.some((u) => /dana/i.test(`${u.id} ${u.name}`)), false, 'no Dana user is left');
 });
@@ -154,4 +155,48 @@ test('the Office: its columns forbidden, routing.depot a node and a label, and P
   assert.deepEqual(manifest.environments, ['dev', 'prod']);
   assert.equal(manifest.label, 'Plan a route');
   assert.equal(manifest.screen, 'route-editor');
+});
+
+// Plan brightside-v1, D10, GRD-009 (Story 19.7): Ask's read-only queries. ASK_DATA is
+// granted by name only, to Ely and Steven; the ask block lists D10's tables and columns.
+test('ASK_DATA is admin_grantable: false and granted to Ely and Steven by name', () => {
+  const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
+  const r = p.resources.find((x) => x.key === 'ASK_DATA');
+  assert.equal(r.admin_grantable, false);
+  assert.equal(r.open_access, false);
+  const holders = p.users.filter((u) => u.grants.includes('ASK_DATA')).map((u) => u.name);
+  assert.deepEqual(holders, ['Ely Potter', 'Steven Auslander']);
+  assert.equal(p.ask.queries_per_hour, 10);
+});
+
+// SQLsmith P1-1, architect P1-1: no name, contact, address, coordinate, staff or pay
+// column is ever readable by an Ask query. scheduled_visits' columns are read from the
+// fixture's schema, so a new column there must be decided on.
+test('the ask block holds no person, contact, address, coordinate, staff or pay column', () => {
+  const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
+  const schema = fs.readFileSync(path.join(__dirname, '../fixture/schema.sql'), 'utf8');
+  const tables = Object.keys(p.ask.tables);
+  for (const t of ['staff', 'pay_rates', 'timesheets', 'crew_memberships', 'staff_absences', 'depots']) {
+    assert.ok(!tables.includes(t), `${t} is not allowed`);
+  }
+  const banned = /^(first_name|last_name|email|phone|street_address|postal_code|access_method|labour_minutes|hourly_rate_cents|clock_in|clock_out)$|staff|geo_|_lat|_lon|latitude|longitude|address/;
+  for (const [t, columns] of Object.entries(p.ask.tables)) {
+    for (const c of columns) {
+      assert.ok(!banned.test(c), `${t}.${c} is a person, contact, address, coordinate, staff or pay column`);
+      assert.ok(!p.sql.forbidden_columns.includes(`${t}.${c}`), `${t}.${c} is forbidden`);
+    }
+  }
+  // Client zone is clients.zone_id: properties has none (SQLsmith P1-2).
+  assert.ok(!p.ask.tables.properties.includes('zone_id'));
+  // scheduled_visits: every column but labour_minutes (GRD-006, SQLsmith P3-13).
+  const block = /CREATE TABLE scheduled_visits \(([\s\S]*?)\n\);/.exec(schema)[1];
+  const all = block.split('\n').map((l) => l.trim().split(/\s+/)[0]).filter((c) => /^[a-z_]+$/.test(c));
+  assert.deepEqual([...p.ask.tables.scheduled_visits].sort(), all.filter((c) => c !== 'labour_minutes').sort());
+});
+
+// Story 19.7: the whole suite takes about 400 seconds, so the unit check's 300-second
+// default reported a false timeout in npm run verify.
+test('the verify unit check has a 900-second limit', () => {
+  const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
+  assert.equal(p.verify.checks.find((c) => c.id === 'unit').timeout_seconds, 900);
 });

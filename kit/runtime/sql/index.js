@@ -47,7 +47,25 @@ const RULES = Object.freeze({
   POSITIONAL_COLUMN: 'positional_column',
   WHOLE_ROW: 'whole_row',
   COLUMN_ALIAS_LIST: 'column_alias_list',
+  // Ask's query guard (plan brightside-v1, D10, Story 19.7): only with allowedTables.
+  TABLE_NOT_ALLOWED: 'table_not_allowed',
+  CTE_NOT_TOP_LEVEL: 'cte_not_top_level',
+  CTE_SHADOWS_TABLE: 'cte_shadows_table',
+  CLOCK_FUNCTION: 'clock_function',
+  NO_ALLOWED_TABLE: 'no_allowed_table',
+  // Only from DuckDB's own parse (./ask checkParsed).
+  COLUMN_NOT_ALLOWED: 'column_not_allowed',
+  PARSE_REFUSED: 'parse_refused',
 });
+
+// The clock (SQLsmith P2-8): "today" is fixture_meta's as_of, never the
+// machine's date, so Ask's queries may not read the clock. CLOCK_KEYWORDS are
+// read without parentheses too (SELECT current_date); the rest are calls.
+const CLOCK_KEYWORDS = new Set(['current_date', 'current_time', 'current_timestamp', 'localtime', 'localtimestamp']);
+const CLOCK_FUNCTIONS = new Set([
+  ...CLOCK_KEYWORDS, 'now', 'today', 'get_current_timestamp', 'get_current_time', 'transaction_timestamp',
+  'statement_timestamp', 'current_localtime', 'current_localtimestamp',
+]);
 
 // Table functions allowed in a FROM clause. V1: none.
 const TABLE_FUNCTION_ALLOWLIST = new Set();
@@ -224,7 +242,7 @@ function tokenize(sql) {
       continue;
     }
 
-    out.push(c === '?' ? { t: 'PARAM' } : { t: 'PUNCT', v: c });
+    out.push(c === '?' ? { t: 'PARAM' } : { t: 'PUNCT', v: c, pos: i });
     i += 1;
   }
   return out;
@@ -288,6 +306,10 @@ function analyseRelations(toks) {
   const defining = new Set();
   const fromFirst = [];
   const aliasLists = [];
+  // Ask's guard: every name in relation position (parts > 1 when qualified),
+  // and every CTE definition, each with its paren depth (0 = top level).
+  const tableRefs = [];
+  const ctes = [];
 
   const frame = (kind, name) => ({ kind, name, selectSeen: false, inFrom: false, expect: null });
   const stack = [frame('query', null)];
@@ -318,6 +340,7 @@ function analyseRelations(toks) {
           if (!TABLE_FUNCTION_ALLOWLIST.has(fn)) throw new Refusal(RULES.TABLE_FUNCTION, `table function ${fn}( is not on the allowlist`);
         }
         relations.add(toks[j].name);
+        tableRefs.push({ name: toks[j].name, parts: (j - k) / 2 + 1, depth: stack.length - 1 });
         k = j;
         f.expect = 'alias';
         continue;
@@ -354,6 +377,14 @@ function analyseRelations(toks) {
       continue;
     }
 
+    // A CTE definition, quoted or not: `name AS [NOT] [MATERIALIZED] (`.
+    if (tok.t === 'IDENT' && !isPunct(toks[k - 1], '.') && isWord(toks[k + 1], 'AS')) {
+      let j = k + 2;
+      if (isWord(toks[j], 'NOT')) j += 1;
+      if (isWord(toks[j], 'MATERIALIZED')) j += 1;
+      if (isPunct(toks[j], '(')) ctes.push({ name: tok.name, depth: stack.length - 1 });
+    }
+
     if (tok.t !== 'IDENT' || tok.quoted || isPunct(toks[k - 1], '.')) {
       if (isPunct(tok, ',') && f.inFrom) f.expect = 'relation';
       continue;
@@ -381,7 +412,9 @@ function analyseRelations(toks) {
       if (isPunct(toks[j], '(')) defining.add(k);
     }
   }
-  return { relations, defining, fromFirst, aliasLists };
+  return {
+    relations, defining, fromFirst, aliasLists, tableRefs, ctes,
+  };
 }
 
 // A `*` with no left operand selects columns; with one, it multiplies.
@@ -442,19 +475,71 @@ function validateForbidden(forbiddenColumns) {
   }
 }
 
+const TABLE_NAME = /^[a-z_][a-z0-9_]*$/;
+
+function nameSet(option, what) {
+  if (option === undefined || option === null) return null;
+  const list = option instanceof Set ? [...option] : option;
+  if (!Array.isArray(list) || !list.every((t) => typeof t === 'string' && TABLE_NAME.test(t))) {
+    throw new TypeError(`${what} must be a list of lower-case table names`);
+  }
+  return new Set(list);
+}
+
+// Ask's query guard (plan brightside-v1, D10, Story 19.7), on top of the
+// forbidden-column rules: every table reference is an allowed table or a
+// top-level CTE; a CTE is defined only at the top of the statement (the one
+// WITH is its first word) and is never named like a data table (a nested
+// `WITH staff AS` once hid `FROM staff` from analyseRelations, architect
+// P1-2a); the clock is never read; at least one allowed table is read.
+function checkAllowed(toks, allowed, known) {
+  const { tableRefs, ctes } = analyseRelations(toks);
+  toks.forEach((tok, k) => {
+    if (!isWord(tok, 'WITH') || isPunct(toks[k - 1], '.')) return;
+    if (k !== 0) throw new Refusal(RULES.CTE_NOT_TOP_LEVEL, 'WITH is allowed only as the first word of the query');
+  });
+  for (const cte of ctes) {
+    if (cte.depth !== 0) throw new Refusal(RULES.CTE_NOT_TOP_LEVEL, `the CTE "${cte.name}" is not at the top level`);
+    if (allowed.has(cte.name) || known.has(cte.name)) throw new Refusal(RULES.CTE_SHADOWS_TABLE, `the CTE "${cte.name}" has a data table's name`);
+  }
+  const cteNames = new Set(ctes.map((c) => c.name));
+  for (const ref of tableRefs) {
+    if (ref.parts > 1) throw new Refusal(RULES.TABLE_NOT_ALLOWED, `a qualified table name ending "${ref.name}"`);
+    if (!allowed.has(ref.name) && !cteNames.has(ref.name)) throw new Refusal(RULES.TABLE_NOT_ALLOWED, `"${ref.name}" is not an allowed table`);
+  }
+  toks.forEach((tok, k) => {
+    if (tok.t !== 'IDENT' || tok.quoted || isPunct(toks[k - 1], '.')) return;
+    if (CLOCK_KEYWORDS.has(tok.name) || (CLOCK_FUNCTIONS.has(tok.name) && isPunct(toks[k + 1], '('))) {
+      throw new Refusal(RULES.CLOCK_FUNCTION, `${tok.name} reads the clock; "today" is fixture_meta's as_of`);
+    }
+  });
+  if (!tableRefs.some((ref) => allowed.has(ref.name) && !cteNames.has(ref.name))) {
+    throw new Refusal(RULES.NO_ALLOWED_TABLE, 'the query reads no allowed table');
+  }
+}
+
 // Checks one SQL text. Returns { ok: true } or { ok: false, rule, detail }:
 // `rule` is one of RULES; `detail` is a short plain reason. Never throws on
-// SQL; throws TypeError on a malformed forbiddenColumns option.
-function checkSql(sql, { forbiddenColumns = [] } = {}) {
+// SQL; throws TypeError on a malformed option.
+//
+// allowedTables (Ask's guard, Story 19.7): the only tables the query may
+// read. With it the forbidden-column rules always apply (no wildcard, no
+// whole-row reference), even with an empty forbidden list, and so do
+// checkAllowed's. knownTables: every table in the data, so no CTE takes one's
+// name. Ask also runs DuckDB's own parse through ./ask checkParsed.
+function checkSql(sql, { forbiddenColumns = [], allowedTables = null, knownTables = null } = {}) {
   validateForbidden(forbiddenColumns);
+  const allowed = nameSet(allowedTables, 'allowedTables');
+  const known = nameSet(knownTables, 'knownTables') || new Set();
   if (typeof sql !== 'string') return { ok: false, rule: RULES.EMPTY, detail: 'SQL must be a string' };
   try {
     const toks = tokenize(sql);
     const match = matchParens(toks);
     checkStatementShape(toks);
     // Table functions and strings used as tables are refused in every mode.
-    if (forbiddenColumns.length) checkForbidden(toks, match, forbiddenColumns);
+    if (forbiddenColumns.length || allowed) checkForbidden(toks, match, forbiddenColumns);
     else analyseRelations(toks);
+    if (allowed) checkAllowed(toks, allowed, known);
     return { ok: true };
   } catch (err) {
     if (err instanceof Refusal) return { ok: false, rule: err.rule, detail: err.detail };
@@ -462,9 +547,28 @@ function checkSql(sql, { forbiddenColumns = [] } = {}) {
   }
 }
 
+// The SQL without its one trailing `;` (and the whitespace or comments after
+// it), so a prepared statement holds exactly one statement. For SQL checkSql
+// passed: it only cuts text, never adds or moves any.
+function withoutTrailingSemicolon(sql) {
+  const toks = tokenize(sql);
+  const last = toks[toks.length - 1];
+  return isPunct(last, ';') ? sql.slice(0, last.pos).trimEnd() : sql;
+}
+
 // The forbidden columns a profile declares (AD-16 default: none).
 function forbiddenColumnsOf(profile) {
   return (profile && profile.sql && profile.sql.forbidden_columns) || [];
 }
 
-module.exports = { checkSql, forbiddenColumnsOf, blockCommentEnd, RULES, TABLE_FUNCTION_ALLOWLIST };
+module.exports = {
+  checkSql,
+  withoutTrailingSemicolon,
+  forbiddenColumnsOf,
+  blockCommentEnd,
+  blockedFunction,
+  RULES,
+  TABLE_FUNCTION_ALLOWLIST,
+  CLOCK_KEYWORDS,
+  CLOCK_FUNCTIONS,
+};

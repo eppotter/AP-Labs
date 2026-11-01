@@ -20,7 +20,10 @@
 // --done     clears a queued question once its rule has merged.
 // --check    the verify check `query-rule:<id>` (npm run verify and the Stop
 //            hook spawn it): validates the rule, checks its reads against the
-//            allow-list and DuckDB's own parse of its SQL, runs the SQL with
+//            allow-list (the profile's ask.tables) and DuckDB's own parse of
+//            its SQL, checks the SQL with Ask's own guard (kit/runtime/sql
+//            checkSql with allowedTables, then checkParsed: Story 19.7, so a
+//            signed rule is one Ask's connection runs), runs the SQL with
 //            check.params through the query runner (kit/runtime/data, with the
 //            profile's forbidden columns), and compares the figure with the
 //            linked signed truth or the stated figure. --rows also prints the
@@ -45,6 +48,9 @@ const { loadTruths } = require('../lib/truths');
 const { gitDirOf, readLastResult } = require('../lib/verify/last');
 const rules = require('../lib/query-rules');
 const { createData, dataPathFor } = require('../runtime/data');
+const { COLUMNS_SQL, PARSE_SQL } = require('../runtime/data/ask');
+const sqlGuard = require('../runtime/sql');
+const { askForbiddenColumns, checkParsed } = require('../runtime/sql/ask');
 const { createAskQueue } = require('../runtime/knowledge/ask-queue');
 const { varDirFor } = require('../runtime/knowledge/store');
 
@@ -53,14 +59,23 @@ const RULE_ID = /^QR-\d{3}$/;
 const QUEUE_ID = /^[0-9a-f]{16}$/;
 const PROFILE_ERRORS = new Set(['PROFILE_INVALID', 'PROFILE_NOT_GOVERNING']);
 
-// Every table's columns in the data (the same catalogue read travelMatrix uses).
-const COLUMNS_SQL = [
-  'SELECT table_name, column_name',
-  'FROM information_schema.columns',
-  'WHERE table_catalog = current_database() AND table_schema = current_schema()',
-].join('\n');
-// DuckDB's own parse of a SQL text, as JSON. It parses only: nothing runs.
-const PARSE_SQL = 'SELECT json_serialize_sql(CAST($sql AS VARCHAR)) AS parsed';
+// Every table's columns in the data, and DuckDB's own parse of a SQL text
+// (it parses only: nothing runs): COLUMNS_SQL and PARSE_SQL, shared with
+// Ask's connection (kit/runtime/data/ask).
+
+// Ask's guard on a rule's SQL (Story 19.7): the tokenizer with Ask's
+// forbidden columns and allowed tables, then DuckDB's parse. A list of
+// problems, empty when both pass.
+function askGuardProblems(sql, tree, allowed, dataColumns, profile) {
+  const verdict = sqlGuard.checkSql(sql, {
+    forbiddenColumns: askForbiddenColumns(allowed, dataColumns, sqlGuard.forbiddenColumnsOf(profile)),
+    allowedTables: Object.keys(allowed),
+    knownTables: [...dataColumns.keys()].filter((t) => /^[a-z_][a-z0-9_]*$/.test(t)),
+  });
+  if (!verdict.ok) return [`Ask's guard refuses the SQL (${verdict.rule}): ${verdict.detail}`];
+  const parsed = checkParsed(tree, { allowedTables: allowed, dataColumns });
+  return parsed.ok ? [] : [`Ask's guard refuses DuckDB's parse of the SQL (${parsed.rule}): ${parsed.detail}`];
+}
 
 function parseArgs(argv) {
   const args = { cmd: null, id: null, from: null, rows: false };
@@ -134,7 +149,7 @@ async function checkRule(id, { profile, file, env, rows: showRows }) {
   }
   const target = rules.targetOf(rule, loadTruths(contextDir));
   if (target.error) return fail(target.error);
-  const allow = rules.allowListFor(profile, contextDir);
+  const allow = rules.allowListFor(profile);
   if (!allow.tables) return fail(allow.problem);
 
   const where = dataPathFor(profile, env);
@@ -157,6 +172,7 @@ async function checkRule(id, { profile, file, env, rows: showRows }) {
       return fail('DuckDB could not parse the SQL');
     }
     const problems = rules.readsProblems(rule, tree, allow.tables, dataColumns);
+    if (!problems.length) problems.push(...askGuardProblems(rule.sql, tree, allow.tables, dataColumns, profile));
     if (problems.length) return fail(problems.join('; '));
     const result = await data.run(rule.sql, { ...rule.check.params }, { declared: Object.keys(rule.params) });
     const figure = rules.figureOf(rule, result);

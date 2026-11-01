@@ -84,8 +84,8 @@ SQLsmith's signed canon of reviewed queries: what Ask may run on a hub that sees
 Each rule is a fenced block with the info string `query-rule`, holding YAML. `npm run verify` (and
 the end-of-turn hook) runs each as the check `query-rule:<id>` (`npm run query-rules -- --check
 <id>`): it checks every table and column the SQL names (DuckDB's own parse) against the rule's
-`reads` and the allow-list (`ask-tables.yml` beside this file, until the profile's `ask` block
-holds it), runs the SQL with `check.params`, and passes when the figure equals the linked signed
+`reads` and the allow-list (the profile's `ask` block, `ask.tables`), checks it with Ask's own
+query guard, runs the SQL with `check.params`, and passes when the figure equals the linked signed
 truth's `expect` (or `check.expect`). A rule linked to a pending truth can't pass. Ask uses only
 signed rules: `status: approved`, `signed_off` a date, `signed_off_by` a named client person, and
 the last check passed. The AI's context never holds these blocks.

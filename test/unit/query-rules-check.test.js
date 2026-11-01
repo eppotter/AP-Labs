@@ -76,15 +76,21 @@ test.before(async () => {
 });
 test.after(() => { if (DB) fs.rmSync(path.dirname(DB), { recursive: true, force: true }); });
 
-// A governed folder: profile.yml, context/data.md with the truths and the given
-// rules, and context/ask-tables.yml (unless allow is null).
+// The profile, with the allow-list as its ask block (Story 19.7) unless allow
+// is null.
+function profileText(allow) {
+  if (!allow) return PROFILE;
+  return `${PROFILE}resources:\n  - { key: ASK_DATA, label: Ask data, admin_grantable: false }\n${YAML.stringify({ ask: allow })}`;
+}
+
+// A governed folder: profile.yml and context/data.md with the truths and the
+// given rules.
 function repo(t, rules, { allow = ALLOW } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-qr-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'context'));
-  fs.writeFileSync(path.join(root, 'profile.yml'), PROFILE);
+  fs.writeFileSync(path.join(root, 'profile.yml'), profileText(allow));
   fs.writeFileSync(path.join(root, 'context', 'data.md'), `# Data\n\n${TRUTHS}\n## Query rules\n\n${rules.map(block).join('\n')}`);
-  if (allow) fs.writeFileSync(path.join(root, 'context', 'ask-tables.yml'), YAML.stringify(allow));
   const env = {
     APLABS_GOVERNING_PROFILE: path.join(root, 'profile.yml'), APLABS_DATA_PATH: DB, APLABS_VAR_DIR: path.join(root, 'var'),
   };
@@ -224,14 +230,27 @@ test('a CTE named like a data table, a qualified table and a wildcard each fail'
   }
 });
 
-test('the profile\'s forbidden columns still apply, even when the allow-list and reads name one', async (t) => {
+test('an allow-list naming one of the profile\'s forbidden columns is refused with the profile', async (t) => {
+  // Story 19.7: the profile's ask block may not allow a forbidden column, so
+  // the profile itself is refused before any rule runs.
   const allow = { tables: { ...ALLOW.tables, shops: [...ALLOW.tables.shops, 'postal_code'] } };
   const sql = 'SELECT COUNT(s.shop_id) AS n FROM shops s WHERE s.postal_code = $code';
   const r = await check(t, [rule({
     sql, params: { code: { type: 'enum', values: ['10001'] } }, reads: { shops: ['shop_id', 'postal_code'] }, check: { expect: 1, params: { code: '10001' } },
   })], 'QR-001', { allow });
+  assert.equal(r.code, 2);
+  assert.match(r.err, /allows postal_code, which is in sql\.forbidden_columns/);
+});
+
+test('a rule that passes its reads check still fails when Ask\'s guard refuses its SQL', async (t) => {
+  // Story 19.7: the verify check also runs Ask's guard, so a signed rule is
+  // one Ask's connection will run. The clock is one thing only Ask refuses.
+  const sql = 'SELECT COUNT(s.shop_id) AS n FROM shops s WHERE s.opened_on <= CAST(now() AS DATE)';
+  const r = await check(t, [rule({
+    sql, params: {}, reads: { shops: ['shop_id', 'opened_on'] }, check: { expect: 3, params: {} },
+  })]);
   assert.equal(r.code, 1);
-  assert.match(r.out, /forbidden_column/);
+  assert.match(r.out, /Ask's guard refuses the SQL \(clock_function\)/);
 });
 
 test('no allow-list, no built data, a malformed or missing rule: each fails closed', async (t) => {

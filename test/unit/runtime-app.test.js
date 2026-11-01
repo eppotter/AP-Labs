@@ -15,6 +15,7 @@ const { EventEmitter } = require('node:events');
 const { main, installCrashHandlers, shutdown } = require('../../kit/runtime/app');
 const { createLog } = require('../../kit/runtime/log');
 const { FakeSlackApp } = require('../fixtures/fake-slack');
+const { build } = require('../../kit/fixture/build');
 
 const ROOT = path.join(__dirname, '../..');
 const PROFILE = path.join(__dirname, '../fixtures/runtime/profile.yml');
@@ -238,6 +239,60 @@ test('refuses to start when APLABS_DATA_PATH is not absolute', async () => {
   const { code, entries } = await boot(env({ APLABS_DATA_PATH: 'var/x.duckdb' }));
   assert.equal(code, 1);
   assert.ok(entries[0].problems.includes('APLABS_DATA_PATH must be an absolute path'));
+});
+
+// --- Story 19.7: Ask's connection at boot (plan brightside-v1, D10) ----------------------
+
+// The runtime profile plus ASK_DATA and an ask block, over a build of the
+// made-up test/fixtures/ask-guard data.
+async function askBootSetup(t, tables) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aplabs-app-ask-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'askguard.duckdb');
+  await build({ fixtureDir: path.join(__dirname, '../fixtures/ask-guard'), out: file });
+  const profile = path.join(dir, 'profile.yml');
+  const ask = Object.entries(tables).map(([table, cols]) => `    ${table}: [${cols.join(', ')}]`).join('\n');
+  fs.writeFileSync(profile, `${fs.readFileSync(PROFILE, 'utf8')}  - { id: ada, name: Ada, role: member, grants: [ASK_DATA] }\n`
+    .replace('resources:\n', 'resources:\n  - { key: ASK_DATA, label: Ask data, admin_grantable: false }\n')
+    + `ask:\n  tables:\n${ask}\n`);
+  return { file, profile };
+}
+
+test('ask: boot refuses an ask block naming a table or column the data does not have (properties.zone_id)', async (t) => {
+  const { file, profile } = await askBootSetup(t, { zones: ['zone_id', 'name'], properties: ['property_id', 'city', 'zone_id'] });
+  const { code, entries } = await boot(env({ APLABS_PROFILE: profile, APLABS_DATA_PATH: file }), { data: undefined });
+  assert.equal(code, 1);
+  const refusal = entries.find((e) => e.msg === 'refusing to start');
+  assert.deepEqual(refusal.problems, ['profile: ask.tables names properties.zone_id, which the data does not have']);
+});
+
+test('ask: boot refuses an allowed column whose bare name a hidden one shares', async (t) => {
+  const { file, profile } = await askBootSetup(t, { zones: ['zone_id', 'name'], clients: ['client_id'] });
+  const { code, entries } = await boot(env({ APLABS_PROFILE: profile, APLABS_DATA_PATH: file }), { data: undefined });
+  assert.equal(code, 1);
+  assert.match(entries.find((e) => e.msg === 'refusing to start').problems[0], /allows zones\.zone_id, but clients\.zone_id is hidden/);
+});
+
+test('ask: a fitting ask block starts, with Ask\'s connection open; shutdown closes it', async (t) => {
+  const { file, profile } = await askBootSetup(t, { zones: ['zone_id', 'name'], clients: ['client_id', 'zone_id'] });
+  const res = await boot(env({ APLABS_PROFILE: profile, APLABS_DATA_PATH: file }), { data: undefined });
+  assert.equal(res.code, 0);
+  assert.equal(res.askData.describe().available, true);
+  const r = await res.askData.run('SELECT COUNT(c.client_id) AS n FROM clients c');
+  assert.deepEqual(r.rows, [{ n: '3' }]);
+  await shutdown({ ...res, exit: () => {} }, 'SIGTERM');
+  assert.equal(res.askData.describe().available, false);
+});
+
+test('ask: data that can\'t be read yet is logged and the app starts; no ask block, no Ask connection', async (t) => {
+  const { profile } = await askBootSetup(t, { zones: ['zone_id', 'name'] });
+  const missing = path.join(os.tmpdir(), 'aplabs-no-such-ask.duckdb');
+  const res = await boot(env({ APLABS_PROFILE: profile, APLABS_DATA_PATH: missing }), { data: undefined });
+  assert.equal(res.code, 0);
+  assert.ok(res.entries.some((e) => e.msg === 'Ask queries unavailable; starting anyway' && e.reason === 'the data file does not exist'));
+  res.data.close();
+  const plain = await boot(env());
+  assert.equal(plain.askData, null);
 });
 
 // --- Plan motherduck-read: a motherduck profile, with a fake connection ------

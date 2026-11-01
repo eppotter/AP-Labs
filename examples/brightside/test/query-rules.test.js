@@ -3,7 +3,7 @@
 // Plan brightside-v1, Story 19.6 (D11): Brightside's seven seed query rules,
 // QR-000 to QR-006, in profiles/brightside/context/data.md. Each restates a
 // signed MET rule or Terminology term, is linked to a signed truth, reads only
-// inside the allow-list (context/ask-tables.yml until Story 19.7), and was
+// inside the allow-list (the profile's ask block, Story 19.7), and was
 // signed by the plan's gate approval (Ely Potter, 2026-10-31, gate item 8).
 // On a temporary build of the fixture every rule's verify check passes, and
 // QR-006's five zones sum to QR-001's 815.
@@ -21,6 +21,8 @@ const { build } = require('../../../kit/fixture/build');
 const { loadRules, allowListFor, readsOutside } = require('../../../kit/lib/query-rules');
 const { loadTruths } = require('../../../kit/lib/truths');
 const { main } = require('../../../kit/query-rules/cli');
+const { loadProfile } = require('../../../kit/lib/profile');
+const { createAskData } = require('../../../kit/runtime/data/ask');
 
 const ROOT = path.join(__dirname, '../../..');
 const PROFILE = path.join(ROOT, 'profiles/brightside/profile.yml');
@@ -80,12 +82,10 @@ test('each metric rule restates its MET rule and is checked against a signed tru
   assert.ok(!/status\s*=\s*'active'/.test(entries[1].rule.sql), 'QR-001 never uses status = active');
 });
 
-test('the allow-list holds no person, contact, staff or coordinate column, and every rule reads inside it', () => {
-  const allow = allowListFor({}, CONTEXT);
-  assert.equal(allow.source, 'ask-tables.yml');
-  for (const hidden of ['staff', 'pay_rates', 'timesheets', 'crew_memberships', 'staff_absences', 'depots']) assert.ok(!allow.tables[hidden], hidden);
-  const columns = Object.values(allow.tables).flat();
-  for (const c of columns) assert.ok(!/^(first_name|last_name|email|phone|street_address|postal_code|access_method|labour_minutes)$|geo_|staff/.test(c), c);
+test('the allow-list is the profile\'s ask block, and every rule reads inside it', () => {
+  const allow = allowListFor(loadProfile(PROFILE));
+  assert.equal(allow.source, 'profile ask.tables');
+  assert.ok(!fs.existsSync(path.join(CONTEXT, 'ask-tables.yml')), 'Story 19.7 deleted the bridge file');
   for (const e of entries.slice(1)) assert.deepEqual(readsOutside(e.rule, allow.tables), [], e.id);
 });
 
@@ -102,5 +102,22 @@ test('on the fixture every seed rule\'s verify check passes; QR-006\'s five zone
       // --rows prints aggregates only: the zone id and name are hidden.
       for (const r of rows) assert.deepEqual([r.zone_id, r.zone], ['[hidden]', '[hidden]']);
     }
+  }
+});
+
+// Story 19.7: boot's check passes on the fixture (every allowed table and column
+// exists, no bare-name clash), and Ask's connection answers the demo's paid revenue
+// question with the reviewed figure, $350,186.40 (QR-003's SQL with its check params).
+test('Ask\'s connection opens on the fixture and runs QR-003 to the signed figure', async () => {
+  const profile = loadProfile(PROFILE);
+  const ask = createAskData({ file: FIXTURE, profile });
+  try {
+    await ask.open();
+    const qr3 = entries.find((e) => e.id === 'QR-003').rule;
+    const r = await ask.run(qr3.sql, qr3.check.params, { declared: Object.keys(qr3.params) });
+    assert.deepEqual(r.rows, [{ paid_cents: '35018640' }]);
+    assert.deepEqual(r.tables, ['payments']);
+  } finally {
+    ask.close();
   }
 });
