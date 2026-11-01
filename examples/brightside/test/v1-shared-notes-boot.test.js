@@ -35,6 +35,7 @@ test('the v1 hub (notes shared with v0; route skills, Ask, Request a tool, Add c
     ['v1-ask', 'ask', 'ASK'],
     ['v1-build-request', 'build-request', 'BUILD_REQUEST'],
     ['v1-data-sources', 'data-sources', 'DATA_SOURCES'],
+    ['v1-route-add-stop', 'routing-map', 'ROUTING_ALL_CREWS'],
     ['v1-route-cancellation', 'routing-map', 'ROUTING_ALL_CREWS'],
     ['v1-route-crew-out', 'routing-map', 'ROUTING_ALL_CREWS'],
     ['v1-route-map', 'routing-map', 'ROUTING_ALL_CREWS'],

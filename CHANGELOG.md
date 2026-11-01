@@ -27,6 +27,7 @@ A fork records the release it is built from in `.aplabs/template-version`
 - CI runs every job on every push to `main` again.
 - Request a tool posts from any hub, including one that sees business context or data (plan brightside-v1, D12, gate item 7; on by default). Its summary call still sends no business context (`withContext: false`, now asserted at call time), so the post holds only the person's previewed words, the AI's summary of them, the hub's name and the requester. Before, a hub that saw context or data said "not available on this hub yet".
 - Ask points a route question to a routing-map tool on the hub (Run), once the hub's data and rules are set up, and Data sources says how many rule cards are approved.
+- Add a stop (plan brightside-v1, D8): a routing-map module with `screen: "add-stop"` is Plan a route's editor with **Add a stop**: search a client of the crew's zone, pick a length and a start window, and the engine's new pure `insertStop` puts the stop at its cheapest place in the day (marked ➕, nothing saved) and names the two cheapest other crews of the zone. Off unless a manifest names the screen; its adapter also needs `clients()` and `addStop()`. The client search is Slack's `external_select`: the hub now registers one options (`block_suggestion`) listener, which answers no options unless the person still has access, and answers within Slack's 3 seconds.
 
 ### What a fork must do
 

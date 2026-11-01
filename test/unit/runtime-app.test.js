@@ -52,11 +52,11 @@ test('starts in Socket Mode with both tokens, no signing secret, and the redacti
   const { code, app } = await boot(env());
   assert.equal(code, 0);
   assert.equal(app.started, true);
-  assert.equal(app.options.socketMode, true);
-  assert.equal(app.options.token, BOT);
-  assert.equal(app.options.appToken, APP);
-  assert.equal(app.options.signingSecret, undefined);
-  assert.equal(typeof app.options.logger.info, 'function');
+  assert.equal(app.appOptions.socketMode, true);
+  assert.equal(app.appOptions.token, BOT);
+  assert.equal(app.appOptions.appToken, APP);
+  assert.equal(app.appOptions.signingSecret, undefined);
+  assert.equal(typeof app.appOptions.logger.info, 'function');
 });
 
 test('logs one startup line naming the client, the profile path and "single instance"', async () => {

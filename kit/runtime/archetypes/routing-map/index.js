@@ -93,9 +93,20 @@
 // with #n) or crewOut() (Crew out); unready says which is missing. Their
 // result is drawn here with the draw's what: Gap fill or Route change on the
 // what-if input, with the screen's own head in place of the view controls.
-// Screen "add-stop" (Story 19.5) is in the schema but not built: unready
-// always, so it never opens. Their own actions (visit, fill, again, out)
-// are refused on the other screens, and the other screens' on them.
+// Their own actions (visit, fill, again, out) are refused on the other
+// screens, and the other screens' on them.
+//
+// Add a stop (Story 19.5, plan brightside-v1 D8): a module with screen
+// "add-stop" is Plan a route's editor with Add a stop on its list
+// (./addstop.js), on the same audience, sessions, hub listener and map
+// lifecycle. Its adapter also gives addStop() and clients(); unready says
+// which is missing (and, as for the editor, when there is no Office). Its
+// own actions (add, client, length, window, place, back, remove) are refused
+// on the other screens. Its client search is suggest(): the hub's
+// block_suggestion listener calls it with the view the search came from;
+// the session must be this person's and this view's, the module must still
+// be theirs to open (resolve) and the audience must still give them a scope,
+// all before any read, or the answer is no options.
 //
 // Exits: Back and Close (view_closed, else the sweep: the hub), an error (a
 // plain message in the view, with Back), an expired trigger (the hub's
@@ -119,15 +130,19 @@ const {
 const { createSessions, STATUS } = require('./session');
 const { createEditor, SCREEN: EDITOR, ACTIONS: EDITOR_ACTIONS } = require('./editor');
 const { createWhatIf, SCREENS: WHATIF_SCREENS, ACTIONS: WHATIF_ACTIONS } = require('./whatif');
+const { createAddStop, SCREEN: ADD_STOP, ACTIONS: ADD_STOP_ACTIONS } = require('./addstop');
 
 const ARCHETYPE = 'routing-map';
 const VIEW_ACTIONS = Object.freeze(['view', 'day', 'crew', 'zone']);
-const ACTIONS = Object.freeze([...new Set([...VIEW_ACTIONS, ...EDITOR_ACTIONS, ...Object.values(WHATIF_ACTIONS).flat()])]);
-const ACTION_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|visit|fill|again|out)$/;
+const ACTIONS = Object.freeze([...new Set([...VIEW_ACTIONS, ...EDITOR_ACTIONS, ...Object.values(WHATIF_ACTIONS).flat(), ...ADD_STOP_ACTIONS])]);
+const ACTION_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|visit|fill|again|out|add|client|length|window|place|back|remove)$/;
 // Retired action ids (Story 15.16): answered with the expired words only.
 const RETIRED_PATTERN = /^routing-map:(up|down)$/;
 // What the hub listens for: every action, and the retired ones.
-const LISTEN_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|visit|fill|fill-[1-5]|again|out|up|down)$/;
+const LISTEN_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|visit|fill|fill-[1-5]|again|out|add|client|length|window|place|back|remove|up|down)$/;
+// Add a stop's client search (block_suggestion, Story 19.5): the one
+// external_select, heard by the hub's options listener.
+const SEARCH_ACTION = 'routing-map:client';
 // Customer cancellation's Fill with #n buttons share one actions block,
 // where Slack needs each action_id unique: fill-1 to fill-5 are fill.
 const FILL_ID = /^routing-map:fill-[1-5]$/;
@@ -136,10 +151,11 @@ const SCREEN_ACTIONS = Object.freeze({
   views: new Set(VIEW_ACTIONS),
   [EDITOR]: new Set(EDITOR_ACTIONS),
   ...Object.fromEntries(WHATIF_SCREENS.map((sc) => [sc, new Set(WHATIF_ACTIONS[sc])])),
+  [ADD_STOP]: new Set(ADD_STOP_ACTIONS),
 });
-const EDITOR_ONLY = new Set(EDITOR_ACTIONS.filter((a) => !VIEW_ACTIONS.includes(a)));
-// Add a stop (Story 19.5) is named in the schema but not built yet: it never opens.
-const ADD_STOP = 'add-stop';
+const EDITOR_ONLY = new Set([...EDITOR_ACTIONS, ...ADD_STOP_ACTIONS].filter((a) => !VIEW_ACTIONS.includes(a)));
+// The screens that speak of a plan, not a map, when it has expired.
+const PLAN_SCREENS = new Set([EDITOR, ADD_STOP]);
 const screenOf = (mod) => {
   const screen = mod && mod.screen;
   if (screen === EDITOR || screen === ADD_STOP || WHATIF_SCREENS.includes(screen)) return screen;
@@ -576,12 +592,17 @@ function createRoutingMap({
     failureText: (...args) => failureText(...args),
   });
 
+  // Add a stop (Story 19.5).
+  const addStop = createAddStop({
+    log, sessions, adapterFor, editor,
+  });
+
   // Why this module cannot open here (a fixed reason), or false.
   const unready = (mod) => {
     const screen = screenOf(mod);
     if (screen === EDITOR) return editor.unready(mod);
     if (WHATIF_SCREENS.includes(screen)) return whatif.unready(mod);
-    if (screen === ADD_STOP) return 'the add-stop screen is not built yet';
+    if (screen === ADD_STOP) return addStop.unready(mod);
     return false;
   };
 
@@ -616,6 +637,10 @@ function createRoutingMap({
       await whatif.open({ mod, s, show });
       return;
     }
+    if (screen === ADD_STOP) {
+      await addStop.open({ mod, s, show });
+      return;
+    }
     await draw({
       mod, s, number, show, showMap, recheck: recheckFor(mod, person, resolve),
     });
@@ -636,7 +661,7 @@ function createRoutingMap({
     const title = from && from.title && typeof from.title.text === 'string' && from.title.text ? escapeText(from.title.text) : 'it';
     if (found.status === STATUS.EXPIRED) {
       log.info('routing map click refused', { action: which, reason: 'expired' });
-      const editing = found.screen ? found.screen === EDITOR : (old !== null || EDITOR_ONLY.has(which));
+      const editing = found.screen ? PLAN_SCREENS.has(found.screen) : (old !== null || EDITOR_ONLY.has(which));
       await show({ text: editing ? ROUTE_WORDS.expired(title) : MAP_WORDS.expired(title) });
       return;
     }
@@ -652,7 +677,7 @@ function createRoutingMap({
       // A retired ↑/↓ on a live session (a crafted click): the plan ends.
       log.info('routing map click refused', { action: which, reason: 'retired' });
       sessions.drop(s.id);
-      await show({ text: s.screen === EDITOR ? ROUTE_WORDS.expired(title) : MAP_WORDS.expired(title) });
+      await show({ text: PLAN_SCREENS.has(s.screen) ? ROUTE_WORDS.expired(title) : MAP_WORDS.expired(title) });
       return;
     }
     // A screen never takes another screen's action (AD-R26).
@@ -689,6 +714,12 @@ function createRoutingMap({
       });
       return;
     }
+    if (s.screen === ADD_STOP) {
+      await addStop.click({
+        which, action, s, mod, show, showMap, showList, recheck: recheckFor(mod, person, resolve),
+      });
+      return;
+    }
     let refusedDay = false;
     if (which === 'view') {
       const v = action && action.selected_option && action.selected_option.value;
@@ -715,11 +746,46 @@ function createRoutingMap({
     });
   }
 
+  // Add a stop's client search (block_suggestion): the options to answer,
+  // [] for anything refused. Every check comes before any read: the session
+  // is this person's and this view's (expired, someone else's or another
+  // view's: none), the module is still theirs to open here (resolve: the
+  // hub's grant and environment check), and the audience still gives them a
+  // scope (AD-R17). Logged by reason only, never the text searched.
+  async function suggest({
+    actionId, value, from, person, resolve,
+  }) {
+    if (actionId !== SEARCH_ACTION) return [];
+    const viewId = from && typeof from.id === 'string' ? from.id : null;
+    const found = sessions.lookup(from && from.private_metadata, { userId: person.id, viewId });
+    if (found.status !== STATUS.OK) {
+      log.info('routing map search refused', { reason: found.status === STATUS.EXPIRED ? 'expired' : 'not yours' });
+      return [];
+    }
+    const s = found.session;
+    if (s.screen !== ADD_STOP) {
+      log.warn('routing map search refused', { reason: 'another screen' });
+      return [];
+    }
+    const allowed = resolve(s.moduleId);
+    if (!allowed || !allowed.mod) {
+      log.warn('routing map search refused', { reason: 'no access' });
+      return [];
+    }
+    const decided = audience.scopeFor(profile, person.user);
+    if (!decided.scope) {
+      log.warn('routing map search refused', { reason: 'no access' });
+      return [];
+    }
+    s.scope = decided.scope;
+    return addStop.suggest({ mod: allowed.mod, s, value });
+  }
+
   return {
-    open, click, unready, closed: (who) => sessions.closed(who), sessions,
+    open, click, suggest, unready, closed: (who) => sessions.closed(who), sessions,
   };
 }
 
 module.exports = {
-  createRoutingMap, controls, dayRange, isRealDate, checkLabels, MAP_WORDS, ACTION_PATTERN, RETIRED_PATTERN, LISTEN_PATTERN, ACTIONS, ARCHETYPE, SCREEN_ACTIONS,
+  createRoutingMap, controls, dayRange, isRealDate, checkLabels, MAP_WORDS, ACTION_PATTERN, RETIRED_PATTERN, LISTEN_PATTERN, SEARCH_ACTION, ACTIONS, ARCHETYPE, SCREEN_ACTIONS,
 };

@@ -117,7 +117,7 @@ A module names its screen in `manifest.json`:
 |---|---|---|
 | `cancellation` | **Customer cancellation:** pick a crew and day, **Show visits**, then the visit that cancels (a select of "hh:mm · client name", "(cancelled)" when the data already shows it). The Gap fill view for the gap it leaves, the top five with reasons, and **Fill with #1** to **#5**: Plan a route's list and map for the day with that visit moved up into the gap ("↩️ Moved up from <day>"). | `visits()`, `gapFor()`, and what Plan a route needs (`route()` taking `fill`, and `routing.depot` in the profile) |
 | `crew-out` | **Crew out:** pick a day and crew, **Mark out for the day**: the Route change view for the crew's zone with that crew out. A crew the data already shows out says so above the same view. | `crewOut()` |
-| `add-stop` | Add a stop (Story 19.5): named in the schema, not built yet. It never opens. | — |
+| `add-stop` | **Add a stop** (Story 19.5): see the next section. | `addStop()`, `clients()`, and what Plan a route needs |
 
 | Function | Returns |
 |---|---|
@@ -130,7 +130,7 @@ Each is scoped like `route()`: a crew lead's crew comes from `scope`, whatever `
 
 **Ways out, each tested:** Back and the X (the map files go; a draw still running shows nothing), **Change crew or day** (from every step, the Fill result too), **Pick another visit**, an error (a plain message, Back), an expired window, an expired trigger, no visits, a crew not working, access withdrawn, a click from another person's window, and the map not ready (Why?).
 
-**Where they run:** dev only until their live check passes, then a one-line PR each turns on production (plan brightside-v1 gate item 5). On `/brightside-v1` (Story 19.2) they are the folders `v1-route-cancellation` and `v1-route-crew-out`, beside `v1-route-optimize` (Optimize a route, the route editor) and `v1-route-map` (Route map), all four dev only, with the same key and adapter as `/brightside`'s; the `/brightside` copies come with Story 20.3.
+**Where they run:** dev only until their live check passes, then a one-line PR each turns on production (plan brightside-v1 gate item 5). On `/brightside-v1` (Story 19.2) they are the folders `v1-route-cancellation` and `v1-route-crew-out`, beside `v1-route-optimize` (Optimize a route, the route editor), `v1-route-add-stop` (Add a stop, Story 19.5) and `v1-route-map` (Route map), all five dev only, with the same key and adapter as `/brightside`'s; the `/brightside` copies come with Story 20.3.
 
 ### Live check (Ely or Steven, dev Slack)
 
@@ -141,3 +141,37 @@ Each is scoped like `route()`: a crew lead's crew comes from `scope`, whatever `
 3. **Crew out:** **2026-10-03**, crew 7, **Mark out for the day**: "is out on … in the data"; 5 visits move in the zone, 1 is recommended for another zone, none to rebook.
 4. **Crew out** on a crew that is working that day: "What if … is out…?" and its stops placed.
 5. **Ways out:** **Change crew or day** from each result, **Back**, the **X**; the terminal shows the files deleted.
+
+## Add a stop (Story 19.5)
+
+Plan a route's editor with one more button (`kit/runtime/archetypes/routing-map/addstop.js`, plan brightside-v1 D8). Same audience, sessions, map files and 20-minute deletion. Suggestions only: nothing is saved or booked.
+
+1. Pick a crew and day, **Show stops**: Plan a route's list and map, with **Add a stop** between **Reset to booked** and **Change crew or day**.
+2. **Add a stop** opens a form where the buttons were (the list and the map stay; the ⋯ menus hide): a client search, a length (30 minutes to 4 hours, steps of 15; 1 hour first) and a start window (Any time, Morning, Afternoon).
+3. The client search is a Slack `external_select`. After two letters, Slack asks the app for options (`block_suggestion`): at most 20 clients of the crew's zone (`clients.zone_id`) whose name holds the text, one per property, as "name · city". A property with a visit booked that day is never offered. Never an address, postal code or position. The options carry tokens, not ids.
+4. **Add**: the engine's `insertStop` puts the stop at the cheapest place in the order shown (the AD-R5 tuple: hard breaks, soft penalty, drive, past the aim finish; the first of equal places). It joins the list marked "➕ Added stop: a suggestion only, nothing is booked", and the map redraws. When no place keeps every hard rule, it goes last with "⚠ No place on this crew keeps every hard rule, so it is placed last". A dispatcher also sees the two cheapest other crews of the zone that could take it; a crew lead sees none.
+5. **Remove added stop** takes it out again. **Optimize** and the ⋯ moves work with it in the day; **Reset to booked** keeps it where `insertStop` put it.
+
+| Function | Returns |
+|---|---|
+| `clients({ day, crewId, query, scope })` | `{ clients: [{ node, clientName, city }] }`: the search's clients, at most 20 (Brightside: `clients.sql`). |
+| `addStop({ day, crewId, depot, scope, node, minutes, window })` | `{ input, travel, distance, stop }`: the crew's zone from the Office (a crew lead: only their crew), and the new stop with its window as a hard time-of-day rule. It checks the client again (in the zone, no visit that day) and refuses one that fails (`unknown_client`). |
+
+Both are scoped like `route()`. A module whose adapter lacks one shows "not available" and the menu row shows **Why?**.
+
+**Who may search:** the hub's options listener answers no options unless the search comes from this person's own open Add a stop form, the module is still theirs to open here (grant and environment), and the routing audience still gives them a scope, all checked before any read. A search that fails, or takes longer than 2.5 seconds (Slack waits 3), answers no options too.
+
+**Ways out, each tested:** **Back to the day** (closes the form), Back and the X (the files go; an Add still working shows nothing), no client found (Slack shows no results), the search failing or too slow (no results), a client that can't be added (the form says why), the day's bookings changed under the form (the form says so), the data unavailable on Add (the form says so), a stop added then removed, an expired window and an expired trigger, access withdrawn (a click shows the refusal; a search gets no options), a search or click from someone else's window, and the map not ready (Why?).
+
+**Where it runs:** dev only, as `v1-route-add-stop` on `/brightside-v1` (the `/brightside` copy comes with Story 20.3).
+
+### Live check (Ely or Steven, dev Slack)
+
+**Untested until you run it.** Run on the local fixture (`npm run fixture:build`).
+
+1. `/brightside-v1`, **Run** on **Add a stop**: crew 4, **2026-10-01**, **Show stops**: seven stops and the map.
+2. **Add a stop**: the form shows where the buttons were. Type two letters of a client's name: up to 20 names of crew 4's zone, each "name · city". **This is the first test of Slack's options load over Socket Mode.** If no list appears, note what Slack shows.
+3. Pick one, 1 h, **Afternoon**, **Add**: the stop joins with ➕ after 12:00, the map redraws, and a line names the other crews of the zone that could take it (or says none has room).
+4. **Remove added stop**: the day as before.
+5. **Ways out:** **Add a stop** then **Back to the day**; **Back**; the **X**; the terminal shows the files deleted.
+

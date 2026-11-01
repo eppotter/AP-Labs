@@ -152,6 +152,28 @@
 //     and digits, no dot: Slack takes extensions, so "application/pdf" or
 //     ".pdf" is unknown).
 //
+// Story 19.5 (Add a stop) adds the external_select and its options load
+// (docs.slack.dev/reference/block-kit/block-elements/select-menu-element
+// #external_select, .../interactivity/handling-user-interaction
+// #block_suggestion), each refused as Slack refuses it:
+//   - an external_select (invalid_blocks) holding options or option_groups
+//     (Slack asks the app for them), a placeholder not plain_text of 1 to 150
+//     characters, a min_query_length not a whole number of 0 or more, or an
+//     initial_option whose text is not plain_text of 1 to 75 characters or
+//     whose value is missing or over 150; outside an actions, section or
+//     input block, like any select.
+//   - options(constraint, fn) registers a block_suggestion listener, as in
+//     Bolt: a string or RegExp is the action_id; an object may name
+//     action_id and block_id. dispatchOptions(action_id, { user, view, value,
+//     block_id }) runs every matching listener with Bolt's arguments (body
+//     and payload: { type: 'block_suggestion', user, action_id, block_id,
+//     value, view, container }) and an ack whose payload is recorded in
+//     this.optionAcks. The ack throws (invalid_options) on a payload Slack
+//     would refuse: not exactly one of options and option_groups, more than
+//     100 options, an option whose text is not plain_text of 1 to 75
+//     characters or whose value is missing or over 150; and on a second ack
+//     for the same request. Returns how many listeners ran.
+//
 // new FakeSlackApp({ views: true }) adds client.views: open, push and update
 // record { method, args } in this.views and answer with a view id and a fresh
 // hash; set this.viewsFail[method] to an error to make that call throw.
@@ -186,10 +208,14 @@ const { EventEmitter } = require('node:events');
 
 class FakeSlackApp {
   constructor(options) {
-    this.options = options;
+    // What the app was made with (Bolt's App options). Not this.options:
+    // that is Bolt's options() listener method (Story 19.5).
+    this.appOptions = options;
     this.messageListeners = [];
     this.commandListeners = new Map();
     this.actionListeners = [];
+    this.optionsListeners = [];
+    this.optionAcks = [];
     this.viewListeners = [];
     this.viewAcks = [];
     this.eventListeners = new Map();
@@ -456,6 +482,34 @@ class FakeSlackApp {
 
   view(callbackId, fn) { this.viewListeners.push({ callbackId, fn }); }
 
+  options(constraint, fn) { this.optionsListeners.push({ constraint, fn }); }
+
+  // A block_suggestion (Story 19.5): the person typed value into an
+  // external_select in view. Returns how many listeners ran.
+  async dispatchOptions(action_id, {
+    user = { id: 'U1', name: 'u1' }, view, value = '', block_id = 'block',
+  } = {}) {
+    const body = {
+      type: 'block_suggestion', user, action_id, block_id, value, ...(view ? { view, container: { type: 'view', view_id: view.id } } : { container: {} }),
+    };
+    const matching = this.optionsListeners.filter(({ constraint }) => matchesOptions(constraint, action_id, block_id));
+    for (const { fn } of matching) {
+      let acked = 0;
+      const ack = async (payload) => {
+        acked += 1;
+        this.acks += 1;
+        if (acked > 1) throw slackError('invalid_options', 'a request is acked once');
+        this.optionAcks.push(payload);
+        const bad = invalidOptionsAck(payload);
+        if (bad) throw slackError('invalid_options', bad);
+      };
+      await fn({
+        options: body, payload: body, body, ack, client: this.client,
+      });
+    }
+    return matching.length;
+  }
+
   // Returns how many listeners ran.
   async dispatchView(callback_id, { user = { id: 'U1', name: 'u1' }, view = {} } = {}) {
     const full = { type: 'modal', callback_id, ...view };
@@ -494,7 +548,7 @@ class FakeSlackApp {
   error(fn) { this.errorHandler = fn; }
 
   async start() {
-    if (this.options.failStart) throw this.options.failStart;
+    if (this.appOptions && this.appOptions.failStart) throw this.appOptions.failStart;
     this.started = true;
     if (this.connectOnStart) this.connect();
   }
@@ -578,7 +632,7 @@ const MAX_BLOCK_ID = 255;
 const MAX_BUTTON_TEXT = 75;
 const MAX_BUTTON_VALUE = 2000;
 const MAX_ACCESSIBILITY_LABEL = 75;
-const SELECTS = new Set(['static_select', 'datepicker']);
+const SELECTS = new Set(['static_select', 'external_select', 'datepicker']);
 const MIN_OVERFLOW_OPTIONS = 2;
 const MAX_OVERFLOW_OPTIONS = 5;
 const MAX_OPTION_VALUE = 150;
@@ -697,10 +751,56 @@ function invalidElement(e) {
       return 'initial_option must be one of the options';
     }
   }
+  if (e.type === 'external_select') {
+    if (e.options !== undefined || e.option_groups !== undefined) return 'an external_select takes no options: Slack asks the app for them';
+    if (e.placeholder !== undefined) {
+      const text = e.placeholder && e.placeholder.text;
+      if (e.placeholder.type !== 'plain_text' || typeof text !== 'string' || !text || Array.from(text).length > MAX_PLACEHOLDER) return `a placeholder is plain_text of 1 to ${MAX_PLACEHOLDER} characters`;
+    }
+    if (e.min_query_length !== undefined && (!Number.isInteger(e.min_query_length) || e.min_query_length < 0)) return 'min_query_length is a whole number of 0 or more';
+    if (e.initial_option !== undefined) {
+      const bad = invalidOption(e.initial_option);
+      if (bad) return bad;
+    }
+  }
   if (e.type === 'datepicker' && e.initial_date !== undefined && (typeof e.initial_date !== 'string' || !ISO_DATE.test(e.initial_date))) {
     return 'initial_date must be written YYYY-MM-DD';
   }
   return null;
+}
+
+// Why Slack would refuse one option object, or null (Story 19.5).
+function invalidOption(o) {
+  const text = o && o.text && o.text.text;
+  if (!o || !o.text || o.text.type !== 'plain_text' || typeof text !== 'string' || !text || Array.from(text).length > MAX_OPTION_TEXT) {
+    return `an option's text is plain_text of 1 to ${MAX_OPTION_TEXT} characters`;
+  }
+  if (typeof o.value !== 'string' || !o.value || o.value.length > MAX_OPTION_VALUE) return `an option needs a value of at most ${MAX_OPTION_VALUE} characters`;
+  return null;
+}
+
+// Why Slack would refuse a block_suggestion's ack payload, or null (Story 19.5).
+function invalidOptionsAck(payload) {
+  if (!payload || typeof payload !== 'object') return 'the ack carries options';
+  const hasOptions = payload.options !== undefined;
+  const hasGroups = payload.option_groups !== undefined;
+  if (hasOptions === hasGroups) return 'the ack carries exactly one of options and option_groups';
+  if (hasGroups) return 'option_groups are not used here';
+  if (!Array.isArray(payload.options) || payload.options.length > MAX_OPTIONS) return `the ack carries at most ${MAX_OPTIONS} options`;
+  for (const o of payload.options) {
+    const bad = invalidOption(o);
+    if (bad) return bad;
+  }
+  return null;
+}
+
+// Bolt's options constraints: a string or RegExp is the action_id; an
+// object may name action_id and block_id.
+function matchesOptions(constraint, actionId, blockId) {
+  const c = constraint && typeof constraint === 'object' && !(constraint instanceof RegExp)
+    ? constraint : { action_id: constraint };
+  const test = (want, got) => want === undefined || (want instanceof RegExp ? want.test(got) : want === got);
+  return test(c.action_id, actionId) && test(c.block_id, blockId);
 }
 
 // Why Slack would refuse a view_submission's ack payload, or null (Story 16.5).
@@ -897,5 +997,5 @@ function invalidModal(view) {
 
 module.exports = {
   fileState, FAKE_BOT_TOKEN, FAKE_BOT_SCOPES,
-  FakeSlackApp, invalidModal, invalidUpload, invalidImageBlocks, invalidView, invalidElements, invalidViewAck, notReadyError, rateLimitedError, TRIGGER_MS,
+  FakeSlackApp, invalidModal, invalidUpload, invalidImageBlocks, invalidView, invalidElements, invalidViewAck, invalidOptionsAck, notReadyError, rateLimitedError, TRIGGER_MS,
 };

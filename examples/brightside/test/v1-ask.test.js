@@ -202,7 +202,7 @@ test('a route question sorted as a tool, or as data, gets "Optimize a route can 
     assert.equal(model.calls.length, 1);
     assert.ok(!model.calls[0].system.includes('<client_context file='), 'the route call carries no context');
     assert.ok(!model.calls[0].system.includes('DATA_PROSE_NEVER_SHOWN'));
-    for (const id of ['v1-route-optimize', 'v1-route-cancellation', 'v1-route-crew-out', 'v1-route-map']) {
+    for (const id of ['v1-route-optimize', 'v1-route-cancellation', 'v1-route-crew-out', 'v1-route-add-stop', 'v1-route-map']) {
       assert.ok(model.calls[0].system.includes(`<tool id="${id}">`), id);
     }
   }

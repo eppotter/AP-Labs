@@ -83,7 +83,7 @@ test('the test profile forbids the four coordinate columns and declares routing'
 
 test('the adapter SQL passes the guardrail with the coordinate columns forbidden, and names none', () => {
   const files = fs.readdirSync(ADAPTER_DIR).filter((f) => f.endsWith('.sql')).sort();
-  assert.deepEqual(files, ['candidates.sql', 'crews.sql', 'day.sql', 'labels.sql']);
+  assert.deepEqual(files, ['candidates.sql', 'clients.sql', 'crews.sql', 'day.sql', 'labels.sql']);
   for (const [name, text] of Object.entries(SQL)) {
     const verdict = checkSql(text, { forbiddenColumns: profile.sql.forbidden_columns });
     assert.deepEqual(verdict, { ok: true }, name);

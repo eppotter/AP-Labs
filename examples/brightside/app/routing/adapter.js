@@ -58,6 +58,28 @@
 //                               service time on this crew's headcount
 // None of them runs new SQL: day.sql and candidates.sql, as before.
 //
+// Add a stop (Story 19.5, D8), scoped like route():
+//   clients({ day, crewId, query, scope })  { clients: [{ node, clientName,
+//                               city }] }: at most 20 clients of the crew's
+//                               zone (clients.zone_id) whose name holds query,
+//                               one per property, leaving out every property
+//                               with a visit booked that day (clients.sql:
+//                               names and city only, never an address)
+//   addStop({ day, crewId, depot, scope, node, minutes, window })  { input,
+//                               travel, distance, stop }: node is checked again
+//                               through clients.sql (in the crew's zone, no
+//                               visit that day; else RoutingFault node
+//                               unknown_client). input holds the crew's zone
+//                               (a crew lead: only their crew) from the Office
+//                               with their booked stops, as route() gives one
+//                               crew; stop is the new visit ("add-<property>",
+//                               minutes on site, labour minutes times the
+//                               crew's headcount, the window a hard
+//                               time-of-day rule split at noon, no other rule);
+//                               travel covers each crew's [Office, stops, new]
+//                               x [stops, new, Office] and distance the same
+//                               legs, each read within max_pairs
+//
 // data is a full data object from createData (it has travelMatrix). A
 // module's or job's ctx.data has only run and describe, so it is refused
 // (sdk.travelMatrix rejects with RoutingFault data_unavailable). routing is
@@ -112,6 +134,7 @@ const SQL = Object.freeze({
   crews: fs.readFileSync(path.join(__dirname, 'crews.sql'), 'utf8'),
   candidates: fs.readFileSync(path.join(__dirname, 'candidates.sql'), 'utf8'),
   labels: fs.readFileSync(path.join(__dirname, 'labels.sql'), 'utf8'),
+  clients: fs.readFileSync(path.join(__dirname, 'clients.sql'), 'utf8'),
 });
 const AS_OF_SQL = "SELECT value FROM fixture_meta WHERE key = 'as_of'";
 
@@ -124,6 +147,9 @@ const STRENGTHS = Object.freeze(['hard', 'soft']);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const DIGITS = /^\d+$/;
 const NODE_ID = /^(crew|property):(\d+)$/;
+const PROPERTY_NODE = /^property:(\d{1,20})$/;
+const ADD_WINDOWS = Object.freeze(['any', 'morning', 'afternoon']);
+const MAX_QUERY = 50;
 const DEPOT_NODE = /^depot:[A-Za-z0-9_-]{1,64}$/;
 
 const fault = (field, problem) => new RoutingFault({ field, problem });
@@ -584,6 +610,78 @@ function createAdapter({ data, routing } = {}) {
     };
   }
 
+  // --- Add a stop (Story 19.5, D8).
+
+  // The legs' km_tenths as distance(from, to); throws, never guesses, for a
+  // pair it was not given, and never puts the value in a fault.
+  function distanceOf(rows) {
+    const tenths = new Map(rows.map((r) => [`${r.from_node}\u0000${r.to_node}`, r.km_tenths]));
+    return (from, to) => {
+      const d = tenths.get(`${from}\u0000${to}`);
+      if (!Number.isSafeInteger(d) || d < 0) throw fault('distance', 'no_travel');
+      return d;
+    };
+  }
+
+  const offered = (day, crewId, query, propertyId) => data.run(SQL.clients, {
+    day, crew_id: crewId, query, property_id: propertyId,
+  }, { declared: ['day', 'crew_id', 'query', 'property_id'] });
+
+  async function clients({
+    day, crewId, query, scope,
+  } = {}) {
+    checkDay(day);
+    const wanted = crewFor(scope, crewId);
+    if (typeof query !== 'string' || !query.trim() || Array.from(query).length > MAX_QUERY) throw fault('query', 'not_text');
+    const rows = await offered(day, wanted, query.trim(), '');
+    return {
+      clients: rows.map((r) => ({ node: propertyNode(r.property_id), clientName: r.client_name, city: r.city })),
+    };
+  }
+
+  async function addStop({
+    day, crewId, depot, scope, node, minutes, window,
+  } = {}) {
+    checkDay(day);
+    if (typeof depot !== 'string' || !DEPOT_NODE.test(depot)) throw fault('depot', 'bad_node');
+    const wanted = crewFor(scope, crewId);
+    const lead = requiredLeadOf(scope) !== null;
+    const m = PROPERTY_NODE.exec(typeof node === 'string' ? node : '');
+    if (!m) throw fault('node', 'bad_node');
+    if (!engine.ADD_STOP_LENGTHS.includes(minutes)) throw fault('minutes', 'out_of_range');
+    if (!ADD_WINDOWS.includes(window)) throw fault('window', 'out_of_range');
+    // The search's own check, again: the crew's zone, no visit that day.
+    if (!(await offered(day, wanted, '', m[1])).length) throw fault('node', 'unknown_client');
+    const booked = await bookedDay(day);
+    const own = booked.crews.find((c) => c.crewId === wanted);
+    if (!own) throw fault('crewId', 'unknown_crew');
+    const crews = booked.crews.filter((c) => (lead ? c.crewId === wanted : c.zoneId === own.zoneId))
+      .map((c) => ({ ...c, baseNode: depot, returnToBase: true }));
+    const ids = new Set(crews.map((c) => c.crewId));
+    const stops = booked.stops.filter((st) => ids.has(st.currentCrewId));
+    const input = { day, asOf: booked.asOf, limits: { ...limits }, crews, stops };
+    engine.validateInput(input);
+    const stop = {
+      stopId: `add-${m[1]}`,
+      node,
+      currentCrewId: wanted,
+      labourMinutes: minutes * Math.max(1, own.headcountPresent),
+      serviceMinutes: minutes,
+      locked: false,
+      rules: window === 'any' ? [] : [{ ruleId: 'time-of-day', value: { ...windows[window] }, strength: 'hard' }],
+    };
+    // Each crew's legs from and back to the Office through its stops and the
+    // new one: every leg insertStop and a later reorder can drive.
+    const rects = crews.map((c) => {
+      const nodes = unique([...stops.filter((st) => st.currentCrewId === c.crewId).map((st) => st.node), node]);
+      return [[depot, ...nodes], [...nodes, depot]];
+    });
+    const rows = await matrixRows(rects);
+    return {
+      input, travel: engine.travel.fromMatrix(rows), distance: distanceOf(rows), stop,
+    };
+  }
+
   // --- Plan a route (Story 15.15, AD-R26): one crew's day from the Office.
 
   async function route({
@@ -620,7 +718,7 @@ function createAdapter({ data, routing } = {}) {
   }
 
   return Object.freeze({
-    asOf, input, labels, dayInput, gapInput, route, visits, gapFor, crewOut,
+    asOf, input, labels, dayInput, gapInput, route, visits, gapFor, crewOut, clients, addStop,
   });
 }
 

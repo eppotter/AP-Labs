@@ -1,0 +1,13 @@
+{
+  "id": "v1-route-add-stop",
+  "hub": "brightside-v1",
+  "label": "Add a stop",
+  "description": "See where a new visit would fit in a crew's day: suggestions only, nothing is booked",
+  "resource": "ROUTING_ALL_CREWS",
+  "archetype": "routing-map",
+  "verb": "Run",
+  "group": "Routing",
+  "screen": "add-stop",
+  "environments": ["dev"],
+  "adapter": "adapter.js"
+}

@@ -93,6 +93,11 @@ const ROUTING_WORDS = Object.freeze({
   missing_stop: ({ field }) => `"${field}" leaves out one of the crew's stops`,
   unknown_stop: ({ field }) => `"${field}" names a stop that isn't in the day`,
   other_crew_stop: ({ field }) => `"${field}" names a stop on another crew`,
+  // Add a stop (Story 19.5).
+  locked: ({ field }) => `"${field}" is locked, and a new stop has no booked start`,
+  not_working: ({ field }) => `"${field}" names a crew that isn't working that day`,
+  unknown_client: ({ field }) => `"${field}" names a client that can't be added to this crew's day`,
+  day_changed: ({ field }) => `"${field}" changed since the day was shown`,
 });
 
 // The AI service's refusals (Story 9.1). Each points to the typed form, which
@@ -196,6 +201,22 @@ const WHATIF_WORDS = Object.freeze({
   alreadyOut: (crew, day) => `*${crew} is out on ${day} in the data,* so this is the plan for it.`,
   fillHelp: () => 'Press *Fill with #n* to see the day with that visit moved up.',
   suggestOnly: () => 'Suggestions only: nothing is changed.',
+});
+
+// Add a stop (Story 19.5, plan brightside-v1 D8): its form in Plan a route's
+// list, and the added stop's lines. Names and days are escaped by the caller.
+const ADD_WORDS = Object.freeze({
+  form: (crew, day) => `*Add a stop to ${crew} on ${day}*\nSearch for a client of this crew's zone by name, pick how long the visit takes and when it may start, then press *Add*.`,
+  formNote: () => "Clients of this crew's zone, by name only. Suggestions only: nothing is booked.",
+  pickClient: () => 'Pick a client first, then press *Add*.',
+  adding: () => 'Working out where the stop fits…',
+  cannotAdd: () => "That client can't be added to this day: they already have a visit that day, or they aren't in this crew's zone. Pick another client.",
+  dayChanged: () => "This day's bookings changed since it was shown, so the stop wasn't added. Press *Back to the day*, then *Change crew or day*, and *Show stops* again.",
+  added: () => 'Added stop: a suggestion only, nothing is booked',
+  placedLast: () => 'No place on this crew keeps every hard rule, so it is placed last',
+  others: (list) => `Other crews in the zone that could take it: ${list}`,
+  other: (crew, k, time, drive) => `${crew} (stop ${k} at ${time}, ${drive})`,
+  noOthers: () => 'No other crew in the zone has room for it.',
 });
 
 const num = (n) => Number(n).toLocaleString('en-US');
@@ -474,6 +495,6 @@ function messageFor(err, { admin = 'your admin' } = {}) {
 }
 
 module.exports = {
-  messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, FILE_WORDS, READ_FILE_AI_WORDS, readFileAiText, READ_WORDS, MAP_WORDS, ROUTE_WORDS, WHATIF_WORDS,
+  messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, FILE_WORDS, READ_FILE_AI_WORDS, readFileAiText, READ_WORDS, MAP_WORDS, ROUTE_WORDS, WHATIF_WORDS, ADD_WORDS,
   BUILD_REQUEST_WORDS, ASK_WORDS, REQUEST_A_TOOL, WHY_WORDS,
 };

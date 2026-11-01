@@ -39,6 +39,7 @@ test('the example\'s verbs and groups are D5\'s and D10\'s', () => {
     'v1-ask': [null, 'Ask'],
     'v1-build-request': [null, 'Request'],
     'v1-data-sources': [null, 'View'],
+    'v1-route-add-stop': ['Routing', 'Run'],
     'v1-route-cancellation': ['Routing', 'Run'],
     'v1-route-crew-out': ['Routing', 'Run'],
     'v1-route-map': ['Routing', 'View'],
