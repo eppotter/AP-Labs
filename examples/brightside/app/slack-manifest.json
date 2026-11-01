@@ -20,6 +20,11 @@
         "should_escape": false
       },
       {
+        "command": "/brightside-v1",
+        "description": "Open the Brightside v1 menu",
+        "should_escape": false
+      },
+      {
         "command": "/brightside",
         "description": "Open the Brightside menu",
         "should_escape": false

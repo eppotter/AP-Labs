@@ -9,7 +9,7 @@ The runtime is its **own** Slack app (architecture AD-5). It is not the "AP Labs
 ## 1. Create the app from the manifest
 
 1. Go to <https://api.slack.com/apps>, choose **Create New App → From a manifest**, and pick the `aplabs-demo` workspace.
-2. Paste `examples/brightside/app/slack-manifest.json`. It creates **Brightside Bot (dev)** with Socket Mode on, the seven bot scopes the runtime is allowed (`commands`, `chat:write`, `im:write`, `im:history`, `files:read`, `files:write`, `users:read`), one slash command per hub (`/brightside` and `/brightside-v0`) and the `message.im` event. Don't add scopes by hand: a new scope needs an Architect review.
+2. Paste `examples/brightside/app/slack-manifest.json`. It creates **Brightside Bot (dev)** with Socket Mode on, the seven bot scopes the runtime is allowed (`commands`, `chat:write`, `im:write`, `im:history`, `files:read`, `files:write`, `users:read`), one slash command per hub (`/brightside`, `/brightside-v0` and `/brightside-v1`) and the `message.im` event. Don't add scopes by hand: a new scope needs an Architect review.
 3. **Install to Workspace** and approve.
 
 ## 2. Store the two tokens
@@ -40,6 +40,17 @@ APLABS_PROFILE="$PWD/profiles/brightside/profile.yml" \
 It logs one startup line naming the client, the profile path and "single instance". Run exactly one copy: two processes would split Slack's events between them. Then send the bot a direct message in `aplabs-demo`; it replies with a short greeting.
 
 If a token or the profile is missing or wrong, it exits non-zero listing each problem by variable name, never by value.
+
+## Adding a hub's command to the app you already have
+
+A new hub file adds a slash command to `slack-manifest.json` (`npm run slack:manifest`; never edit the file by hand). An app created before that hub doesn't get it by itself. Add it once, by hand, as for `/brightside-v0` (Story 16.2) and `/brightside-v1` (plan brightside-v1, Story 19.2):
+
+1. Open <https://api.slack.com/apps> and pick **Brightside Bot (dev)**.
+2. Click **Slash Commands**, then **Create New Command**.
+3. Command `/brightside-v1`, short description `Open the Brightside v1 menu`, no usage hint, **Escape channels, users, and links** off. Save.
+4. If Slack asks you to reinstall the app, click it and allow.
+
+No new scope comes with a command: the app keeps its seven. Restart the bot so it listens for the new command.
 
 ## Later (Story 6.3)
 

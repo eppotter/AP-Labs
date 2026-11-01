@@ -66,5 +66,6 @@ test('/brightside-v0 lists Ask (Story 16.7) and Request a tool (Story 16.6), the
   await app.dispatchAction('v0-data-sources:open', { user: { id: ADMIN_SLACK, name: 'ely' } });
   const reply = app.responded.at(-1);
   assert.equal(reply.response_type, 'ephemeral');
-  assert.deepEqual(reply.blocks.map((b) => b.text.text), ["Nothing yet: no added context, and this hub doesn't connect to data.", '*Added context*\nNone yet.']);
+  // v0 shares its notes with /brightside-v1 (plan brightside-v1, D6, Story 19.2).
+  assert.deepEqual(reply.blocks.map((b) => b.text.text), ["Nothing yet: no added context, and this hub doesn't connect to data.", '*Added context (shared with Brightside v1)*\nNone yet.']);
 });

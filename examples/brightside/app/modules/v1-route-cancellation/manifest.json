@@ -1,0 +1,13 @@
+{
+  "id": "v1-route-cancellation",
+  "hub": "brightside-v1",
+  "label": "Customer cancellation",
+  "description": "If one visit cancels, see the best visits to fill its slot: suggestions only, nothing is changed",
+  "resource": "ROUTING_ALL_CREWS",
+  "archetype": "routing-map",
+  "verb": "Run",
+  "group": "Routing",
+  "screen": "cancellation",
+  "environments": ["dev"],
+  "adapter": "adapter.js"
+}

@@ -1,0 +1,13 @@
+{
+  "id": "v1-route-optimize",
+  "hub": "brightside-v1",
+  "label": "Optimize a route",
+  "description": "Reorder one crew's day from the Office: suggestions only, nothing is changed",
+  "resource": "ROUTING_ALL_CREWS",
+  "archetype": "routing-map",
+  "verb": "Run",
+  "group": "Routing",
+  "screen": "route-editor",
+  "environments": ["dev"],
+  "adapter": "adapter.js"
+}

@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-11-01 | 19.2 | feature | T3 | The `/brightside-v1` hub: it sees context, data and rules, shares v0's notes, and lists four route skills (Optimize a route, Customer cancellation, Crew out, Route map; all dev only, `ROUTING_ALL_CREWS`, Brightside's routing adapter), Ask, Request a tool, and Add context and Data sources in Setup. The Slack manifest gains `/brightside-v1` (three commands, seven scopes); `/brightside` and `/brightside-v0` menus unchanged. Raised to T3 (computes T1): it puts `org.md` and `data.md` in front of whoever holds Ask on a new command. | — |

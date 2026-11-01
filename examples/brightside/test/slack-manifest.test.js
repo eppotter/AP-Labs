@@ -20,10 +20,13 @@ test('the committed manifest is what npm run slack:manifest generates from the h
   assert.equal(r.code, 0, `${r.out}\nRun: APLABS_APP_DIR=$PWD/examples/brightside/app npm run slack:manifest`);
 });
 
-test('the slash commands are the hub commands: /brightside and the blank /brightside-v0 (Story 16.2)', () => {
-  assert.deepEqual(manifest.features.slash_commands.map((c) => c.command), ['/brightside-v0', '/brightside']);
+test('the slash commands are the hub commands: /brightside, the blank /brightside-v0 (Story 16.2) and /brightside-v1 (Story 19.2)', () => {
+  assert.deepEqual(manifest.features.slash_commands.map((c) => c.command), ['/brightside-v0', '/brightside-v1', '/brightside']);
   const v0 = manifest.features.slash_commands.find((c) => c.command === '/brightside-v0');
   assert.deepEqual(v0, { command: '/brightside-v0', description: 'Open the Brightside v0 (blank) menu', should_escape: false });
+  // What Ely types in the Slack app (plan brightside-v1, "Steps only you can do" 2): no usage hint, escaping off.
+  const v1 = manifest.features.slash_commands.find((c) => c.command === '/brightside-v1');
+  assert.deepEqual(v1, { command: '/brightside-v1', description: 'Open the Brightside v1 menu', should_escape: false });
 });
 
 test('the v0 hub sees nothing, has no usage hint, and its welcome says it is a blank bot', () => {

@@ -110,3 +110,5 @@ Questions 3 to 5 ask for figures, which Ask sorts as data questions. On v0 no da
 ### Resetting v0
 
 Press **Add** on Add context. Under *Added here*, press **Remove** on each of the four notes and confirm. Type `/brightside-v0`: "Knows: nothing yet". The files stay in your own Slack files; delete them there if you want.
+
+`/brightside-v1` shares v0's notes (plan brightside-v1, D6, Story 19.2): a note added on either hub shows on both, and removing it on either removes it from both. Reset once, on either hub.

@@ -73,5 +73,6 @@ test('/brightside-v0: Ely adds a typed note in Add context; it is stored under t
   assert.equal(files.filter((f) => f.endsWith('.json')).length, 1);
   await app.dispatchAction('v0-data-sources:open', { user: ELY, view: menu });
   const sources = app.views.at(-1).args.view.blocks.map((b) => b.text.text).join('\n');
-  assert.match(sources, /\*Added context\*\n• Saturdays by <@U0FIXTUREELY>/);
+  // v0 shares its notes with /brightside-v1 (plan brightside-v1, D6, Story 19.2).
+  assert.match(sources, /\*Added context \(shared with Brightside v1\)\*\n• Saturdays by <@U0FIXTUREELY>/);
 });
