@@ -1,0 +1,16 @@
+# Shared notes test profile (Story 19.1, plan brightside-v1 D6): the keys the
+# three notes archetypes use (ASK, ADD_CONTEXT, DATA_SOURCES, which the admin
+# role confers) and a second Ask key, OTHER_ASK, for the different-keys
+# refusal. Ada is an admin; Marcus a member with no grants. Its context
+# folder holds org.md and data.md (copies of test/fixtures/llm/context), so a
+# test can show the hub that sees context gets them and the blank hub never does.
+schema_version: 1
+client: { id: tiny, name: Tiny }
+resources:
+  - { key: ASK, label: Ask }
+  - { key: OTHER_ASK, label: Ask (other) }
+  - { key: ADD_CONTEXT, label: Add context }
+  - { key: DATA_SOURCES, label: Data sources }
+users:
+  - { id: ada, name: Ada, role: admin, identities: { slack: UADA } }
+  - { id: marcus, name: Marcus, role: member, identities: { slack: UMARCUS } }

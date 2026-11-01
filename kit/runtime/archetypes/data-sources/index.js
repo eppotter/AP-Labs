@@ -14,6 +14,9 @@
 //   Added context           what admins added on this hub (titles, who, when),
 //                           from the hub view's knowledge store (Story 16.4;
 //                           entriesOf), else "None yet." Never an entry's text.
+//                           On a hub that shares its notes (plan brightside-v1,
+//                           D6, Story 19.1) the heading names the other hubs:
+//                           "Added context (shared with <hub>)".
 //
 // A lead line says what the hub can answer from when it has no data:
 //   added context, no data   "Answers from the added context below. No data
@@ -108,6 +111,12 @@ function contextLines(entries) {
   });
 }
 
+// The Added context heading, naming the hubs that share the notes (D6).
+function contextHeading(sharedWith) {
+  if (!Array.isArray(sharedWith) || !sharedWith.length) return 'Added context';
+  return `Added context (shared with ${sharedWith.map((n) => escapeText(oneLine(n))).join(', ')})`;
+}
+
 // The hub's added context: { entries, problem }. A hub view with no
 // knowledge store has none; a list that fails is none, with problem set
 // (logged with the hub only).
@@ -144,7 +153,7 @@ function leadLine(data, rules, entries, contextProblem) {
 // could not be read. admin: who to ask, as Slack mrkdwn (kit/runtime/access
 // adminContact).
 function render({
-  ready, entries = [], contextProblem = false, admin = 'your admin',
+  ready, entries = [], contextProblem = false, admin = 'your admin', sharedWith = [],
 }) {
   const { data, rules } = ready.detail;
   const sections = [];
@@ -155,7 +164,7 @@ function render({
   if (lead) sections.push(lead);
   if (data.seen) sections.push([heading('Connected data'), ...dataLines(data)].join('\n'));
   if (rules.seen) sections.push([heading('Known truths and rules'), ...rulesLines(rules, ready.rules)].join('\n'));
-  sections.push([heading('Added context'), ...contextLines(entries)].join('\n'));
+  sections.push([heading(contextHeading(sharedWith)), ...contextLines(entries)].join('\n'));
   return { text: sections[0], blocks: sections.flatMap(textBlocks) };
 }
 

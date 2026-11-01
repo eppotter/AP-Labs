@@ -1,0 +1,7 @@
+{
+  "id": "third",
+  "command": "/third",
+  "name": "Third tools",
+  "description": "Open the Third tools menu",
+  "sees": []
+}

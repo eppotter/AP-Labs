@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/eppotter/AP-Labs/kit/runtime/schema/hub.schema.json",
   "title": "AP Labs hub",
-  "description": "One hub: a slash command whose menu lists the modules that name it. Lives at <app>/hubs/<id>.json. Unknown keys are errors. sees is required.",
+  "description": "One hub: a slash command whose menu lists the modules that name it. Lives at <app>/hubs/<id>.json. Unknown keys are errors. sees is required; notes is optional.",
   "type": "object",
   "additionalProperties": false,
   "required": ["id", "command", "name", "description", "sees"],
@@ -23,6 +23,7 @@
       "uniqueItems": true,
       "items": { "type": "string", "enum": ["context", "data", "rules"] }
     },
+    "notes": { "description": "Optional (plan brightside-v1, D6, Story 19.1): the id of another hub whose notes (its added context) this hub shares: one store, read and written from both hubs. Leave it out for the hub's own notes. Boot refuses a hub that does not exist, the hub itself, a hub that shares another hub's notes (no chains), and ask, add-context or data-sources modules on the sharing hubs with different resource keys. sees still decides what each hub gets from the profile.", "$ref": "#/$defs/slug" },
     "feedback": { "description": "Optional line in the hub's Help saying how to give feedback. Default: tell the profile's admins.", "type": "string", "$ref": "#/$defs/text", "maxLength": 300 }
   },
   "$defs": {
