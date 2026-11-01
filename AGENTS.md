@@ -123,8 +123,8 @@ Scope changes mid-program: `bmad-correct-course`. Do not route to BMAD's build, 
 
 ### Merge authority
 
-- Merge yourself only when the human driving the session is an approver for the repo. For this template repo, that is Ely.
-- Otherwise stop when the PR is ready, post `npm run notify -- --kind decision` @-mentioning the approver, and wait.
+- Merge yourself only when the human driving the session is an approver for the repo. For this template repo, the approvers are Ely and Steven: either may write `approve plan <slug>` and merge.
+- Otherwise stop when the PR is ready, post `npm run notify -- --kind decision` @-mentioning the approvers, and wait.
 - Template releases are tagged with `npm run template:release -- vX.Y.Z`; Ely pushes the tag. It needs the four CI jobs green on main's head, which every push to main runs: wait for that run to finish first. The Orchestrator never passes `--push` to `template:release` and never runs `git push --tags`.
 ### Model roles
 
