@@ -15,6 +15,6 @@ const { optimizeDay } = require('./optimize');
 const { placeOrphans } = require('./change');
 const { fillGap } = require('./gapfill');
 const { evaluateOrder } = require('./evaluate');
-const { insertStop } = require('./insert');
+const { insertStop, ADD_STOP_LENGTHS } = require('./insert');
 
-module.exports = { validateInput, optimizeDay, placeOrphans, fillGap, evaluateOrder, insertStop, travel: Object.freeze({ ...travel }), rules: Object.freeze({ ...rules }) };
+module.exports = { validateInput, optimizeDay, placeOrphans, fillGap, evaluateOrder, insertStop, ADD_STOP_LENGTHS, travel: Object.freeze({ ...travel }), rules: Object.freeze({ ...rules }) };

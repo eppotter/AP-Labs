@@ -60,6 +60,10 @@ const {
 } = shared;
 
 const OTHERS = 2;
+// The lengths a new stop may take, in minutes: 30 to 240 in steps of 15. Add
+// a stop's form offers exactly these and an adapter's addStop() accepts only
+// these (Story 19.5), so the two read this one list and cannot drift.
+const ADD_STOP_LENGTHS = Object.freeze(Array.from({ length: 15 }, (_, i) => 30 + 15 * i));
 const NONE = Number.MAX_SAFE_INTEGER;
 
 const fault = (field, problem) => new RoutingFault({ field, problem });
@@ -206,4 +210,4 @@ function insertStop(input, stop, opts) {
   };
 }
 
-module.exports = { insertStop, OTHERS };
+module.exports = { insertStop, OTHERS, ADD_STOP_LENGTHS };

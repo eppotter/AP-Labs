@@ -185,6 +185,10 @@ test('the pure helpers: button values, the search text, lengths and drive words'
   assert.equal(Array.from(queryOf('x'.repeat(80))).length, 50);
   assert.equal(queryOf(42), null);
   assert.deepEqual(LENGTHS, [30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240]);
+  // One list: the form's lengths are the engine's, which adapters read through the sdk.
+  assert.equal(LENGTHS, require('../../kit/runtime/routing').ADD_STOP_LENGTHS);
+  assert.equal(LENGTHS, require('../../kit/runtime/sdk').routing.ADD_STOP_LENGTHS);
+  assert.ok(Object.isFrozen(LENGTHS));
   assert.deepEqual([30, 60, 75, 240].map(lengthWords), ['30 min', '1 h', '1 h 15 min', '4 h']);
   assert.deepEqual([9, 0, -3].map(driveDelta), ['+9 min drive', 'no extra drive', '\u22123 min drive']);
 });

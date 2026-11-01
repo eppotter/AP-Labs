@@ -48,6 +48,7 @@
 // fault on Add: the form says so, and Back to the day).
 
 const { escapeName, ADD_WORDS } = require('../../messages');
+const { ADD_STOP_LENGTHS } = require('../../routing');
 const audience = require('./audience');
 const { dayWords, clock } = require('./views');
 
@@ -56,7 +57,8 @@ const OWN = Object.freeze(['add', 'client', 'length', 'window', 'place', 'back',
 const ACTIONS = Object.freeze(['crew', 'day', 'show', 'move', 'optimize', 'reset', 'change', ...OWN]);
 const FORM = new Set(['client', 'length', 'window', 'place', 'back']);
 const EDITOR_LIST = new Set(['move', 'optimize', 'reset', 'change']);
-const LENGTHS = Object.freeze(Array.from({ length: 15 }, (_, i) => 30 + 15 * i));
+// The engine's own list, which adapters read through the sdk too.
+const LENGTHS = ADD_STOP_LENGTHS;
 const DEFAULT_MINUTES = 60;
 const WINDOWS = Object.freeze({ any: 'Any time', morning: 'Morning', afternoon: 'Afternoon' });
 const MAX_RESULTS = 20;

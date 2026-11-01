@@ -148,7 +148,6 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const DIGITS = /^\d+$/;
 const NODE_ID = /^(crew|property):(\d+)$/;
 const PROPERTY_NODE = /^property:(\d{1,20})$/;
-const ADD_MINUTES = Object.freeze(Array.from({ length: 15 }, (_, i) => 30 + 15 * i));
 const ADD_WINDOWS = Object.freeze(['any', 'morning', 'afternoon']);
 const MAX_QUERY = 50;
 const DEPOT_NODE = /^depot:[A-Za-z0-9_-]{1,64}$/;
@@ -649,7 +648,7 @@ function createAdapter({ data, routing } = {}) {
     const lead = requiredLeadOf(scope) !== null;
     const m = PROPERTY_NODE.exec(typeof node === 'string' ? node : '');
     if (!m) throw fault('node', 'bad_node');
-    if (!ADD_MINUTES.includes(minutes)) throw fault('minutes', 'out_of_range');
+    if (!engine.ADD_STOP_LENGTHS.includes(minutes)) throw fault('minutes', 'out_of_range');
     if (!ADD_WINDOWS.includes(window)) throw fault('window', 'out_of_range');
     // The search's own check, again: the crew's zone, no visit that day.
     if (!(await offered(day, wanted, '', m[1])).length) throw fault('node', 'unknown_client');

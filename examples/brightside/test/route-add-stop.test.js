@@ -117,15 +117,6 @@ test('clients(): clients of crew 4\'s zone whose name holds the text, at most 20
     day, crewId: CREW, query: 'an', scope: ALL,
   });
   assert.ok(wide.clients.length <= 20);
-  // A crew lead's search is their own crew's zone, whatever crewId says.
-  const lead = await adapter.clients({
-    day, crewId: CREW, query: 'an', scope: { crewId: LEAD_CREW },
-  });
-  const [leadZone] = await raw.run('SELECT zone_id FROM crews WHERE crew_id = $c', { c: Number(LEAD_CREW) }, { declared: ['c'] });
-  for (const c of lead.clients) {
-    const [row] = await raw.run('SELECT cl.zone_id FROM properties p JOIN clients cl ON cl.client_id = p.client_id WHERE p.property_id = $p', { p: Number(c.node.slice(9)) }, { declared: ['p'] });
-    assert.equal(row.zone_id, leadZone.zone_id);
-  }
 });
 
 test('addStop(): the zone\'s crews from the Office, the new stop with its window as a hard rule, travel and distance for every leg; insertStop places it', async () => {
@@ -159,12 +150,47 @@ test('addStop(): the zone\'s crews from the Office, the new stop with its window
   }
   // Same input, same answer.
   assert.equal(JSON.stringify(result), JSON.stringify(routing.insertStop(got.input, got.stop, { travel: got.travel, returnToBase: true, order: crew4 })));
-  // A crew lead's input holds only their crew.
-  const lead = await adapter.addStop({
-    day, crewId: CREW, depot: OFFICE, scope: { crewId: LEAD_CREW }, node: `property:${client.property_id}`, minutes: 60, window: 'any',
-  }).catch((err) => err);
-  if (lead instanceof RoutingFault) assert.equal(lead.details.problem, 'unknown_client', 'the client is not in the lead\'s zone');
-  else assert.deepEqual(lead.input.crews.map((c) => c.crewId), [LEAD_CREW]);
+});
+
+test('addStop() and clients() for a crew lead: only their own crew, whatever crewId says; their zone\'s clients only; no other crew to offer', async () => {
+  const SCOPE = Object.freeze({ crewId: LEAD_CREW });
+  const [lz] = await raw.run('SELECT zone_id FROM crews WHERE crew_id = $c', { c: Number(LEAD_CREW) }, { declared: ['c'] });
+  const zoneCrews = await raw.run('SELECT crew_id FROM crews WHERE zone_id = $z', { z: lz.zone_id }, { declared: ['z'] });
+  assert.ok(zoneCrews.length > 1, 'the lead\'s zone has other crews, so leaving them out is a real check');
+  // A client of the lead's zone with no visit that day.
+  const [mine] = await raw.run(`
+    SELECT p.property_id FROM clients cl JOIN properties p ON p.client_id = cl.client_id
+    WHERE cl.zone_id = $z
+      AND p.property_id NOT IN (SELECT property_id FROM scheduled_visits WHERE visit_date = CAST($d AS DATE) AND status = 'scheduled')
+    ORDER BY p.property_id LIMIT 1`, { z: lz.zone_id, d: day }, { declared: ['z', 'd'] });
+  // crewId names crew 4 (another crew, maybe another zone): the scope wins.
+  const got = await adapter.addStop({
+    day, crewId: CREW, depot: OFFICE, scope: SCOPE, node: `property:${mine.property_id}`, minutes: 60, window: 'any',
+  });
+  assert.deepEqual(got.input.crews.map((c) => c.crewId), [LEAD_CREW]);
+  assert.ok(got.input.stops.length > 0);
+  assert.deepEqual([...new Set(got.input.stops.map((s) => s.currentCrewId))], [LEAD_CREW]);
+  assert.equal(got.stop.currentCrewId, LEAD_CREW);
+  const order = got.input.stops.sort((a, b) => a.routeOrder - b.routeOrder).map((s) => s.stopId);
+  const result = routing.insertStop(got.input, got.stop, { travel: got.travel, returnToBase: true, order });
+  assert.equal(result.crewId, LEAD_CREW);
+  assert.deepEqual(result.others, [], 'no other crew is offered to a lead');
+  // A client of crew 4's zone (another zone than the lead's) is refused for the lead.
+  assert.notEqual(zone, lz.zone_id, 'crew 4 and the lead\'s crew work different zones');
+  const err = await adapter.addStop({
+    day, crewId: CREW, depot: OFFICE, scope: SCOPE, node: `property:${client.property_id}`, minutes: 60, window: 'any',
+  }).catch((e) => e);
+  assert.ok(err instanceof RoutingFault);
+  assert.deepEqual([err.details.field, err.details.problem], ['node', 'unknown_client']);
+  // The lead's search: every client in the lead's zone, whatever crewId says.
+  const found = await adapter.clients({
+    day, crewId: CREW, query: 'an', scope: SCOPE,
+  });
+  assert.ok(found.clients.length > 0);
+  for (const c of found.clients) {
+    const [row] = await raw.run('SELECT cl.zone_id FROM properties p JOIN clients cl ON cl.client_id = p.client_id WHERE p.property_id = $p', { p: Number(c.node.slice(9)) }, { declared: ['p'] });
+    assert.equal(row.zone_id, lz.zone_id);
+  }
 });
 
 test('addStop() refuses, by field name, a client booked that day or of another zone, and a bad length, window or node', async () => {
@@ -178,6 +204,7 @@ test('addStop() refuses, by field name, a client booked that day or of another z
     [{ node: `property:${other.property_id}` }, 'node', 'unknown_client'],
     [{ node: 'crew:4' }, 'node', 'bad_node'],
     [{ minutes: 50 }, 'minutes', 'out_of_range'],
+    [{ minutes: 255 }, 'minutes', 'out_of_range'],
     [{ window: 'evening' }, 'window', 'out_of_range'],
     [{ scope: undefined }, 'scope', 'missing'],
   ];
@@ -207,7 +234,7 @@ function quietLog() {
   return { lines, debug: rec('debug'), info: rec('info'), warn: rec('warn'), error: rec('error') };
 }
 
-function hub() {
+function hub({ mod = MOD } = {}) {
   const app = new FakeSlackApp({ views: true });
   app.checkHashes = true;
   const log = quietLog();
@@ -216,7 +243,7 @@ function hub() {
     store, client: app.client, log, sweeping: () => true, sleep: async () => {},
   });
   registerHubs(app, {
-    registry: createRegistry({ hubs: [HUB], modules: [MOD] }), profile, env: 'dev', log, store, data, mapFiles,
+    registry: createRegistry({ hubs: [HUB], modules: [mod] }), profile, env: 'dev', log, store, data, mapFiles,
     routingMap: { editor: { mapDelayMs: 0 } },
   });
   return { app, log };
@@ -282,10 +309,26 @@ test('through the hub: crew 4 on S1\'s day, Add a stop, search a client of its z
 });
 
 test('through the hub: a crew lead searches and adds only on their own crew, and sees no other crew', async () => {
-  const ctx = hub();
+  // Every clients() and addStop() call the hub makes, and what it answered.
+  const seen = { clients: [], addStop: [] };
+  const spied = Object.freeze({
+    ...MOD,
+    createAdapter: (args) => {
+      const a = createAdapter(args);
+      return Object.freeze({
+        ...a,
+        clients: async (q) => { const r = await a.clients(q); seen.clients.push({ q, r }); return r; },
+        addStop: async (q) => { const r = await a.addStop(q); seen.addStop.push({ q, r }); return r; },
+      });
+    },
+  });
+  const ctx = hub({ mod: spied });
+  const [lz] = await raw.run('SELECT zone_id FROM crews WHERE crew_id = $c', { c: Number(LEAD_CREW) }, { declared: ['c'] });
   await ctx.app.dispatchAction(`${MOD.id}:open`, { user: LEAD, view: MENU });
   await act(ctx, 'routing-map:day', { action: { type: 'datepicker', selected_date: day } }, LEAD);
   await settle();
+  // A forged crew pick names crew 4: the lead's crew comes from the scope.
+  await act(ctx, 'routing-map:crew', { action: pick(CREW) }, LEAD);
   await act(ctx, 'routing-map:show', { value: 'show' }, LEAD);
   await settle();
   const view = viewOf(ctx.app);
@@ -301,4 +344,25 @@ test('through the hub: a crew lead searches and adds only on their own crew, and
   const after = viewOf(ctx.app);
   assert.equal(rows(after).filter((r) => r.includes('➕')).length, 1);
   assert.ok(!contexts(after).some((c) => c.startsWith('Other crews') || c === ADD_WORDS.noOthers()), 'no other crew for a lead');
+  // The search listener's read: the lead's scope and crew, their zone's clients only.
+  assert.ok(seen.clients.length >= 1);
+  for (const { q, r } of seen.clients) {
+    assert.deepEqual(q.scope, { crewId: LEAD_CREW });
+    assert.equal(q.crewId, LEAD_CREW);
+    for (const c of r.clients) {
+      const [row] = await raw.run('SELECT cl.zone_id FROM properties p JOIN clients cl ON cl.client_id = p.client_id WHERE p.property_id = $p', { p: Number(c.node.slice(9)) }, { declared: ['p'] });
+      assert.equal(row.zone_id, lz.zone_id);
+    }
+  }
+  // Add's read: the lead's crew alone.
+  assert.equal(seen.addStop.length, 1);
+  const [{ q, r }] = seen.addStop;
+  assert.deepEqual(q.scope, { crewId: LEAD_CREW });
+  assert.deepEqual(r.input.crews.map((c) => c.crewId), [LEAD_CREW]);
+  assert.deepEqual([...new Set(r.input.stops.map((s) => s.currentCrewId))], [LEAD_CREW]);
+  // No other crew of the zone is named anywhere the lead was shown.
+  const others = await raw.run('SELECT name FROM crews WHERE zone_id = $z AND crew_id <> $c', { z: lz.zone_id, c: Number(LEAD_CREW) }, { declared: ['z', 'c'] });
+  assert.ok(others.length > 0);
+  const shown = JSON.stringify(ctx.app.views.map((v) => v.args.view)) + JSON.stringify(ctx.app.optionAcks);
+  for (const o of others) assert.ok(!shown.includes(o.name), `${o.name} is not shown to the lead`);
 });
