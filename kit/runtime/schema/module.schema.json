@@ -24,7 +24,7 @@
     },
     "handler": { "description": "The handler file in the module's folder.", "type": "string", "$ref": "#/$defs/file", "pattern": "^[a-z0-9][a-z0-9._-]*\\.js$" },
     "adapter": { "description": "A routing-map module's adapter file in the module's folder (Story 15.4, AD-R16): it exports createAdapter({ data, routing }) giving asOf, input and labels.", "type": "string", "$ref": "#/$defs/file", "pattern": "^[a-z0-9][a-z0-9._-]*\\.js$" },
-    "screen": { "description": "A routing-map module's screen (Story 15.14, AD-R26): views (the default: Routing's four map views) or route-editor (Plan a route: one crew's day from the Office, reordered by hand; needs routing.depot in the profile and route() in the adapter).", "enum": ["views", "route-editor"] },
+    "screen": { "description": "A routing-map module's screen (Story 15.14, AD-R26; Story 19.4): views (the default: Routing's four map views), route-editor (Plan a route: one crew's day from the Office, reordered by hand; needs routing.depot in the profile and route() in the adapter), cancellation (Customer cancellation: a what-if gap fill; needs visits(), gapFor() and what route-editor needs), crew-out (Crew out: a what-if route change; needs crewOut()) or add-stop (Add a stop, Story 19.5: not built yet, never opens).", "enum": ["views", "route-editor", "cancellation", "crew-out", "add-stop"] },
     "parameters": {
       "type": "array",
       "items": {

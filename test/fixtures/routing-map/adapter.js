@@ -24,7 +24,13 @@
 //                                marked out (available false); travel and
 //                                distance from the matrix's minutes and
 //                                km_tenths. distance throws for a pair the
-//                                matrix lacks, never 0.
+//                                matrix lacks, never 0. With fill (Story
+//                                19.4) { cancel, add }: candidate add in the
+//                                place of visit cancel
+//   visits, gapFor, crewOut      (Story 19.4) the what-if screens: a crew's
+//                                visits (booked and cancelled), the gap day
+//                                with one visit taken as cancelled, and the
+//                                day with one crew out (plus day.json "out")
 //
 // Like an app's adapter it reads only through data.run (so a data outage
 // reaches the archetype as DataUnavailable). fakeData() answers its three
@@ -89,8 +95,57 @@ function createAdapter({ data } = {}) {
     return out;
   }
 
+  // The what-if screens (Story 19.4): a crew lead's crew from the scope.
+  const crewOf = (scope, crewId) => (scope && scope.all !== true ? scope.crewId : crewId);
+
+  async function visits({ day, crewId, scope }) {
+    const rows = await data.run(SQL.day, { day }, { declared: ['day'] });
+    const p = rows[0].payload;
+    const wanted = crewOf(scope, crewId);
+    if (!p.crews.some((c) => c.crewId === wanted)) return { known: false, visits: [] };
+    const own = (st) => st.currentCrewId === wanted;
+    const visit = (cancelled) => (st) => ({
+      stopId: st.stopId, node: st.node, start: st.start, cancelled,
+    });
+    return { known: true, visits: [...p.stops.filter(own).map(visit(false)), ...p.cancelled.filter(own).map(visit(true))] };
+  }
+
+  async function gapFor({
+    day, crewId, stopId, scope,
+  }) {
+    const rows = await data.run(SQL.day, { day }, { declared: ['day'] });
+    const p = rows[0].payload;
+    const wanted = crewOf(scope, crewId);
+    const taken = p.stops.find((st) => st.stopId === stopId && st.currentCrewId === wanted);
+    const already = p.cancelled.some((c) => c.stopId === stopId && c.currentCrewId === wanted);
+    if (!taken && !already) throw new sdk.RoutingFault({ field: 'stopId', problem: 'unknown_stop' });
+    const cancelled = taken ? [...p.cancelled, {
+      stopId: taken.stopId, node: taken.node, currentCrewId: taken.currentCrewId, start: taken.start, serviceMinutes: taken.serviceMinutes,
+    }] : p.cancelled;
+    return {
+      input: {
+        day, asOf: p.asOf, limits: p.limits, crews: p.crews, stops: p.stops.filter((st) => st !== taken), cancelled, candidates: p.candidates,
+      },
+      travel: engine.travel.fromMatrix(p.matrix),
+    };
+  }
+
+  async function crewOut({ day, crewId, scope }) {
+    const rows = await data.run(SQL.day, { day }, { declared: ['day'] });
+    const p = rows[0].payload;
+    const wanted = crewOf(scope, crewId);
+    const crews = p.crews.map((c) => (p.out.includes(c.crewId) || c.crewId === wanted ? { ...c, headcountPresent: 0, available: false } : c));
+    return {
+      input: {
+        day, asOf: p.asOf, limits: p.limits, crews, stops: p.stops,
+      },
+      travel: engine.travel.fromMatrix(p.matrix),
+      wasOut: p.out.includes(wanted),
+    };
+  }
+
   async function route({
-    day, crewId, depot, scope,
+    day, crewId, depot, scope, fill,
   }) {
     const rows = await data.run(SQL.day, { day }, { declared: ['day'] });
     const p = rows[0].payload;
@@ -98,7 +153,21 @@ function createAdapter({ data } = {}) {
     const wanted = lead || crewId;
     const crews = p.crews.filter((c) => c.crewId === wanted)
       .map((c) => ({ ...c, baseNode: depot, ...(p.out.includes(c.crewId) ? { headcountPresent: 0, available: false } : {}) }));
-    const stops = p.stops.filter((st) => st.currentCrewId === wanted && crews.length > 0);
+    let stops = p.stops.filter((st) => st.currentCrewId === wanted && crews.length > 0);
+    if (fill && crews.length) {
+      // Customer cancellation's Fill with #n: the candidate in the cancelled
+      // visit's place.
+      const gone = [...p.stops, ...p.cancelled].find((st) => st.stopId === fill.cancel && st.currentCrewId === wanted);
+      const cand = p.candidates.find((c) => c.stopId === fill.add);
+      if (!gone || !cand) throw new sdk.RoutingFault({ field: gone ? 'fill.add' : 'fill.cancel', problem: 'unknown_stop' });
+      const {
+        plannedDate, cadenceDays, prevVisitDate, flexible, ...rest
+      } = cand;
+      const order = gone.routeOrder === undefined ? null : gone.routeOrder;
+      stops = [...stops.filter((st) => st.stopId !== fill.cancel), {
+        ...rest, currentCrewId: wanted, routeOrder: order, start: gone.start,
+      }];
+    }
     const km = new Map(p.matrix.map((r) => [`${r.from_node}>${r.to_node}`, r.km_tenths]));
     const distance = (from, to) => {
       const d = km.get(`${from}>${to}`);
@@ -115,7 +184,7 @@ function createAdapter({ data } = {}) {
   }
 
   return Object.freeze({
-    asOf, input, labels, route,
+    asOf, input, labels, route, visits, gapFor, crewOut,
   });
 }
 

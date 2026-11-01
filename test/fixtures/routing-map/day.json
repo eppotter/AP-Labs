@@ -144,6 +144,7 @@
       "stopId": "x1",
       "node": "property:x1",
       "currentCrewId": "v1",
+      "routeOrder": 3,
       "start": 720,
       "serviceMinutes": 120
     }

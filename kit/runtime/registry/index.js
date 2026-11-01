@@ -84,6 +84,8 @@
 // default) or "route-editor" (Plan a route, AD-R26). Whether the profile has
 // routing.depot and the adapter a route() is checked when it opens (the hub
 // shows "not available" and opens no modal), since the adapter is made then.
+// Story 19.4 adds cancellation and crew-out (the what-if screens) and
+// add-stop (Story 19.5, not built: it never opens), checked the same way.
 //
 // Plan hub-status-menu (Story 17.1): a manifest may name its menu verb
 // ("verb", one of kit/runtime/registry/vocabulary VERBS) and its group

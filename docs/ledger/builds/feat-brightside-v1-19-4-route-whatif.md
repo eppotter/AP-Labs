@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-10-31 | 19.4 | feature | T3 | Two what-if route screens in the routing-map archetype: Customer cancellation (pick a crew, day and the visit that cancels, see the top five fills with reasons, then Fill with #n shows the day in Plan a route's editor) and Crew out (mark a crew out for the day and see the route change; a crew already out in the data says so). The adapter gains `visits()`, `gapFor()`, `crewOut()` and `route({ fill })` with no new SQL; the schema's `screen` gains `cancellation`, `crew-out` and `add-stop` (not built yet, never opens). Scope unchanged (AD-R17). The `/brightside-v1` folders wait for the v1 hub (Story 19.2). | — |

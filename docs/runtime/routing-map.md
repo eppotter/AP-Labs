@@ -106,3 +106,38 @@ Story 15.6 turned on production after Ely Potter signed GRD-002's reworded map i
 6. **iOS,** once: the buttons and the ⋯ menus (an action sheet) can be tapped and the layout stays put.
 
 The MotherDuck copy has no Office until Ely republishes v7 (DEP-033): until then, run this on the local fixture. Story 15.6 turned on production after DEP-025 and DEP-032 were signed (2026-10-31).
+
+## Customer cancellation and Crew out (Story 19.4)
+
+Two what-if screens of the same archetype (`kit/runtime/archetypes/routing-map/whatif.js`, plan brightside-v1 D8). Same audience, sessions, map files and 20-minute deletion as the views. Suggestions only: nothing is written.
+
+A module names its screen in `manifest.json`:
+
+| `screen` | The tool | The adapter also needs |
+|---|---|---|
+| `cancellation` | **Customer cancellation:** pick a crew and day, **Show visits**, then the visit that cancels (a select of "hh:mm · client name", "(cancelled)" when the data already shows it). The Gap fill view for the gap it leaves, the top five with reasons, and **Fill with #1** to **#5**: Plan a route's list and map for the day with that visit moved up into the gap ("↩️ Moved up from <day>"). | `visits()`, `gapFor()`, and what Plan a route needs (`route()` taking `fill`, and `routing.depot` in the profile) |
+| `crew-out` | **Crew out:** pick a day and crew, **Mark out for the day**: the Route change view for the crew's zone with that crew out. A crew the data already shows out says so above the same view. | `crewOut()` |
+| `add-stop` | Add a stop (Story 19.5): named in the schema, not built yet. It never opens. | — |
+
+| Function | Returns |
+|---|---|
+| `visits({ day, crewId, scope })` | `{ known, visits }`: whether the crew is in the day's data, and its visits, each `{ stopId, node, start, cancelled }`. Names come from `labels()`. |
+| `gapFor({ day, crewId, stopId, scope })` | `{ input, travel }` for `fillGap`, with `stopId` taken as cancelled (one the data already shows cancelled stays as it is). |
+| `crewOut({ day, crewId, scope })` | `{ input, travel, wasOut }`: the day with that crew `available: false`; `wasOut` says the data already had it out. |
+| `route({ ..., fill: { cancel, add } })` | Plan a route's day with visit `cancel` left out and candidate `add` in its place. |
+
+Each is scoped like `route()`: a crew lead's crew comes from `scope`, whatever `crewId` says. A screen whose adapter lacks one shows "not available" and the menu row shows **Why?** ("needs map setup"). Brightside's adapter has all four and runs no new SQL.
+
+**Ways out, each tested:** Back and the X (the map files go; a draw still running shows nothing), **Change crew or day** (from every step, the Fill result too), **Pick another visit**, an error (a plain message, Back), an expired window, an expired trigger, no visits, a crew not working, access withdrawn, a click from another person's window, and the map not ready (Why?).
+
+**Where they run:** dev only until their live check passes, then a one-line PR each turns on production (plan brightside-v1 gate item 5). The `/brightside-v1` folders `v1-route-cancellation` and `v1-route-crew-out` come with the v1 hub (Story 19.2); the `/brightside` copies come with Story 20.3.
+
+### Live check (Ely or Steven, dev Slack)
+
+**Untested until you run it.** Run on the local fixture (`npm run fixture:build`).
+
+1. **Customer cancellation:** crew 2, **2026-10-02**, **Show visits**. The afternoon visit shows "(cancelled)". Pick it: property 762's client is **#1**. Press **Fill with #1**: the day shows that client "↩️ Moved up from…" in the gap. **Optimize** works.
+2. **Pick another visit**, then a morning visit: a different gap and its candidates.
+3. **Crew out:** **2026-10-03**, crew 7, **Mark out for the day**: "is out on … in the data"; 5 visits move in the zone, 1 is recommended for another zone, none to rebook.
+4. **Crew out** on a crew that is working that day: "What if … is out…?" and its stops placed.
+5. **Ways out:** **Change crew or day** from each result, **Back**, the **X**; the terminal shows the files deleted.

@@ -304,18 +304,23 @@ function hiddenLine(other, none) {
   return [`${parts.join(' and ')} could fill it; ${total === 1 ? 'it is' : 'they are'} not shown here.`];
 }
 
-function gap(d, { travel, scope, pick, gapFill }) {
+function gap(d, {
+  travel, scope, pick, gapFill, focus,
+}) {
   const crewId = pick.id;
   const lead = scope.all !== true;
   const result = engine.fillGap(d.input, { travel, horizonDays: gapFill.horizon_days, limit: gapFill.limit });
   const gaps = result.gaps.filter((g) => g.crewId === crewId);
-  if (!gaps.length) {
+  // focus (Customer cancellation, Story 19.4): the gap the picked visit
+  // leaves, when there is one; else the first.
+  const focused = typeof focus === 'string' ? gaps.find((x) => x.cancelled.includes(focus)) : undefined;
+  if (!gaps.length || (typeof focus === 'string' && !focused)) {
     return {
       empty: (n) => `No visit was cancelled on ${n.crew(crewId)} on ${dayWords(d.input.day)}, so there's no gap to fill.`,
       labelNodes: [crewNode(crewId)],
     };
   }
-  const g = gaps[0];
+  const g = focused || gaps[0];
   const route = booked(d, crewId).map((s) => s.node);
   const ranked = g.candidates.filter((c) => !lead || c.fromCrew === crewId);
   // The candidates a lead may not see, counted only: booked on another
@@ -325,7 +330,7 @@ function gap(d, { travel, scope, pick, gapFill }) {
   const hiddenNone = notShown.length - hiddenOther;
   // Renumbered 1..n, so no gap in the numbers shows a hidden one.
   const cands = ranked.slice(0, MAX_CANDIDATES).map((c, i) => ({
-    rank: i + 1, node: nodeOf(d, c.stopId), start: c.start, fromCrew: c.fromCrew, plannedDate: c.plannedDate,
+    rank: i + 1, stopId: c.stopId, node: nodeOf(d, c.stopId), start: c.start, fromCrew: c.fromCrew, plannedDate: c.plannedDate,
     daysMovedUp: c.daysMovedUp, extra: c.extraDriveMinutes, reason: c.reason,
   }));
   const beforeNode = g.after === null ? crewNode(crewId) : nodeOf(d, g.after);
@@ -352,10 +357,13 @@ function gap(d, { travel, scope, pick, gapFill }) {
         ...cands.map((c) => `${c.rank}. ${row(clock(c.start), n.place(c.node), `booked ${c.fromCrew === null ? 'on no crew' : `on ${n.crew(c.fromCrew)}`} for ${c.plannedDate} (${plural(c.daysMovedUp, 'day')} earlier)`, `${c.extra} min extra drive`, escapeText(c.reason))}`),
         ...(cands.length ? [] : ['No visit can be moved up into this gap.']),
         ...hiddenLine(hiddenOther, hiddenNone),
-        ...(gaps.length > 1 ? [`${plural(gaps.length - 1, 'more gap')} on this crew today; only the first is shown.`] : []),
+        ...(gaps.length > 1 ? [`${plural(gaps.length - 1, 'more gap')} on this crew today; only ${focused ? 'the one this visit leaves' : 'the first'} is shown.`] : []),
       ],
       alt: { crew: n.crewLabel(crewId), stops: route.length },
     }),
+    // The shown candidates by rank, for Customer cancellation's Fill with
+    // #n (Story 19.4): ids and dates only, never a place.
+    fills: cands.map((c) => ({ rank: c.rank, stopId: c.stopId, plannedDate: c.plannedDate })),
   };
 }
 
@@ -365,12 +373,16 @@ const PLANS = Object.freeze({
 
 // The plan for one view: { empty, labelNodes } or { nodes, placeNodes,
 // crewIds, build }. gapFill: the profile's routing.gap_fill.
-function planView({ view, input, travel, scope, pick, gapFill }) {
+// focus: a gap view's cancelled stop id, so the gap it leaves is the one
+// drawn (Customer cancellation, Story 19.4).
+function planView({
+  view, input, travel, scope, pick, gapFill, focus,
+}) {
   if (!VIEWS.includes(view)) throw new RoutingFault({ field: 'view', problem: 'out_of_range' });
   engine.validateInput(input);
   const d = dayOf(input);
   return PLANS[view](d, {
-    travel, scope, pick, gapFill,
+    travel, scope, pick, gapFill, focus,
   });
 }
 
