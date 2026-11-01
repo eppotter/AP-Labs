@@ -3,7 +3,7 @@
 // Story 13.3: GRD-002 names the four coordinate columns (DEP-028). Plan
 // brightside-v1, Story 18.1: Ely Potter signed every rule card on 2026-10-31
 // (DEP-025, DEP-028, DEP-032 closed), and the gate approval signed GRD-009
-// (Story 19.7), so all nine cards are approved and
+// (Story 19.7) and GRD-010 (Story 20.1), so all ten cards are approved and
 // `npm run onboard -- --status` shows guardrails.md signed. An example test
 // (architecture carve-out): it reads profiles/brightside/ and is deleted with
 // the example in a fork.
@@ -138,14 +138,14 @@ test('the crew-out rule (GRD-008) is approved with its edge cases settled (DEP-0
   assert.match(card('GRD-008'), APPROVED);
 });
 
-// Plan brightside-v1 D2 and D10: every one of the nine cards is approved, and the
-// readiness parser counts exactly nine (the strip's "9 rules", D13).
-test('all nine rule cards are approved and countApprovedRules counts 9', () => {
-  for (let n = 1; n <= 9; n += 1) {
-    const id = `GRD-00${n}`;
+// Plan brightside-v1 D2, D10 and D14: every one of the ten cards is approved, and the
+// readiness parser counts exactly ten (the strip's "10 rules once GRD-010 lands", D13).
+test('all ten rule cards are approved and countApprovedRules counts 10', () => {
+  for (let n = 1; n <= 10; n += 1) {
+    const id = `GRD-${String(n).padStart(3, '0')}`;
     assert.match(card(id), /\n- status: approved\n/, id);
   }
-  assert.equal(countApprovedRules(read()), 9);
+  assert.equal(countApprovedRules(read()), 10);
   const cards = read().slice(read().indexOf('\n### GRD-001:'));
   assert.doesNotMatch(cards, /^- status: (?!approved$).*$/m, 'no card status line other than approved');
 });
@@ -186,8 +186,8 @@ test('GRD-007 says the coordinates are random Columbus points, none from a real 
 
 // Plan brightside-v1, D7, Story 19.3: Data sources on a hub that sees rules
 // (/brightside-v1, /brightside) reads Brightside's own files and says
-// "Rule cards approved: 9" (GRD-009, Story 19.7).
-test('Data sources on Brightside\'s files: "Rule cards approved: 9"', () => {
+// "Rule cards approved: 10" (GRD-009, Story 19.7; GRD-010, Story 20.1).
+test('Data sources on Brightside\'s files: "Rule cards approved: 10"', () => {
   const { loadProfile } = require('../../../kit/lib/profile');
   const { readiness, createRulesReader } = require('../../../kit/runtime/knowledge/readiness');
   const dataSources = require('../../../kit/runtime/archetypes/data-sources');
@@ -197,5 +197,24 @@ test('Data sources on Brightside\'s files: "Rule cards approved: 9"', () => {
     id: 'brightside-v1', sees: ['context', 'data', 'rules'], data: null, rules: true,
   };
   const text = dataSources.render({ ready: readiness(view, { rules }) }).blocks.map((b) => (b.text && b.text.text) || '').join('\n');
-  assert.match(text, /\n• Rule cards approved: 9\n/);
+  assert.match(text, /\n• Rule cards approved: 10\n/);
+});
+
+// Plan brightside-v1 D14 (gate item 3, Story 20.1): GRD-010 as worded in the plan, the
+// summary line, and the Write paths row.
+test('GRD-010 (appointment emails) is approved as worded in D14, with its Write paths row', () => {
+  const grd = card('GRD-010').replace(/\s+/g, ' ');
+  for (const words of [
+    /- type: exception_workflow/,
+    /from fixed templates/,
+    /never an address, postal code, coordinate, price, another customer or a staff name/,
+    /granted `APPOINTMENT_EMAILS` by name approves the exact text: at most 50 a push and 200 a day per hub/,
+    /A reminder is held for a crew-day with an absence/,
+    /accepts only a single `\.invalid` address/,
+    /NOT a change to bookings: routes stay suggestions/,
+    /- approval: approved by Ely Potter on 2026-10-31 \(`approve plan brightside-v1`\), added by Story 20\.1\./,
+  ]) assert.match(grd, words);
+  assert.match(card('GRD-010'), APPROVED);
+  assert.match(read(), /\n- GRD-010: appointment emails/);
+  assert.ok(read().includes('| Send appointment emails | Mock email tool (outbox) | approval-write preview and approval | `BRIGHTSIDE_EMAIL_OFF`, `APLABS_WRITES_OFF` | built by Epic 20'), 'the Write paths row');
 });

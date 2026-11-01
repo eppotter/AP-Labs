@@ -58,11 +58,48 @@
 // it passes the first push's key as listKey on every push and retry, and the
 // list and each contact are keyed by it (else by idempotencyKey), so a retry
 // adds to the list the first push made and never makes a second one.
+//
+// sendEmails (Story 20.1, plan brightside-v1 D14, D14a, GRD-010): appointment
+// emails, a reminder or a change notice, in the contract's { name, contacts }
+// shape so the approval-write archetype pushes them as it pushes a list:
+//
+//   await email.write.sendEmails({ name, contacts, idempotencyKey, listKey?, dryRun: false });
+//
+// Each contact is exactly { external_ref, email, first_name, kind, visit_date,
+// window, crew_name, package_name, before_date?, before_window?,
+// before_crew_name?, reason? } (external_ref is the scheduled_visit_id); any
+// other field is refused, and the template fields are checked by
+// ./templates.js (a missing or malformed one, a change that changes nothing).
+// The connector renders each email in its dry run, so the preview shows the
+// exact subject and body, and apply sends what was previewed: plan returns
+// { name, send, skipped, emails: [{ ref, to, kind, subject, body }], limits }.
+// No AI writes or polishes the text.
+//
+// The address parse is strict (D14): exactly one address, lower case, no
+// display name, comma or whitespace, no trailing dot, ending in ".invalid".
+// A contact without one is skipped ("no email"), one with any other address
+// is skipped ("address refused"), the same way in plan and apply, so it never
+// reaches the outbox; the mock tool refuses such an address too.
+//
+// Limits (D14): at most 50 emails a push (more and both plan and apply refuse
+// the whole push, so nothing is sent) and 200 a UTC day in the outbox
+// (checked with the push's emails inside one locked outbox transaction: over
+// it, the whole push is refused and nothing is sent).
+//
+// Idempotency (D14a): each email's key is the push's key (listKey when given,
+// as for pushList, else idempotencyKey), its kind, its scheduled_visit_id and
+// a hash of its new date, window and crew. A repeat sends nothing; a second,
+// different change to the same visit is a new email. It declares
+// perItemIdempotency: a retry with the same key and input sends only the
+// emails that failed. Every request answers only counts and id-shaped refs.
 
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { defineConnector, PartialFailure } = require('#sdk');
-const { openOutbox, outboxPath } = require('./outbox');
+const {
+  openOutbox, outboxPath, emailsSentOn, dayOf,
+} = require('./outbox');
+const templates = require('./templates');
 
 const FIELDS = Object.freeze(['external_ref', 'email', 'first_name']);
 const MAX_NAME = 120;
@@ -70,6 +107,24 @@ const MAX_NAME = 120;
 // A contact the tool would refuse for its data, not its shape: no usable
 // email. Returned by sortContacts as skipped, never sent.
 const SKIP_NO_EMAIL = 'no email';
+
+// sendEmails: a contact's fields, its skip reason for an address the tool
+// refuses, and the limits (D14).
+const EMAIL_FIELDS = Object.freeze(['external_ref', 'email', ...templates.FIELDS]);
+const SKIP_ADDRESS = 'address refused';
+const LIMITS = Object.freeze({ perPush: 50, perDay: 200 });
+const MAX_ADDRESS = 254;
+// One plain address, lower case, ending in .invalid: a local part of dot-
+// separated atoms, then dot-separated domain labels. No display name, quote,
+// angle bracket, comma, whitespace, upper case or trailing dot can match.
+const ADDRESS = /^[a-z0-9_%+-]+(?:\.[a-z0-9_%+-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+invalid$/;
+
+// True when the tool takes the address: a string matching ADDRESS, at most
+// 254 characters. Anything else (two addresses, "Name <a@b.invalid>", a comma,
+// a space, "a@b.invalid.", "A@b.invalid", "a@b.com") is refused.
+function isAllowedAddress(email) {
+  return typeof email === 'string' && email.length <= MAX_ADDRESS && ADDRESS.test(email);
+}
 
 function checkName(name) {
   if (typeof name !== 'string' || !name.trim() || name.length > MAX_NAME) {
@@ -124,6 +179,52 @@ function sortContacts(contacts) {
   return { send, skipped };
 }
 
+// sendEmails' contacts: { send: [{ external_ref, to, kind, subject, body,
+// change }], skipped: [{ ref, reason }] }. Throws on a list over the push
+// limit, a missing or extra field, a ref given twice or template fields
+// ./templates.js refuses; a missing email or an address the tool refuses is
+// a skip, decided the same way by plan and apply. change: a hash of the new
+// date, window and crew, part of the email's key.
+function sortEmails(contacts) {
+  if (!Array.isArray(contacts) || !contacts.length) throw new Error('contacts must be a non-empty list');
+  if (contacts.length > LIMITS.perPush) {
+    throw new Error(`${contacts.length} emails is over the limit of ${LIMITS.perPush} a push, so none is sent`);
+  }
+  const send = [];
+  const skipped = [];
+  const refs = new Set();
+  contacts.forEach((c, i) => {
+    if (!c || typeof c !== 'object' || Array.isArray(c)) throw new Error(`contact ${i + 1} is not an object`);
+    const extra = Object.keys(c).filter((k) => !EMAIL_FIELDS.includes(k));
+    if (extra.length) throw new Error(`contact ${i + 1}: fields not allowed: ${extra.join(', ')} (allowed: ${EMAIL_FIELDS.join(', ')})`);
+    const ref = typeof c.external_ref === 'number' && Number.isSafeInteger(c.external_ref) ? String(c.external_ref) : c.external_ref;
+    if (typeof ref !== 'string' || !ref.trim()) throw new Error(`contact ${i + 1}: external_ref (the scheduled_visit_id) is required`);
+    if (refs.has(ref)) throw new Error(`contact ${i + 1}: external_ref ${ref} is given twice`);
+    refs.add(ref);
+    const { external_ref: _ref, email: to, ...fields } = c;
+    let rendered;
+    try {
+      rendered = templates.render(fields);
+    } catch (err) {
+      throw new Error(`contact ${i + 1}: ${err.message}`);
+    }
+    if (to === undefined || to === null || to === '') {
+      skipped.push({ ref, reason: SKIP_NO_EMAIL });
+      return;
+    }
+    if (!isAllowedAddress(to)) {
+      skipped.push({ ref, reason: SKIP_ADDRESS });
+      return;
+    }
+    const change = crypto.createHash('sha256')
+      .update(JSON.stringify([fields.visit_date, fields.window, fields.crew_name.trim()])).digest('hex').slice(0, 12);
+    send.push({
+      external_ref: ref, to, kind: rendered.kind, subject: rendered.subject, body: rendered.body, change,
+    });
+  });
+  return { send, skipped };
+}
+
 // A list id from its key: "list-" and 12 hex characters, with a 0 added when
 // those have no digit, so it is always id-shaped (the contract keeps only
 // id-shaped strings in a progress record).
@@ -165,6 +266,31 @@ function mockEmailTool(outbox, simulate = {}) {
           }
           tx.append({ type: 'contact', operation: 'addContacts', key, payload: { listId, ...contact } });
           out.added += 1;
+        }
+        return out;
+      });
+    },
+    // Sends each email whose key it has not seen, as one locked transaction:
+    // the day limit is checked first, against the emails it would add, and
+    // over it nothing is sent. An address it doesn't take is refused (failed),
+    // as a real tool refuses one. Returns what it sent, what it already had
+    // and the refs it refused.
+    sendEmails(push, keyed, { perDay }) {
+      return outbox.transaction((tx) => {
+        const fresh = keyed.filter((e) => !tx.find('email', e.key));
+        const today = emailsSentOn(tx.records, dayOf());
+        if (today + fresh.length > perDay) {
+          throw new Error(`the email tool has sent ${today} emails today; ${fresh.length} more is over the limit of ${perDay} a day, so none is sent`);
+        }
+        const out = { sent: 0, alreadySent: keyed.length - fresh.length, failedRefs: [] };
+        const fail = simulate.failContacts || new Set();
+        for (const { key, ...email } of fresh) {
+          if (fail.has(email.external_ref) || !isAllowedAddress(email.to)) {
+            out.failedRefs.push(email.external_ref);
+            continue;
+          }
+          tx.append({ type: 'email', operation: 'sendEmails', key, payload: { push, ...email } });
+          out.sent += 1;
         }
         return out;
       });
@@ -265,6 +391,52 @@ function declare(outbox) {
           return { listId, added: total.added, alreadyAdded: total.alreadyAdded, skipped: skipped.length };
         },
       },
+      // input: { name, contacts: [{ external_ref, email, first_name, kind, visit_date, window,
+      // crew_name, package_name, before_date?, before_window?, before_crew_name?, reason? }],
+      // idempotencyKey, listKey? }. Appointment emails (Story 20.1, D14a).
+      sendEmails: {
+        perItemIdempotency: true,
+        plan: ({ name, contacts }) => {
+          checkName(name);
+          const { send, skipped } = sortEmails(contacts);
+          return {
+            name,
+            send: send.length,
+            skipped,
+            emails: send.map((e) => ({
+              ref: e.external_ref, to: e.to, kind: e.kind, subject: e.subject, body: e.body,
+            })),
+            limits: { ...LIMITS },
+          };
+        },
+        async apply({ name, contacts, listKey }, ctx) {
+          checkName(name);
+          if (listKey !== undefined && (typeof listKey !== 'string' || !listKey)) throw new Error('listKey must be a non-empty string');
+          const base = listKey || ctx.idempotencyKey;
+          const { send, skipped } = sortEmails(contacts);
+          const total = { sent: 0, alreadySent: 0, failedRefs: [] };
+          // At most 50 emails (the push limit) in batches of 100: one
+          // request, so the day limit is checked once for the whole push.
+          for (const batch of ctx.batches(send)) {
+            const keyed = batch.map(({ change, ...e }) => ({ ...e, key: `${base}:${e.kind}:${e.external_ref}:${change}` }));
+            // Counts and refs only, never an address or the text.
+            const res = await ctx.request(async () => {
+              const out = await ctx.client.sendEmails(name, keyed, { perDay: LIMITS.perDay });
+              return { sent: out.sent, alreadySent: out.alreadySent, failedRefs: out.failedRefs };
+            }, { size: batch.length });
+            total.sent += res.sent;
+            total.alreadySent += res.alreadySent;
+            total.failedRefs.push(...res.failedRefs);
+          }
+          if (total.failedRefs.length) {
+            const succeeded = total.sent + total.alreadySent;
+            throw new PartialFailure(`${succeeded} of ${send.length} emails sent, ${total.failedRefs.length} failed`, {
+              succeeded, failed: total.failedRefs.length, failedRefs: total.failedRefs,
+            });
+          }
+          return { sent: total.sent, alreadySent: total.alreadySent, skipped: skipped.length };
+        },
+      },
     },
   });
 }
@@ -292,4 +464,6 @@ function create(deps = {}) {
   return connector.create({ ...deps, idempotency: deps.idempotency || outbox.ledger });
 }
 
-module.exports = Object.freeze({ ...email, create, FIELDS, SKIP_NO_EMAIL });
+module.exports = Object.freeze({
+  ...email, create, FIELDS, SKIP_NO_EMAIL, EMAIL_FIELDS, SKIP_ADDRESS, LIMITS, isAllowedAddress,
+});

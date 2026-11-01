@@ -42,7 +42,7 @@ test('Ely is the admin user on the same Slack identity, and Steven holds exactly
   assert.equal(ely.identities.github, undefined, 'the fictional github id is dropped');
   assert.equal(steven.name, 'Steven Auslander');
   assert.equal(steven.role, 'admin');
-  assert.deepEqual([...ely.grants].sort(), ['ASK_DATA', 'ROUTING_ALL_CREWS', 'TIER3_APPROVE', 'WIN_BACK']);
+  assert.deepEqual([...ely.grants].sort(), ['APPOINTMENT_EMAILS', 'ASK_DATA', 'ROUTING_ALL_CREWS', 'TIER3_APPROVE', 'WIN_BACK']);
   assert.deepEqual([...(steven.grants || [])].sort(), [...ely.grants].sort());
   assert.equal(p.users.some((u) => /dana/i.test(`${u.id} ${u.name}`)), false, 'no Dana user is left');
 });
@@ -167,6 +167,19 @@ test('ASK_DATA is admin_grantable: false and granted to Ely and Steven by name',
   const holders = p.users.filter((u) => u.grants.includes('ASK_DATA')).map((u) => u.name);
   assert.deepEqual(holders, ['Ely Potter', 'Steven Auslander']);
   assert.equal(p.ask.queries_per_hour, 10);
+});
+
+// Plan brightside-v1, D14, GRD-010 (Story 20.1): appointment emails. APPOINTMENT_EMAILS
+// is granted by name only, to Ely and Steven; the admin role does not confer it.
+test('APPOINTMENT_EMAILS is admin_grantable: false and granted to Ely and Steven by name', () => {
+  const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
+  const r = p.resources.find((x) => x.key === 'APPOINTMENT_EMAILS');
+  assert.equal(r.admin_grantable, false);
+  assert.equal(r.open_access, false);
+  const holders = p.users.filter((u) => u.grants.includes('APPOINTMENT_EMAILS')).map((u) => u.name);
+  assert.deepEqual(holders, ['Ely Potter', 'Steven Auslander']);
+  const marcus = p.users.find((u) => u.id === 'marcus');
+  assert.equal(marcus.grants.includes('APPOINTMENT_EMAILS'), false, 'a member does not get it');
 });
 
 // SQLsmith P1-1, architect P1-1: no name, contact, address, coordinate, staff or pay

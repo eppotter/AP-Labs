@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-11-01 | 20.1 | feature | T3 | The mock email tool sends appointment emails (D14, D14a): `sendEmails` takes the contract's `{ name, contacts }` (a reminder or a change notice per scheduled visit, only D14's fields), renders each email from fixed templates in its dry run so the preview is what is sent, skips any address that isn't one plain lower-case `.invalid` address, refuses over 50 a push or 200 a UTC day (nothing sent), and keys each email by the push, kind, visit and a hash of the change. The contract suite gains an item `limit` for bulk samples. `APPOINTMENT_EMAILS` (by name: Ely and Steven); GRD-010 and its Write paths row. | DEP-045, DEP-046 |

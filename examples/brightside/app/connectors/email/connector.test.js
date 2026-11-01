@@ -36,6 +36,19 @@ const contacts = (count, from = 1) => Array.from({ length: count }, (_, i) => ({
   external_ref: String(from + i), email: `p${from + i}@home.invalid`, first_name: `P${from + i}`,
 }));
 
+// Appointment emails (Story 20.1): reminders for fixture-shaped visits, each
+// to a .invalid address.
+const emails = (count, from = 1) => Array.from({ length: count }, (_, i) => ({
+  external_ref: String(from + i),
+  email: `p${from + i}@home.invalid`,
+  first_name: `P${from + i}`,
+  kind: 'reminder',
+  visit_date: '2026-10-01',
+  window: 'morning',
+  crew_name: 'South crew A',
+  package_name: 'Deep clean',
+}));
+
 // The contract suite creates a fresh instance per check; the getter gives each
 // one its own outbox, holding one list for the addContacts samples to use.
 const SUITE_LIST = 'list-suite';
@@ -45,10 +58,13 @@ connectorContract(connector, {
     createList: (idempotencyKey) => ({ name: 'win-back-north-2026-10-24', idempotencyKey }),
     addContacts: (idempotencyKey) => ({ listId: SUITE_LIST, contacts: contacts(3), idempotencyKey }),
     pushList: (idempotencyKey) => ({ name: 'win-back-north-2026-10-24', contacts: contacts(3), idempotencyKey }),
+    sendEmails: (idempotencyKey) => ({ name: 'appointment-reminders-2026-10-01', contacts: emails(3), idempotencyKey }),
   },
   bulk: [
     { operation: 'addContacts', input: (count, idempotencyKey) => ({ listId: SUITE_LIST, contacts: contacts(count), idempotencyKey }) },
     { operation: 'pushList', input: (count, idempotencyKey) => ({ name: 'win-back-north-2026-10-24', contacts: contacts(count), idempotencyKey }) },
+    // At most 50 emails a push (D14): the suite checks 51 are refused.
+    { operation: 'sendEmails', limit: 50, input: (count, idempotencyKey) => ({ name: 'appointment-reminders-2026-10-01', contacts: emails(count), idempotencyKey }) },
   ],
 }, {
   deps: {
@@ -75,14 +91,14 @@ function readLines(file) {
 
 const live = { dryRun: false };
 
-test('email: a mock with no credential, its own kill switch, and three writes', () => {
+test('email: a mock with no credential, its own kill switch, and four writes', () => {
   assert.equal(connector.id, 'email');
   assert.deepEqual([...connector.auth.env], [], 'a mock declares no credential (#90)');
   assert.equal(connector.killSwitchEnv, 'BRIGHTSIDE_EMAIL_OFF');
-  assert.deepEqual([...connector.write].sort(), ['addContacts', 'createList', 'pushList']);
+  assert.deepEqual([...connector.write].sort(), ['addContacts', 'createList', 'pushList', 'sendEmails']);
   assert.deepEqual([...connector.read], []);
   assert.deepEqual({ ...connector.rateLimit }, { perSecond: 5, batchSize: 100 });
-  assert.deepEqual([...connector.perItemIdempotency], ['addContacts', 'pushList'], 'each contact is keyed, so a retry re-sends only the failed ones');
+  assert.deepEqual([...connector.perItemIdempotency], ['addContacts', 'pushList', 'sendEmails'], 'each contact or email is keyed, so a retry re-sends only the failed ones');
 });
 
 test('email: the outbox defaults to var/outbox/email.jsonl, under APLABS_VAR_DIR when set', () => {

@@ -150,7 +150,7 @@ Run it after Stage 1, so the four demo-pack notes are there. Everything you see 
 
 | Line or group | What it shows |
 |---|---|
-| First line | "Knows: 4 notes · 1 source · 7 truths · 9 rules" (without the Stage 1 notes, "Knows: 1 source · 7 truths · 9 rules") |
+| First line | "Knows: 4 notes · 1 source · 7 truths · 10 rules" (without the Stage 1 notes, "Knows: 1 source · 7 truths · 10 rules") |
 | Second line, small grey text | "All 7 tools working" |
 | Welcome, first visit only | "Brightside on your real data: it knows the company, follows its rules, and plans routes." |
 | **Routing** | Add a stop (**Run**), Customer cancellation (**Run**), Crew out (**Run**), Route map (**View**), Optimize a route (**Run**) |
@@ -163,7 +163,7 @@ Run it after Stage 1, so the four demo-pack notes are there. Everything you see 
 | # | You do | You should see |
 |---|---|---|
 | 1 | Type `/brightside-v1` in any channel or DM. | The Brightside v1 window, as in "The v1 menu" above. |
-| 2 | Press **View** on Data sources. | *Connected data:* "local fixture: brightside.duckdb, available". *Known truths and rules:* data.md and guardrails.md each "signed off 2026-10-31 by Ely Potter", "Rule cards approved: 9", "Query rules signed: 7", then the known truths: seven "Signed off 2026-10-25", each "Last check passed" with the date you ran the checks, and the rest "Awaiting sign-off". *Added context (shared with Brightside v0):* the four notes from Stage 1. Press **Back**. |
+| 2 | Press **View** on Data sources. | *Connected data:* "local fixture: brightside.duckdb, available". *Known truths and rules:* data.md and guardrails.md each "signed off 2026-10-31 by Ely Potter", "Rule cards approved: 10", "Query rules signed: 7", then the known truths: seven "Signed off 2026-10-25", each "Last check passed" with the date you ran the checks, and the rest "Awaiting sign-off". *Added context (shared with Brightside v0):* the four notes from Stage 1. Press **Back**. |
 | 3 | Press **Ask**. Type `How much notice does a customer need to give to reschedule?` and press **Ask**. | "Thinking…", then: 24 hours' notice, and no fee (from the Policies note). It ends "Not what you needed?". Press **Ask another**. |
 | 4 | Ask `What was paid revenue in September 2026?` | A bold label and **$350,186.40**. Under it, "From signed rule QR-003 (reviewed query)." and "Source: brightside.duckdb, as of 2026-09-30. 1 row. Tables: payments." There may also be a line saying the AI's own query agreed (if it disagreed, the figure shown is still the signed rule's). |
 | 5 | Press **Show the query**. | "The signed rule's query (QR-003, reviewed):" and its SQL. Press **Back to the answer**: the same answer again. Press **Ask another**. |
@@ -198,9 +198,9 @@ The bold label above a figure is the AI's wording and may differ. The figure, th
 
 Before you start: steps 1 to 6 of "Before the demo" above, and the four demo-pack notes from Stage 1 on `/brightside-v0`.
 
-1. Type `/brightside-v1`. The first line reads "Knows: 4 notes · 1 source · 7 truths · 9 rules". The second reads "All 7 tools working".
+1. Type `/brightside-v1`. The first line reads "Knows: 4 notes · 1 source · 7 truths · 10 rules". The second reads "All 7 tools working".
 2. Look at the rows. Routing: Add a stop, Customer cancellation, Crew out, Route map, Optimize a route. Tools: Ask, Request a tool. Setup · admins only: Add context ("4 notes"), Data sources. Help at the bottom.
-3. Press **View** on Data sources. You see the local fixture "available"; data.md and guardrails.md signed off by Ely Potter; "Rule cards approved: 9"; "Query rules signed: 7"; seven known truths signed off, each "Last check passed"; and the four notes under "Added context (shared with Brightside v0)".
+3. Press **View** on Data sources. You see the local fixture "available"; data.md and guardrails.md signed off by Ely Potter; "Rule cards approved: 10"; "Query rules signed: 7"; seven known truths signed off, each "Last check passed"; and the four notes under "Added context (shared with Brightside v0)".
 4. Press **Back**, then **Ask**. Ask `Crew 4's stops on October 1 zig-zag. Can you fix the order?`. The answer names Optimize a route, with **Run**.
 5. Press **Run**. Pick South crew A and 2026-10-01, press **Show stops**. You see seven stops, the map and the Drive time.
 6. Press **Optimize**. The order changes, the map redraws, and the Drive time is shorter than in step 5.
@@ -224,7 +224,7 @@ Before you start: steps 1 to 6 of "Before the demo" above, and the four demo-pac
 24. Type `/brightside-v0`. The first line reads "Knows: 5 notes", and Add context lists the new note.
 25. Remove that note on `/brightside-v0`, then type `/brightside-v1`. The first line reads "Knows: 4 notes" again.
 26. Type `/brightside-v0` and look at it. It is as after Stage 1: "Knows: 4 notes"; Ask and Request a tool; Add context and Data sources under Setup.
-27. Type `/brightside`. It has the same groups and tools as before Epic 19 (Lists, Routing, Tools). Its first line ends "1 source · 7 truths · 9 rules": 9, not 8, since GRD-009 was signed (Story 19.7). Both hubs read the same rule file.
+27. Type `/brightside`. It has the same groups and tools as before Epic 19 (Lists, Routing, Tools). Its first line ends "1 source · 7 truths · 10 rules": 10, not 8, since GRD-009 and GRD-010 were signed (Stories 19.7 and 20.1). Both hubs read the same rule file.
 28. Open the Slack app's settings (api.slack.com/apps, Brightside Bot (dev)). Slash Commands lists `/brightside`, `/brightside-v0` and `/brightside-v1`. OAuth & Permissions lists the same seven bot scopes as `examples/brightside/app/slack-manifest.json`.
 
 Not checked live: a crew lead's and a member's view of v1 (there are no real ones), and Ask's limits (10 query answers an hour each, one at a time). The tests cover them.

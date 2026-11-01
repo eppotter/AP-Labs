@@ -1333,6 +1333,57 @@ test('the suite requires a bulk sample for a write that declares perItemIdempote
   assert.ok(none.find((c) => /per-item idempotency/.test(c.name)).opts.skip, 'skipped when no write declares it');
 });
 
+// Story 20.1: a bulk sample may declare the write's own item limit (the mock
+// email tool's sendEmails takes at most 50 a push). The suite checks one more
+// is refused before any I/O and the limit goes, sends no more than the limit
+// in its bulk checks, and says so when the limit fits in one request.
+test('the suite checks a write\'s own item limit, and sizes its bulk checks to it (Story 20.1)', async () => {
+  const limitSpec = (enforce, batchSize) => spec({
+    rateLimit: { perSecond: 10, batchSize },
+    write: {
+      send: {
+        perItemIdempotency: true,
+        plan: (i) => {
+          if (enforce && i.items.length > 3) throw new Error('over the limit of 3');
+          return { send: i.items.length };
+        },
+        async apply({ items: list }, ctx) {
+          if (enforce && list.length > 3) throw new Error('over the limit of 3');
+          for (const batch of ctx.batches(list)) await ctx.request(() => ({ sent: batch.length }), { size: batch.length });
+          return { sent: list.length };
+        },
+      },
+    },
+  });
+  const samples = { read: { get: {} }, write: { send: (idempotencyKey) => ({ items: ['a', 'b'], idempotencyKey }) } };
+  const bulk = { operation: 'send', limit: 3, input: (count, idempotencyKey) => ({ items: Array.from({ length: count }, (_, i) => `i${i}`), idempotencyKey }) };
+  const LIMIT_CASE = 'a write with an item limit refuses one more, before any I/O';
+  // Batches of 2: a limit of 3 takes two requests, so every check runs.
+  assert.deepEqual(await failingCases(defineConnector(limitSpec(true, 2)), { ...samples, bulk }), []);
+  // Batches of 5: the limit fits in one request; the resume check says so.
+  const cases = [];
+  connectorContract(defineConnector(limitSpec(true, 5)), { ...samples, bulk }, { test: (name, opts, fn) => cases.push({ name, fn: fn || opts, opts: fn ? opts : {} }) });
+  const failed = [];
+  const notes = [];
+  for (const c of cases) {
+    if (c.opts.skip) continue;
+    const t = fakeT();
+    try { await c.fn(t); } catch { failed.push(c.name); }
+    notes.push(...t.notes);
+  }
+  assert.deepEqual(failed, []);
+  assert.ok(notes.some((n) => /send takes at most 3 items, one request/.test(n)), notes.join('\n'));
+  // A write that ignores its limit fails the limit check.
+  assert.deepEqual(await failingCases(defineConnector(limitSpec(false, 2)), { ...samples, bulk }), [LIMIT_CASE]);
+  // No limit declared: the limit check is skipped.
+  const none = [];
+  connectorContract(defineConnector(limitSpec(true, 2)), { ...samples, bulk: { ...bulk, limit: undefined } }, { test: (name, opts, fn) => none.push({ name, opts: fn ? opts : {} }) });
+  assert.ok(none.find((c) => c.name.endsWith(LIMIT_CASE)).opts.skip, 'skipped when no bulk sample declares a limit');
+  // A limit that isn't a positive integer fails the declaration.
+  const bad = await failingCases(defineConnector(limitSpec(true, 2)), { ...samples, bulk: { ...bulk, limit: 0 } });
+  assert.ok(bad.includes('declares the contract (auth env names, operations, kill switch, rate limit)'), bad.join('\n'));
+});
+
 test('a PartialFailure with bad counts, or from a read, is a plain ConnectorFailed (#90)', async () => {
   for (const details of [
     { succeeded: -1, failed: 1, failedRefs: ['a'] },
