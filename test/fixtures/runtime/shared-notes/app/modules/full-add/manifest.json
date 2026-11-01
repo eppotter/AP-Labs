@@ -1,0 +1,12 @@
+{
+  "id": "full-add",
+  "hub": "full",
+  "label": "Add context",
+  "description": "Add what Ask should know about the business.",
+  "resource": "ADD_CONTEXT",
+  "archetype": "add-context",
+  "environments": [
+    "dev",
+    "prod"
+  ]
+}

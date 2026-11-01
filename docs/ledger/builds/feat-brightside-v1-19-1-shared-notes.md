@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-10-31 | 19.1 | feature | T3 | Hubs can share notes: a hub file's optional `notes` names another hub, and both then use one added-context store (one folder, queue and set of caps), listed, prompted and removed from either hub, while `sees` alone still decides the profile context, data and rules each hub gets. Boot refuses a link to no hub, to itself or to a hub with `notes` of its own, and different Ask, Add context or Data sources keys on the sharing hubs, naming the hub file and field. Both screens say the notes are shared. | — |

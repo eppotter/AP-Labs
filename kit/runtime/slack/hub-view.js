@@ -6,7 +6,7 @@
 //
 //   const views = createHubViews({ hubs, data, llm, knowledge });
 //   const view = views.forHub('brightside');
-//   // { id, sees, data, llm, rules, knowledge }
+//   // { id, sees, data, llm, rules, knowledge, notes, sharedWith }
 //
 //   data       the query runner (kit/runtime/data) when sees lists "data",
 //              else null: a handler's ctx.data.run then rejects with "no data
@@ -19,6 +19,21 @@
 //              kit/runtime/knowledge/store forHub): add, list, remove and
 //              forPrompt, for this hub's entries only. Every hub gets its
 //              own, whatever sees says (D1, D4). null when there is no store.
+//   notes      the id of the hub whose notes store this hub uses: its own id,
+//              or the hub its file's "notes" names (below).
+//   sharedWith the names of the other hubs that use the same notes, in file
+//              order ([] for a hub whose notes are its own alone), for the
+//              Add context and Data sources screens to say so.
+//
+// Shared notes (plan brightside-v1, D6, Story 19.1): a hub file may name
+// another hub in "notes". Its knowledge store is then that hub's
+// (knowledge.forHub(notes)) and its AI service reads the same entries
+// (llm.forHub({ id, sees, notes })): one folder, one queue, one set of caps,
+// so a note added or removed on either hub is added or removed on both.
+// sees is unchanged: it alone decides what each hub gets from the profile,
+// so a blank hub sharing notes with a full one still never gets the
+// profile's context, data or rules. createHubViews throws on a link boot
+// would refuse (fail closed); boot names each problem first (bootProblems).
 //
 // kit/runtime/app hands registerHubs (kit/runtime/slack/hubs) only forHub,
 // never the app-wide runner or AI service. The hubs give each handler,
@@ -35,6 +50,20 @@
 //     the job too. Fork jobs (<app>/jobs.json) belong to no hub: their ctx is
 //     log, data, now and name only, never an AI service or a knowledge store
 //     (Story 11.1).
+// And, naming the hub file and its "notes" field (Story 19.1, D6):
+//   - a notes link to no hub, to the hub itself, or to a hub that shares
+//     another hub's notes (no chains, so no loops);
+//   - ask, add-context or data-sources modules (in any environment) on the
+//     hubs that share one set of notes with more than one resource key
+//     between them, so the same people read, add and remove, and list the
+//     shared notes (architect P3-15). A hub without one of them is fine;
+//   - any other module on those hubs whose AI calls carry the hub's prompt,
+//     and so the shared notes (a scoped-pull or approval-write module's
+//     reader, or an archetype added later: fail closed), unless it uses the
+//     key that reads the notes (the ask modules' key, else the add-context
+//     modules'; neither: refused). Exempt, because their AI calls never carry
+//     notes: routing-map (no AI service), handler (its ctx has none),
+//     build-request (withContext: false) (PR #307 review).
 //
 // everyHubSeesAll({ data, llm }): registerHubs' test seam, for tests that
 // hand it a runner and an AI service directly (as before Story 16.1). Every
@@ -51,6 +80,83 @@ const DATA_ARCHETYPES = Object.freeze(['scoped-pull', 'approval-write', 'routing
 const ENGINE_JOB_NEEDS = Object.freeze(['data', 'context']);
 
 const nameOf = (hub) => (hub && (hub.file || hub.id)) || 'a hub';
+const hubFile = (hub) => hub.file || `hubs/${hub.id}.json`;
+const moduleFile = (mod) => mod.file || `modules/${mod.id}/manifest.json`;
+// The archetypes that reach a hub's notes, and what their key lets people
+// do with them (Story 19.1, D6).
+const NOTES_ARCHETYPES = Object.freeze({ ask: 'read', 'add-context': 'add and remove', 'data-sources': 'list' });
+// The other archetypes whose AI calls never carry a hub's notes (PR #307
+// review): routing-map gets no AI service; a handler's ctx has none;
+// build-request's one call is withContext: false. Every other module on
+// hubs that share notes must use the key that reads them.
+const NOTES_FREE = Object.freeze(['routing-map', 'handler', 'build-request']);
+
+// The id of the hub whose notes a hub uses: its "notes" link, else its own.
+const notesOf = (hub) => (typeof hub.notes === 'string' ? hub.notes : hub.id);
+
+// A hub's notes link, checked against the other hubs (D6): problems naming
+// the hub file and the field. A hub with no link has none.
+function linkProblems(hubs) {
+  const byId = new Map((hubs || []).map((h) => [h.id, h]));
+  const problems = [];
+  for (const hub of hubs || []) {
+    if (hub.notes === undefined) continue;
+    const file = hubFile(hub);
+    const target = typeof hub.notes === 'string' ? byId.get(hub.notes) : undefined;
+    if (typeof hub.notes !== 'string') problems.push(`${file}: field "notes" must be the id of another hub`);
+    else if (hub.notes === hub.id) problems.push(`${file}: field "notes" names the hub itself (leave "notes" out for the hub's own notes)`);
+    else if (!target) problems.push(`${file}: field "notes" names no hub ("${hub.notes}" has no hubs/${hub.notes}.json)`);
+    else if (target.notes !== undefined) {
+      problems.push(`${file}: field "notes" names ${target.id}, which shares another hub's notes itself (${hubFile(target)} field "notes"); name a hub that keeps its own notes (no chains)`);
+    }
+  }
+  return problems;
+}
+
+// The hubs that share one set of notes: Map(store hub id -> [linking hub]),
+// for well-formed links only (linkProblems names the rest).
+function sharedGroups(hubs) {
+  const byId = new Map((hubs || []).map((h) => [h.id, h]));
+  const groups = new Map();
+  for (const hub of hubs || []) {
+    if (typeof hub.notes !== 'string' || hub.notes === hub.id) continue;
+    const target = byId.get(hub.notes);
+    if (!target || target.notes !== undefined) continue;
+    if (!groups.has(target.id)) groups.set(target.id, []);
+    groups.get(target.id).push(hub);
+  }
+  return groups;
+}
+
+// One resource key per notes archetype across the hubs that share notes
+// (D6, architect P3-15). Each problem names the linking hub file, its field
+// and every module with its key.
+function sharedKeyProblems(hubs, modules) {
+  const problems = [];
+  for (const [store, linkers] of sharedGroups(hubs)) {
+    const members = new Set([store, ...linkers.map((h) => h.id)]);
+    for (const [archetype, verb] of Object.entries(NOTES_ARCHETYPES)) {
+      const mods = (modules || []).filter((m) => m.archetype === archetype && members.has(m.hub));
+      if (new Set(mods.map((m) => m.resource)).size <= 1) continue;
+      const list = mods.map((m) => `${moduleFile(m)} "resource" ${m.resource}`).join(', ');
+      for (const hub of linkers) {
+        problems.push(`${hubFile(hub)}: field "notes" shares the notes of ${store}, but the ${archetype} modules on these hubs use different keys (${list}); give them one key, so the same people ${verb} the shared notes`);
+      }
+    }
+    // Who may read the notes: the ask modules' key, else add-context's.
+    const keyOf = (archetype) => [...new Set((modules || []).filter((m) => m.archetype === archetype && members.has(m.hub)).map((m) => m.resource))];
+    const readers = keyOf('ask').length ? keyOf('ask') : keyOf('add-context');
+    for (const m of modules || []) {
+      if (!members.has(m.hub) || NOTES_ARCHETYPES[m.archetype] || NOTES_FREE.includes(m.archetype)) continue;
+      if (readers.length === 1 && m.resource === readers[0]) continue;
+      const want = readers.length === 1 ? `use ${readers[0]}, the key that reads them,` : 'give it the key the hubs\' ask modules use';
+      for (const hub of linkers) {
+        problems.push(`${hubFile(hub)}: field "notes" shares the notes of ${store}, but ${moduleFile(m)} (a${/^[aeiou]/.test(m.archetype) ? 'n' : ''} ${m.archetype} module on ${m.hub}) uses "resource" ${m.resource}, and its AI calls carry the shared notes; ${want} or move it to a hub that keeps its own notes`);
+      }
+    }
+  }
+  return problems;
+}
 
 // The hub's sees, checked: a frozen list. Throws, naming the hub, when it is
 // missing or holds anything else.
@@ -63,7 +169,7 @@ function seesOf(hub) {
 }
 
 function viewOf({
-  id, sees, data, llm, knowledge = null,
+  id, sees, data, llm, knowledge = null, notes = id, sharedWith = [],
 }) {
   return Object.freeze({
     id,
@@ -72,6 +178,8 @@ function viewOf({
     llm,
     rules: sees.includes('rules'),
     knowledge,
+    notes,
+    sharedWith: Object.freeze([...sharedWith]),
   });
 }
 
@@ -86,15 +194,23 @@ const BLANK_VIEW = viewOf({ id: null, sees: Object.freeze([]), data: null, llm: 
 function createHubViews({
   hubs, data = null, llm = null, knowledge = null,
 }) {
+  // A notes link boot would refuse stops here too (fail closed).
+  const bad = linkProblems(hubs);
+  if (bad.length) throw new TypeError(bad[0]);
   const views = new Map();
   for (const hub of hubs || []) {
     const sees = seesOf(hub);
+    const notes = notesOf(hub);
+    const sharedWith = (hubs || []).filter((h) => h.id !== hub.id && notesOf(h) === notes).map((h) => h.name || h.id);
+    const bind = { id: hub.id, sees: [...sees], ...(notes !== hub.id ? { notes } : {}) };
     views.set(hub.id, viewOf({
       id: hub.id,
       sees,
       data,
-      llm: llm ? llm.forHub({ id: hub.id, sees: [...sees] }) : null,
-      knowledge: knowledge ? knowledge.forHub(hub.id) : null,
+      llm: llm ? llm.forHub(bind) : null,
+      knowledge: knowledge ? knowledge.forHub(notes) : null,
+      notes,
+      sharedWith,
     }));
   }
   return Object.freeze({
@@ -151,9 +267,10 @@ function bootProblems({ hubs, modules, env }) {
       problems.push(`${file}: module ${mod.id} brings the engine job "${job}", but its hub ${nameOf(hub)} does not see ${lacks.join(' or ')}`);
     }
   }
+  problems.push(...linkProblems(hubs), ...sharedKeyProblems(hubs, modules));
   return problems;
 }
 
 module.exports = {
-  createHubViews, everyHubSeesAll, bootProblems, seesOf, BLANK_VIEW, DATA_ARCHETYPES, ENGINE_JOB_NEEDS,
+  createHubViews, everyHubSeesAll, bootProblems, seesOf, BLANK_VIEW, DATA_ARCHETYPES, ENGINE_JOB_NEEDS, NOTES_ARCHETYPES, NOTES_FREE,
 };

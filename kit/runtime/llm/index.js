@@ -8,6 +8,7 @@
 //   llm.status();                         // { on, reason, model, ... }
 //   llm.registerTool({ name, description, input_schema, effects: 'none' });
 //   const hub = llm.forHub({ id, sees });  // { ask, structured, readFile }, bound to a hub
+//   llm.forHub({ id, sees, notes });       // the same, reading another hub's notes
 //   await hub.ask({ person, resource, request, tool });
 //   await hub.structured({ person, resource, request, tool, instructions });
 //   await hub.readFile({ person, resource, file: { kind, mediaType, data } });
@@ -27,6 +28,11 @@
 // entries reach its own prompt only, whatever sees says. Read on every call,
 // so an entry is used as soon as it is added. A store that throws refuses the
 // call with the configuration-fault message.
+// Shared notes (plan brightside-v1, D6, Story 19.1): forHub's notes names the
+// hub whose entries are read (the hub file's "notes", checked at boot by
+// kit/runtime/slack/hub-view), else the hub's own id. Only the added context
+// is shared: whether the profile's context files are in the prompt is still
+// the hub's own sees, and the 40,000-character limit is unchanged.
 //
 // Setup, fixed at startup (a change takes a restart):
 //   - the key, read once by readKey() through kit/lib/secrets (env
@@ -145,6 +151,8 @@ const READ_FILE_REQUEST = 'Write down what this file says about the business, as
   + `If you can read nothing in it, write only: ${NOTHING_READABLE}`;
 // What a hub may see: the one list (kit/runtime/sees, from hub.schema.json).
 const { HUB_SEES } = require('../sees');
+// A hub id (hub.schema.json's slug), for forHub's notes.
+const NOTES_HUB = /^[a-z][a-z0-9-]{0,63}$/;
 
 // Any non-empty value other than "0" turns the AI off. Not trimmed: " 0" is off.
 function isSwitchedOff(env) {
@@ -391,7 +399,7 @@ function createLlm({
     const prompt = promptFor(hub);
     let added;
     try {
-      added = await knowledge.forPrompt(hub.id);
+      added = await knowledge.forPrompt(hub.notes);
     } catch {
       throw refuseConfig(hub);
     }
@@ -401,7 +409,7 @@ function createLlm({
     return full;
   }
 
-  // ask() and structured() bound to one hub: { id, context }.
+  // ask() and structured() bound to one hub: { id, context, notes }.
   function bindTo(hub) {
     async function ask({ person, resource, request, tool } = {}) {
       precheck('ask', person, resource, request);
@@ -475,13 +483,15 @@ function createLlm({
   }
 
   // The service bound to one hub (D2). sees: the hub file's list, checked
-  // again here so a caller can't widen it.
-  function forHub({ id, sees } = {}) {
+  // again here so a caller can't widen it. notes: the id of the hub whose
+  // added context is read (Story 19.1), else the hub's own.
+  function forHub({ id, sees, notes } = {}) {
     if (typeof id !== 'string' || !id) throw new TypeError('forHub() needs the hub id');
     if (!Array.isArray(sees) || sees.some((s) => !HUB_SEES.includes(s))) {
       throw new TypeError(`forHub() needs the hub's sees, a list of ${HUB_SEES.join(', ')}`);
     }
-    return bindTo({ id, context: sees.includes('context') });
+    if (notes !== undefined && (typeof notes !== 'string' || !NOTES_HUB.test(notes))) throw new TypeError('forHub() needs notes to be a hub id');
+    return bindTo({ id, context: sees.includes('context'), notes: notes === undefined ? id : notes });
   }
 
   // Steps 4 and 5, then the call. def: the one tool to send, or null.

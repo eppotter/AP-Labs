@@ -52,6 +52,11 @@
 // details …"). The hubs read it as text (kit/runtime/slack/files readCsv: no
 // AI call, never summarised), and "Here's what I took from <title>:" adds
 // "<N> rows, <M> columns" (fileAdded's table).
+//
+// Shared notes (plan brightside-v1, D6, Story 19.1): on a hub that shares its
+// notes with other hubs (the hub view's sharedWith, their names), the list
+// says so under its heading: "Shared with <hub>: a note added or removed here
+// is added or removed there too." (sharedLine).
 
 const { escapeText, messageFor } = require('../../messages');
 const { ContextRefused, FileRefused } = require('../../errors');
@@ -101,6 +106,8 @@ const TITLE_TOO_LONG = `A title holds at most ${MAX_TITLE_CHARS} characters.`;
 const saveFailed = (admin) => `I couldn't save that just now, so nothing was added. Press Back and try again in a minute, or tell ${admin} if it keeps happening.`;
 const removeFailed = (admin) => `I couldn't remove that just now, so it is still there. Try again in a minute, or tell ${admin} if it keeps happening.`;
 const listFailed = (admin) => `The entries here couldn't be listed just now. Press Back and try again in a minute, or ask ${admin}.`;
+// The line under "Added here" on a hub whose notes are shared (Story 19.1).
+const sharedLine = (names) => `Shared with ${names.map((n) => escapeText(oneLine(n))).join(', ')}: a note added or removed here is added or removed there too.`;
 const NO_STORE = (admin) => `Adding context isn't set up on this bot, so nothing can be added here. Please tell ${admin}.`;
 
 const HUB = /^[a-z][a-z0-9-]{0,63}$/;
@@ -159,9 +166,10 @@ function entryBlock(moduleId, e) {
 // The hub's entries as blocks: a heading, then one section per entry with
 // Remove, or a line saying there are none, or that they couldn't be listed.
 function listBlocks({
-  moduleId, entries = [], problem = false, admin = 'your admin',
+  moduleId, entries = [], problem = false, admin = 'your admin', sharedWith = [],
 }) {
   const blocks = [{ type: 'divider' }, section('*Added here*')];
+  if (Array.isArray(sharedWith) && sharedWith.length) blocks.push(section(sharedLine(sharedWith)));
   if (problem) blocks.push(section(listFailed(admin)));
   else if (!entries.length) blocks.push(section(NOTHING_YET));
   else blocks.push(...entries.map((e) => entryBlock(moduleId, e)));
@@ -171,7 +179,7 @@ function listBlocks({
 // The form: the boxes, with the hub's entries below. note: a line above it
 // all (after a Remove). A message for the hubs' view renderer.
 function form({
-  hubId, moduleId, entries, problem, admin, note,
+  hubId, moduleId, entries, problem, admin, note, sharedWith,
 }) {
   const blocks = [
     ...(note ? [section(note)] : []),
@@ -205,7 +213,7 @@ function form({
       },
     },
     ...listBlocks({
-      moduleId, entries, problem, admin,
+      moduleId, entries, problem, admin, sharedWith,
     }),
   ];
   return {
@@ -218,12 +226,12 @@ function form({
 // A result: note (already worded), then the hub's entries with Remove. No
 // boxes and no submit, so the view's only way out is Back.
 function result({
-  hubId, moduleId, note, entries, problem, admin, list = true,
+  hubId, moduleId, note, entries, problem, admin, list = true, sharedWith,
 }) {
   return {
     text: note,
     blocks: [section(note), ...(list ? listBlocks({
-      moduleId, entries, problem, admin,
+      moduleId, entries, problem, admin, sharedWith,
     }) : [])],
     modal: { callbackId: VIEW_CALLBACK, privateMetadata: metadata(hubId, moduleId) },
   };
@@ -263,7 +271,7 @@ function textSections(text) {
 // columns"; null for any other file.
 const count = (n, one) => `${Number(n).toLocaleString('en-US')} ${one}${n === 1 ? '' : 's'}`;
 function fileAdded({
-  hubId, moduleId, entry, entries, problem, admin, table = null,
+  hubId, moduleId, entry, entries, problem, admin, table = null, sharedWith,
 }) {
   const title = escapeText(cut(entry.title || 'Untitled', MAX_TITLE_CHARS));
   const chars = Array.from(String(entry.text || ''));
@@ -278,7 +286,7 @@ function fileAdded({
       ...textSections(shown),
       section(`${more}${ADDED} ${FILE_STAYS}`),
       ...listBlocks({
-        moduleId, entries, problem, admin,
+        moduleId, entries, problem, admin, sharedWith,
       }),
     ],
     modal: { callbackId: VIEW_CALLBACK, privateMetadata: metadata(hubId, moduleId) },
@@ -340,6 +348,7 @@ module.exports = {
   removeValue,
   saveFailed,
   removeFailed,
+  sharedLine,
   NO_STORE,
   SUBMIT_CALLBACK,
   VIEW_CALLBACK,

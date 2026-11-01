@@ -1,0 +1,7 @@
+{
+  "id": "teach",
+  "command": "/teach",
+  "name": "Teach tools",
+  "description": "Open the Teach tools menu",
+  "sees": []
+}

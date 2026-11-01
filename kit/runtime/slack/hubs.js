@@ -881,7 +881,7 @@ function registerHubs(app, {
     const listed = await dataSources.entriesOf(viewOf(mod.hub), log);
     await target.reply({
       ...addContext.form({
-        hubId: mod.hub, moduleId: mod.id, entries: listed.entries, problem: listed.problem, admin,
+        hubId: mod.hub, moduleId: mod.id, entries: listed.entries, problem: listed.problem, admin, sharedWith: viewOf(mod.hub).sharedWith,
       }),
       ephemeralFallback: FORM_NEEDS_WINDOW,
     });
@@ -932,7 +932,7 @@ function registerHubs(app, {
       hubId: mod.hub,
       where: 'add-context',
       message: addContext.result({
-        hubId: mod.hub, moduleId: mod.id, note, entries: listed.entries, problem: listed.problem, admin,
+        hubId: mod.hub, moduleId: mod.id, note, entries: listed.entries, problem: listed.problem, admin, sharedWith: viewOf(mod.hub).sharedWith,
       }),
     });
   };
@@ -1003,7 +1003,7 @@ function registerHubs(app, {
     }
     const listed = await dataSources.entriesOf(viewOf(mod.hub), log);
     const shown = {
-      hubId: mod.hub, moduleId: mod.id, entries: listed.entries, problem: listed.problem, admin,
+      hubId: mod.hub, moduleId: mod.id, entries: listed.entries, problem: listed.problem, admin, sharedWith: viewOf(mod.hub).sharedWith,
     };
     await showAfterAck({
       client,
@@ -1243,7 +1243,7 @@ function registerHubs(app, {
         const hubView = viewOf(mod.hub);
         const listed = await dataSources.entriesOf(hubView, log);
         await target.reply(dataSources.render({
-          ready: readiness(hubView, { rules }), entries: listed.entries, contextProblem: listed.problem, admin,
+          ready: readiness(hubView, { rules }), entries: listed.entries, contextProblem: listed.problem, admin, sharedWith: hubView.sharedWith,
         }));
         return;
       }
@@ -1667,7 +1667,7 @@ function registerHubs(app, {
       }
       const listed = await dataSources.entriesOf(viewOf(mod.hub), log);
       const shown = {
-        hubId: mod.hub, moduleId: mod.id, note, entries: listed.entries, problem: listed.problem, admin,
+        hubId: mod.hub, moduleId: mod.id, note, entries: listed.entries, problem: listed.problem, admin, sharedWith: viewOf(mod.hub).sharedWith,
       };
       await show(from.callback_id === addContext.SUBMIT_CALLBACK ? addContext.form(shown) : addContext.result(shown));
     } catch (err) {

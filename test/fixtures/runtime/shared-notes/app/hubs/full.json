@@ -1,0 +1,12 @@
+{
+  "id": "full",
+  "command": "/full",
+  "name": "Full tools",
+  "description": "Open the Full tools menu",
+  "sees": [
+    "context",
+    "data",
+    "rules"
+  ],
+  "notes": "teach"
+}
