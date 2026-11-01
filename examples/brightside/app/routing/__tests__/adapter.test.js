@@ -4,7 +4,7 @@
 // object answers the adapter's three queries and records every travelMatrix
 // rectangle. Checked here, without DuckDB: a module's ctx.data (run and
 // describe only) is refused; a crew is out when its lead is absent or nobody
-// is present (pending Dana Reyes, DEP-028); the rule and cadence mappings;
+// is present (GRD-008, approved 2026-10-31); the rule and cadence mappings;
 // every travel read stays within max_pairs; a bad day is refused before any
 // query. The same adapter on the built fixture, with the planted scenarios
 // through the engine, is examples/brightside/test/routing-adapter.test.js.
@@ -62,7 +62,7 @@ test('a module ctx.data (run and describe only) is refused: the adapter needs tr
   await assert.rejects(adapter.dayInput({ day: DAY }), (err) => err instanceof RoutingFault && err.details.problem === 'data_unavailable');
 });
 
-test('a crew is out when its lead is absent or nobody is present (pending Dana Reyes, DEP-028)', async () => {
+test('a crew is out when its lead is absent or nobody is present (GRD-008, approved 2026-10-31)', async () => {
   const data = fakeData({
     crews: [
       crewRow(1, 'n'),

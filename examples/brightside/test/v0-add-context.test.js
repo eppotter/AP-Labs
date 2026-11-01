@@ -17,7 +17,7 @@ const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
 
 const ROOT = path.join(__dirname, '../../..');
 const PROFILE = path.join(__dirname, 'fixtures/demo-profile.yml');
-const DANA = { id: 'U0FIXTUREDANA', name: 'dana' }; // the fixture's admin
+const ELY = { id: 'U0FIXTUREELY', name: 'ely' }; // the fixture's admin
 
 // The fake with views on, as the live app has them.
 class ViewsApp extends FakeSlackApp {
@@ -51,15 +51,15 @@ async function boot(t) {
   return { app: res.app, varDir };
 }
 
-test('/brightside-v0: Dana adds a typed note in Add context; it is stored under the var dir and Data sources lists it', async (t) => {
+test('/brightside-v0: Ely adds a typed note in Add context; it is stored under the var dir and Data sources lists it', async (t) => {
   const { app, varDir } = await boot(t);
   const menu = { id: 'VMENU', type: 'modal', private_metadata: 'brightside-v0', hash: 'h0' };
-  await app.dispatchAction('v0-add-context:open', { user: DANA, view: menu });
+  await app.dispatchAction('v0-add-context:open', { user: ELY, view: menu });
   const form = app.views.at(-1).args.view;
   assert.equal(form.submit.text, 'Add');
   assert.match(JSON.stringify(form.blocks), /Everyone who can use Ask here can read this\./);
   await app.dispatchView('add-context:submit', {
-    user: DANA,
+    user: ELY,
     view: {
       ...form,
       id: 'VFORM',
@@ -71,7 +71,7 @@ test('/brightside-v0: Dana adds a typed note in Add context; it is stored under 
   assert.equal(added.view.blocks[0].text.text, 'Added. Ask can use it now.');
   const files = fs.readdirSync(path.join(varDir, 'context', 'brightside', 'brightside-v0'));
   assert.equal(files.filter((f) => f.endsWith('.json')).length, 1);
-  await app.dispatchAction('v0-data-sources:open', { user: DANA, view: menu });
+  await app.dispatchAction('v0-data-sources:open', { user: ELY, view: menu });
   const sources = app.views.at(-1).args.view.blocks.map((b) => b.text.text).join('\n');
-  assert.match(sources, /\*Added context\*\n• Saturdays by <@U0FIXTUREDANA>/);
+  assert.match(sources, /\*Added context\*\n• Saturdays by <@U0FIXTUREELY>/);
 });

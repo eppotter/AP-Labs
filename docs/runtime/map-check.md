@@ -48,7 +48,7 @@ Do them in order. Write down what you see for each numbered item; the answers go
 
 ## If something fails
 
-- **Item 1 fails** (no picture): AD-R15's fallback applies (upload to your own DM with the bot and link to it from the window). That changes Story 15.4's acceptance criteria and needs Dana Reyes's answer first, because a DM image shows in push notification previews and in her Files list. Tell the Orchestrator; nothing is built on it until then.
+- **Item 1 fails** (no picture): AD-R15's fallback applies (upload to your own DM with the bot and link to it from the window). That changes Story 15.4's acceptance criteria and needs Ely Potter's answer first (the demo client's owner since 2026-10-31), because a DM image shows in push notification previews and in the person's Files list. Tell the Orchestrator; nothing is built on it until then.
 - **Item 3 fails on Back** (no `map view closed` line): no change is needed. The sweep deletes the file within 20 minutes of upload.
 - **Anything else unexpected**: note exactly what you saw and tell the Orchestrator.
 

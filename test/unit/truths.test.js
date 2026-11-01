@@ -48,7 +48,7 @@ function block(fields = {}, prints = '412,300') {
     run: [node, '-e', `console.log(${JSON.stringify(prints)})`],
     expect: 412300,
     tolerance: '0.5%',
-    owner: 'Dana Reyes',
+    owner: 'Ely Potter',
     signed_off: '2026-10-20',
     ...fields,
   };
@@ -68,7 +68,7 @@ test('parses a valid truth block', () => {
   assert.equal(e.id, 'revenue-2026-09');
   assert.equal(e.truth.statement, 'Total paid revenue for September 2026 is $412,300.');
   assert.deepEqual(e.truth.tolerance, { kind: 'pct', value: 0.5 });
-  assert.equal(e.truth.owner, 'Dana Reyes');
+  assert.equal(e.truth.owner, 'Ely Potter');
   assert.equal(e.truth.signedOff, '2026-10-20');
   assert.equal(e.truth.timeoutSeconds, 300);
 });
@@ -80,7 +80,7 @@ test('the format in the brief parses as written (unquoted percent, comments)', (
     'statement: Total paid revenue for September 2026 is $412,300.',
     'run: [node, scripts/truths/revenue.js, "2026-09"]',
     '# a whole-line YAML comment does not end the section',
-    'expect: 412300', 'tolerance: 0.5%', 'owner: Dana Reyes', 'signed_off: 2026-10-20', '```', '',
+    'expect: 412300', 'tolerance: 0.5%', 'owner: Ely Potter', 'signed_off: 2026-10-20', '```', '',
   ].join('\n');
   const [e] = parseTruths(text);
   assert.deepEqual(e.problems, []);

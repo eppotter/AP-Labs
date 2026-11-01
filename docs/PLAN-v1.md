@@ -92,10 +92,10 @@ resources:
     label: Read the ops handbook
     open_access: true               # everyone, incl. people not in users; deny still wins
 users:
-  - id: dana                         # stable kit id; surface ids hang off it
-    name: Dana Reyes
+  - id: ely                          # stable kit id; surface ids hang off it
+    name: Ely Potter
     role: admin                      # admin | member
-    identities: { github: dana-r }
+    identities: { slack: U0EXAMPLE1 }
     grants: [TIER3_APPROVE]
     deny: []
 

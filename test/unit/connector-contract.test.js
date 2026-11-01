@@ -579,7 +579,7 @@ test('a batched write stopped partway (kill switch or failure) records its progr
     assert.ok(stopped.error instanceof KillSwitchOn, `got ${stopped.error ? stopped.error.name : 'a result'}`);
     assert.deepEqual(stopped.error.details.sent, { batches: 1, items: 2, recorded: true });
     assert.deepEqual(system.sent, ['p0', 'p1']);
-    const words = messageFor(stopped.error, { admin: 'Dana' });
+    const words = messageFor(stopped.error, { admin: 'Ely' });
     assert.match(words, /partway/);
     assert.match(words, /\b2 items were sent\b/);
     assert.doesNotMatch(words, /nothing was sent/i);
@@ -709,13 +709,13 @@ test('a progress record that could not be saved is marked unrecorded, logged as 
   assert.ok(first.error instanceof ConnectorFailed);
   assert.deepEqual(first.error.details.sent, { batches: 1, items: 2, recorded: false });
   assert.ok(lines.some((l) => l.level === 'error' && /progress could not be recorded/.test(l.msg)), JSON.stringify(lines));
-  const words = messageFor(first.error, { admin: 'Dana' });
-  assert.match(words, /Dana should check what arrived before anyone tries again/);
+  const words = messageFor(first.error, { admin: 'Ely' });
+  assert.match(words, /Ely should check what arrived before anyone tries again/);
   assert.doesNotMatch(words, /safe/i);
   const ks = new KillSwitchOn({ connector: 'demo', system: 'Demo', env: 'DEMO_OFF', sent: { batches: 1, items: 2, recorded: false } });
-  assert.match(messageFor(ks, { admin: 'Dana' }), /Dana should check what arrived before anyone tries again/);
+  assert.match(messageFor(ks, { admin: 'Ely' }), /Ely should check what arrived before anyone tries again/);
   const auth = new ConnectorAuthFailed('HTTP 401', { connector: 'demo', system: 'Demo', operation: 'push', sent: { batches: 1, items: 2, recorded: false } });
-  assert.match(messageFor(auth, { admin: 'Dana' }), /Dana should check what arrived before anyone tries again/);
+  assert.match(messageFor(auth, { admin: 'Ely' }), /Ely should check what arrived before anyone tries again/);
 });
 
 test('a per-item PartialFailure whose stale progress could not be cleared is not called safe to retry (#89 round 3)', async () => {
@@ -849,9 +849,9 @@ test('a save that fails mid-write stops the write before the next request, unrec
   assert.deepEqual(stopped.error.details.sent, { batches: 2, items: 4, recorded: false });
   assert.match(stopped.error.reason, /progress could not be saved/);
   assert.ok(lines.some((l) => l.level === 'error' && /progress could not be recorded/.test(l.msg)), JSON.stringify(lines));
-  const words = messageFor(stopped.error, { admin: 'Dana' });
+  const words = messageFor(stopped.error, { admin: 'Ely' });
   assert.match(words, /\b4 items were sent\b/);
-  assert.match(words, /Dana should check what arrived before anyone tries again/);
+  assert.match(words, /Ely should check what arrived before anyone tries again/);
   assert.doesNotMatch(words, /safe/i);
 });
 

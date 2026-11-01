@@ -73,7 +73,7 @@ statement: Total paid revenue for September 2026 is $412,300, matching the finan
 run: [node, scripts/truths/revenue.js, "2026-09"]
 expect: 412300
 tolerance: 0.5%
-owner: Dana Reyes
+owner: <the owner's name>
 signed_off: pending
 ```
 -->

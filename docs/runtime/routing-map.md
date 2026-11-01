@@ -49,7 +49,7 @@ Image files are private Slack files shared nowhere. They are deleted when the wi
 
 Its menu label is **Route map** (renamed 2026-10-31, so the tool is not named like its **Routing** group header); the module id stays `routing`.
 
-`examples/brightside/app/modules/routing/`: dev only (`environments: ["dev"]`) until Dana Reyes signs GRD-002's map image rule (Story 15.6). Its adapter is `examples/brightside/app/routing/adapter.js`; names come from `labels.sql`. The audience in `profiles/brightside/profile.yml` is a **dev placeholder**: Dana (the user Ely drives in dev) is the one dispatcher, and no crew leads are listed until Dana confirms the real list (DEP-024).
+`examples/brightside/app/modules/routing/`: dev only (`environments: ["dev"]`) until Story 15.6 adds production (Ely Potter signed GRD-002's map image rule on 2026-10-31, DEP-025). Its adapter is `examples/brightside/app/routing/adapter.js`; names come from `labels.sql`. The audience in `profiles/brightside/profile.yml`, decided by Ely Potter on 2026-10-31 (DEP-024, closed): **Ely Potter and Steven Auslander** are the dispatchers (both hold `ROUTING_ALL_CREWS`), and there are no crew leads.
 
 ## Live check (Ely, dev Slack)
 
@@ -60,7 +60,7 @@ Real Slack only, so each step is **untested until you run it**. About 10 minutes
 1. `npm run fixture:build`: the local data must be generator v4 (it has the schedule the map reads). `npm run fixture:status` should say `local fixture version 4+…, as of 2026-09-30`.
 2. Start the bot in dev: `APLABS_PROFILE="$PWD/profiles/brightside/profile.yml" APLABS_APP_DIR="$PWD/examples/brightside/app" npm start`. The startup line's `engine_jobs` must list `sweep-map-files`. Keep the terminal visible.
 
-| # | You do (as Dana) | Look for |
+| # | You do (as Ely or Steven) | Look for |
 |---|---|---|
 | 1 | `/brightside`, **View** on **Route map** (under the **Routing** header). Pick day **2026-10-03** (as_of+3). | "Loading…", then a map, the controls (view, day, crew) and a list. |
 | 2 | Switch the view to **Route change**, then the zone to **Zone east**. | A map, and in the list one "Recommended for another zone" line and no "To rebook". |
@@ -73,9 +73,9 @@ Real Slack only, so each step is **untested until you run it**. About 10 minutes
 | 9 | Open Route map, leave it over 15 minutes, then switch the view. | "This map has expired… open Route map again". |
 | 10 | **15.1 carry-over:** a second person (not in the audience) searches **Files** for `route-map.png` and `Route map`. | They find nothing; they don't see Route map on their menu either. |
 
-**Pending DEP-024:** the crew-lead check (a lead sees only their crew in every view) waits for Dana's audience list. The tests cover it on the fixture today.
+**Not checked live:** the crew-lead check (a lead sees only their crew in every view): the demo has no crew leads (DEP-024, closed). The tests cover it on the fixture.
 
-**A note, no change:** clicking the image offers Open in Browser, Copy Link and Share (15.1 item 5). This is written into GRD-002 for Dana's sign-off (DEP-025).
+**A note, no change:** clicking the image offers Open in Browser, Copy Link and Share (15.1 item 5). This is written into GRD-002, signed by Ely Potter on 2026-10-31 (DEP-025).
 
 Record the outcome in the Story 15.5 PR, one line per step.
 
@@ -92,7 +92,7 @@ Brightside's profile turns the street map on (`routing.basemap`: OpenStreetMap's
 7. **Cache:** re-open the same view: the debug log's tile-request count is 0 (a count only, never a tile number).
 8. **15.1 carry-overs:** Close (the X) sends `view_closed` (`map view closed`); a second person's Files search finds nothing (steps 8 and 10 above).
 
-Production waits for Dana's sign-off of GRD-002's reworded map image rule (DEP-025, Story 15.6).
+Production waits for Story 15.6; Ely Potter signed GRD-002's reworded map image rule on 2026-10-31 (DEP-025).
 
 ## Plan a route live check (Story 15.15, Ely, dev Slack)
 

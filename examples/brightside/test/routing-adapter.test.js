@@ -5,7 +5,7 @@
 // engine's validateInput; its SQL passes the guardrail with the four
 // coordinate columns forbidden and never names one; rules are pivoted one row
 // per property (no fan-out); headcount subtracts absences and a crew is out
-// when its lead is absent or nobody is present (pending Dana Reyes, DEP-028);
+// when its lead is absent or nobody is present (GRD-008, approved 2026-10-31);
 // node ids are kind-prefixed; candidates leave out the cancelled property and
 // every property visited on the gap day; prevVisitDate is the latest
 // non-cancelled visit across history and schedule; flexible means no hard day
@@ -157,7 +157,7 @@ test('rules map to engine rule instances: ISO day numbers, windows as minutes, t
   assert.ok(windows > 0, 'a time_of_day rule is mapped');
 });
 
-test('headcount subtracts absences; a crew is out when its lead is absent or nobody is present (pending Dana Reyes, DEP-028)', async () => {
+test('headcount subtracts absences; a crew is out when its lead is absent or nobody is present (GRD-008, approved 2026-10-31)', async () => {
   const day = dayOf(S3.dayOffset);
   const { input } = await adapter.dayInput({ day });
   const crew = (id) => input.crews.find((c) => c.crewId === String(id));

@@ -1,8 +1,8 @@
 ---
-owner: Dana Reyes          # the named client person who owns this file
-signed_off: 2026-10-25  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
-signed_off_by: "Dana Reyes (Ely as Dana Reyes, 2026-10-25)"  # who signed off: the owner, recorded by a facilitator
-updated: 2026-10-27        # ISO date of the last edit
+owner: Ely Potter          # the named client person who owns this file
+signed_off: 2026-10-31  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
+signed_off_by: "Ely Potter (2026-10-31)"  # who signed off: the owner, recorded by a facilitator
+updated: 2026-10-31        # ISO date of the last edit
 ---
 
 # Data canon
@@ -10,6 +10,10 @@ updated: 2026-10-27        # ISO date of the last edit
 Written by the Onboarder for SQLsmith. Everything here was said by the client's people, proved by
 a check, and signed by the owner above. Anything not yet checked or signed is marked
 `unverified` with the gap stated.
+
+Until 2026-10-31 these files named a fictional owner, Dana Reyes, played by Ely; lines that say
+"Ely as Dana Reyes" are kept as history. Ely Potter owns and signs them since 2026-10-31 (plan
+brightside-v1, Story 18.1).
 
 ## Data model
 
@@ -91,7 +95,7 @@ One rule card per metric (docs/reference/05-discovery-process.md §3), types met
 -->
 
 Every card below is **approved**: the definition comes from the fixture's data definitions, and
-Dana Reyes signed it off on 2026-10-25 (Ely as Dana Reyes). The worked examples are made-up records that
+Ely Potter signed it off on 2026-10-31 (first signed on 2026-10-25, Ely as Dana Reyes). The worked examples are made-up records that
 show where the rule bites, not rows from the data.
 
 ### MET-001: Plans active at as_of
@@ -101,7 +105,7 @@ show where the rule bites, not rows from the data.
 - audience: anyone who may use the Dataset entry; not sensitive on its own. Confirmed by Dana Reyes
   (Ely as Dana Reyes, 2026-10-25).
 - exclusions: not `status = 'active'`; not plans that start after as_of.
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `fixture-tables.md` "Plan active at date d"; truth `active-plans-at-as-of` (expect 815,
   planted target). Tests: (1) a plan with `end_date` = 2026-09-30 counts, though its status is
   `cancelled`; (2) a plan with `end_date` = 2026-09-29 does not count.
@@ -115,7 +119,7 @@ show where the rule bites, not rows from the data.
   a client with two properties, one plan lapsed and one active, is not a candidate.
 - audience: whoever runs the win-back push (Epic 10). The list holds names and emails, so not open
   to everyone. Confirmed by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `fixture-tables.md` "Win-back candidate"; truths `winback-north-90d` (38) and
   `winback-north-90d-price-rise` (17), planted targets. Tests: (1) a North client whose only plan
   ended 2026-08-15 is a candidate; (2) a North client whose plan ended 2026-06-01 (more than 90
@@ -129,7 +133,7 @@ show where the rule bites, not rows from the data.
   lines, so the sum would multiply).
 - audience: owner and admin only. Answered by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
 - exclusions: not billed revenue; not invoices issued in the month but paid later.
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `fixture-tables.md` "Paid revenue in month M"; truth `paid-revenue-2026-09`
   (35,018,640 cents). Tests: (1) a $140.00 invoice issued 2026-08-30 and paid 2026-09-02 counts in
   September; (2) a $140.00 invoice issued 2026-09-29 and not yet paid adds nothing to September.
@@ -142,7 +146,7 @@ show where the rule bites, not rows from the data.
 - audience: owner and admin only, as MET-003. Answered by Dana Reyes (Ely as Dana Reyes,
   2026-10-25).
 - exclusions: not cash received; not cancelled visits (they have no invoice).
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `fixture-tables.md` "Billed revenue in M"; truth `billed-revenue-2026-09`
   (36,402,350 cents). Tests: the same two invoices as MET-003 give the opposite answers: the
   2026-08-30 invoice counts in August, the 2026-09-29 invoice counts in September.
@@ -158,7 +162,7 @@ show where the rule bites, not rows from the data.
 - exclusions: not "overdue" (`due_on` plays no part); an overpaid invoice does not reduce the total.
 - invoices issued after as_of: moot. The fixture check `integrity-no-date-after-as-of` guarantees
   none exist. Answered by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `fixture-tables.md` "Outstanding at as_of"; truth `outstanding-at-as-of`
   (19,875,325 cents). Tests: (1) a $260.00 invoice with $100.00 paid adds $160.00; (2) a fully paid
   invoice adds $0.
@@ -172,7 +176,7 @@ show where the rule bites, not rows from the data.
 - audience: owner and admin only, with Labour cost (GRD-006 in guardrails.md). Confirmed by Dana
   Reyes (Ely as Dana Reyes, 2026-10-25).
 - exclusions: not scheduled minutes, not travel minutes, not cancelled visits.
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `fixture-tables.md` (timesheets grain). Tests: (1) a completed visit with three
   timesheets of 120, 118 and 121 minutes adds 359; (2) a cancelled visit adds 0.
 - status: approved. **unverified:** no known truth yet. A `labour-minutes-2026-09` truth needs a
@@ -193,7 +197,7 @@ show where the rule bites, not rows from the data.
   raise. Detected by a planted truth (not yet built).
 - rounding: once, at the end. Sum the exact minutes × cents products, divide by 60 and round only
   the final figure, never per timesheet. Answered by Dana Reyes (Ely as Dana Reyes, 2026-10-25).
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `fixture-tables.md` "Labour cost of a visit"; Epic 9 plan Story 9.7. Tests: (1) one
   60-minute timesheet at 2,000 cents an hour costs 2,000 cents; (2) a staff member raised from
   2,000 to 2,075 cents on 2026-09-15 is priced at 2,000 for a 2026-09-14 visit and 2,075 for a
@@ -231,12 +235,12 @@ statement: Total paid revenue for September 2026 is $412,300, matching the finan
 run: [node, scripts/truths/revenue.js, "2026-09"]
 expect: 412300
 tolerance: 0.5%
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: pending
 ```
 -->
 
-The figures below are Brightside fixture truths (Story 7.6). Each `expect` is the generator's planted target in `examples/brightside/fixture/targets.json`, never a number read back from the query, and each `run` executes its SQL through the query runner (`kit/fixture/query.js`). Build the fixture first: `npm run fixture:build`. Money is in cents. Dana Reyes signs them off in the onboarding proof (Orchestrator Story 4.3).
+The figures below are Brightside fixture truths (Story 7.6). Each `expect` is the generator's planted target in `examples/brightside/fixture/targets.json`, never a number read back from the query, and each `run` executes its SQL through the query runner (`kit/fixture/query.js`). Build the fixture first: `npm run fixture:build`. Money is in cents. They were signed off in the onboarding proof (Orchestrator Story 4.3, 2026-10-25, Ely as Dana Reyes); their owner is Ely Potter since 2026-10-31.
 
 ```truth
 id: clients-total
@@ -244,7 +248,7 @@ statement: "Brightside has 2,000 clients at as_of (2026-09-30)."
 run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/clients-total.sql]
 expect: 2000
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: 2026-10-25
 ```
 
@@ -254,7 +258,7 @@ statement: "815 plans are active at as_of: start_date <= as_of and (end_date IS 
 run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/active-plans-at-as-of.sql]
 expect: 815
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: 2026-10-25
 ```
 
@@ -264,7 +268,7 @@ statement: "38 North-zone clients are win-back candidates: a plan lapsed in the 
 run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/winback-north-90d.sql]
 expect: 38
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: 2026-10-25
 ```
 
@@ -274,7 +278,7 @@ statement: "17 of the North win-back candidates had a price rise in the 60 days 
 run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/winback-north-90d-price-rise.sql]
 expect: 17
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: 2026-10-25
 ```
 
@@ -284,7 +288,7 @@ statement: "Paid revenue (payments by paid_on) for September 2026 is $350,186.40
 run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/paid-revenue-2026-09.sql]
 expect: 35018640
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: 2026-10-25
 ```
 
@@ -294,7 +298,7 @@ statement: "Billed revenue (invoice totals by issued_on) for September 2026 is $
 run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/billed-revenue-2026-09.sql]
 expect: 36402350
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: 2026-10-25
 ```
 
@@ -304,7 +308,7 @@ statement: "Outstanding at as_of (per invoice, total minus payments up to as_of,
 run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/outstanding-at-as-of.sql]
 expect: 19875325
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: 2026-10-25
 ```
 
@@ -313,8 +317,8 @@ The routing truths below (Story 14.4, data-design §5) check the planted routing
 through the query runner; the other four run the scenario through Brightside's routing adapter
 and the routing engine (`examples/brightside/fixture/truths/routing.js`), reading drive times only
 through `travelMatrix`, which returns whole minutes and never a coordinate (GRD-002). "as_of+n"
-is n days after as_of. They are not signed off yet: until Dana Reyes confirms them they are
-`unverified` and SQLsmith must not rely on them.
+is n days after as_of. They are not signed off yet: until Ely Potter confirms them they are
+`unverified` and SQLsmith must not rely on them (plan brightside-v1, gate item 6).
 
 Every property and crew base sits at a random synthetic point in the Columbus, Ohio area
 (generator v5, Story 15.7): none is or comes from a real address. Since generator v6 none sits on
@@ -347,7 +351,7 @@ statement: "825 stops are booked (status scheduled, not cancelled) from the day 
 run: [node, kit/fixture/query.js, examples/brightside/fixture/truths/scheduled-stops-next-14d.sql]
 expect: 825
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: pending
 ```
 
@@ -357,7 +361,7 @@ statement: "S1, crew 4 on as_of+1 (seven stops booked back and forth between cit
 run: [node, examples/brightside/fixture/truths/routing.js, route-optimize-s1-drive]
 expect: 134
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: pending
 ```
 
@@ -367,7 +371,7 @@ statement: "S2, the afternoon stop crew 2 lost on as_of+2 to a cancellation: the
 run: [node, examples/brightside/fixture/truths/routing.js, route-change-s2-top]
 expect: 762
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: pending
 ```
 
@@ -377,7 +381,7 @@ statement: "S2: exactly 2 candidates can fill the gap. The closer morning-only d
 run: [node, examples/brightside/fixture/truths/routing.js, route-change-s2-count]
 expect: 2
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: pending
 ```
 
@@ -387,6 +391,6 @@ statement: "S3, crew 7 out on as_of+3 (its lead and a cleaner absent): of its 6 
 run: [node, examples/brightside/fixture/truths/routing.js, route-change-s3-crosszone]
 expect: 510
 tolerance: 0
-owner: Dana Reyes
+owner: Ely Potter
 signed_off: pending
 ```

@@ -52,7 +52,7 @@ test('Dataset replies privately with the local fixture, its version, as-of date 
   await build({ fixtureDir: path.join(ROOT, 'examples/brightside/fixture'), out: file });
   const { app, entries } = await boot(t, file);
   assert.equal(entries.at(-1).data, 'available');
-  await app.dispatchAction('dataset:open', { user: { id: 'U1', name: 'dana' } });
+  await app.dispatchAction('dataset:open', { user: { id: 'U1', name: 'ely' } });
   assert.equal(app.responded.length, 1);
   const [reply] = app.responded;
   assert.equal(reply.response_type, 'ephemeral');
@@ -77,9 +77,9 @@ test('Dataset replies privately with the local fixture, its version, as-of date 
 test('with no data file, the app still starts and Dataset says plainly the data is unavailable', async (t) => {
   const { app, entries } = await boot(t, path.join(tmpDir(t), 'brightside.duckdb'));
   assert.equal(entries[0].msg, 'data unavailable; starting anyway');
-  await app.dispatchAction('dataset:open', { user: { id: 'U1', name: 'dana' } });
+  await app.dispatchAction('dataset:open', { user: { id: 'U1', name: 'ely' } });
   assert.deepEqual(app.responded.map((r) => r.text), [DATA_UNAVAILABLE]);
   // The rest of the hub still works.
-  await app.dispatchAction('hello-world:open', { user: { id: 'U1', name: 'dana' } });
+  await app.dispatchAction('hello-world:open', { user: { id: 'U1', name: 'ely' } });
   assert.match(app.responded[1].text, /^Hello /);
 });

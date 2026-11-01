@@ -562,13 +562,13 @@ test('a structured reply with text only and no tool call returns toolInput null'
 
 test('every refusal reason has a plain message that points to the form or a next step', () => {
   for (const reason of LLM_REASONS) {
-    const text = messageFor(new LlmUnavailable(reason, reason === 'too_long' ? { maxChars: 500 } : reason === 'rate_limited' ? { perHour: 20 } : {}), { admin: 'Dana' });
+    const text = messageFor(new LlmUnavailable(reason, reason === 'too_long' ? { maxChars: 500 } : reason === 'rate_limited' ? { perHour: 20 } : {}), { admin: 'Ely' });
     assert.equal(typeof text, 'string', reason);
     assert.match(text, /form/, reason);
   }
   assert.match(messageFor(new LlmUnavailable('too_long', { maxChars: 500 })), /500 characters/);
   assert.match(messageFor(new LlmUnavailable('rate_limited', { perHour: 20 })), /20 AI requests an hour/);
-  assert.match(messageFor(new LlmUnavailable('config'), { admin: 'Dana' }), /tell Dana/);
+  assert.match(messageFor(new LlmUnavailable('config'), { admin: 'Ely' }), /tell Ely/);
   assert.doesNotMatch(messageFor(new LlmUnavailable('failed', { log: 'InternalServerError' })), /InternalServerError/);
   assert.throws(() => new LlmUnavailable('mystery'), /unknown LlmUnavailable reason/);
 });

@@ -55,12 +55,12 @@ test('/brightside shows a private menu with the Dataset and hello-world entries'
 
 test('Say hello replies privately with the person\'s name and the client\'s name', async (t) => {
   const app = await boot(t);
-  app.users.U1 = { real_name: 'Dana Reyes', profile: { display_name: 'Dana', real_name: 'Dana Reyes' } };
-  await app.dispatchAction('hello-world:open', { user: { id: 'U1', name: 'dana' } });
+  app.users.U1 = { real_name: 'Ely Potter', profile: { display_name: 'Ely', real_name: 'Ely Potter' } };
+  await app.dispatchAction('hello-world:open', { user: { id: 'U1', name: 'ely' } });
   assert.equal(app.acks, 1);
   assert.equal(app.responded.length, 1);
   const [reply] = app.responded;
   assert.equal(reply.response_type, 'ephemeral');
-  assert.match(reply.text, /^Hello Dana!/);
+  assert.match(reply.text, /^Hello Ely!/);
   assert.match(reply.text, /Brightside Home Cleaning bot/);
 });
