@@ -406,8 +406,8 @@ last `npm run verify` check passed. The context prompt never holds these blocks
 `npm run verify` (and the end-of-turn hook) runs each rule as the check `query-rule:<id>`
 (`npm run query-rules -- --check <id>`): it checks the rule's fields, checks that every table and
 column its SQL names (DuckDB's own parse) is in the rule's `reads` and that `reads` is inside the
-allow-list (`ask-tables.yml` beside this file, until Story 19.7 moves it into the profile's `ask`
-block), runs the SQL with `check.params` through the query runner, and passes when the figure
+allow-list (the profile's `ask` block, `ask.tables`, since Story 19.7), checks the SQL with Ask's
+own query guard, runs the SQL with `check.params` through the query runner, and passes when the figure
 equals the linked signed truth's `expect` within its tolerance (or `check.expect`). A rule linked
 to a pending truth can't pass.
 

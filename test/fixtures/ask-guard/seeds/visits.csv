@@ -1,0 +1,5 @@
+visit_id,property_id,visit_date,status,labour_minutes
+100,10,2026-09-01,completed,120
+101,20,2026-09-02,completed,95
+102,30,2026-09-03,cancelled,0
+103,10,2026-09-15,completed,110

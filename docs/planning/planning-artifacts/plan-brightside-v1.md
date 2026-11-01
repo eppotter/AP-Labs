@@ -248,7 +248,7 @@ Stories 19.7 (the guard) and 19.8 (the flow), both T3, after 19.6 (the signed qu
 | `plans` | `plan_id`, `property_id`, `package_id`, `frequency`, `start_date`, `end_date`, `status`, `start_price_cents`, `price_cents` |
 | `plan_price_changes` | `change_id`, `plan_id`, `effective_date`, `old_price_cents`, `new_price_cents` |
 | `visits` | `visit_id`, `property_id`, `plan_id`, `crew_id`, `package_id`, `visit_date`, `status`, `arrival_window`, `scheduled_start`, `scheduled_minutes` |
-| `scheduled_visits` | every column except `labour_minutes` (GRD-006, SQLsmith P3-13) |
+| `scheduled_visits` | every column except `labour_minutes` (GRD-006, SQLsmith P3-13), `route_order` and `travel_minutes_from_previous` (SQLsmith's signature, 2026-11-01, Story 19.7, DEP-041: a leg's travel minutes come from the forbidden coordinates and stand in for one leg's distance, GRD-002; `scheduled_start` already gives the order) |
 | `invoices` | `invoice_id`, `client_id`, `visit_id`, `issued_on`, `due_on`, `total_cents` |
 | `invoice_lines` | `line_id`, `invoice_id`, `package_id`, `add_on_id`, `quantity`, `amount_cents` |
 | `payments` | `payment_id`, `invoice_id`, `paid_on`, `amount_cents`, `method` |

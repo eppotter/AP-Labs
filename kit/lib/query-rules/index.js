@@ -46,12 +46,13 @@
 // signed rules may ever be used by Ask (Stories 19.7, 19.8).
 //
 // The allow-list. The tables and columns a rule may read come from the
-// profile's ask.tables (Story 19.7). Until that block exists, the bridge is
-// ask-tables.yml beside data.md (`tables: { table: [columns] }`); with
-// neither, every metric rule fails its check (fail closed). Every rule's
-// `reads` must sit inside the allow-list, and every table and column its SQL
-// names (read from DuckDB's own parse, json_serialize_sql) must sit inside
-// `reads`. See readsProblems.
+// profile's ask block (ask.tables, Story 19.7); without it every metric rule
+// fails its check (fail closed). Every rule's `reads` must sit inside the
+// allow-list, and every table and column its SQL names (read from DuckDB's
+// own parse, json_serialize_sql) must sit inside `reads`. See readsProblems.
+// The verify check also runs the rule's SQL through Ask's own guard
+// (kit/runtime/sql checkSql with allowedTables, and checkParsed), so a signed
+// rule is one Ask's connection will run.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -79,7 +80,6 @@ const REQUIRED = Object.freeze({
   traps: [...COMMON_KEYS, 'traps'],
 });
 const CHECK_KEYS = Object.freeze(['truth', 'expect', 'tolerance', 'params', 'rows', 'sum']);
-const ALLOW_FILE = 'ask-tables.yml';
 const MAX_PATTERN_CHARS = 200;
 // The most rows check.rows may require.
 const MAX_SHOWN_ROWS = 50;
@@ -310,27 +310,13 @@ function validateAllowList(tables) {
 }
 
 // The tables and columns rules may read: the profile's ask.tables (Story
-// 19.7) when present, else ask-tables.yml beside data.md (the bridge until
-// then). Returns { tables, source, problem }; with neither, tables is null.
-function allowListFor(profile, contextDir, readFile = (p) => fs.readFileSync(p, 'utf8')) {
+// 19.7). Returns { tables, source, problem }; without the block, tables is
+// null and every metric rule fails its check.
+function allowListFor(profile) {
   if (profile && isMap(profile.ask) && profile.ask.tables !== undefined) {
     return { ...validateAllowList(profile.ask.tables), source: 'profile ask.tables' };
   }
-  let raw;
-  try {
-    raw = readFile(path.join(contextDir, ALLOW_FILE));
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return { tables: null, source: null, problem: `no allow-list: the profile has no ask.tables and there is no ${ALLOW_FILE}` };
-    return { tables: null, source: ALLOW_FILE, problem: `cannot read ${ALLOW_FILE}: ${(err && err.code) || 'error'}` };
-  }
-  let doc;
-  try {
-    doc = YAML.parse(raw);
-  } catch {
-    return { tables: null, source: ALLOW_FILE, problem: `${ALLOW_FILE} is not valid YAML` };
-  }
-  if (!isMap(doc) || Object.keys(doc).some((k) => k !== 'tables')) return { tables: null, source: ALLOW_FILE, problem: `${ALLOW_FILE} must hold only tables: { table: [columns] }` };
-  return { ...validateAllowList(doc.tables), source: ALLOW_FILE };
+  return { tables: null, source: null, problem: 'no allow-list: the profile has no ask block (ask.tables)' };
 }
 
 // A rule's declared reads outside the allow-list: a list of problems.
@@ -650,7 +636,6 @@ function insertBlock(text, block) {
 module.exports = {
   SECTION,
   INFO,
-  ALLOW_FILE,
   KINDS,
   STATUSES,
   UNITS,

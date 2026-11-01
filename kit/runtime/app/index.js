@@ -90,6 +90,15 @@
 // through Add context. The token stays inside it and goes only to
 // files.slack.com.
 //
+// Story 19.7 (plan brightside-v1, D10): with an ask block in the profile,
+// boot opens Ask's own connection (kit/runtime/data/ask) on the local data
+// file and checks ask.tables against the data. A table or column the data
+// doesn't have, or a bare-name clash with a hidden column, refuses to start,
+// naming each. Data that can't be read yet is logged, as for the tools'
+// runner, and the check runs again on Ask's first query. MotherDuck data:
+// Ask's queries stay off (logged). Nothing calls Ask's connection until
+// Story 19.8; shutdown closes it.
+//
 // Profile: APLABS_PROFILE (absolute path) in template dev and the container,
 // else .aplabs/profile.yml found walking up from the working directory (a fork).
 //
@@ -108,6 +117,7 @@ const { createRulesReader } = require('../knowledge/readiness');
 const { loadRegistry, ENV_PATTERN } = require('../registry');
 const { createStore } = require('../store');
 const { createData, dataPathFor, sourceOf } = require('../data');
+const { createAskData } = require('../data/ask');
 const md = require('../data/motherduck');
 const llm = require('../llm');
 const { createKnowledgeStore, varDirFor } = require('../knowledge/store');
@@ -325,8 +335,15 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
     throw err;
   }
   const {
-    remote, data, connecting, store, ai, aiStatus, knowledge,
+    remote, data, connecting, store, ai, aiStatus, knowledge, askData, askProblems,
   } = setup;
+  // Ask's tables must fit the data (Story 19.7): a misfit refuses to start.
+  if (askProblems.length) {
+    log.error('refusing to start', { problems: askProblems });
+    data.close();
+    if (healthCheck) await healthCheck.close();
+    return { code: 1 };
+  }
 
   // createApp inside the try: a throw while building the app (it may carry a
   // token) still goes through the redacting logger.
@@ -380,7 +397,7 @@ async function main({ env = process.env, cwd = process.cwd(), deps = {} } = {}) 
   scheduler.start();
   engineJobs.start();
   return {
-    code: 0, app, log, data, connecting, llm: ai, knowledge, jobs: scheduler, engineJobs, health: healthCheck, connectors,
+    code: 0, app, log, data, connecting, llm: ai, knowledge, jobs: scheduler, engineJobs, health: healthCheck, connectors, askData,
   };
 }
 
@@ -414,6 +431,8 @@ async function setUp({ cfg, deps, log, env }) {
     }
   }
 
+  const ask = await openAsk({ cfg, deps, log, remote });
+
   const store = deps.store || createStore({ now: deps.now });
   // Added context (Story 16.4): no file is touched until the first add.
   const knowledge = createKnowledgeStore({
@@ -434,8 +453,34 @@ async function setUp({ cfg, deps, log, env }) {
   if (aiStatus.reason === 'config') log.error('AI helper off: configuration fault', { problem: aiStatus.problem });
   if (aiStatus.contextProblem) log.error('AI context unusable: hubs that see context refuse AI calls', { problem: aiStatus.contextProblem });
   return {
-    remote, data, connecting, store, ai, aiStatus, knowledge,
+    remote, data, connecting, store, ai, aiStatus, knowledge, askData: ask.askData, askProblems: ask.problems,
   };
+}
+
+// Ask's connection (Story 19.7). Returns { askData, problems }: askData is
+// null without an ask block or with MotherDuck data; problems are boot's
+// refusals (ask.tables against the data). Data that can't be read yet is
+// not a problem: the check runs again on Ask's first query.
+async function openAsk({
+  cfg, deps, log, remote,
+}) {
+  if (!cfg.profile.ask) return { askData: null, problems: [] };
+  if (remote) {
+    log.warn('Ask queries off: they read the local data file only', { source: 'motherduck' });
+    return { askData: null, problems: [] };
+  }
+  const askData = deps.askData || createAskData({ file: cfg.dataFile, profile: cfg.profile, log });
+  try {
+    await askData.open();
+  } catch (err) {
+    if (err.code === 'ASK_CONFIG') {
+      askData.close();
+      return { askData: null, problems: err.problems.map((p) => `profile: ${p}`) };
+    }
+    if (err.code !== 'DATA_UNAVAILABLE') throw err;
+    log.warn('Ask queries unavailable; starting anyway', { reason: err.reason });
+  }
+  return { askData, problems: [] };
 }
 
 // Anything that escapes main() is logged through the same redacting logger
@@ -455,7 +500,7 @@ function installCrashHandlers(log, proc = process) {
 // (a run in progress is not awaited), then Slack stops, the health listener and the data close
 // and the process exits.
 function shutdown({
-  app, data, jobs: scheduler, engineJobs = null, health: healthCheck, log, exit = (code) => process.exit(code),
+  app, data, askData = null, jobs: scheduler, engineJobs = null, health: healthCheck, log, exit = (code) => process.exit(code),
 }, signal) {
   log.info('stopping', { signal });
   if (scheduler) scheduler.stop();
@@ -467,6 +512,7 @@ function shutdown({
     .catch((err) => log.error('could not close the health listener', { err }))
     .finally(() => {
       data.close();
+      if (askData) askData.close();
       exit(0);
     });
 }
@@ -479,7 +525,7 @@ if (require.main === module) {
   const log = createLog();
   const bootFailed = installCrashHandlers(log);
   main({ deps: { log } }).then(({
-    code, app, data, jobs: scheduler, engineJobs, health: healthCheck,
+    code, app, data, askData, jobs: scheduler, engineJobs, health: healthCheck,
   }) => {
     if (code !== 0) {
       process.exitCode = code;
@@ -488,7 +534,7 @@ if (require.main === module) {
       return;
     }
     const stop = (signal) => shutdown({
-      app, data, jobs: scheduler, engineJobs, health: healthCheck, log,
+      app, data, askData, jobs: scheduler, engineJobs, health: healthCheck, log,
     }, signal);
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);

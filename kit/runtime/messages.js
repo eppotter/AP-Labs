@@ -16,7 +16,18 @@ const {
 const {
   ProvenanceGone, ProvenanceNotYours, ScoringFault, PreviewInvalid, PushRefused, AlreadyPushed,
 } = require('./errors');
-const { RoutingFault, ContextRefused, FileRefused } = require('./errors');
+const {
+  RoutingFault, ContextRefused, FileRefused, AskQueryRefused,
+} = require('./errors');
+
+// Ask's query words (plan brightside-v1, D10). The guard and a failure share
+// one sentence, so the person can't tell which check refused.
+const ASK_QUERY_WORDS = Object.freeze({
+  guard: "I couldn't run that query safely.",
+  failed: "I couldn't run that query safely.",
+  timeout: 'That question took too long to answer; narrow it.',
+  busy: 'Another question is being answered. Try again in a moment.',
+});
 
 // Slack mrkdwn treats &, < and > as control characters.
 function escapeText(s) {
@@ -325,6 +336,9 @@ const MESSAGES = [
   // Added context (Stories 16.4, 16.5).
   [ContextRefused, ({ reason, max }) => CONTEXT_WORDS[reason](max)],
   [FileRefused, ({ reason, max }, { admin }) => FILE_WORDS[reason](max, admin)],
+  // Ask's query (plan brightside-v1, D10, Story 19.7): fixed words, never
+  // DuckDB's error text or the rule (architect P2-5, P3-14).
+  [AskQueryRefused, ({ reason }) => ASK_QUERY_WORDS[reason]],
   [RoutingFault, (details, { admin }) => `The suggested plan couldn't be worked out: ${escapeText(ROUTING_WORDS[details.problem](details))}. Nothing was changed. I've logged the problem; please tell ${admin}.`],
   // "How was this made?" (Story 9.6). Neither says anything about the run.
   [ProvenanceGone, () => "The details of this run are no longer available (they're kept for 24 hours). Run the list again from the menu to see how a new one is made."],

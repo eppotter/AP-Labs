@@ -74,6 +74,9 @@ const { DataUnavailable: DataUnavailableError } = require('../errors');
 const md = require('./motherduck');
 const travel = require('./travel');
 const map = require('./map');
+const {
+  QueryRefusedError, PARAM_RULES, isPlainObject, checkParams,
+} = require('./params');
 
 const REPO = path.resolve(__dirname, '../../..');
 const SOURCE = 'local fixture';
@@ -89,24 +92,8 @@ const LOCKDOWN = Object.freeze({
   autoload_known_extensions: 'false',
 });
 
-// A query the runner refused before it reached DuckDB. rule is a guardrail
-// rule (kit/runtime/sql RULES) or one of the parameter rules below.
-class QueryRefusedError extends Error {
-  constructor(rule, detail) {
-    super(`query refused (${rule}): ${detail}`);
-    this.name = 'QueryRefusedError';
-    this.code = 'QUERY_REFUSED';
-    this.rule = rule;
-    this.detail = detail;
-  }
-}
-
-const PARAM_RULES = Object.freeze({
-  UNDECLARED: 'undeclared_parameter',
-  MISSING: 'missing_parameter',
-  POSITIONAL: 'positional_parameter',
-  BAD_VALUE: 'bad_parameter_value',
-});
+// QueryRefusedError (a query refused before it reached DuckDB), PARAM_RULES
+// and the parameter check live in ./params, shared with Ask's connection.
 
 // The profile's data source: 'local' (the default) or 'motherduck'.
 const sourceOf = (profile) => (profile && profile.data && profile.data.source) || 'local';
@@ -122,13 +109,16 @@ function dataPathFor(profile, env = process.env) {
   return { path: path.join(varDir, 'fixture', `${profile.client.id}.duckdb`) };
 }
 
-// Opens a file read-only and locked. Returns the instance; throws
-// DataUnavailableError when the file is missing or DuckDB cannot open it.
-async function openLocked(file) {
+// Opens a file read-only and locked. settings (Ask's connection, Story 19.7:
+// memory_limit and threads) are applied with the lockdown, before
+// lock_configuration, so no later SET can change them; they never override
+// a lockdown setting. Returns the instance; throws DataUnavailableError when
+// the file is missing or DuckDB cannot open it.
+async function openLocked(file, settings = {}) {
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw new DataUnavailableError('the data file does not exist');
   let instance;
   try {
-    instance = await DuckDBInstance.create(file, { ...LOCKDOWN });
+    instance = await DuckDBInstance.create(file, { ...settings, ...LOCKDOWN });
     const conn = await instance.connect();
     try {
       await conn.run('SET lock_configuration = true');
@@ -257,34 +247,6 @@ function withoutPaths(text, file) {
   let out = text;
   for (const dir of [...dirs].sort((a, b) => b.length - a.length)) out = out.split(dir + path.sep).join('');
   return out.replace(/(?:[A-Za-z]:)?[\\/](?:[^\s"'\\/]+[\\/])+([^\s"'\\/]+)/g, '$1');
-}
-
-const isPlainObject = (v) => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
-
-function checkValue(name, v) {
-  const ok = v === null || typeof v === 'string' || typeof v === 'boolean' || typeof v === 'bigint'
-    || (typeof v === 'number' && Number.isFinite(v));
-  if (!ok) throw new QueryRefusedError(PARAM_RULES.BAD_VALUE, `$${name} must be a string, finite number, boolean, bigint or null`);
-}
-
-// The template's placeholders, as DuckDB parsed them, against what the caller
-// declared and passed.
-function checkParams(prepared, params, declared) {
-  const names = [];
-  for (let i = 1; i <= prepared.parameterCount; i += 1) {
-    const name = prepared.parameterName(i);
-    if (/^\d+$/.test(name)) throw new QueryRefusedError(PARAM_RULES.POSITIONAL, 'parameters are bound by name ($name), never by position');
-    names.push(name);
-  }
-  for (const key of Object.keys(params)) {
-    if (!declared.has(key)) throw new QueryRefusedError(PARAM_RULES.UNDECLARED, `$${key} was not declared`);
-    if (!names.includes(key)) throw new QueryRefusedError(PARAM_RULES.UNDECLARED, `$${key} is not a placeholder in the query`);
-    checkValue(key, params[key]);
-  }
-  for (const name of names) {
-    if (!declared.has(name)) throw new QueryRefusedError(PARAM_RULES.UNDECLARED, `$${name} was not declared`);
-    if (!Object.hasOwn(params, name)) throw new QueryRefusedError(PARAM_RULES.MISSING, `$${name} has no value`);
-  }
 }
 
 const seconds = (ms) => (ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`);

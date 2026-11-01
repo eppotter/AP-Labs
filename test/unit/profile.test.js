@@ -572,3 +572,44 @@ test('findProfilePath walks up to .aplabs/profile.yml, and APLABS_PROFILE overri
   process.env.APLABS_PROFILE = 'relative/profile.yml';
   assert.throws(() => findProfilePath(deep), /APLABS_PROFILE must be an absolute path/);
 });
+
+// Ask's queries (plan brightside-v1, D10, GRD-009, Story 19.7): the ask block.
+const withAsk = (edit = () => {}) => {
+  const p = parsed('minimal');
+  p.resources = [{ key: 'ASK_DATA', label: 'Ask data', admin_grantable: false }];
+  p.sql = { forbidden_columns: ['shops.postal_code'] };
+  p.ask = { tables: { shops: ['shop_id', 'region_id'], regions: ['region_id', 'name'] } };
+  edit(p);
+  return p;
+};
+
+test('the ask block: tables as declared, queries_per_hour defaults to 10', () => {
+  const p = validateProfile(withAsk());
+  assert.deepEqual(p.ask, { queries_per_hour: 10, tables: { shops: ['shop_id', 'region_id'], regions: ['region_id', 'name'] } });
+  assert.equal(validateProfile(withAsk((x) => { x.ask.queries_per_hour = 3; })).ask.queries_per_hour, 3);
+  assert.equal(validateProfile(parsed('minimal')).ask, undefined);
+});
+
+test('the ask block needs ASK_DATA, granted by name only: declared, admin_grantable false, never open_access', () => {
+  rejects(withAsk((p) => { p.resources = []; }), /\/ask needs the resource ASK_DATA/);
+  rejects(withAsk((p) => { p.resources[0].admin_grantable = true; }), /ASK_DATA must have admin_grantable: false/);
+  rejects(withAsk((p) => { delete p.resources[0].admin_grantable; }), /ASK_DATA must have admin_grantable: false/);
+  rejects(withAsk((p) => { p.resources[0].open_access = true; }), /ASK_DATA must not be open_access/);
+});
+
+test('the ask block refuses a forbidden column, a bare-name clash with one, and a catalogue name', () => {
+  rejects(withAsk((p) => { p.ask.tables.shops.push('postal_code'); }), /\/ask\/tables\/shops allows postal_code, which is in sql.forbidden_columns/);
+  rejects(withAsk((p) => { p.ask.tables.regions.push('postal_code'); }), /\/ask\/tables\/regions allows postal_code, which shares its name with the forbidden column shops.postal_code/);
+  rejects(withAsk((p) => { p.ask.tables.duckdb_tables = ['table_name']; }), /\/ask\/tables\/duckdb_tables is a name DuckDB's own catalogue uses/);
+  rejects(withAsk((p) => { p.ask.tables.information_schema = ['x']; }), /catalogue/);
+});
+
+test('the ask block\'s shape: unknown keys, empty or upper-case names, a bad rate, no tables', () => {
+  rejects(withAsk((p) => { p.ask.surprise = 1; }), /\/ask has unknown key "surprise"/);
+  rejects(withAsk((p) => { p.ask.tables.shops = []; }), /\/ask\/tables\/shops/);
+  rejects(withAsk((p) => { p.ask.tables.Shops = ['shop_id']; }), /\/ask\/tables/);
+  rejects(withAsk((p) => { p.ask.tables.shops = ['Shop_Id']; }), /\/ask\/tables\/shops/);
+  rejects(withAsk((p) => { p.ask.queries_per_hour = 0; }), /\/ask\/queries_per_hour/);
+  rejects(withAsk((p) => { p.ask = { queries_per_hour: 5 }; }), /\/ask must have required property 'tables'/);
+  rejects(withAsk((p) => { p.ask.tables = {}; }), /\/ask\/tables/);
+});

@@ -108,6 +108,14 @@ resources:
   # open_access (boot refuses that: it would include people the profile doesn't name).
   - key: ASK
     label: Ask
+  # Ask's read-only queries (plan brightside-v1, D10, GRD-009, Story 19.7): on a hub that
+  # sees data and rules, Ask may answer a data question by running a query that reads only
+  # the tables and columns in the ask block below. Granted by name only (admin_grantable:
+  # false; boot refuses anything else): each holder must be cleared for every metric those
+  # tables expose, including client-level money (client_id is pseudonymous, not anonymous).
+  - key: ASK_DATA
+    label: Ask, answers from data queries
+    admin_grantable: false
 
 users:
   # Ely Potter (AP Labs partner) is the demo client's owner and signs its rules (plan
@@ -118,7 +126,7 @@ users:
     name: Ely Potter
     role: admin
     identities: { slack: U0CB6HDBBQX }
-    grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS]
+    grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS, ASK_DATA]
   - id: marcus
     name: Marcus Lee
     role: member
@@ -133,7 +141,7 @@ users:
     name: Steven Auslander
     role: admin
     identities: { slack: U0CB6GJ6UTH }
-    grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS]
+    grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS, ASK_DATA]
 
 # Slack settings (kit/runtime).
 slack:
@@ -161,6 +169,39 @@ sql:
     # forbidden like the others in the same PR that adds the depots table.
     - depots.geo_lat_e6
     - depots.geo_lon_e6
+
+# Ask's read-only queries (plan brightside-v1, D10, GRD-009; kit/runtime/data/ask). The
+# only tables and columns an Ask query may read; every other column of these tables is
+# forbidden to Ask, and every other table is never read. Boot refuses a table or column the
+# data doesn't have, and an allowed column whose name a hidden one shares. The list is D10's
+# table as approved with the plan on 2026-10-31, with one change SQLsmith made when signing
+# the list on 2026-11-01 (Story 19.7, PR #323, DEP-041): route_order and
+# travel_minutes_from_previous are hidden in both visits and scheduled_visits. A leg's travel
+# minutes come from the forbidden coordinates and stand in for one leg's distance, which
+# GRD-002 never shows; scheduled_start already gives the order. Never allowed: staff,
+# pay_rates, timesheets, crew_memberships and staff_absences (staff names and ids), depots,
+# every name, email, phone, address and coordinate, scheduled_visits.labour_minutes
+# (GRD-006), and route_order and travel_minutes_from_previous in either visit table.
+# Client zone is clients.zone_id (properties has no zone_id). Ely Potter and Steven
+# Auslander hold ASK_DATA.
+ask:
+  queries_per_hour: 10
+  tables:
+    zones: [zone_id, name]
+    packages: [package_id, name, base_price_cents]
+    add_ons: [add_on_id, name, price_cents]
+    crews: [crew_id, zone_id, name]
+    clients: [client_id, zone_id, created_on]
+    properties: [property_id, client_id, city, home_type, square_feet, bedrooms, bathrooms, has_pets]
+    plans: [plan_id, property_id, package_id, frequency, start_date, end_date, status, start_price_cents, price_cents]
+    plan_price_changes: [change_id, plan_id, effective_date, old_price_cents, new_price_cents]
+    visits: [visit_id, property_id, plan_id, crew_id, package_id, visit_date, status, arrival_window, scheduled_start, scheduled_minutes]
+    scheduled_visits: [scheduled_visit_id, property_id, plan_id, crew_id, package_id, visit_date, status, status_changed_on, arrival_window, scheduled_start, scheduled_minutes]
+    invoices: [invoice_id, client_id, visit_id, issued_on, due_on, total_cents]
+    invoice_lines: [line_id, invoice_id, package_id, add_on_id, quantity, amount_cents]
+    payments: [payment_id, invoice_id, paid_on, amount_cents, method]
+    service_rules: [rule_id, property_id, rule_type, value, strength]
+    fixture_meta: [key, value]
 
 # Route optimization (AD-R10). Each node kind's coordinate columns (micro-degree
 # INTEGER) must also be in sql.forbidden_columns above. The engine knows the
@@ -207,8 +248,11 @@ routing:
 
 verify:
   checks:
+    # The whole suite takes about 400 seconds (2026-11), longer when other builds share
+    # the machine, so the default 300 reported a false timeout (Story 19.7).
     - id: unit
       run: [npm, test]
+      timeout_seconds: 900
     # Story 7.6: the fixture's integrity and synthetic-only checks. The known
     # truths in context/data.md run after these, as truth:<id>.
     # No --profile: verify passes this profile as APLABS_GOVERNING_PROFILE

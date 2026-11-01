@@ -219,6 +219,38 @@ function audienceProblems(audience, p) {
   return problems;
 }
 
+// Ask's queries (plan brightside-v1, D10, GRD-009, Story 19.7): who may get
+// them is the ASK_DATA resource, granted by name only. What the schema can't
+// say: the key is declared, never conferred by the admin role and never
+// open_access; no allowed column is a forbidden one, or shares a forbidden
+// one's bare name (the guard matches names bare, so it would refuse it
+// anyway); no allowed table has a name DuckDB's own catalogue uses. That the
+// tables and columns exist is checked against the data at boot
+// (kit/runtime/data/ask).
+const ASK_DATA_KEY = 'ASK_DATA';
+const ASK_DEFAULTS = Object.freeze({ queries_per_hour: 10 });
+const CATALOGUE_NAME = /^(duckdb_|pg_|sqlite_|information_schema$)/;
+
+function askProblems(ask, p) {
+  const problems = [];
+  const resource = p.resources.find((r) => r.key === ASK_DATA_KEY);
+  if (!resource) problems.push(`/ask needs the resource ${ASK_DATA_KEY} (the people who may get query answers), with admin_grantable: false`);
+  else {
+    if (resource.admin_grantable !== false) problems.push(`resource ${ASK_DATA_KEY} must have admin_grantable: false (granted by name only, GRD-009)`);
+    if (resource.open_access) problems.push(`resource ${ASK_DATA_KEY} must not be open_access`);
+  }
+  const forbidden = new Set(p.sql.forbidden_columns);
+  const bare = new Map(p.sql.forbidden_columns.map((fc) => [fc.split('.')[1], fc]));
+  for (const [table, columns] of Object.entries(ask.tables)) {
+    if (CATALOGUE_NAME.test(table)) problems.push(`/ask/tables/${table} is a name DuckDB's own catalogue uses`);
+    for (const c of columns) {
+      if (forbidden.has(`${table}.${c}`)) problems.push(`/ask/tables/${table} allows ${c}, which is in sql.forbidden_columns`);
+      else if (bare.has(c)) problems.push(`/ask/tables/${table} allows ${c}, which shares its name with the forbidden column ${bare.get(c)}`);
+    }
+  }
+  return problems;
+}
+
 let _validate = null;
 function schemaValidator() {
   if (!_validate) {
@@ -368,6 +400,10 @@ function validateProfile(profile, file) {
     if (p.routing.basemap) p.routing.basemap = { ...BASEMAP_DEFAULTS, ...p.routing.basemap };
     problems.push(...routingProblems(p.routing, p.sql.forbidden_columns, p));
   }
+  if (p.ask) {
+    p.ask = { ...ASK_DEFAULTS, ...p.ask };
+    problems.push(...askProblems(p.ask, p));
+  }
 
   if (problems.length) throw new ProfileError(problems.join('; '), file);
   return deepFreeze(p);
@@ -394,4 +430,5 @@ function loadProfile(file = findProfilePath()) {
 
 module.exports = {
   loadProfile, validateProfile, findProfilePath, governingProfilePath, ProfileError, NotGoverningError, PROFILE_REL, LLM_DEFAULTS, ROUTING_DEFAULTS, BASEMAP_DEFAULTS,
+  ASK_DATA_KEY, ASK_DEFAULTS,
 };

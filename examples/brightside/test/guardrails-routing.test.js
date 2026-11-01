@@ -2,7 +2,8 @@
 
 // Story 13.3: GRD-002 names the four coordinate columns (DEP-028). Plan
 // brightside-v1, Story 18.1: Ely Potter signed every rule card on 2026-10-31
-// (DEP-025, DEP-028, DEP-032 closed), so all eight cards are approved and
+// (DEP-025, DEP-028, DEP-032 closed), and the gate approval signed GRD-009
+// (Story 19.7), so all nine cards are approved and
 // `npm run onboard -- --status` shows guardrails.md signed. An example test
 // (architecture carve-out): it reads profiles/brightside/ and is deleted with
 // the example in a fork.
@@ -137,14 +138,14 @@ test('the crew-out rule (GRD-008) is approved with its edge cases settled (DEP-0
   assert.match(card('GRD-008'), APPROVED);
 });
 
-// Plan brightside-v1 D2: every one of the eight cards is approved, and the
-// readiness parser counts exactly eight (the strip's "8 rules").
-test('all eight rule cards are approved and countApprovedRules counts 8', () => {
-  for (let n = 1; n <= 8; n += 1) {
+// Plan brightside-v1 D2 and D10: every one of the nine cards is approved, and the
+// readiness parser counts exactly nine (the strip's "9 rules", D13).
+test('all nine rule cards are approved and countApprovedRules counts 9', () => {
+  for (let n = 1; n <= 9; n += 1) {
     const id = `GRD-00${n}`;
     assert.match(card(id), /\n- status: approved\n/, id);
   }
-  assert.equal(countApprovedRules(read()), 8);
+  assert.equal(countApprovedRules(read()), 9);
   const cards = read().slice(read().indexOf('\n### GRD-001:'));
   assert.doesNotMatch(cards, /^- status: (?!approved$).*$/m, 'no card status line other than approved');
 });
@@ -185,8 +186,8 @@ test('GRD-007 says the coordinates are random Columbus points, none from a real 
 
 // Plan brightside-v1, D7, Story 19.3: Data sources on a hub that sees rules
 // (/brightside-v1, /brightside) reads Brightside's own files and says
-// "Rule cards approved: 8".
-test('Data sources on Brightside\'s files: "Rule cards approved: 8"', () => {
+// "Rule cards approved: 9" (GRD-009, Story 19.7).
+test('Data sources on Brightside\'s files: "Rule cards approved: 9"', () => {
   const { loadProfile } = require('../../../kit/lib/profile');
   const { readiness, createRulesReader } = require('../../../kit/runtime/knowledge/readiness');
   const dataSources = require('../../../kit/runtime/archetypes/data-sources');
@@ -196,5 +197,5 @@ test('Data sources on Brightside\'s files: "Rule cards approved: 8"', () => {
     id: 'brightside-v1', sees: ['context', 'data', 'rules'], data: null, rules: true,
   };
   const text = dataSources.render({ ready: readiness(view, { rules }) }).blocks.map((b) => (b.text && b.text.text) || '').join('\n');
-  assert.match(text, /\n• Rule cards approved: 8\n/);
+  assert.match(text, /\n• Rule cards approved: 9\n/);
 });
