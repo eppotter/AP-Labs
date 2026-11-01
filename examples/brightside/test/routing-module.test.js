@@ -11,7 +11,7 @@
 // draws on S3's day; the labels SQL passes the guardrail, names no forbidden
 // column and returns only crew name, client name and city, filtered by the
 // scope; and no coordinate, street address or postal code reaches Slack or
-// the logs as text. The manifest is dev-only (F12).
+// the logs as text. The manifest was dev-only (F12) until Story 15.6 added prod.
 //
 // An example test (architecture carve-out): it reads Brightside's app dir and
 // fixture, and is deleted with the example in a fork. Its profile comes from
@@ -124,8 +124,8 @@ async function openOn(ctx, user, day) {
   await click(ctx, 'routing-map:day', date(day), user);
 }
 
-test('the Routing manifest is a dev-only routing-map module whose resource is the audience\'s all_crews key (F12)', () => {
-  assert.deepEqual(manifest.environments, ['dev']);
+test('the Routing manifest is a dev and prod routing-map module whose resource is the audience\'s all_crews key (F12, Story 15.6)', () => {
+  assert.deepEqual(manifest.environments, ['dev', 'prod']);
   assert.equal(manifest.archetype, 'routing-map');
   assert.equal(manifest.adapter, 'adapter.js');
   assert.equal(manifest.resource, profile.routing.audience.all_crews);

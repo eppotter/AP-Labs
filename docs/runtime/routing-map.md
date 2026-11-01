@@ -49,7 +49,7 @@ Image files are private Slack files shared nowhere. They are deleted when the wi
 
 Its menu label is **Route map** (renamed 2026-10-31, so the tool is not named like its **Routing** group header); the module id stays `routing`.
 
-`examples/brightside/app/modules/routing/`: dev only (`environments: ["dev"]`) until Story 15.6 adds production (Ely Potter signed GRD-002's map image rule on 2026-10-31, DEP-025). Its adapter is `examples/brightside/app/routing/adapter.js`; names come from `labels.sql`. The audience in `profiles/brightside/profile.yml`, decided by Ely Potter on 2026-10-31 (DEP-024, closed): **Ely Potter and Steven Auslander** are the dispatchers (both hold `ROUTING_ALL_CREWS`), and there are no crew leads.
+`examples/brightside/app/modules/routing/`: dev and production (`environments: ["dev", "prod"]`); Story 15.6 added production after Ely Potter signed GRD-002's map image rule on 2026-10-31 (DEP-025). Its adapter is `examples/brightside/app/routing/adapter.js`; names come from `labels.sql`. The audience in `profiles/brightside/profile.yml`, decided by Ely Potter on 2026-10-31 (DEP-024, closed): **Ely Potter and Steven Auslander** are the dispatchers (both hold `ROUTING_ALL_CREWS`), and there are no crew leads.
 
 ## Live check (Ely, dev Slack)
 
@@ -92,11 +92,11 @@ Brightside's profile turns the street map on (`routing.basemap`: OpenStreetMap's
 7. **Cache:** re-open the same view: the debug log's tile-request count is 0 (a count only, never a tile number).
 8. **15.1 carry-overs:** Close (the X) sends `view_closed` (`map view closed`); a second person's Files search finds nothing (steps 8 and 10 above).
 
-Production waits for Story 15.6; Ely Potter signed GRD-002's reworded map image rule on 2026-10-31 (DEP-025).
+Story 15.6 turned on production after Ely Potter signed GRD-002's reworded map image rule on 2026-10-31 (DEP-025).
 
 ## Plan a route live check (Story 15.15, Ely, dev Slack)
 
-**Plan a route** (`examples/brightside/app/modules/route-planner/`, dev only) reorders one crew's day from the Office (`routing.depot`, the one `depots` row). **Untested until you run it.** First `npm run fixture:build`: the local data must be generator v7 (it has the Office). Start the bot as above. Note each result in the Story 15.15 PR, one line each, with seconds where asked.
+**Plan a route** (`examples/brightside/app/modules/route-planner/`, dev and production since Story 15.6) reorders one crew's day from the Office (`routing.depot`, the one `depots` row). **Untested until you run it.** First `npm run fixture:build`: the local data must be generator v7 (it has the Office). Start the bot as above. Note each result in the Story 15.15 PR, one line each, with seconds where asked.
 
 1. **Open:** `/brightside`, **Open** on **Plan a route**, pick a crew and as_of+3 (**2026-10-03**), **Show stops**: the Office marker and the loop, the totals line at the top.
 2. **Fast moves:** pick **⋯ Move stop 1 down** three times fast: the list follows each move without jumping, and the map lands on the final order. Note the seconds.
@@ -105,4 +105,4 @@ Production waits for Story 15.6; Ely Potter signed GRD-002's reworded map image 
 5. **Ways out:** **Change crew or day**, then **Back**; open again and close with the **X**: the terminal shows the files deleted both times (also 15.1's open Close item).
 6. **iOS,** once: the buttons and the ⋯ menus (an action sheet) can be tapped and the layout stays put.
 
-The MotherDuck copy has no Office until Ely republishes v7 (DEP-033): until then, run this on the local fixture. Production waits for DEP-025 and DEP-032 (Story 15.6).
+The MotherDuck copy has no Office until Ely republishes v7 (DEP-033): until then, run this on the local fixture. Story 15.6 turned on production after DEP-025 and DEP-032 were signed (2026-10-31).

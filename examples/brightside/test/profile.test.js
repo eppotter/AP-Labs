@@ -117,7 +117,7 @@ test('the routing audience: two keys by name only; Ely and Steven are the dispat
 // free tiles (dev and the demo only; a fork sets its own provider, DEP-031).
 // The User-Agent names the app and a contact (DEP-030), never the client,
 // since every tile request carries it to the provider. GRD-002 was signed on
-// 2026-10-31 (DEP-025); the Routing module stays dev-only until Story 15.6.
+// 2026-10-31 (DEP-025); Story 15.6 then added production to the Routing module.
 // The contact is Ely Potter's own (DEP-030): since Story 18.1 Ely, an AP Labs
 // partner, is also the profile's admin user, so Ely's name is not a client
 // person's and is the one user left out of the check below.
@@ -137,21 +137,21 @@ test('routing.basemap: OpenStreetMap tiles, its credit, a contact and no client 
   for (const name of names) assert.ok(!ua.includes(name.toLowerCase()), `the User-Agent names no client or client person (${name})`);
 });
 
-test('the Routing module stays dev-only with the street map on', () => {
+test('the Routing module runs in dev and prod with the street map on (Story 15.6)', () => {
   const manifest = require('../app/modules/routing/manifest.json');
-  assert.deepEqual(manifest.environments, ['dev']);
+  assert.deepEqual(manifest.environments, ['dev', 'prod']);
 });
 
 // Story 15.15 (AD-R23, AD-R26): the Office. Its two coordinate columns are
 // forbidden in the same PR as the depots table; routing.depot names its node
-// and label, never a position. Plan a route is dev-only until Story 15.6
+// and label, never a position. Plan a route runs in prod since Story 15.6
 // (after DEP-025 and DEP-032).
-test('the Office: its columns forbidden, routing.depot a node and a label, and Plan a route dev-only', () => {
+test('the Office: its columns forbidden, routing.depot a node and a label, and Plan a route in dev and prod', () => {
   const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
   for (const column of ['depots.geo_lat_e6', 'depots.geo_lon_e6']) assert.ok(p.sql.forbidden_columns.includes(column), `${column} forbidden`);
   assert.deepEqual(p.routing.depot, { node: 'depot:office', label: 'Office' });
   const manifest = require('../app/modules/route-planner/manifest.json');
-  assert.deepEqual(manifest.environments, ['dev']);
+  assert.deepEqual(manifest.environments, ['dev', 'prod']);
   assert.equal(manifest.label, 'Plan a route');
   assert.equal(manifest.screen, 'route-editor');
 });
