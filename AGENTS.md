@@ -96,6 +96,8 @@ Agents (`.claude/agents/<name>.md`): onboarder, sqlsmith, architect, connector, 
 - **Onboarding builds:** at engagement start, or when the client adds a new system or data source (scoped to that slice). Log it with `npm run engage -- --kind onboarding --plan <slug>`; it always needs `approve plan <slug>`, at any tier. Then `npm run onboard -- --init` creates the client files in `.aplabs/context/`.
   The onboarder agent runs discovery and fills `data.md`, `guardrails.md` and `connectors.md`; the scribe agent drafts `org.md`. Each file records its named client owner's sign-off in its frontmatter (`npm run onboard -- --status` shows them). Each known truth is a fenced truth block in `data.md` with a check, run by `npm run verify`.
 
+- **Query-rule build:** turns a question Ask declined into a signed query rule (the fenced query-rule blocks in `data.md`'s `## Query rules`; `docs/orchestrator/DESIGN.md` §3b). `npm run query-rules -- --queue` lists the questions; on a branch, `--new QR-NNN --from <queue id>` scaffolds a draft and sqlsmith writes its content (the builder puts it in the file: sqlsmith has no shell); the verifier runs `npm run verify` and pastes the `query-rule:QR-NNN` result in the PR; the data owner signs it in the PR (Ely or Steven for the demo client, a named client person in a fork). The PR is T3; it merges after review, then `--done <queue id>` clears the question. `--status` lists every rule.
+
 Scope changes mid-program: `bmad-correct-course`. Do not route to BMAD's build, code-review or retro skills, its persona agents, or p3's experimental extras.
 
 ### Ceremony by tier

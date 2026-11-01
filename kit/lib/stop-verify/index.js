@@ -26,6 +26,7 @@ const { findProfilePath, loadProfile, ProfileError } = require('../profile');
 const { checkEnv, tail } = require('../verify');
 const { runChecks } = require('../verify/runner');
 const { truthChecksFor } = require('../truths');
+const { queryRuleChecksFor } = require('../query-rules');
 const { git, readSessionHead } = require('../session/head');
 const { writeLastResult } = require('../verify/last');
 const { runBuiltins } = require('../../verify/builtins');
@@ -133,8 +134,8 @@ async function stopVerify(input, { startDir, env = process.env } = {}) {
     if (err instanceof ProfileError) return null;
     throw err;
   }
-  // The same checks as `npm run verify`: the profile's, then the known truths.
-  const checks = [...profile.verify.checks, ...truthChecksFor(file)];
+  // The same checks as `npm run verify`: the profile's, the known truths, then the query rules.
+  const checks = [...profile.verify.checks, ...truthChecksFor(file), ...queryRuleChecksFor(file)];
   const envAllow = profile.verify.env_allow;
 
   const root = git(startDir, ['rev-parse', '--show-toplevel']);

@@ -60,6 +60,8 @@ After onboarding, canon grows the way it did on the reference platform: regular 
 
 File locations are open (§8). They will sit under `.aplabs/`, which always floors at T3, because every agent trusts these files.
 
+**Query-rule build** (plan brightside-v1, D11): a small regular build that adds one query rule to SQLsmith's signed canon, the `## Query rules` section of `data.md` (§3b).
+
 ## 3a. Stages and ceremony (decided)
 
 **A simple core that every build runs, plus add-ons a client switches on.** The reference platform's 0–12 map grew to fit its client. Client builders need something they can learn in a day.
@@ -94,6 +96,16 @@ Each add-on slots between two core stages and never removes one. The batch revie
 
 "Decide and report" means the agent applies a sensible default on reversible calls, builds, and says what it chose and what you could tell it to do instead. Review (§5) and the production gate apply at every tier.
 
+## 3b. Query-rule build (decided)
+
+Ask answers a data question by query only from **signed query rules**: fenced `query-rule` blocks in `data.md`, each with its definition, reviewed SQL, typed parameters, traps, the tables and columns it reads, a check against a signed known truth, and its sign-off. When Ask declines a data question, the question goes to the review queue (on the bot's machine, never a row or a figure). The stage turns the questions that recur into rules:
+
+1. `npm run query-rules -- --queue` lists the waiting questions (the data owner or the Orchestrator, on the bot's machine).
+2. On a branch, `npm run query-rules -- --new QR-NNN --from <queue id>` scaffolds a draft (`status: draft`, `signed_off: pending`) with the question as its first pattern. The Orchestrator routes it to **SQLsmith**, which writes the definition, SQL, parameters, traps, reads and check (it reads only; the Builder puts its text in the file).
+3. The **Verifier** runs `npm run verify` and pastes the `query-rule:QR-NNN` line in the PR (`npm run query-rules -- --check QR-NNN --rows` adds the result's aggregate columns, never a group key, id or text value, and nothing over 10 rows: a PR holds aggregates only, never row-level client data). The check proves the SQL reads only what `reads` lists, `reads` sits inside the allow-list, and the figure equals the linked signed truth (a rule linked to a pending truth can't pass).
+4. **The data owner signs it in the PR** (sets `status: approved`, `signed_off`, `signed_off_by`): a named client person in a fork; Ely or Steven for the demo client. The PR is T3 (`.aplabs/**`, or `profiles/**` here) and merges after review.
+5. `npm run query-rules -- --done <queue id>` clears the question. `npm run query-rules -- --status` lists every rule, its sign-off and its last check.
+
 ## 4. Tooling: BMAD plans, p3 builds (decided)
 
 Both are installed off the shelf at pinned versions and are not modified. Our rules layer decides when each is used. Where both offer a skill for the same step, the one below wins and the other is not routed to.
@@ -113,6 +125,7 @@ Both are installed off the shelf at pinned versions and are not modified. Our ru
 | 9. Ship | Orchestrator | | `opening-a-pr`, `shipping`, `babysit` |
 | **Production gate** | **Human** (server-side) | | |
 | 10. Retro | Orchestrator | | `npm run retro` (our port of CanonCRM's retro script; upstream p3 has no retro playbook), measured against the budgets |
+| Query-rule build (§3b) | SQLsmith drafts, Verifier runs, the data owner signs | | `npm run query-rules` (`--queue`, `--new`, `--check`, `--done`, `--status`) and `npm run verify` |
 | Scope change mid-program | Orchestrator | `bmad-correct-course` | |
 
 **Not routed to:**

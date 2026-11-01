@@ -47,7 +47,9 @@ const oneLine = (s) => String(s).replace(/\s+/g, ' ').trim();
 // The raw `truth` blocks under "## Known truths": [{ index, line, body, unclosed? }].
 // `index` counts from 1 in file order; `line` is the opening fence's line number.
 // Skips HTML comments, other fences, and everything outside the section.
-function extractBlocks(text) {
+// `section` and `info` name another section and info string: the query rules
+// (kit/lib/query-rules) are `query-rule` blocks under "## Query rules".
+function extractBlocks(text, { section = SECTION, info = 'truth' } = {}) {
   const lines = String(text).split(/\r?\n/);
   const blocks = [];
   let inSection = false;
@@ -72,12 +74,12 @@ function extractBlocks(text) {
       return;
     }
     if (/^#{1,6}\s/.test(line)) {
-      if (SECTION.test(line)) inSection = true;
+      if (section.test(line)) inSection = true;
       else if (/^#{1,2}\s/.test(line)) inSection = false;
       return;
     }
     const start = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)/.exec(line);
-    if (start) fence = { marker: start[1], keep: inSection && start[2] === 'truth', line: i + 1, body: [] };
+    if (start) fence = { marker: start[1], keep: inSection && start[2] === info, line: i + 1, body: [] };
   });
   if (fence && fence.keep) blocks.push({ index: blocks.length + 1, line: fence.line, body: fence.body.join('\n'), unclosed: true });
   return blocks;
@@ -234,6 +236,7 @@ function bannerLine(entries, last = null) {
 
 module.exports = {
   DEFAULT_TIMEOUT_SECONDS,
+  allowance,
   extractBlocks,
   parseTolerance,
   parseTruths,
