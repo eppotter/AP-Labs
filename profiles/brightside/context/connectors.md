@@ -1,8 +1,8 @@
 ---
-owner: Dana Reyes          # the named client person who owns this file
-signed_off: 2026-10-25  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
-signed_off_by: "Dana Reyes (Ely as Dana Reyes, 2026-10-25)"  # who signed off: the owner, recorded by a facilitator
-updated: 2026-10-25        # ISO date of the last edit
+owner: Ely Potter          # the named client person who owns this file
+signed_off: 2026-10-31  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
+signed_off_by: "Ely Potter (2026-10-31)"  # who signed off: the owner, recorded by a facilitator
+updated: 2026-10-31        # ISO date of the last edit
 ---
 
 # Connectors
@@ -10,8 +10,12 @@ updated: 2026-10-25        # ISO date of the last edit
 Written by the Onboarder for Connector. Record how each system authenticates, never the
 credential itself.
 
-Brightside's CRM and email tool are mocks (no real vendor). Every entry is **approved**: Dana
-Reyes signed it off on 2026-10-25 (Ely as Dana Reyes).
+Until 2026-10-31 these files named a fictional owner, Dana Reyes, played by Ely; lines that say
+"Ely as Dana Reyes" are kept as history. Ely Potter owns and signs them since 2026-10-31 (plan
+brightside-v1, Story 18.1).
+
+Brightside's CRM and email tool are mocks (no real vendor). Every entry is **approved**: Ely
+Potter signed it off on 2026-10-31 (first signed on 2026-10-25, Ely as Dana Reyes).
 
 ## Systems
 
@@ -58,7 +62,7 @@ Contract fields (what the system's connector declares; kit/templates/connector.m
   "data unavailable" for a minute or two. No fallback to the local file.
 
 ### Brightside CRM (mock)
-- owner: Dana Reyes
+- owner: Ely Potter
 - purpose: look up one client the standard way (Story 8.2): the contract's read-path example.
 - auth: none: a mock over the fixture, read through the app's query runner.
 - read path: `lookupClient` by `client_id` or by email (trimmed, lower-cased). Returns only
@@ -74,7 +78,7 @@ Contract fields (what the system's connector declares; kit/templates/connector.m
 - dry run: not applicable (no writes)
 
 ### Brightside email tool (mock)
-- owner: Dana Reyes
+- owner: Ely Potter
 - purpose: receive the win-back list (Story 8.3): the contract's write-path example. The "system"
   is the outbox file `var/outbox/email.jsonl` (under `APLABS_VAR_DIR`, gitignored). The `OUTBOX`
   entry (gated; the admin role has it) shows what it received.
@@ -116,20 +120,20 @@ Contract fields (what the system's connector declares; kit/templates/connector.m
 ### CON-001: One approved path per system
 - rule: each system has one connector, and every call goes through it (`defineConnector`, shared
   contract tests). No module talks to a system directly.
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `kit/templates/connector.md`; `connectorContract` tests in each connector folder.
 - status: approved
 
 ### CON-002: Least-privilege fields
 - rule: a connector fetches or sends only the fields its job needs. The CRM returns five client
   fields; the email tool accepts three per contact. Forbidden columns never pass.
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `FIELDS` in the CRM connector; the contact check in the email connector; their tests.
 - status: approved
 
 ### CON-003: Credentials by mechanism only
 - rule: a connector declares the env var names of its credentials, never the values. Keys live in
   env or the macOS Keychain and are masked in every log line. The mocks declare none.
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: the contract's `auth.env`; `kit/lib/secrets`; the log redactor.
 - status: approved

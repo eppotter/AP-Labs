@@ -53,8 +53,9 @@
 //
 // Brightside's mapping (the fixture's own rules, Story 14.2, data-design §6):
 //   - a crew is out (available: false) when its lead is absent or nobody is
-//     present; a crew with no lead on the day counts as out too. Pending Dana
-//     Reyes's confirmation (GRD-008, DEP-028).
+//     present; a crew with no lead on the day counts as out too. GRD-008,
+//     approved 2026-10-31 (a stand-in lead or a part-day member would count;
+//     the fixture records neither, so no mapping is needed).
 //   - headcount: memberships covering the day, less that day's absences.
 //   - service time on a working crew: labour_minutes / headcount present,
 //     rounded to routing.limits.slot_minutes, at least 30. An out crew's

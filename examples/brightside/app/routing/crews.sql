@@ -2,7 +2,7 @@
 -- $day with its zone and headcount. Planned = memberships covering $day
 -- (end_date inclusive); present = planned less that day's staff_absences.
 -- Leads are counted the same way, so the adapter can mark a crew out when its
--- lead is absent or nobody is present (GRD-008, pending Dana Reyes, DEP-028).
+-- lead is absent or nobody is present (GRD-008, approved 2026-10-31).
 -- No coordinate: the crew's base is a node id, and its drives come only from
 -- travelMatrix.
 WITH m AS (

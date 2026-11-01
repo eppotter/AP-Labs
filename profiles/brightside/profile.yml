@@ -63,7 +63,8 @@ resources:
   # Runtime: the Win-back list (Story 9.3): client names and emails (client data). Since
   # Story 10.2 it pushes the list to the email tool (approval-write), so it is owner-only:
   # the admin role does not confer it (admin_grantable: false, AD-16), and it is granted by
-  # name (Dana for the demo). A read-only pull for more people would be a separate module.
+  # name (Ely Potter and Steven Auslander for the demo). A read-only pull for more people
+  # would be a separate module.
   - key: WIN_BACK
     label: Win-back list
     admin_grantable: false
@@ -73,7 +74,7 @@ resources:
     label: Unpaid invoices
   # Runtime: Labour cost (Story 9.7): a month's total pay for visit time. Totals only, but pay
   # rates are open for the demo (GRD-006), so it is never open_access: only the admin role
-  # confers it (the schema's roles are admin and member; the owner, Dana, is an admin). Do not
+  # confers it (the schema's roles are admin and member; the owner, Ely Potter, is an admin). Do not
   # grant it to members. A real client decides on day one whether pay rates are forbidden.
   - key: LABOUR_COST
     label: Labour cost
@@ -109,25 +110,30 @@ resources:
     label: Ask
 
 users:
-  - id: dana
-    name: Dana Reyes
+  # Ely Potter (AP Labs partner) is the demo client's owner and signs its rules (plan
+  # brightside-v1, Story 18.1). Until 2026-10-31 this user was a fictional owner, Dana Reyes,
+  # played by Ely with the same Slack identity.
+  # ROUTING_ALL_CREWS: Ely is a dispatcher (DEP-024, closed 2026-10-31).
+  - id: ely
+    name: Ely Potter
     role: admin
-    # slack: the aplabs-demo member id Ely uses to drive Dana in the dev workspace.
-    identities: { github: dana-r, slack: U0CB6HDBBQX }
-    # ROUTING_ALL_CREWS: a dev placeholder (Story 15.5) so Ely, driving Dana, can run the
-    # routing live check as a dispatcher. Pending Dana Reyes's audience list (DEP-024).
+    identities: { slack: U0CB6HDBBQX }
     grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS]
   - id: marcus
     name: Marcus Lee
     role: member
     identities: { github: mlee-bright }
     grants: [VERIFY_SKIP]
-  # Steven Auslander (AP Labs partner): admin so he can drive /brightside-v0 in the dev
-  # workspace (plan steven-access, 2026-10-31). No by-name grants (no Win-back, no routing map).
+  # Steven Auslander (AP Labs partner): admin, with every grant Ely has, on every hub, always
+  # (plan brightside-v1, Ely's rule of 2026-10-31): any grant to Ely is granted to Steven in
+  # the same change. examples/brightside/test/profile.test.js asserts their grants are equal.
+  # TIER3_APPROVE here is the demo client's resource; it does not change who merges in the
+  # template repo (AGENTS.md "Merge authority").
   - id: steven
     name: Steven Auslander
     role: admin
     identities: { slack: U0CB6GJ6UTH }
+    grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS]
 
 # Slack settings (kit/runtime).
 slack:
@@ -175,21 +181,22 @@ routing:
   # Routing's four views keep each crew's base. A fork sets its own node and label.
   depot: { node: "depot:office", label: Office }
   # Who sees the routing map (Story 15.5, AD-R17): all_crews sees every crew; own_crew plus
-  # a crew_leads row sees that crew only. A DEV PLACEHOLDER until Dana Reyes confirms the
-  # real audience (DEP-024): one dispatcher (dana, the user Ely drives in dev) and no crew
-  # leads. The Routing module is dev-only (environments ["dev"]) until Story 15.6.
+  # a crew_leads row sees that crew only. Decided by Ely Potter on 2026-10-31 (DEP-024,
+  # closed): the dispatchers are Ely Potter and Steven Auslander (both hold
+  # ROUTING_ALL_CREWS) and there are no crew leads. The Routing module is dev-only
+  # (environments ["dev"]) until Story 15.6.
   audience:
     all_crews: ROUTING_ALL_CREWS
     own_crew: ROUTING_OWN_CREW
-    # pending Dana Reyes (DEP-024): which people lead which crew. Add { user, crew_id } rows
-    # (crew_id without the crew: prefix); each user needs the ROUTING_OWN_CREW grant.
+    # No crew leads (DEP-024). To add one: a { user, crew_id } row (crew_id without the
+    # crew: prefix); each such user needs the ROUTING_OWN_CREW grant.
     crew_leads: []
   # The street map under the routing map (Story 15.11, AD-R18): OpenStreetMap's free tiles,
   # for dev and the demo only. Its policy asks for an app name and a contact in the
   # User-Agent; the contact is Ely's (DEP-030) and names no client. A real fork sets its own
   # production provider here (DEP-031). APLABS_BASEMAP_OFF turns it off; without the network
-  # the plain map shows. The wording Dana signs is GRD-002's (DEP-025); the module stays
-  # dev-only until then.
+  # the plain map shows. GRD-002's street-map wording was signed by Ely Potter on 2026-10-31
+  # (DEP-025, closed); the module stays dev-only until Story 15.6.
   basemap:
     url_template: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
     attribution: "© OpenStreetMap contributors"

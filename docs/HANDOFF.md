@@ -134,7 +134,7 @@ APLABS_APP_DIR="$PWD/examples/brightside/app" npm start
   - Scopes: `commands`, `chat:write`, `im:write`, `im:history`, `files:write`, `users:read`.
   - Events: `message.im`, `team_join`.
   - Interactivity is on.
-- Ely's member id `U0CB6HDBBQX` is Dana (the admin) in `profiles/brightside/profile.yml`.
+- Ely's member id `U0CB6HDBBQX` is the user `ely` (Ely Potter, the admin) in `profiles/brightside/profile.yml`; Steven's is `steven`, with every grant Ely has.
 - When an agent runs the bot as a background job, give it a long time limit; the default kills it after 30 minutes.
 
 ## 6. How the work runs (short version; `AGENTS.md` is the rule)

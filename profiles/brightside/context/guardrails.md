@@ -1,8 +1,8 @@
 ---
-owner: Dana Reyes          # the named client person who owns this file
-signed_off: pending  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
-signed_off_by: ""  # who signed off: the owner, recorded by a facilitator
-updated: 2026-10-27        # ISO date of the last edit
+owner: Ely Potter          # the named client person who owns this file
+signed_off: 2026-10-31  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
+signed_off_by: "Ely Potter (2026-10-31)"  # who signed off: the owner, recorded by a facilitator
+updated: 2026-10-31        # ISO date of the last edit
 ---
 
 # Guardrails
@@ -11,16 +11,19 @@ Written by the Onboarder for Architect. Most of this mirrors `.aplabs/profile.ym
 profile rather than copy it, and propose profile changes to the Orchestrator instead of editing it.
 
 In this template repo Brightside's profile is `profiles/brightside/profile.yml` (a fork keeps it at
-`.aplabs/profile.yml`). Dana Reyes signed off this file on 2026-10-25 (Ely as Dana Reyes). Story 13.3
-(route optimization) changed it on 2026-10-26, so the file awaits her sign-off again (DEP-028): GRD-002
-now names the four coordinate columns and GRD-008 records the crew-out rule, both **draft**. Story 15.5
-added the routing map image rule to GRD-002 (DEP-025), also for her sign-off, and Story 15.11
-reworded it for the street map under the picture (still DEP-025, **draft**). Story 15.7 added the
-Columbus coordinates line to GRD-007 (with DEP-025), **draft** too; its follow-up fix on 2026-10-27
-keeps every point off the area's big water (still DEP-025, **draft**). Story 15.15 (Plan a route,
-2026-10-27) added the Office and a route's total distance to GRD-002 and the Office exception to
-GRD-007, **pending** Dana Reyes's sign-off (DEP-032). Every other card stays **approved** as signed on
-2026-10-25.
+`.aplabs/profile.yml`). **All eight rule cards (GRD-001 to GRD-008) are approved:** Ely Potter signed
+off this file on 2026-10-31 (plan brightside-v1, Story 18.1).
+
+Until 2026-10-31 these files named a fictional owner, Dana Reyes, played by Ely; lines that say
+"Ely as Dana Reyes" are kept as history. History of this file: it was first signed on 2026-10-25 (Ely
+as Dana Reyes). Story 13.3 (route optimization) changed it on 2026-10-26: GRD-002 named the four
+coordinate columns and GRD-008 recorded the crew-out rule (DEP-028). Story 15.5 added the routing map
+image rule to GRD-002 (DEP-025), and Story 15.11 reworded it for the street map under the picture.
+Story 15.7 added the Columbus coordinates line to GRD-007 (with DEP-025), and its follow-up fix on
+2026-10-27 kept every point off the area's big water. Story 15.15 (Plan a route, 2026-10-27) added
+the Office and a route's total distance to GRD-002 and the Office exception to GRD-007 (DEP-032).
+Ely Potter approved all of them on 2026-10-31 and settled GRD-008's edge cases; DEP-025, DEP-028 and
+DEP-032 are closed.
 
 ## Guardrails
 
@@ -28,19 +31,20 @@ GRD-007, **pending** Dana Reyes's sign-off (DEP-032). Every other card stays **a
 
 - GRD-001: the bot only reads data. No query writes, changes structure or attaches anything.
 - GRD-002: forbidden columns (coordinates included) are never named, and `SELECT *` is refused;
-  `travelMatrix` alone reads the coordinates and returns drive minutes only. Draft update: a coarse
-  map picture (about 150 m) on a street map, only in the Routing window, deleted within 20 minutes;
-  the street-map provider learns the area viewed and when, never which stops or customers.
-  Pending update (DEP-032): an estimated distance too, only a route's total shown; the Office has
+  `travelMatrix` alone reads the coordinates and returns drive minutes only. Approved update: a
+  coarse map picture (about 150 m) on a street map, only in the Routing window, deleted within 20
+  minutes; the street-map provider learns the area viewed and when, never which stops or customers.
+  Approved update (DEP-032): an estimated distance too, only a route's total shown; the Office has
   its own marker and is never shown by address.
 - GRD-003: MotherDuck is read through the locked reader sequence; one accepted exception (`my_db`).
 - GRD-004: anything that writes to an outside system goes through the approval step, never a module.
 - GRD-005: the AI fills in a form and nothing else: no data rows, a spend breaker and an off switch.
 - GRD-006: pay rates are open for the demo, but Labour cost is for owner and admin only, totals only.
-- GRD-007: the data is synthetic, and publishing it is a human step. Draft update: the coordinates
-  are random points in the Columbus area, none from a real address and none on water. Pending
-  update (DEP-032): the Office is the one point that is not random.
-- GRD-008: a crew is out for the day when its lead is absent, or nobody on it is present (draft).
+- GRD-007: the data is synthetic, and publishing it is a human step. Approved update: the
+  coordinates are random points in the Columbus area, none from a real address and none on water.
+  Approved update (DEP-032): the Office is the one point that is not random.
+- GRD-008: a crew is out for the day when its lead is absent, or nobody on it is present. A stand-in
+  lead counts as the lead; a member present for part of the day counts as present.
 
 ## Protected systems
 
@@ -77,16 +81,19 @@ fails any other code that does. The mock CRM has no writes.
 
 From the profile's `users` and `resources`:
 
-- **Dana Reyes** (admin): holds `TIER3_APPROVE` (approve T3 changes; `admin_grantable: false`, so
-  only the profile can give it). Owns and signs every client context file. The admin role confers
-  the gated resources, such as `OUTBOX`.
+- **Ely Potter** (admin): holds `TIER3_APPROVE` (approve T3 changes; `admin_grantable: false`, so
+  only the profile can give it), `WIN_BACK` and `ROUTING_ALL_CREWS`. Owns and signs every client
+  context file. The admin role confers the gated resources, such as `OUTBOX`.
+- **Steven Auslander** (admin): every grant Ely Potter has, on every hub, always (plan
+  brightside-v1: any grant to Ely is granted to Steven in the same change). He may sign rules for
+  the demo client as Ely can.
 - **Marcus Lee** (member): holds `VERIFY_SKIP` (waive a skipped verify check). No T3 approval.
 - **The routing map audience** (`routing.audience`, Story 15.5): `ROUTING_ALL_CREWS` (dispatchers)
-  and `ROUTING_OWN_CREW` (crew leads), neither conferred by the admin role. A dev placeholder for
-  now: Dana holds `ROUTING_ALL_CREWS` so Ely can run the live check, and no crew leads are listed.
-  Who the dispatchers and crew leads really are: **empty field, owner Dana Reyes** (DEP-024).
-- On the AP Labs side, Ely drives Dana in the demo workspace and signs as her; merges in this
-  template repo are Ely's (AGENTS.md "Merge authority").
+  and `ROUTING_OWN_CREW` (crew leads), neither conferred by the admin role. Decided by Ely Potter on
+  2026-10-31 (DEP-024, closed): the dispatchers are Ely Potter and Steven Auslander, and there are
+  no crew leads.
+- `TIER3_APPROVE` here is the demo client's resource; merges in this template repo are Ely's
+  (AGENTS.md "Merge authority").
 
 ## Cost limits
 
@@ -100,7 +107,7 @@ From the profile's `users` and `resources`:
 - **MotherDuck:** 10 seconds to connect, 30 seconds a query (`kit/runtime/data/motherduck.js`).
   No spending limit is recorded: **empty field, owner Ely** (the MotherDuck plan and its cap).
 - **Connectors:** 5 calls a second each (see `connectors.md`).
-- Who is told when a limit is near: **empty field, owner Dana Reyes.** Today the breaker refuses and
+- Who is told when a limit is near: **empty field, owner Ely Potter.** Today the breaker refuses and
   logs a warning; nobody is notified.
 
 ## Rule cards
@@ -122,7 +129,7 @@ exception_workflow and data_quality_guard.
   DDL, `ATTACH`, `COPY`, file and URL reads and multiple statements before the query runs, and the
   query runner (`kit/runtime/data`) opens the data read-only. NOT a promise about the outside
   systems: writes there follow GRD-004.
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: Story 7.4 and 7.5; the guardrail and runner tests in `test/`. A build tests it by
   sending a write through the runner and expecting a refusal.
 - status: approved
@@ -144,19 +151,19 @@ exception_workflow and data_quality_guard.
   `routing.coordinates` declares. It returns whole-minute drive times and an estimated distance
   (straight line × 1.3, in tenths of a km) between two places only, never a latitude or longitude,
   and every other forbidden column still applies to it. Only a route's total distance is shown, in whole km; the distance of one leg
-  is never shown or logged. (The distance words are Story 15.15's, pending Dana Reyes's sign-off,
-  DEP-032.) No coordinate
+  is never shown or logged. (The distance words are Story 15.15's, approved by Ely Potter on
+  2026-10-31, DEP-032.) No coordinate
   value, street address or postal code appears as text anywhere: Slack, logs, reasons, errors or AI
-  input. NOT the map image: that is the update below, which Dana signs separately.
-- map image (Story 15.5, reworded for the street map by Story 15.11; update for Dana Reyes's
-  sign-off, DEP-025): the Routing entry in Slack shows a map of a crew's day as a picture, and
+  input. NOT the map image: that is the update below, signed separately.
+- map image (Story 15.5, reworded for the street map by Story 15.11; approved by Ely Potter on
+  2026-10-31, DEP-025): the Routing entry in Slack shows a map of a crew's day as a picture, and
   nowhere else. This update adds one more read
   beside `travelMatrix`, for the picture only: the kit's map read
   (`mapPoints`, `kit/runtime/data/map.js`) turns the declared coordinate columns into pixel
   positions inside the bot; like `travelMatrix`, it never returns a latitude or longitude, and the
   positions are never logged, stored or sent. Only the picture leaves. What it reveals, in plain
   words:
-  - **The street map (Story 15.11, the wording Dana signs, pending DEP-025).** The picture now has a
+  - **The street map (Story 15.11, the wording Ely Potter signed on 2026-10-31, DEP-025).** The picture now has a
     street map under it. Anyone who sees it can read each marker's area directly, to about 150 m (a
     block), with no need to line it up. Next to the window's list (client name, city, stop number),
     a screenshot shows roughly where a named client lives. To draw the streets, the bot asks the
@@ -189,9 +196,9 @@ exception_workflow and data_quality_guard.
     to the file, but Copy can put the picture itself on the clipboard, and anyone can take a
     screenshot. Once copied or screenshotted, the picture is outside the 20-minute deletion.
   - NOT a change to the forbidden columns: they stay forbidden to every query, and no coordinate
-    goes to the street-map provider. Until Dana signs this update, the Routing module runs in dev
-    only (Story 15.6 adds production after her sign-off).
-- the Office and Plan a route (Story 15.15, update for Dana Reyes's sign-off, pending DEP-032): The
+    goes to the street-map provider. The Routing module runs in dev only until Story 15.6 adds
+    production (unblocked by this sign-off).
+- the Office and Plan a route (Story 15.15, approved by Ely Potter on 2026-10-31, DEP-032): The
   Office, where every crew starts and ends in Plan a route, is a point in the data's `depots` table.
   Its coordinate columns are forbidden like the others. The map shows it with its own marker. It is
   called 'Office' in the list, never by address.
@@ -201,19 +208,20 @@ exception_workflow and data_quality_guard.
   - **Held for the window's life.** So a reorder reads nothing new, the stops' pixel positions are
     kept in the bot's memory while the window is open (15 minutes, longer while in use), and dropped
     when it closes or expires. They are never logged, stored or sent.
-  - NOT a change to who sees it: the same audience as Routing. Until Dana signs this update, Plan a
-    route runs in dev only (Story 15.6 adds production after DEP-025 and DEP-032).
-- owner: Dana Reyes
+  - NOT a change to who sees it: the same audience as Routing. Plan a route runs in dev only until
+    Story 15.6 adds production (unblocked by DEP-025 and DEP-032).
+- owner: Ely Potter
 - evidence: profile `sql.forbidden_columns` and `routing` (`map_grid_e6` 2000, `map_min_span_km`
   5, `audience`, `basemap`, `depot`); `kit/runtime/sql`; `kit/runtime/data/map.js`; `kit/runtime/basemap`;
   `fixture-tables.md` "Rules"; architecture-routing AD-R9, AD-R10, AD-R12, AD-R13, AD-R15,
   AD-R17, AD-R18 and AD-R23 to AD-R27; Story 15.1's live check in `epics-routing.md`. The mock CRM's field list and the email connector's contact shape leave
   these columns out too.
-- status: draft (the coordinate columns were added on 2026-10-26 and await Dana Reyes's sign-off,
-  DEP-028; the map image update was added on 2026-10-26 and reworded for the street map the same
-  day (Story 15.11), and awaits her sign-off, DEP-025; the distance words and the Office were
-  added on 2026-10-27 (Story 15.15), pending her sign-off, DEP-032; the rest was approved on
-  2026-10-25)
+- status: approved
+- approval: approved by Ely Potter on 2026-10-31 (plan brightside-v1, Story 18.1); earlier drafts:
+  the rest approved on 2026-10-25 (Ely as Dana Reyes); the coordinate columns added on 2026-10-26
+  (DEP-028); the map image update added on 2026-10-26 and reworded for the street map the same day
+  (Story 15.11, DEP-025); the distance words and the Office added on 2026-10-27 (Story 15.15,
+  DEP-032).
 
 ### GRD-003: MotherDuck reader lockdown
 - type: access_rule
@@ -224,9 +232,9 @@ exception_workflow and data_quality_guard.
   sees "data unavailable"; there is no fallback to the local file.
 - exception (accepted by Ely, 2026-10-24): the reader account's own `my_db` can still be attached
   by name; MotherDuck can't block it. The barrier is GRD-001: the guardrail refuses `ATTACH`. The
-  reader's `my_db` must stay empty. Exception confirmed for the client canon by Dana Reyes (Ely as
-  Dana Reyes, 2026-10-25).
-- owner: Dana Reyes
+  reader's `my_db` must stay empty. Exception confirmed for the client canon on 2026-10-25 (Ely as
+  Dana Reyes), and by Ely Potter on 2026-10-31.
+- owner: Ely Potter
 - evidence: `docs/runtime/motherduck-publish.md` ("The bot reading MotherDuck", "Known
   exception"); `npm run fixture:probe` (Ely only) shows each lock as PASS and `my_db` as ACCEPTED.
   Brightside's profile in this repo stays `local`.
@@ -243,10 +251,10 @@ exception_workflow and data_quality_guard.
 - failure_modes: a module calling a connector's write directly (caught by `engine:write-path`); a
   retry sending twice (stopped by the idempotency key); a partial push (reported honestly, Story
   10.3).
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `kit/templates/connector.md` (the contract); Epic 10 stories in
   `docs/planning/planning-artifacts/epics.md`. Who may approve a push is an **empty field, owner
-  Dana Reyes**.
+  Ely Potter**.
 - status: approved
 
 ### GRD-005: The AI service
@@ -258,7 +266,7 @@ exception_workflow and data_quality_guard.
   only for a person allowed to use the module, behind an off switch (`APLABS_LLM_OFF`), a
   per-person limit and an hourly spend breaker that fails closed. Requests and replies are never
   logged, but they do reach Anthropic. With the AI off, the form still works.
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `kit/runtime/llm/index.js` and `context.js` (Story 9.1); `docs/runtime/ai-setup.md`;
   the Epic 9 plan. A grep test keeps the AI off the SDK.
 - status: approved
@@ -270,7 +278,7 @@ exception_workflow and data_quality_guard.
   `LABOUR_COST`, Story 9.7) is granted only to the owner or admin role, never open access, and shows
   totals only: never one person's pay rate or name. A real client decides on day one whether pay
   rates are forbidden (fork guide, Story 11.4).
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: Ely's decision on the Epic 9 plan (`approve plan epic-9`, 2026-10-25,
   `docs/planning/planning-artifacts/plan-epic-9.md`, decision 1). `LABOUR_COST` is not in the
   profile yet; Story 9.7 adds it.
@@ -281,25 +289,26 @@ exception_workflow and data_quality_guard.
 - rule: every Brightside record is generated: emails end in `.invalid`, phones are 555-0100 to
   555-0199. The fixture checks (`fixture-validate` in the profile's `verify.checks`) must pass
   before a publish, and only Ely publishes; agents never run `fixture:publish` or touch its token.
-- coordinates (Story 15.7, update for Dana Reyes's sign-off, with DEP-025): every property and crew
+- coordinates (Story 15.7, approved by Ely Potter on 2026-10-31, with DEP-025): every property and crew
   base is a random synthetic point in the Columbus, Ohio area. On a street map a marker sits near
   real streets and homes, never on the area's big water (reservoirs, the Scioto and the Olentangy,
   from rough hand-drawn outlines, not map data; generator v6), and none is or comes from a real
   address.
-- the Office (Story 15.15, update for Dana Reyes's sign-off, pending DEP-032): One point is not
+- the Office (Story 15.15, approved by Ely Potter on 2026-10-31, DEP-032): One point is not
   random: the Office, a point Ely chose in Westerville, rounded to 0.002° (about 150 m). It is the
   one row of the `depots` table (generator v7); no street address for it is written anywhere.
 - failure_modes: a real-looking email or phone (caught by `synthetic-email.sql` and
   `synthetic-phone.sql`); a stale or hand-edited build (publish refuses it); a coordinate outside
   the Columbus box (caught by `synthetic-coordinates.sql`) or on water (caught by
   `synthetic-off-water.sql`), the Office's included.
-- owner: Dana Reyes
+- owner: Ely Potter
 - evidence: `fixture-tables.md` "Rules" and "Validation"; `docs/runtime/motherduck-publish.md`;
   `examples/brightside/fixture/lib/routing.js` (`CENTRE`, `BOX`; generator v6; `OFFICE`, generator
   v7) and `lib/water.js`.
-- status: draft (approved 2026-10-25; the coordinates line was added on 2026-10-26, its off-water
-  words on 2026-10-27, and awaits Dana Reyes's sign-off with DEP-025; the Office exception was added
-  on 2026-10-27, pending her sign-off, DEP-032)
+- status: approved
+- approval: approved by Ely Potter on 2026-10-31 (plan brightside-v1, Story 18.1); earlier drafts:
+  approved on 2026-10-25 (Ely as Dana Reyes); the coordinates line added on 2026-10-26 and its
+  off-water words on 2026-10-27 (DEP-025); the Office exception added on 2026-10-27 (DEP-032).
 
 ### GRD-008: A crew out for the day
 - type: classification
@@ -307,9 +316,13 @@ exception_workflow and data_quality_guard.
   new crew, when its lead is absent, or nobody on the crew is present. A crew with its lead and at
   least one person present works the day with fewer people, and its visits take longer. NOT a rule
   about who may see a route, and NOT a change to any booked visit: routing only suggests.
-- edge_cases: who counts as the lead on a day the usual lead is swapped; a member present for part
-  of the day. Both wait for Dana Reyes.
-- owner: Dana Reyes
+- edge_cases: A stand-in lead counts as the lead for that day. A member present for part of the
+  day counts as present. Brightside's data has neither (no stand-in field; `staff_absences` holds
+  whole days only), so the adapter needs no change; a fork whose data records either must map it
+  this way.
+- owner: Ely Potter
 - evidence: data-design §4 and architecture-routing AD-R1 (the adapter, Story 14.3); absences come
   from `staff_absences` (Story 14.2).
-- status: draft (pending Dana Reyes's confirmation, DEP-028)
+- status: approved
+- approval: approved by Ely Potter on 2026-10-31 (plan brightside-v1, Story 18.1), with its edge
+  cases settled; earlier draft: recorded on 2026-10-26 by Story 13.3 (DEP-028).

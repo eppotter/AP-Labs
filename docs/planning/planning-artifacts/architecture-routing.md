@@ -19,6 +19,10 @@ companions:
 
 # Architecture Spine: AP Labs routing
 
+> **Note, 2026-10-31 (plan brightside-v1, Story 18.1):** Dana Reyes, the fictional Brightside owner named
+> below, no longer exists; Ely Potter replaced her as the owner and signed GRD-002, GRD-007 and GRD-008
+> (DEP-024, DEP-025, DEP-028, DEP-029 and DEP-032 closed). Read "Dana" below as history.
+
 Decisions only. Inherits `architecture-runtime.md` (AD-1 engine/fork boundary, AD-9 the only query runner, AD-16 optional profile keys, AD-17 typed errors, AD-18 fixture tooling) read-only. Every story in `epics-routing.md` builds against these rules.
 
 **Amended 2026-10-26 (routing-streetmap):** Ely decided, after seeing the plain plot in dev Slack ("we need a map here"), to put a street map under the plot: free OpenStreetMap tiles ($0, no account), the demo company moved onto a real US metro (Columbus, Ohio), and new Stories 15.7 to 15.11 built now. Adds AD-R18 to AD-R22; amends AD-R10, R12, R13, R14 and the deferred list. Architect review: approve with conditions, all folded in. Drive time is unchanged: haversine × detour ÷ speed, not road time.

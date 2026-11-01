@@ -10,6 +10,10 @@ inputDocuments:
 
 # AP-Labs - Epic Breakdown: route optimization
 
+> **Note, 2026-10-31 (plan brightside-v1, Story 18.1):** Dana Reyes, the fictional Brightside owner named
+> below, no longer exists; Ely Potter replaced her as the owner and signed GRD-002, GRD-007 and GRD-008
+> (DEP-024, DEP-025, DEP-028, DEP-029 and DEP-032 closed). Read "Dana" below as history.
+
 **Status: approved by Ely 2026-10-26 (`approve plan routing`).** Amendment routing-streetmap (Stories 15.7 to 15.11): built (#231, #233, #235, #237, #239; fix #241). Amendment routing-editor (Stories 15.12 to 15.15): awaiting `approve plan routing-editor`.
 
 ## Overview

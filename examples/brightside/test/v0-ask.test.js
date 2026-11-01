@@ -21,7 +21,7 @@ const { ASK_WORDS } = require('../../../kit/runtime/messages');
 
 const ROOT = path.join(__dirname, '../../..');
 const PROFILE = path.join(__dirname, 'fixtures/demo-profile.yml');
-const ADMIN = { id: 'U0FIXTUREDANA', name: 'dana' }; // Dana, the fixture's admin
+const ADMIN = { id: 'U0FIXTUREELY', name: 'ely' }; // Ely, the fixture's admin
 
 class ViewsApp extends FakeSlackApp {
   constructor(options) {
@@ -93,6 +93,6 @@ test('/brightside-v0: Ask with a data question gets "no data and no rules yet", 
   assert.equal(model.calls.length, 1);
   // The blank hub's prompt carries no business context.
   assert.ok(!model.calls[0].system.includes('<client_context file='));
-  // Request a tool is offered: Dana holds the key, a channel is set, the hub is blank.
+  // Request a tool is offered: Ely holds the key, a channel is set, the hub is blank.
   assert.deepEqual(answer.blocks.at(-1).elements.map((e) => e.action_id), [askTool.ACTIONS.buildRequest, askTool.ACTIONS.again]);
 });

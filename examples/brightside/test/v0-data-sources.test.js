@@ -17,7 +17,7 @@ const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
 
 const ROOT = path.join(__dirname, '../../..');
 const PROFILE = path.join(__dirname, 'fixtures/demo-profile.yml');
-const ADMIN_SLACK = 'U0FIXTUREDANA'; // Dana, the fixture's admin
+const ADMIN_SLACK = 'U0FIXTUREELY'; // Ely, the fixture's admin
 
 async function boot(t) {
   const lines = [];
@@ -63,7 +63,7 @@ test('/brightside-v0 lists Ask (Story 16.7) and Request a tool (Story 16.6), the
   assert.equal(next.text.text, '*Next:* teach it the business');
   assert.equal(next.accessory.action_id, 'v0-add-context:open');
   assert.equal(stranger.blocks.find((b) => b.block_id === 'next'), undefined);
-  await app.dispatchAction('v0-data-sources:open', { user: { id: ADMIN_SLACK, name: 'dana' } });
+  await app.dispatchAction('v0-data-sources:open', { user: { id: ADMIN_SLACK, name: 'ely' } });
   const reply = app.responded.at(-1);
   assert.equal(reply.response_type, 'ephemeral');
   assert.deepEqual(reply.blocks.map((b) => b.text.text), ["Nothing yet: no added context, and this hub doesn't connect to data.", '*Added context*\nNone yet.']);

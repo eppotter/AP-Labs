@@ -19,7 +19,7 @@ const br = require('../../../kit/runtime/archetypes/build-request');
 
 const ROOT = path.join(__dirname, '../../..');
 const PROFILE = path.join(__dirname, 'fixtures/demo-profile.yml');
-const ADMIN = { id: 'U0FIXTUREDANA', name: 'dana' }; // Dana, the fixture's admin
+const ADMIN = { id: 'U0FIXTUREELY', name: 'ely' }; // Ely, the fixture's admin
 const CHANNEL = 'C0FIXTUREREQ'; // the fixture's build-request channel
 
 // The fake Slack app, a member of the fixture's build-request channel.
@@ -71,7 +71,7 @@ test('/brightside-v0: Request a tool opens its form, previews the person\'s own 
   const preview = app.views.filter((v) => v.method === 'update').at(-1).args.view;
   const shown = preview.blocks.map((b) => (b.text && b.text.text) || '').join('\n');
   assert.match(shown, /not summarised/);
-  assert.match(shown, /From <@U0FIXTUREDANA> on the Brightside v0 hub/);
+  assert.match(shown, /From <@U0FIXTUREELY> on the Brightside v0 hub/);
   const post = preview.blocks.find((b) => b.type === 'actions').elements.find((e) => e.action_id === br.ACTIONS.post);
   await app.dispatchAction(br.ACTIONS.post, { user: ADMIN, value: post.value, view: { id: 'VFORM', type: 'modal', private_metadata: 'brightside-v0' } });
   assert.equal(app.posted.length, 1);

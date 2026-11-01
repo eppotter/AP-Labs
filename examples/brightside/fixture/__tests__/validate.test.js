@@ -77,7 +77,7 @@ const ROUTING_SCRIPT = 'examples/brightside/fixture/truths/routing.js';
 // one number as the script prints them (100 x in-zone + 10 x cross-zone + unplaced).
 const routingExpect = (id) => (id === 'route-change-s3-crosszone' ? packS3(ROUTING_TARGETS[id]) : ROUTING_TARGETS[id]);
 
-test('data.md holds one truth per planted target: owner Dana Reyes, signed off 2026-10-25 (Story 4.3), tolerance 0', () => {
+test('data.md holds one truth per planted target: owner Ely Potter (since 2026-10-31), signed off 2026-10-25 (Story 4.3), tolerance 0', () => {
   const entries = loadTruths(contextDirFor(PROFILE_FILE)).filter((e) => TRUTH_IDS.includes(e.id));
   assert.deepEqual(entries.map((e) => e.id).sort(), [...TRUTH_IDS].sort());
   assert.deepEqual(Object.keys(TARGETS).sort(), [...TRUTH_IDS].sort());
@@ -85,7 +85,7 @@ test('data.md holds one truth per planted target: owner Dana Reyes, signed off 2
     assert.deepEqual(e.problems, [], e.id);
     assert.equal(e.truth.expect, TARGETS[e.id], `${e.id}: expect must be the planted target`);
     assert.deepEqual(e.truth.tolerance, { kind: 'abs', value: 0 }, e.id);
-    assert.equal(e.truth.owner, 'Dana Reyes', e.id);
+    assert.equal(e.truth.owner, 'Ely Potter', e.id);
     assert.equal(e.truth.signedOff, '2026-10-25', e.id);
     // No --profile: the governing profile applies, so a fork that copies the
     // block enforces its own forbidden columns, never Brightside's (issue #77).
@@ -93,7 +93,7 @@ test('data.md holds one truth per planted target: owner Dana Reyes, signed off 2
   }
 });
 
-test('data.md holds the five routing truths (Story 14.4): planted targets, tolerance 0, owner Dana Reyes, sign-off pending', () => {
+test('data.md holds the five routing truths (Story 14.4): planted targets, tolerance 0, owner Ely Potter, sign-off pending (plan brightside-v1, gate item 6)', () => {
   const entries = loadTruths(contextDirFor(PROFILE_FILE));
   assert.deepEqual(entries.map((e) => e.id), ALL_TRUTH_IDS);
   assert.deepEqual(Object.keys(ROUTING_TARGETS).sort(), [...ROUTING_TARGET_IDS].sort());
@@ -102,8 +102,8 @@ test('data.md holds the five routing truths (Story 14.4): planted targets, toler
     assert.deepEqual(e.problems, [], e.id);
     assert.equal(e.truth.expect, routingExpect(e.id), `${e.id}: expect must be the planted target`);
     assert.deepEqual(e.truth.tolerance, { kind: 'abs', value: 0 }, e.id);
-    assert.equal(e.truth.owner, 'Dana Reyes', e.id);
-    assert.equal(e.truth.signedOff, 'pending', `${e.id}: not signed off until Dana Reyes confirms it`);
+    assert.equal(e.truth.owner, 'Ely Potter', e.id);
+    assert.equal(e.truth.signedOff, 'pending', `${e.id}: not signed off until Ely Potter confirms it`);
     // No --profile here either: the governing profile applies.
     const run = e.id === 'scheduled-stops-next-14d'
       ? ['node', 'kit/fixture/query.js', `examples/brightside/fixture/truths/${e.id}.sql`]

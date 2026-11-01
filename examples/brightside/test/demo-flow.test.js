@@ -9,13 +9,13 @@
 // switch cleared. No copy of the repo is made. Offline: fake Slack, a
 // stand-in model reply, the local fixture file.
 //
-//   1  /brightside: the menu shows only what Dana's profile grants
+//   1  /brightside: the menu shows only what Ely's profile grants
 //   2  Win-back list, "clients in the North zone whose plan lapsed in the
 //      last 90 days, top 25", Read my request
 //   3  the values understood (north, 90, 25) with Confirm / Change; Change
 //      opens the typed form, prefilled
 //   4  Confirm: the top 25 by score with a reason each, "How was this
-//      made?", and the CSV in Dana's DM
+//      made?", and the CSV in Ely's DM
 //   5  How was this made?: the values and the exact SQL, then Back to the
 //      list: the same result again, with its buttons
 //   6  Push to email tool: the list name, the count, a sample, Approve / Cancel
@@ -23,7 +23,7 @@
 //   8  the Outbox entry shows the list the mock email tool received
 //
 // At the end: the outbox holds exactly the approved, scored list, once;
-// every message went privately to Dana (a modal or an ephemeral reply,
+// every message went privately to Ely (a modal or an ephemeral reply,
 // nothing posted to a channel); exactly one CSV went, only to her DM.
 //
 // A second pass runs with APLABS_LLM_OFF set: step 2 says the AI helper is
@@ -58,8 +58,8 @@ const APP_DIR = path.join(ROOT, 'examples/brightside/app');
 const profile = loadProfile(PROFILE_PATH);
 const { registry } = loadRegistry({ appDir: APP_DIR, profile });
 const winBack = registry.module('win-back');
-const DANA = profile.users.find((u) => u.id === 'dana').identities.slack;
-const DANA_DM = `D${DANA.slice(1)}`;
+const ELY = profile.users.find((u) => u.id === 'ely').identities.slack;
+const ELY_DM = `D${ELY.slice(1)}`;
 const REQUEST = 'clients in the North zone whose plan lapsed in the last 90 days, top 25';
 const today = () => new Date().toISOString().slice(0, 10);
 const LIST_NAME = () => `win-back-north-${today()}`;
@@ -186,20 +186,20 @@ function csvRows(upload) {
 // is filled instead. Returns the Confirm screen.
 async function askForTheList(ctx, { llmOff }) {
   const { app } = ctx;
-  await app.dispatchAction('win-back:open', { user: { id: DANA }, view: ctx.menu });
+  await app.dispatchAction('win-back:open', { user: { id: ELY }, view: ctx.menu });
   const form = last(app);
   assert.equal(form.title.text, 'Win-back list');
   const read = button(form, 'scoped-pull:read');
   assert.equal(read.text.text, 'Read my request');
   const request = { values: { 'sp-request': { value: { type: 'plain_text_input', value: REQUEST } } } };
-  await app.dispatchAction('scoped-pull:read', { user: { id: DANA }, view: from(app, form, request), value: read.value });
+  await app.dispatchAction('scoped-pull:read', { user: { id: ELY }, view: from(app, form, request), value: read.value });
   let shown = last(app);
   if (llmOff) {
     // Step 2 with the AI off: said plainly, above the typed form.
     assert.equal(shown.blocks[0].text.text, "The AI helper is switched off right now, so I can't read your request. Please use the form instead.");
     assert.equal(shown.submit.text, 'Check values');
     assert.equal(ctx.model.created, 0, 'no model client is built when the AI is off');
-    await app.dispatchView('scoped-pull:form', { user: { id: DANA }, view: from(app, shown, typed) });
+    await app.dispatchView('scoped-pull:form', { user: { id: ELY }, view: from(app, shown, typed) });
     shown = app.viewAcks.at(-1).view;
   } else {
     ctx.reads += 1;
@@ -216,7 +216,7 @@ async function askForTheList(ctx, { llmOff }) {
 // Confirm on the Confirm screen (step 4). Returns the result view.
 async function confirm(ctx, confirmView) {
   const { app } = ctx;
-  await app.dispatchAction('scoped-pull:confirm', { user: { id: DANA }, view: from(app, confirmView), value: button(confirmView, 'scoped-pull:confirm').value });
+  await app.dispatchAction('scoped-pull:confirm', { user: { id: ELY }, view: from(app, confirmView), value: button(confirmView, 'scoped-pull:confirm').value });
   return last(app);
 }
 
@@ -224,14 +224,14 @@ async function demo(t, { llmOff }) {
   const ctx = await boot(t, { llmOff });
   const { app } = ctx;
 
-  // Step 1: the hub menu shows only what Dana's profile grants.
-  await app.dispatchCommand('/brightside', { user_id: DANA });
+  // Step 1: the hub menu shows only what Ely's profile grants.
+  await app.dispatchCommand('/brightside', { user_id: ELY });
   const menuArgs = app.views[0].args;
   assert.equal(app.views[0].method, 'open');
   // A row's button sends <id>:open, or <id>:why while the tool waits (Story 17.3).
   const entries = (view) => view.blocks.filter((b) => b.accessory && /:(open|why)$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id.replace(/:(open|why)$/, ''));
   // routing is the dev-only Routing map (Story 15.5) and route-planner the dev-only Plan a
-  // route (Story 15.15), on the same resource: Dana holds ROUTING_ALL_CREWS by name.
+  // route (Story 15.15), on the same resource: Ely holds ROUTING_ALL_CREWS by name.
   assert.deepEqual(entries(menuArgs.view).sort(), ['dataset', 'hello-world', 'labour-cost', 'outbox', 'route-planner', 'routing', 'unpaid-invoices', 'win-back']);
   // Plan a route can't open in this boot (its editor is unready: the
   // dispatcher refuses it), so its status is waiting for map setup and its
@@ -245,17 +245,17 @@ async function demo(t, { llmOff }) {
 
   // Steps 2 and 3, then Change: the typed form, prefilled with the values.
   const firstConfirm = await askForTheList(ctx, { llmOff });
-  await app.dispatchAction('scoped-pull:change', { user: { id: DANA }, view: from(app, firstConfirm), value: button(firstConfirm, 'scoped-pull:change').value });
+  await app.dispatchAction('scoped-pull:change', { user: { id: ELY }, view: from(app, firstConfirm), value: button(firstConfirm, 'scoped-pull:change').value });
   const changed = last(app);
   assert.equal(changed.submit.text, 'Check values');
   const zone = changed.blocks.find((b) => b.block_id === 'sp-input:zone').element.initial_option.value;
   assert.equal(zone, 'north', 'Change keeps the values understood');
-  await app.dispatchView('scoped-pull:form', { user: { id: DANA }, view: from(app, changed, typed) });
+  await app.dispatchView('scoped-pull:form', { user: { id: ELY }, view: from(app, changed, typed) });
   const confirmView = app.viewAcks.at(-1).view;
   assert.deepEqual(values(confirmView), ['north', '90', '25']);
   assert.equal(app.uploads.length, 0, 'nothing runs before Confirm');
 
-  // Step 4: the top 25 by score, a reason each, the CSV in Dana's DM.
+  // Step 4: the top 25 by score, a reason each, the CSV in Ely's DM.
   const result = await confirm(ctx, confirmView);
   assert.equal(result.blocks[0].text.text, '*Win-back list: the top 25 of 38 rows, by score.*');
   const table = texts(result).split('\n');
@@ -264,13 +264,13 @@ async function demo(t, { llmOff }) {
   assert.equal(button(result, 'provenance:show').text.text, 'How was this made?');
   assert.equal(button(result, 'approval-write:push').text.text, 'Push to email tool');
   assert.equal(app.uploads.length, 1);
-  assert.equal(app.uploads[0].channel_id, DANA_DM);
+  assert.equal(app.uploads[0].channel_id, ELY_DM);
   const scored = csvRows(app.uploads[0]);
   assert.equal(scored.length, 25);
   assert.deepEqual(scored.slice(0, 2).map((r) => [r.score, r.client_id]), [[86, '730'], [74, '931']]);
 
   // Step 5: How was this made? shows the values and the exact SQL.
-  await app.dispatchAction('provenance:show', { user: { id: DANA }, view: from(app, result), value: button(result, 'provenance:show').value });
+  await app.dispatchAction('provenance:show', { user: { id: ELY }, view: from(app, result), value: button(result, 'provenance:show').value });
   const details = last(app);
   assert.equal(details.blocks[0].text.text, '*How Win-back list was made*');
   assert.deepEqual(values(details), ['north', '90', '25']);
@@ -281,14 +281,14 @@ async function demo(t, { llmOff }) {
   // the same result back, with its buttons, and runs nothing.
   const back = button(details, 'provenance:back');
   assert.equal(back.text.text, 'Back to the list');
-  await app.dispatchAction('provenance:back', { user: { id: DANA }, view: from(app, details), value: back.value });
+  await app.dispatchAction('provenance:back', { user: { id: ELY }, view: from(app, details), value: back.value });
   const again = last(app);
   assert.deepEqual(again.blocks, result.blocks, 'the same result, as it was shown');
   assert.equal(button(again, 'approval-write:push').text.text, 'Push to email tool');
   assert.equal(app.uploads.length, 1, 'Back sends no second CSV');
 
   // Step 6: the preview names the list, the count and a sample.
-  await app.dispatchAction('approval-write:push', { user: { id: DANA }, view: from(app, again), value: button(again, 'approval-write:push').value });
+  await app.dispatchAction('approval-write:push', { user: { id: ELY }, view: from(app, again), value: button(again, 'approval-write:push').value });
   const preview = last(app);
   assert.ok(texts(preview).includes(`*List name:* ${LIST_NAME()}`), texts(preview));
   assert.match(texts(preview), /\*Rows to send:\* 25 of 25 rows/);
@@ -299,14 +299,14 @@ async function demo(t, { llmOff }) {
 
   // Step 7: Approve pushes once; a second click sends nothing new.
   const approve = button(preview, 'approval-write:approve');
-  await app.dispatchAction('approval-write:approve', { user: { id: DANA }, view: from(app, preview), value: approve.value });
+  await app.dispatchAction('approval-write:approve', { user: { id: ELY }, view: from(app, preview), value: approve.value });
   const pushed = last(app);
   assert.equal(pushed.blocks[0].text.text, `*Pushed 25 to email tool*, skipped 0, failed 0. List: ${LIST_NAME()}.`);
-  await app.dispatchAction('approval-write:approve', { user: { id: DANA }, view: from(app, pushed), value: approve.value });
+  await app.dispatchAction('approval-write:approve', { user: { id: ELY }, view: from(app, pushed), value: approve.value });
   assert.match(last(app).blocks[0].text.text, /^You already approved this push, so it ran once and I won't send it again\./);
 
   // Step 8: the Outbox entry shows what the mock email tool received.
-  await app.dispatchAction('outbox:open', { user: { id: DANA }, view: ctx.menu });
+  await app.dispatchAction('outbox:open', { user: { id: ELY }, view: ctx.menu });
   const outboxView = texts(last(app));
   assert.match(outboxView, /^\*Email outbox\*/);
   assert.ok(outboxView.includes(`*${LIST_NAME()}* · 25 contacts · `), outboxView);
@@ -325,14 +325,14 @@ async function demo(t, { llmOff }) {
   assert.ok(contacts.every((c) => c.listId === lists[0].payload.listId));
 
   // Every message was private: modals and ephemeral replies only, nothing
-  // posted to a channel; exactly one CSV, only to Dana's DM.
+  // posted to a channel; exactly one CSV, only to Ely's DM.
   assert.deepEqual(app.posted, [], 'nothing posted to a channel');
   assert.ok(app.said.every((m) => m.ephemeral), 'every said reply is ephemeral');
   assert.ok(app.responded.every((m) => m.response_type === 'ephemeral'), 'every respond is ephemeral');
   assert.ok(app.views.every((v) => ['open', 'push', 'update'].includes(v.method) && (v.args.view.type || 'modal') === 'modal'));
   assert.equal(app.uploads.length, 1, 'exactly one CSV');
-  assert.ok(app.uploads.every((u) => u.channel_id === DANA_DM));
-  assert.ok(app.dms.every((d) => d.user === DANA && d.channel === DANA_DM));
+  assert.ok(app.uploads.every((u) => u.channel_id === ELY_DM));
+  assert.ok(app.dms.every((d) => d.user === ELY && d.channel === ELY_DM));
 
   // The rows never reached the model.
   const sent = JSON.stringify(ctx.model.calls);

@@ -1,8 +1,8 @@
 ---
-owner: Dana Reyes          # the named client person who owns this file
-signed_off: 2026-10-25  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
-signed_off_by: "Dana Reyes (Ely as Dana Reyes, 2026-10-25)"  # who signed off: the owner, recorded by a facilitator
-updated: 2026-10-25        # ISO date of the last edit
+owner: Ely Potter          # the named client person who owns this file
+signed_off: 2026-10-31  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
+signed_off_by: "Ely Potter (2026-10-31)"  # who signed off: the owner, recorded by a facilitator
+updated: 2026-10-31        # ISO date of the last edit
 ---
 
 # Organisation context
@@ -10,6 +10,10 @@ updated: 2026-10-25        # ISO date of the last edit
 Drafted by Scribe from the Onboarder's findings; every agent reads it. Write only what a client
 source supports, and mark anything inferred as _inferred_. No secrets, no personal data.
 Brightside is fictional.
+
+Until 2026-10-31 these files named a fictional owner, Dana Reyes, played by Ely; lines that say
+"Ely as Dana Reyes" are kept as history. Ely Potter owns and signs them since 2026-10-31 (plan
+brightside-v1, Story 18.1).
 
 ## What the company does
 
@@ -29,8 +33,8 @@ in full or in parts. The data history runs from 2024-10-01 to 2026-09-30.
 three members, one of whom is the crew lead. Cleaners and crew leads are paid by the hour. Staff
 join, leave and move between crews.
 
-**Office and owners** (_inferred_). Dana Reyes is the admin and owns the client files; Marcus Lee
-is a member. Their job titles are not recorded.
+**Office and owners** (_inferred_). Ely Potter is the admin and owns the client files; Steven
+Auslander is an admin with the same grants; Marcus Lee is a member. Their job titles are not recorded.
 
 ## Tools and systems
 
@@ -58,4 +62,5 @@ The shared data sits in MotherDuck; the bot reads it but never writes. Connectio
 - `docs/planning/specs/spec-runtime/fixture-tables.md` and `examples/brightside/fixture/lib/reference.js`
   (zones, crews, packages, add-ons, plans): 2026-10-25.
 - `examples/brightside/app/` (connectors, modules, hub): 2026-10-25.
-- No interview with Brightside people: the client is fictional, and Ely signs as Dana Reyes.
+- No interview with Brightside people: the client is fictional, and Ely Potter signs (until
+  2026-10-31 as a fictional owner, Dana Reyes).

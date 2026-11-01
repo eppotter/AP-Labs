@@ -15,13 +15,35 @@ test('the Brightside demo profile is valid', () => {
 });
 
 // Story 10.2 (Q6): Win-back pushes to the email tool (approval-write), so its
-// resource is owner-only and granted to Dana by name; the admin role alone
-// does not confer it.
-test('WIN_BACK is admin_grantable: false and granted to Dana by name', () => {
+// resource is owner-only and granted by name (Ely Potter, and Steven Auslander
+// with every grant Ely has, plan brightside-v1); the admin role alone does not
+// confer it.
+test('WIN_BACK is admin_grantable: false and granted to Ely and Steven by name', () => {
   const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
   assert.equal(p.resources.find((r) => r.key === 'WIN_BACK').admin_grantable, false);
   const holders = p.users.filter((u) => (u.grants || []).includes('WIN_BACK')).map((u) => u.name);
-  assert.deepEqual(holders, ['Dana Reyes']);
+  assert.deepEqual(holders, ['Ely Potter', 'Steven Auslander']);
+});
+
+// Plan brightside-v1 (Story 18.1): Ely Potter replaces the fictional Dana
+// Reyes as the admin user, on the same Slack identity, and Steven Auslander
+// gets every grant Ely has, on every hub, always: any grant to Ely is granted
+// to Steven in the same change. This test holds the rule for every later story.
+test('Ely is the admin user on the same Slack identity, and Steven holds exactly the grants Ely holds', () => {
+  const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
+  const ely = p.users.find((u) => u.id === 'ely');
+  const steven = p.users.find((u) => u.id === 'steven');
+  assert.ok(ely, 'user ely');
+  assert.ok(steven, 'user steven');
+  assert.equal(ely.name, 'Ely Potter');
+  assert.equal(ely.role, 'admin');
+  assert.equal(ely.identities.slack, 'U0CB6HDBBQX');
+  assert.equal(ely.identities.github, undefined, 'the fictional github id is dropped');
+  assert.equal(steven.name, 'Steven Auslander');
+  assert.equal(steven.role, 'admin');
+  assert.deepEqual([...ely.grants].sort(), ['ROUTING_ALL_CREWS', 'TIER3_APPROVE', 'WIN_BACK']);
+  assert.deepEqual([...(steven.grants || [])].sort(), [...ely.grants].sort());
+  assert.equal(p.users.some((u) => /dana/i.test(`${u.id} ${u.name}`)), false, 'no Dana user is left');
 });
 
 // Story 10.3: slack.ops_channel stays unset until Ely creates #brightside-ops
@@ -74,20 +96,19 @@ test('routing declares property, crew and depot nodes and the generator limits',
 });
 
 // Story 15.5 (AD-R17): the routing map's two resource keys, neither conferred
-// by the admin role, and its audience. A dev placeholder until Dana Reyes
-// confirms the real audience (DEP-024): Dana (the user Ely drives in dev) is
-// the one dispatcher and no crew leads are listed. When the list arrives,
-// update the profile and this test with it.
-test('the routing audience: two keys by name only; a dev placeholder with Dana as the one dispatcher (DEP-024)', () => {
+// by the admin role, and its audience. Decided by Ely Potter on 2026-10-31
+// (DEP-024, closed): the dispatchers are Ely Potter and Steven Auslander, and
+// no crew leads are listed.
+test('the routing audience: two keys by name only; Ely and Steven are the dispatchers, no crew leads (DEP-024)', () => {
   const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
   assert.deepEqual(p.routing.audience, { all_crews: 'ROUTING_ALL_CREWS', own_crew: 'ROUTING_OWN_CREW', crew_leads: [] });
   for (const key of ['ROUTING_ALL_CREWS', 'ROUTING_OWN_CREW']) {
     assert.equal(p.resources.find((r) => r.key === key).admin_grantable, false, key);
   }
   const holders = (key) => p.users.filter((u) => (u.grants || []).includes(key)).map((u) => u.id);
-  assert.deepEqual(holders('ROUTING_ALL_CREWS'), ['dana']);
+  assert.deepEqual(holders('ROUTING_ALL_CREWS'), ['ely', 'steven']);
   assert.deepEqual(holders('ROUTING_OWN_CREW'), []);
-  // The map floors Dana signs GRD-002 against.
+  // The map floors GRD-002 was signed against (Ely Potter, 2026-10-31).
   assert.equal(p.routing.map_grid_e6, 2000);
   assert.equal(p.routing.map_min_span_km, 5);
 });
@@ -95,8 +116,11 @@ test('the routing audience: two keys by name only; a dev placeholder with Dana a
 // Story 15.11 (AD-R18): Brightside turns the street map on with OpenStreetMap's
 // free tiles (dev and the demo only; a fork sets its own provider, DEP-031).
 // The User-Agent names the app and a contact (DEP-030), never the client,
-// since every tile request carries it to the provider. The Routing module
-// stays dev-only until Dana Reyes signs GRD-002 (DEP-025, Story 15.6).
+// since every tile request carries it to the provider. GRD-002 was signed on
+// 2026-10-31 (DEP-025); the Routing module stays dev-only until Story 15.6.
+// The contact is Ely Potter's own (DEP-030): since Story 18.1 Ely, an AP Labs
+// partner, is also the profile's admin user, so Ely's name is not a client
+// person's and is the one user left out of the check below.
 test('routing.basemap: OpenStreetMap tiles, its credit, a contact and no client name in the User-Agent', () => {
   const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
   const b = p.routing.basemap;
@@ -107,7 +131,9 @@ test('routing.basemap: OpenStreetMap tiles, its credit, a contact and no client 
   assert.equal(b.cache_days, 7);
   assert.match(b.user_agent, /^aplabs-routing-map\/[0-9.]+ \(\+mailto:[^\s@()]+@[^\s@()]+\)$/);
   const ua = b.user_agent.toLowerCase();
-  const names = [p.client.id, p.client.name, ...p.client.name.split(/\s+/), ...p.users.flatMap((u) => [u.id, ...u.name.split(/\s+/)])];
+  const clientPeople = p.users.filter((u) => u.name !== 'Ely Potter');
+  assert.ok(clientPeople.length > 0, 'at least one client person is checked');
+  const names = [p.client.id, p.client.name, ...p.client.name.split(/\s+/), ...clientPeople.flatMap((u) => [u.id, ...u.name.split(/\s+/)])];
   for (const name of names) assert.ok(!ua.includes(name.toLowerCase()), `the User-Agent names no client or client person (${name})`);
 });
 

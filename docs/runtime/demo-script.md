@@ -2,7 +2,7 @@
 
 The Win-back demo in Slack, step by step: what you type, and what you should see. It follows `docs/planning/specs/spec-runtime/demo-flow.md`. The same steps run in CI, offline, in `examples/brightside/test/demo-flow.test.js` (fake Slack, a stand-in AI reply, the local fixture).
 
-You play Dana Reyes, Brightside's owner. Everything the bot shows you is private: it appears in the hub window (a modal) or as a message only you can see, and the CSV arrives in your DM with the bot. Nothing is posted in a channel.
+You play yourself: Ely Potter is Brightside's owner and admin in the demo profile, and Steven Auslander holds every grant Ely holds, so either of you can run it (until 2026-10-31 the owner was a fictional Dana Reyes, played by Ely). Everything the bot shows you is private: it appears in the hub window (a modal) or as a message only you can see, and the CSV arrives in your DM with the bot. Nothing is posted in a channel.
 
 ## Before the live demo
 
@@ -14,7 +14,7 @@ You play Dana Reyes, Brightside's owner. Everything the bot shows you is private
    ```
 
    It reads the local fixture (`npm run fixture:build` first if it isn't built). Check the startup line: `ai` should say `on`.
-2. **Dana's grant.** Your `aplabs-demo` member id is Dana's `identities.slack` in `profiles/brightside/profile.yml`, and Dana holds `WIN_BACK` by name (it is owner-only: the admin role alone doesn't give it). Without both, Win-back list isn't in your menu.
+2. **Your grant.** Your `aplabs-demo` member id is your user's `identities.slack` in `profiles/brightside/profile.yml` (`ely` or `steven`), and both hold `WIN_BACK` by name (it is owner-only: the admin role alone doesn't give it). Without both, Win-back list isn't in your menu.
 3. **The real AI key for step 2.** It is already in the Keychain as `aplabs-anthropic-key` (`ai-setup.md`), so there is nothing to do unless the startup line says `ai: off (ANTHROPIC_API_KEY not set)`. With the AI off, step 2 says so and you use the form instead (see "With the AI off" below).
 4. **No ops channel is set** (`slack.ops_channel` is unset in the profile), so a failed push is logged in the bot's terminal only, not posted anywhere. That is fine for the demo, where the push should succeed. To see escalations in Slack, follow "The ops channel" in `slack-app-setup.md` first.
 5. **Start clean**: see "Resetting" below.
@@ -23,7 +23,7 @@ You play Dana Reyes, Brightside's owner. Everything the bot shows you is private
 
 | # | You do | You should see |
 |---|---|---|
-| 1 | Type `/brightside` in any channel or DM. | The Brightside window, listing only what Dana may use: Dataset, Say hello, Labour cost, Outbox, Unpaid invoices and Win-back list, then Help. In dev it also lists Route map and Plan a route under the Routing header (`routing-map.md`); production waits for Dana's GRD-002 sign-off (Story 15.6). |
+| 1 | Type `/brightside` in any channel or DM. | The Brightside window, listing only what you may use: Dataset, Say hello, Labour cost, Outbox, Unpaid invoices and Win-back list, then Help. In dev it also lists Route map and Plan a route under the Routing header (`routing-map.md`); production waits for Story 15.6 (GRD-002 was signed by Ely Potter on 2026-10-31). |
 | 2 | Press **Open** on Win-back list. In the request box type `clients in the North zone whose plan lapsed in the last 90 days, top 25` and press **Read my request**. | "Reading your request…", then step 3. |
 | 3 | Check the values. Press **Change** if you want to see the typed form, then **Check values** to come back. | The values the bot understood: Zone north, Lapsed within (days) 90, How many clients 25, with **Confirm** and **Change**. Change opens the form with those values filled in. |
 | 4 | Press **Confirm**. | *Running Win-back list…*, then *Win-back list: the top 25 of 38 rows, by score.* The top 10 rows with a score and a one-line reason each (client 730 first, score 86), a **How was this made?** button, a **Push to email tool** button, and a link to the CSV, which is in your DM with the bot. |

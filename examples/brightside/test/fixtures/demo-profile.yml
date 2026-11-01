@@ -1,7 +1,8 @@
 # Test fixture for the demo-flow example test (Story 10.4, issue #161): a copy
 # of the Brightside demo profile's client, resources, users, forbidden columns
-# and routing block (Story 15.5: the routing audience, with Dana the one
-# dispatcher), with a fake Slack id for Dana. Tests read this, never
+# and routing block (Story 15.5: the routing audience; plan brightside-v1,
+# Story 18.1: Ely and Steven the dispatchers, with the same grants), with fake
+# Slack ids for Ely and Steven. Tests read this, never
 # profiles/brightside/profile.yml. Deleted with the example in a fork.
 schema_version: 1
 
@@ -26,8 +27,10 @@ resources:
   - { key: ASK, label: Ask }
 
 users:
-  - { id: dana, name: Dana Reyes, role: admin, identities: { github: dana-r, slack: U0FIXTUREDANA }, grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS] }
+  - { id: ely, name: Ely Potter, role: admin, identities: { slack: U0FIXTUREELY }, grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS] }
   - { id: marcus, name: Marcus Lee, role: member, identities: { github: mlee-bright }, grants: [VERIFY_SKIP] }
+  # Steven holds every grant Ely holds (plan brightside-v1).
+  - { id: steven, name: Steven Auslander, role: admin, identities: { slack: U0FIXTURESTEVEN }, grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS] }
 
 # A fake build-request channel id (Story 16.6), shaped like a real one; the
 # fake Slack client is a member only when a test says so.

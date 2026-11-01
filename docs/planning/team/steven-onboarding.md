@@ -43,7 +43,7 @@ Written 2026-10-26 by the Orchestrator for Ely. This file lives under `docs/plan
 
 - **One copy per Slack app.** Two bots on the same Socket Mode token split Slack's events between them. Make your own dev app ("Brightside Bot (Steven dev)") from the manifest in `docs/runtime/slack-app-setup.md`, so you and Ely never collide. Then store its two tokens as that doc shows.
 - **The AI helper:** create your own Anthropic key with a monthly spend cap, as in `docs/runtime/ai-setup.md`. Without a key the bot still runs; "Read my request" falls back to the form.
-- **Your Slack member id:** send it to Ely. A reviewed PR maps it to a demo user in `profiles/brightside/profile.yml`, so you get the Brightside menus. Today only Ely's id is mapped (to Dana, the admin).
+- **Your Slack member id:** mapped to the user `steven` in `profiles/brightside/profile.yml` (an admin, with every grant Ely has, on every hub: plan brightside-v1), so you get the same Brightside menus as Ely.
 - **The demo itself:** `docs/runtime/demo-script.md`. The bot reads the local fixture by default; MotherDuck isn't needed.
 
 ## 5. How work runs
