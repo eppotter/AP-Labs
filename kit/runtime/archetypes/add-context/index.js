@@ -35,7 +35,7 @@
 // Upload a file (plan brightside-v0, D5, D6, D7, D13, Story 16.8): the form
 // also has an optional file_input (FILE_BLOCK, max_files 1, filetypes from
 // kit/runtime/slack/files FILETYPES: pdf, png, jpg, jpeg, gif, webp, txt,
-// md), with "Everyone who can use Ask here can read what this file says."
+// md, csv), with "Everyone who can use Ask here can read what this file says."
 // and "The file stays in your Slack files; you can delete it there." beside
 // it. A submit holds exactly one of typed text or a file. The instant checks
 // beside the fields (fieldErrors): the title; neither or both; more than one
@@ -46,11 +46,19 @@
 // the text, and update the view to "Here's what I took from <title>:" with
 // the first 1,500 characters of what was stored and Remove (fileAdded), or
 // to why nothing was added, with Back. The file itself is never stored.
+//
+// A .csv file (plan brightside-v1, D3, Story 18.2): filetypes gains csv, the
+// hint names it with its caps and adds NO_PERSONAL ("Don't upload personal
+// details …"). The hubs read it as text (kit/runtime/slack/files readCsv: no
+// AI call, never summarised), and "Here's what I took from <title>:" adds
+// "<N> rows, <M> columns" (fileAdded's table).
 
 const { escapeText, messageFor } = require('../../messages');
 const { ContextRefused, FileRefused } = require('../../errors');
 const { promptChars, CAPS, MAX_TITLE_CHARS } = require('../../knowledge/store');
-const { FILETYPES, typeOf } = require('../../slack/files');
+const {
+  FILETYPES, typeOf, MAX_CSV_ROWS, MAX_CSV_COLUMNS,
+} = require('../../slack/files');
 const { MAX_PDF_PAGES } = require('../../llm/file-check');
 
 const SUBMIT_CALLBACK = 'add-context:submit';
@@ -74,8 +82,10 @@ const TOOK_CHARS = 1500;
 const SECTION_CHARS = 2900;
 
 const READERS = 'Everyone who can use Ask here can read this.';
-const INTRO = `${READERS} Type something about the business that Ask should know, or upload a file (a PDF, a photo, or a .txt or .md file), give it a title, and press Add. Ask can use it as soon as it is added.`;
+const INTRO = `${READERS} Type something about the business that Ask should know, or upload a file (a PDF, a photo, a .csv, or a .txt or .md file), give it a title, and press Add. Ask can use it as soon as it is added.`;
 const FILE_READERS = 'Everyone who can use Ask here can read what this file says.';
+// Beside the file field (plan brightside-v1, D3).
+const NO_PERSONAL = "Don't upload personal details (emails, phones, addresses): everyone who can use Ask here can read them, and they are sent to the AI.";
 const FILE_STAYS = 'The file stays in your Slack files; you can delete it there.';
 const SAVING = 'Saving…';
 const READING = 'Reading…';
@@ -188,7 +198,7 @@ function form({
       type: 'input',
       block_id: FILE_BLOCK,
       label: plain('Or upload a file'),
-      hint: plain(`${FILE_READERS} ${FILE_STAYS} PDF (at most ${MAX_PDF_PAGES} pages), PNG, JPEG, GIF, WebP, .txt or .md, at most 5 MB.`),
+      hint: plain(`${FILE_READERS} ${FILE_STAYS} PDF (at most ${MAX_PDF_PAGES} pages), PNG, JPEG, GIF, WebP, .csv (at most ${MAX_CSV_ROWS} rows and ${MAX_CSV_COLUMNS} columns), .txt or .md, at most 5 MB. ${NO_PERSONAL}`),
       optional: true,
       element: {
         type: 'file_input', action_id: VALUE_ACTION, max_files: 1, filetypes: [...FILETYPES],
@@ -248,17 +258,21 @@ function textSections(text) {
 
 // After an upload (Story 16.8): "Here's what I took from <title>:" with
 // Remove for this entry, the first TOOK_CHARS characters of the stored text,
-// then the hub's entries. A result: no boxes, no submit.
+// then the hub's entries. A result: no boxes, no submit. table: a CSV's
+// { rows, columns } (Story 18.2), shown after the title as "<N> rows, <M>
+// columns"; null for any other file.
+const count = (n, one) => `${Number(n).toLocaleString('en-US')} ${one}${n === 1 ? '' : 's'}`;
 function fileAdded({
-  hubId, moduleId, entry, entries, problem, admin,
+  hubId, moduleId, entry, entries, problem, admin, table = null,
 }) {
   const title = escapeText(cut(entry.title || 'Untitled', MAX_TITLE_CHARS));
   const chars = Array.from(String(entry.text || ''));
   const shown = chars.slice(0, TOOK_CHARS).join('');
   const more = chars.length > TOOK_CHARS ? `_…and ${(chars.length - TOOK_CHARS).toLocaleString('en-US')} more characters._\n` : '';
-  const note = `Here's what I took from *${title}*:`;
+  const shape = table ? ` ${count(table.rows, 'row')}, ${count(table.columns, 'column')}` : '';
+  const note = `Here's what I took from *${title}*:${shape}`;
   return {
-    text: `Here's what I took from ${cut(entry.title || 'Untitled', MAX_TITLE_CHARS)}.`,
+    text: `Here's what I took from ${cut(entry.title || 'Untitled', MAX_TITLE_CHARS)}${shape ? `:${shape}` : ''}.`,
     blocks: [
       section(note, { block_id: `${TOOK_BLOCK}${entry.id}`, accessory: removeButton(moduleId, entry.id) }),
       ...textSections(shown),
@@ -346,6 +360,7 @@ module.exports = {
   ONE_FILE,
   FILE_READERS,
   FILE_STAYS,
+  NO_PERSONAL,
   ADDED,
   REMOVED,
   ALREADY_REMOVED,

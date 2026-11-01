@@ -292,9 +292,16 @@ class ContextRefused extends RuntimeRefusal {
 //   empty       nothing could be taken from it
 //   too_costly  its worst-case price alone is over the hourly upload limit
 //   not_set_up  this bot has no way to read Slack files
+// A .csv file (plan brightside-v1, D3, Story 18.2; kit/runtime/slack/files
+// readCsv):
+//   csv_too_big over 200 rows, 30 columns or 6,000 escaped characters
+//   csv_ragged  a row whose column count is not the header's
+//   csv_quote   a quote left open, or out of place
+//   csv_no_rows a header row and nothing under it
 const FILE_REFUSALS = Object.freeze([
   'type', 'docx', 'size', 'signature', 'pages', 'pages_unreadable', 'pixels', 'encoding', 'not_owner',
   'not_found', 'info_failed', 'download_failed', 'too_long', 'empty', 'too_costly', 'not_set_up',
+  'csv_too_big', 'csv_ragged', 'csv_quote', 'csv_no_rows',
 ]);
 class FileRefused extends RuntimeRefusal {
   constructor(reason, max = null) {

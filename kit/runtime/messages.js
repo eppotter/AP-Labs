@@ -191,8 +191,8 @@ const CONTEXT_WORDS = Object.freeze({
 // A file refused by Add context (Story 16.8). Nothing was added in any case.
 const mb = (bytes) => `${Math.round((Number(bytes) / (1024 * 1024)) * 10) / 10} MB`;
 const FILE_WORDS = Object.freeze({
-  type: () => 'I can read PDF, PNG, JPEG, GIF and WebP files, and .txt or .md text files. Choose one of those, or type the text instead.',
-  docx: () => "I can't read Word or other office files yet. Save it as a PDF first, then upload the PDF.",
+  type: () => 'I can read PDF, PNG, JPEG, GIF and WebP files, .csv files, and .txt or .md text files. Choose one of those, or type the text instead.',
+  docx: () => "I can't read Word, Excel or other office files yet. Save it as a PDF first, then upload the PDF. For a sheet, you can save it as a .csv instead.",
   size: (max) => `That file is too big: I read files of at most ${mb(max)}. Split it or make it smaller, then try again.`,
   signature: () => "That file isn't what its name says it is (its contents don't match its type), so I didn't read it. Save it again in the right format, then try again.",
   pages: (max) => `That PDF has more than ${num(max)} pages, the most I read in one go. Split it into smaller PDFs, then add each one.`,
@@ -207,6 +207,11 @@ const FILE_WORDS = Object.freeze({
   empty: () => "I couldn't take any text from that file, so nothing was added. Try a clearer copy, or type the text instead.",
   too_costly: () => "That file is too large to read within this hour's limit for reading files. Split it into smaller parts, then add each one.",
   not_set_up: (max, admin) => `Reading files isn't set up on this bot, so nothing was added. Type the text instead, or tell ${admin}.`,
+  // A .csv file (plan brightside-v1, D3, Story 18.2).
+  csv_too_big: () => 'That CSV is too big for a note: at most 200 rows, 30 columns and about 6,000 characters. Keep the rows you need, or split it.',
+  csv_ragged: () => "Every row of a CSV needs as many columns as its header row, and at least one row in that file doesn't, so nothing was added. Save the sheet as a CSV again, then try again.",
+  csv_quote: () => 'That CSV has a quote mark (") left open or out of place, so I can\'t tell where a value ends. Nothing was added. Save the sheet as a CSV again, then try again.',
+  csv_no_rows: () => 'That CSV has a header row but no rows under it, so nothing was added. Add the rows you need, then try again.',
 });
 
 // The AI refusing to read an uploaded file (Story 16.8): each says nothing
