@@ -188,10 +188,24 @@ test('the ask block holds no person, contact, address, coordinate, staff or pay 
   }
   // Client zone is clients.zone_id: properties has none (SQLsmith P1-2).
   assert.ok(!p.ask.tables.properties.includes('zone_id'));
-  // scheduled_visits: every column but labour_minutes (GRD-006, SQLsmith P3-13).
+  // scheduled_visits: every column but labour_minutes (GRD-006, SQLsmith P3-13) and the
+  // two route columns SQLsmith hid when signing the list (DEP-041).
   const block = /CREATE TABLE scheduled_visits \(([\s\S]*?)\n\);/.exec(schema)[1];
   const all = block.split('\n').map((l) => l.trim().split(/\s+/)[0]).filter((c) => /^[a-z_]+$/.test(c));
-  assert.deepEqual([...p.ask.tables.scheduled_visits].sort(), all.filter((c) => c !== 'labour_minutes').sort());
+  const hidden = ['labour_minutes', 'route_order', 'travel_minutes_from_previous'];
+  assert.deepEqual([...p.ask.tables.scheduled_visits].sort(), all.filter((c) => !hidden.includes(c)).sort());
+});
+
+// SQLsmith's signature on the list (2026-11-01, PR #323, DEP-041): a leg's travel minutes
+// come from the forbidden coordinates and stand in for one leg's distance (GRD-002), and
+// scheduled_start already gives the order, so both are hidden in both visit tables.
+test('route_order and travel_minutes_from_previous are hidden in visits and scheduled_visits', () => {
+  const p = loadProfile(path.join(__dirname, '../../../profiles/brightside/profile.yml'));
+  for (const table of ['visits', 'scheduled_visits']) {
+    for (const column of ['route_order', 'travel_minutes_from_previous']) {
+      assert.ok(!p.ask.tables[table].includes(column), `${table}.${column} is hidden`);
+    }
+  }
 });
 
 // Story 19.7: the whole suite takes about 400 seconds, so the unit check's 300-second

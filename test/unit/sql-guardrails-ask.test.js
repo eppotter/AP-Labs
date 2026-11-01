@@ -82,6 +82,17 @@ test('allowed queries pass: top-level CTEs, joins, as_of from fixture_meta, ORDE
   ]) assert.deepEqual(ask(sql), { ok: true }, sql);
 });
 
+test('a named window (WINDOW w AS (...)) is not taken for a CTE, at the top or in a subquery (PR #323 review)', () => {
+  for (const sql of [
+    'SELECT v.visit_id, rank() OVER w AS r FROM visits v WINDOW w AS (ORDER BY v.visit_date)',
+    'SELECT s.r FROM (SELECT rank() OVER w AS r FROM visits v WINDOW w AS (ORDER BY v.visit_date)) s',
+    'SELECT rank() OVER clients AS r FROM visits v WINDOW clients AS (ORDER BY v.visit_date), w2 AS (ORDER BY v.visit_id)',
+    'WITH m AS (SELECT z.zone_id FROM zones z) SELECT rank() OVER w AS r FROM m, visits v WINDOW w AS (ORDER BY v.visit_id)',
+  ]) assert.deepEqual(ask(sql), { ok: true }, sql);
+  // A real CTE after a windowed query's own clauses is still a CTE.
+  refused('SELECT s.r FROM (WITH staff AS (SELECT 1 AS r) SELECT staff.r FROM staff) s, zones z', RULES.CTE_NOT_TOP_LEVEL);
+});
+
 test('without allowedTables nothing changes: the tools\' reviewed queries keep their rules', () => {
   assert.deepEqual(checkSql('SELECT COUNT(*) AS n FROM staff'), { ok: true });
   assert.deepEqual(checkSql('SELECT 815'), { ok: true });

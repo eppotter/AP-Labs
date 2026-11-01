@@ -144,6 +144,14 @@ function scan(parsed) {
         if (Array.isArray(entry.value.aliases) && entry.value.aliases.length) throw new Refusal(RULES.COLUMN_ALIAS_LIST, `a column alias list on the CTE ${entry.key}`);
         out.ctes.push(entry.key.toLowerCase());
       }
+    } else if (node.type === 'JOIN') {
+      // USING (col) names its columns as plain strings, not COLUMN_REF nodes,
+      // so each is checked as a bare column (PR #323 review). A NATURAL join
+      // matches every shared column, hidden ones too, without naming any.
+      if (node.ref_type === 'NATURAL') throw new Refusal(RULES.COLUMN_NOT_ALLOWED, 'a NATURAL join matches columns it does not name');
+      const using = node.using_columns === undefined ? [] : node.using_columns;
+      if (!Array.isArray(using) || !using.every(filled)) throw new Refusal(RULES.PARSE_REFUSED, 'a USING list the guard can\'t read');
+      for (const c of using) out.refs.push([c.toLowerCase()]);
     } else if (node.type === 'BASE_TABLE') {
       const name = String(node.table_name || '').toLowerCase();
       if (filled(node.schema_name) || filled(node.catalog_name)) {

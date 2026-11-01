@@ -170,8 +170,17 @@ function createAskData({
     return new AskQueryRefused(reason, extra);
   }
 
+  // Why a run couldn't open the data, as a fixed class (PR #323 review): a
+  // DataUnavailableError's reason or an AskConfigError's problems never
+  // reach the person or the log through run().
+  const OPEN_CLASSES = Object.freeze({ DATA_UNAVAILABLE: 'data_unavailable', ASK_CONFIG: 'ask_config' });
+
   async function guarded(sql, params, declared, state) {
-    await open();
+    try {
+      await open();
+    } catch (err) {
+      throw refuse('failed', { errorClass: OPEN_CLASSES[err && err.code] || errorClassOf(err) });
+    }
     const verdict = sqlGuard.checkSql(sql, { forbiddenColumns: forbidden, allowedTables, knownTables });
     if (!verdict.ok) throw refuse('guard', { rule: verdict.rule });
     if (!isPlainObject(params)) throw refuse('guard', { rule: 'bad_parameter_value' });

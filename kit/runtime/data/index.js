@@ -249,7 +249,6 @@ function withoutPaths(text, file) {
   return out.replace(/(?:[A-Za-z]:)?[\\/](?:[^\s"'\\/]+[\\/])+([^\s"'\\/]+)/g, '$1');
 }
 
-
 const seconds = (ms) => (ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`);
 
 // The data source. profile: its forbidden columns and data.source.

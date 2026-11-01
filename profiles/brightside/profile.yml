@@ -174,12 +174,14 @@ sql:
 # only tables and columns an Ask query may read; every other column of these tables is
 # forbidden to Ask, and every other table is never read. Boot refuses a table or column the
 # data doesn't have, and an allowed column whose name a hidden one shares. The list is D10's
-# table as approved with the plan on 2026-10-31, with one change (Story 19.7): visits also
-# allows route_order and travel_minutes_from_previous, which scheduled_visits allows (the
-# guard matches column names bare, so hiding them in one table would refuse them in both).
-# SQLsmith signs the final list in the Story 19.7 PR. Never allowed: staff, pay_rates,
-# timesheets, crew_memberships and staff_absences (staff names and ids), depots, every name,
-# email, phone, address and coordinate, and scheduled_visits.labour_minutes (GRD-006).
+# table as approved with the plan on 2026-10-31, with one change SQLsmith made when signing
+# the list on 2026-11-01 (Story 19.7, PR #323, DEP-041): route_order and
+# travel_minutes_from_previous are hidden in both visits and scheduled_visits. A leg's travel
+# minutes come from the forbidden coordinates and stand in for one leg's distance, which
+# GRD-002 never shows; scheduled_start already gives the order. Never allowed: staff,
+# pay_rates, timesheets, crew_memberships and staff_absences (staff names and ids), depots,
+# every name, email, phone, address and coordinate, scheduled_visits.labour_minutes
+# (GRD-006), and route_order and travel_minutes_from_previous in either visit table.
 # Client zone is clients.zone_id (properties has no zone_id). Ely Potter and Steven
 # Auslander hold ASK_DATA.
 ask:
@@ -193,8 +195,8 @@ ask:
     properties: [property_id, client_id, city, home_type, square_feet, bedrooms, bathrooms, has_pets]
     plans: [plan_id, property_id, package_id, frequency, start_date, end_date, status, start_price_cents, price_cents]
     plan_price_changes: [change_id, plan_id, effective_date, old_price_cents, new_price_cents]
-    visits: [visit_id, property_id, plan_id, crew_id, package_id, visit_date, status, arrival_window, scheduled_start, scheduled_minutes, route_order, travel_minutes_from_previous]
-    scheduled_visits: [scheduled_visit_id, property_id, plan_id, crew_id, package_id, visit_date, status, status_changed_on, arrival_window, scheduled_start, scheduled_minutes, route_order, travel_minutes_from_previous]
+    visits: [visit_id, property_id, plan_id, crew_id, package_id, visit_date, status, arrival_window, scheduled_start, scheduled_minutes]
+    scheduled_visits: [scheduled_visit_id, property_id, plan_id, crew_id, package_id, visit_date, status, status_changed_on, arrival_window, scheduled_start, scheduled_minutes]
     invoices: [invoice_id, client_id, visit_id, issued_on, due_on, total_cents]
     invoice_lines: [line_id, invoice_id, package_id, add_on_id, quantity, amount_cents]
     payments: [payment_id, invoice_id, paid_on, amount_cents, method]

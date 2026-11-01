@@ -377,8 +377,9 @@ function analyseRelations(toks) {
       continue;
     }
 
-    // A CTE definition, quoted or not: `name AS [NOT] [MATERIALIZED] (`.
-    if (tok.t === 'IDENT' && !isPunct(toks[k - 1], '.') && isWord(toks[k + 1], 'AS')) {
+    // A CTE definition, quoted or not: `name AS [NOT] [MATERIALIZED] (`. Never a
+    // named window (`WINDOW w AS (...)`, PR #323 review), which has the same shape.
+    if (!f.inWindow && tok.t === 'IDENT' && !isPunct(toks[k - 1], '.') && isWord(toks[k + 1], 'AS')) {
       let j = k + 2;
       if (isWord(toks[j], 'NOT')) j += 1;
       if (isWord(toks[j], 'MATERIALIZED')) j += 1;
@@ -390,9 +391,9 @@ function analyseRelations(toks) {
       continue;
     }
 
-    if (tok.v === 'SELECT') { f.selectSeen = true; f.inFrom = false; continue; }
-    if (tok.v === 'UNION' || tok.v === 'EXCEPT' || tok.v === 'INTERSECT') { f.selectSeen = false; f.inFrom = false; continue; }
-    if (FROM_CLAUSE_END.has(tok.v)) { f.inFrom = false; continue; }
+    if (tok.v === 'SELECT') { f.selectSeen = true; f.inFrom = false; f.inWindow = false; continue; }
+    if (tok.v === 'UNION' || tok.v === 'EXCEPT' || tok.v === 'INTERSECT') { f.selectSeen = false; f.inFrom = false; f.inWindow = false; continue; }
+    if (FROM_CLAUSE_END.has(tok.v)) { f.inFrom = false; f.inWindow = tok.v === 'WINDOW'; continue; }
     if (tok.v === 'FROM') {
       if (f.kind === 'call' && FROM_ARG_FUNCTIONS.has(f.name)) continue;
       const p1 = toks[k - 1];

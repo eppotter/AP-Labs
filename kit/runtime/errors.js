@@ -320,7 +320,9 @@ class FileRefused extends RuntimeRefusal {
 // Ask's query (plan brightside-v1, D10, Story 19.7; kit/runtime/data/ask)
 // did not run or did not finish. Nothing is shown from it. reason:
 //   guard    the SQL guard or DuckDB's parse refused it (details.rule)
-//   failed   DuckDB failed while running it (details.errorClass)
+//   failed   DuckDB failed while running it, or the data couldn't be opened
+//            or didn't fit ask.tables (details.errorClass: a DuckDB error
+//            kind, data_unavailable or ask_config)
 //   timeout  it ran past its 10 seconds and was interrupted
 //   busy     another Ask query was running; this one never started
 // rule and errorClass are fixed words for the log. DuckDB's own error text

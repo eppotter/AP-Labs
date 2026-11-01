@@ -114,6 +114,10 @@ test('the parse check alone refuses every refusal the tokenizer makes (the token
     ['SELECT to_json(z) AS j FROM zones z', RULES.WHOLE_ROW],
     ['SELECT getenv(\'HOME\') AS h FROM zones z', RULES.BLOCKED_FUNCTION],
     ['SELECT z.zone_id FROM zones z; SELECT 1', RULES.MULTIPLE_STATEMENTS],
+    // USING names its columns as plain strings, and NATURAL names none (PR #323 review).
+    ['SELECT COUNT(a.client_id) AS n FROM clients a JOIN clients b USING (email)', RULES.COLUMN_NOT_ALLOWED],
+    ['SELECT COUNT(v.visit_id) AS n FROM visits v JOIN visits w USING (visit_id, labour_minutes)', RULES.COLUMN_NOT_ALLOWED],
+    ['SELECT COUNT(a.client_id) AS n FROM clients a NATURAL JOIN clients b', RULES.COLUMN_NOT_ALLOWED],
   ];
   const { columns, parsed } = await parsedOf(DB, cases.map(([sql]) => sql));
   parsed.forEach((tree, i) => {
@@ -129,6 +133,8 @@ test('the parse check passes allowed queries and reports the tables read and an 
       + 'SELECT COUNT(v.visit_id) AS n FROM visits v, meta WHERE v.visit_date <= meta.as_of',
     'SELECT zone_id, COUNT(DISTINCT client_id) AS n FROM clients GROUP BY zone_id ORDER BY n DESC',
     'SELECT p.city FROM properties p JOIN clients c ON c.client_id = p.client_id WHERE c.zone_id = $zone',
+    'SELECT COUNT(p.property_id) AS n FROM properties p JOIN clients c USING (client_id)',
+    'SELECT v.visit_id, rank() OVER w AS r FROM visits v WINDOW w AS (ORDER BY v.visit_date)',
   ];
   const { columns, parsed } = await parsedOf(DB, sqls);
   const verdicts = parsed.map((tree) => checkParsed(tree, { allowedTables: TABLES, dataColumns: columns }));
@@ -136,6 +142,8 @@ test('the parse check passes allowed queries and reports the tables read and an 
     { ok: true, tables: ['fixture_meta', 'visits'], ordered: false },
     { ok: true, tables: ['clients'], ordered: true },
     { ok: true, tables: ['clients', 'properties'], ordered: false },
+    { ok: true, tables: ['clients', 'properties'], ordered: false },
+    { ok: true, tables: ['visits'], ordered: false },
   ]);
 });
 
@@ -240,7 +248,12 @@ test('a column added after boot (a republish) is refused by the parse check, whi
     await ask.open(); // boot: Ask's forbidden columns are fixed from v1
     ask.close();
     fs.copyFileSync(DB2, file); // republished with visits.crew_note
-    for (const sql of ['SELECT v.crew_note FROM visits v', 'SELECT crew_note FROM visits']) {
+    for (const sql of [
+      'SELECT v.crew_note FROM visits v',
+      'SELECT crew_note FROM visits',
+      // A USING column is a plain string in DuckDB's parse (PR #323 review).
+      'SELECT COUNT(a.visit_id) AS n FROM visits a JOIN visits b USING (crew_note)',
+    ]) {
       await assert.rejects(ask.run(sql), (err) => err.reason === 'guard' && err.details.rule === RULES.COLUMN_NOT_ALLOWED, sql);
     }
   } finally {
@@ -268,6 +281,26 @@ test('Ask\'s instance is locked, read-only, with memory_limit 512MB and 2 thread
   } finally {
     conn.closeSync();
     inst.closeSync();
+  }
+});
+
+test('a run that can\'t open the data, or finds ask.tables doesn\'t fit it, is refused with fixed words and a class only', async () => {
+  const cases = [
+    [{ file: path.join(DIR, 'missing.duckdb'), profile: profileWith() }, 'data_unavailable'],
+    [{ file: DB, profile: profileWith({ ...TABLES, properties: [...TABLES.properties, 'zone_id'] }) }, 'ask_config'],
+  ];
+  for (const [opts, errorClass] of cases) {
+    const { entries, log } = logger();
+    const ask = createAskData({ ...opts, log });
+    let caught;
+    await assert.rejects(ask.run('SELECT COUNT(z.zone_id) AS n FROM zones z'), (err) => { caught = err; return true; });
+    assert.ok(caught instanceof AskQueryRefused, errorClass);
+    assert.deepEqual(caught.details, { reason: 'failed', rule: null, errorClass });
+    assert.equal(messageFor(caught), "I couldn't run that query safely.");
+    assert.deepEqual(entries, [{ level: 'warn', msg: 'ask query refused', reason: 'failed', errorClass }]);
+    const everything = `${caught.message} ${JSON.stringify(entries)}`;
+    for (const leak of ['missing.duckdb', 'does not exist', 'zone_id', DIR]) assert.ok(!everything.includes(leak), leak);
+    ask.close();
   }
 });
 
