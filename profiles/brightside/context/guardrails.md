@@ -97,8 +97,8 @@ From the profile's `users` and `resources`:
   and `ROUTING_OWN_CREW` (crew leads), neither conferred by the admin role. Decided by Ely Potter on
   2026-10-31 (DEP-024, closed): the dispatchers are Ely Potter and Steven Auslander, and there are
   no crew leads.
-- `TIER3_APPROVE` here is the demo client's resource; merges in this template repo are Ely's
-  (AGENTS.md "Merge authority").
+- `TIER3_APPROVE` here is the demo client's resource; plan approvals and merges in this template
+  repo are Ely's and Steven's (AGENTS.md "Merge authority").
 
 ## Cost limits
 

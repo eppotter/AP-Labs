@@ -49,10 +49,10 @@ Written 2026-10-26 by the Orchestrator for Ely. This file lives under `docs/plan
 ## 5. How work runs
 
 - **Open Claude Code in the repo.** The session banner announces the AP Labs Orchestrator. Tell it what you want built; it runs intake, computes the tier, plans, delegates the build to a builder agent, runs the Codex review, opens the PR and merges through `npm run land`.
-- **Approvals and merges:** this repo's approver is Ely (`AGENTS.md`, Merge authority).
-  - **T0–T1 work:** your session builds and opens the PR, then posts a `--kind decision` update for Ely to merge.
-  - **T2–T3 work:** your session stops at the plan gate until Ely writes `approve plan <slug>`.
-  - If Ely makes you an approver, that line in `AGENTS.md` changes and your sessions merge too.
+- **Approvals and merges:** this repo's approvers are Ely and you (`AGENTS.md`, Merge authority).
+  - **T0–T1 work:** your session builds, opens the PR and merges once review and CI are clean.
+  - **T2–T3 work:** your session stops at the plan gate until you (or Ely) write `approve plan <slug>`.
+  - Release pushes (`template:publish`, `template:release`) stay with Ely.
 - **Hard rules** (the full list is in `AGENTS.md`):
   - Never put secrets in the repo, a PR or a chat.
   - No reference-client specifics outside `docs/reference/`.
