@@ -1,6 +1,6 @@
 # Brightside v1 and the three-stage demo: plan for Ely
 
-Status: **draft, awaiting `approve plan brightside-v1`.** Tier **T3** (computed per story below with `APLABS_PROFILE=$PWD/profiles/brightside/profile.yml node kit/lib/tier <paths>`, 2026-10-31). Three epics: **18** (v0 demo pack, CSV, Ely replaces Dana, rules signed off), **19** (the `/brightside-v1` hub: shared notes, the database, route skills, signed query rules, Ask that runs queries) and **20** (appointment emails on the live hub). Run mode after the gate: you let it run.
+Status: **approved 2026-10-31 (Ely: "approve plan brightside-v1"), every gate item at its default; run mode ("Build everything you can tonight without me").** Tier **T3** (computed per story below with `APLABS_PROFILE=$PWD/profiles/brightside/profile.yml node kit/lib/tier <paths>`, 2026-10-31). Three epics: **18** (v0 demo pack, CSV, Ely replaces Dana, rules signed off), **19** (the `/brightside-v1` hub: shared notes, the database, route skills, signed query rules, Ask that runs queries) and **20** (appointment emails on the live hub). Run mode after the gate: you let it run.
 
 **Reviews: done, 2026-10-31.** The architect design review (12 findings plus P3s) and the SQLsmith review of the data design (15 findings) are folded in below; every one is applied (section "Review findings folded in"). Your decisions of 2026-10-31 on Option B and Steven's access are applied too. `bmad-review` was not run as a separate pass: the architect's review covered the adversarial and edge-case lenses, as for plan hub-status-menu.
 
