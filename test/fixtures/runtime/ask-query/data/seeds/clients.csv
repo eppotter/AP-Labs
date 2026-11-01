@@ -1,0 +1,5 @@
+client_id,zone_id,first_name,email
+1,north,Ann,ann@example.invalid
+2,north,Ben,ben@example.invalid
+3,south,Cat,cat@example.invalid
+4,south,Dee,dee@example.invalid

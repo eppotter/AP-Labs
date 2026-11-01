@@ -1,0 +1,10 @@
+{
+  "id": "plain",
+  "command": "/plain",
+  "name": "Plain tools",
+  "description": "Open the Plain tools menu (it sees context and data, not the rules)",
+  "sees": [
+    "context",
+    "data"
+  ]
+}

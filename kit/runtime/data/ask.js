@@ -33,6 +33,12 @@
 // this file, not even to the log (architect P2-5): it can name a hidden
 // column or hold a value. Resolves { rows, columns, tables, ordered }.
 //
+// schema() (Story 19.8) lists each allowed table's allowed columns with
+// DuckDB's type for each, in the data's column order: the schema Ask's query
+// writer is shown. Only what ask.tables lists; never a hidden column's name.
+// idle() resolves once no query is running and the last one's connection has
+// closed, so the query path's own runs, one after another, never meet busy.
+//
 // Local data only: with data.source: motherduck, open() refuses (data
 // unavailable) and Ask's queries stay off. The instance factory, the clock's
 // timers (default: the global ones, so node:test mock.timers freezes them)
@@ -56,6 +62,13 @@ const COLUMNS_SQL = [
   'WHERE table_catalog = current_database() AND table_schema = current_schema()',
 ].join('\n');
 const PARSE_SQL = 'SELECT json_serialize_sql(CAST($sql AS VARCHAR)) AS parsed';
+// The same columns with their types, in table order (schema()).
+const TYPES_SQL = [
+  'SELECT table_name, column_name, data_type',
+  'FROM information_schema.columns',
+  'WHERE table_catalog = current_database() AND table_schema = current_schema()',
+  'ORDER BY table_name, ordinal_position',
+].join('\n');
 
 const ASK_SETTINGS = Object.freeze({ memory_limit: '512MB', threads: '2' });
 const ASK_LIMITS = Object.freeze({ timeoutMs: 10000, maxRows: 51 });
@@ -125,6 +138,7 @@ function createAskData({
   let knownTables = [];
   let busy = false;
   let lastProblem = null;
+  let settled = Promise.resolve(); // the last run's cleanup (idle())
 
   async function openOnce() {
     if (remote) throw new DataUnavailableError('Ask\'s queries read the local data file only');
@@ -240,7 +254,43 @@ function createAskData({
     try {
       return await guarded(sql, params, declared, state);
     } finally {
-      state.cleanup.finally(() => { busy = false; });
+      settled = state.cleanup.finally(() => { busy = false; });
+    }
+  }
+
+  // Resolves once no query runs (see the header). Never rejects.
+  async function idle() {
+    for (;;) {
+      const at = settled;
+      await at.catch(() => {});
+      if (!busy && at === settled) return;
+    }
+  }
+
+  // The allowed tables and columns with their types (see the header).
+  // Rejects with AskQueryRefused (failed, a fixed class) when the data can't
+  // be read.
+  async function schema() {
+    try {
+      await open();
+    } catch (err) {
+      throw refuse('failed', { errorClass: OPEN_CLASSES[err && err.code] || errorClassOf(err) });
+    }
+    let conn;
+    try {
+      conn = await instance.connect();
+      const out = {};
+      for (const r of (await conn.runAndReadAll(TYPES_SQL)).getRowObjectsJson()) {
+        if (!Object.hasOwn(allowed, r.table_name) || !allowed[r.table_name].includes(r.column_name)) continue;
+        if (!out[r.table_name]) out[r.table_name] = [];
+        out[r.table_name].push(Object.freeze({ column: r.column_name, type: String(r.data_type) }));
+      }
+      return Object.freeze(Object.fromEntries(allowedTables.filter((t) => out[t]).map((t) => [t, Object.freeze(out[t])])));
+    } catch (err) {
+      if (err instanceof RuntimeRefusal) throw err;
+      throw refuse('failed', { errorClass: errorClassOf(err) });
+    } finally {
+      if (conn) closeQuietly(conn);
     }
   }
 
@@ -253,9 +303,11 @@ function createAskData({
     instance = null;
   }
 
-  return Object.freeze({ open, run, describe, close });
+  return Object.freeze({
+    open, run, describe, close, schema, idle,
+  });
 }
 
 module.exports = {
-  createAskData, AskConfigError, errorClassOf, COLUMNS_SQL, PARSE_SQL, ASK_SETTINGS, ASK_LIMITS,
+  createAskData, AskConfigError, errorClassOf, COLUMNS_SQL, PARSE_SQL, TYPES_SQL, ASK_SETTINGS, ASK_LIMITS,
 };

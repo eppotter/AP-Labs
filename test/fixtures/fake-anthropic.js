@@ -40,6 +40,14 @@
 // ^[a-zA-Z0-9_-]{1,64}$, a description that is not text, or an input_schema
 // that is not a JSON Schema object with type "object" (and, when given,
 // properties an object and required a list of property names).
+//
+// Story 19.8 (Ask's write_query tool) adds: an input_schema that is not a
+// valid JSON Schema (draft 2020-12, the dialect the API reads tool schemas
+// in: a type that is not a JSON type, an enum that is not a list, a
+// maxLength, maxItems or maxProperties that is not a non-negative integer,
+// items or additionalProperties that is not a schema) is refused with a 400,
+// checked with Ajv's draft 2020-12 meta-schema; and a system prompt that is
+// neither text nor a list of text blocks, or a user turn with no content.
 
 const UNSUPPORTED_TOOL_CHOICE = new Set(['tool', 'any']);
 const MODEL_MAX_OUTPUT = Object.freeze({
@@ -55,6 +63,12 @@ const MAX_PDF_PAGES = 600;
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 
+const Ajv2020 = require('ajv/dist/2020');
+
+// Ajv's draft 2020-12 meta-schema check: a schema it can't accept is one the
+// API refuses. Unknown keywords are allowed, as in JSON Schema itself.
+const META = new Ajv2020({ strict: false, validateSchema: true });
+
 const TOOL_FIELDS = new Set(['name', 'description', 'input_schema', 'cache_control', 'type']);
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 
@@ -68,6 +82,7 @@ function badTool(tool, i) {
   const schema = tool.input_schema;
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return `tools.${i}.input_schema: Field required`;
   if (schema.type !== 'object') return `tools.${i}.input_schema.type: Input should be 'object'`;
+  if (!META.validateSchema(schema)) return `tools.${i}.input_schema: JSON schema is invalid. It must match JSON Schema draft 2020-12`;
   if (schema.properties !== undefined && (!schema.properties || typeof schema.properties !== 'object' || Array.isArray(schema.properties))) {
     return `tools.${i}.input_schema.properties: Input should be a valid dictionary`;
   }
@@ -163,8 +178,17 @@ function checkRequest(params, { maxRequestBytes = MAX_REQUEST_BYTES } = {}) {
   if (!Number.isInteger(params.max_tokens) || params.max_tokens < 1 || params.max_tokens > max) {
     throw badRequest(`max_tokens: ${params.max_tokens} > ${max}, which is the maximum allowed number of output tokens for ${params.model}`);
   }
-  for (const m of Array.isArray(params.messages) ? params.messages : []) {
-    if (Array.isArray(m.content)) m.content.forEach(checkBlock);
+  if (params.system !== undefined && typeof params.system !== 'string'
+    && !(Array.isArray(params.system) && params.system.every((b) => b && b.type === 'text' && typeof b.text === 'string' && b.text))) {
+    throw badRequest('system: Input should be a valid string or a list of text blocks');
+  }
+  if (!Array.isArray(params.messages) || !params.messages.length) throw badRequest('messages: Field required');
+  for (const m of params.messages) {
+    if (!m || (m.role !== 'user' && m.role !== 'assistant')) throw badRequest("messages: role should be 'user' or 'assistant'");
+    if (typeof m.content === 'string') {
+      if (!m.content) throw badRequest('messages: text content blocks must be non-empty');
+    } else if (Array.isArray(m.content)) m.content.forEach(checkBlock);
+    else throw badRequest('messages: content should be a valid string or list');
   }
 }
 

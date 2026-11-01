@@ -64,7 +64,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { contextDirFor, fileStatus } = require('../../lib/onboard');
 const { loadTruths } = require('../../lib/truths');
-const { parseRules, countSigned } = require('../../lib/query-rules');
+const {
+  parseRules, countSigned, isSigned, writerCanon,
+} = require('../../lib/query-rules');
 const { gitDirOf, readLastResult, lastFile } = require('../../lib/verify/last');
 const { forbiddenColumnsOf } = require('../sql');
 
@@ -261,6 +263,16 @@ const OVER_BOUND = 'APLABS_OVER_BOUND';
 // (contextDirFor), the profile's forbidden columns and the last verify
 // record of the repo it sits in. Each read() reads the files again, so a
 // sign-off shows without a restart. readLast and now are test seams.
+//
+// forQueries() (plan brightside-v1, D10, D11, Story 19.8) is for Ask's query
+// path only, never a screen: { rules, canon, truths, checkedAt }. rules: the
+// signed query rules (isSigned, against the same verify record), each its
+// validated rule object. canon: kit/lib/query-rules writerCanon of data.md
+// (Terminology and approved metric rule lines, no figure). truths: every
+// known truth as { id, signed, last } (signed: valid and signed off; last:
+// its outcome at the last verify), never its expect. checkedAt: the record's
+// time, or null with no record. data.md over the bound, missing or
+// unreadable gives no rules and no truths, so Ask refuses (fail closed).
 function createRulesReader({
   profile, profilePath, readLast = null, now = Date.now,
 }) {
@@ -295,6 +307,38 @@ function createRulesReader({
         checkedAt: record && typeof record.at === 'string' ? record.at : null,
         problem: files.some((f) => f.problem) || entries.some((e) => e.index === 0) || recordOver,
       };
+    },
+    forQueries() {
+      const none = {
+        rules: Object.freeze([]), canon: writerCanon(''), truths: Object.freeze([]), checkedAt: null,
+      };
+      if (!contextDir) return none;
+      const full = path.join(contextDir, 'data.md');
+      if (overBound(full)) return none;
+      let text;
+      try {
+        text = fs.readFileSync(full, 'utf8');
+      } catch {
+        return none;
+      }
+      let record = null;
+      try {
+        record = last();
+      } catch {
+        record = null;
+      }
+      const outcomes = new Map(((record && record.results) || []).map((r) => [r.id, r.outcome]));
+      const truths = loadTruths(contextDir).filter((e) => e.index !== 0).map((e) => Object.freeze({
+        id: e.id,
+        signed: e.problems.length === 0 && Boolean(e.truth && e.truth.owner && e.truth.signedOff && e.truth.signedOff !== 'pending'),
+        last: outcomes.get(`truth:${e.id}`) || null,
+      }));
+      return Object.freeze({
+        rules: Object.freeze(parseRules(text).filter((e) => isSigned(e, record)).map((e) => e.rule)),
+        canon: writerCanon(text),
+        truths: Object.freeze(truths),
+        checkedAt: record && typeof record.at === 'string' ? record.at : null,
+      });
     },
   });
 }
