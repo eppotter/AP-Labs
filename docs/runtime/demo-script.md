@@ -1,4 +1,6 @@
-# The demo script (Story 10.4)
+# The demo scripts (Stories 10.4 and 18.3)
+
+Two scripts. **Stage 1: v0** (Story 18.3, at the end of this file) teaches the blank `/brightside-v0` bot from the demo pack. **The Win-back demo** (Story 10.4, below) runs on the full `/brightside` hub.
 
 The Win-back demo in Slack, step by step: what you type, and what you should see. It follows `docs/planning/specs/spec-runtime/demo-flow.md`. The same steps run in CI, offline, in `examples/brightside/test/demo-flow.test.js` (fake Slack, a stand-in AI reply, the local fixture).
 
@@ -51,3 +53,60 @@ rm -f var/outbox/email.jsonl
 ```
 
 The next push starts fresh, and the Outbox entry says nothing has been sent yet. Restarting the bot also clears any open previews and sessions (they live in memory).
+
+## Stage 1: v0
+
+The blank bot, taught in front of the audience (plan brightside-v1, D4, Story 18.3). The point: "It knows nothing, until you teach it." `/brightside-v0` sees no data, no rules and no company context, so everything it answers comes from the four demo-pack files you upload.
+
+### The demo pack
+
+Four files in `examples/brightside/demo-pack/`, built from the fixture by `npm run demo-pack`, so every figure agrees with the data. Copy them to the computer you run Slack on before the demo.
+
+| File | What it holds | Size |
+|---|---|---|
+| `price-list-2026.pdf` | 1 page: the three packages and five add-ons with their prices | 1.8 KB |
+| `service-policies.pdf` | 2 pages: arrival windows, 24 hours' notice to reschedule (no fee), what each package includes, paying, and what happens when a crew is out for the day | 3.6 KB |
+| `zone-billing-2026-09.csv` | 5 rows, 4 columns: per zone, invoices issued, billed and cash received in September. The zone is the client's zone. The totals are the signed truths: billed $364,023.50, cash received $350,186.40 | 0.2 KB |
+| `complaints-2026-09.csv` | 40 rows, 5 columns: date, zone, crew, category, resolved. Synthetic: no client names, emails, phones or addresses | 1.9 KB |
+
+All four together are about 4,200 characters as notes, well under the hub's 15,000. Each CSV is inside Add context's limits (200 rows, 30 columns, 6,000 characters).
+
+`npm run demo-pack` rebuilds the files and prints the five questions with their expected answers; `npm run demo-pack -- --check` only checks that the committed files are current. The build fails if question 3 or 4 has a tie at the top, or if the billing totals stop matching the signed truths. `examples/brightside/test/demo-pack.test.js` checks that the table of answers below matches the build.
+
+### Before the demo
+
+1. **The bot is running** with the AI on (the startup line says `ai: on`). Reading a PDF and answering a question both use the AI.
+2. **You are an admin** in the demo profile (Ely or Steven), so you see Add context and Data sources.
+3. **No notes from the last demo.** Type `/brightside-v0`. The first line must read "Knows: nothing yet". If it lists notes, see "Resetting v0" below.
+
+### The steps
+
+| # | You do | You should see |
+|---|---|---|
+| 1 | Type `/brightside-v0` in any channel or DM. | The Brightside v0 window. The first line reads "Knows: nothing yet"; the second starts "Setup". Rows: Ask, Request a tool, and under Setup, Add context and Data sources. |
+| 2 | Press **Help**, then **Back**. | The four tools, each with one line on what it does. Back returns to the menu. |
+| 3 | Press **Ask** on the Ask row. Type `Which zone billed the most in September, and how much cash did we receive from that zone in September?` and press **Ask**. | "Thinking…", then: "I can't answer data questions yet. No data is connected, and there are no rules yet for using it safely." This is the "it can't answer" moment. Press **Back**. |
+| 4 | Press **Add** on the Add context row. Title `Price list`. Under **Or upload a file**, pick `price-list-2026.pdf`. Press **Add**. | "Reading…", then "Here's what I took from *Price list*:" with the packages and add-ons and their prices. Press **Back**. |
+| 5 | **Add** again: title `Policies`, file `service-policies.pdf`, **Add**. | "Here's what I took from *Policies*:" with the arrival windows and the 24 hours' notice. **Back**. |
+| 6 | **Add** again: title `Billing by zone, September`, file `zone-billing-2026-09.csv`, **Add**. | "Here's what I took from *Billing by zone, September*: 5 rows, 4 columns", then the table as text. **Back**. |
+| 7 | **Add** again: title `Complaints, September`, file `complaints-2026-09.csv`, **Add**. | "Here's what I took from *Complaints, September*: 40 rows, 5 columns". **Back**. |
+| 8 | Close the window and type `/brightside-v0` again. | The first line reads "Knows: 4 notes". |
+| 9 | Press **Ask** and ask the five questions below, one at a time. Press **Ask another** between them. | Each answer says what the table below says (in the AI's own words), ending with "Not what you needed?". |
+
+### The five questions and their expected answers
+
+| # | Ask | Expected answer | From |
+|---|---|---|---|
+| 1 | How much is a deep clean, and what does the inside oven add-on cost? | Deep clean $260.00 (base price); Inside oven $35.00. | `price-list-2026.pdf` |
+| 2 | How much notice does a customer need to give to reschedule? | 24 hours' notice, and there is no fee. | `service-policies.pdf` |
+| 3 | Which zone billed the most in September, and how much cash did we receive from that zone in September? | South: billed $91,558.00 on 470 invoices; cash received in September $91,232.40. | `zone-billing-2026-09.csv` |
+| 4 | Which crew had the most late-arrival complaints in September? | West crew B, with 5 late-arrival complaints. | `complaints-2026-09.csv` |
+| 5 | How many complaints in September are still unresolved? | 11 of 40. | `complaints-2026-09.csv` |
+
+The runners-up, if someone asks: North billed $86,608.00 (second); West crew A and North crew B had 4 late-arrival complaints each.
+
+**Not live-checked yet.** Ask sorts each question before answering it, and a question about figures ("which zone billed the most") may be sorted as a data question, which on v0 gets the "I can't answer data questions yet" reply even after the CSVs are uploaded. If questions 3 to 5 get that reply at step 9, stop and tell the Orchestrator: it is a known open point from Story 18.3, not a step you did wrong.
+
+### Resetting v0
+
+Press **Add** on Add context. Under *Added here*, press **Remove** on each of the four notes and confirm. Type `/brightside-v0`: "Knows: nothing yet". The files stay in your own Slack files; delete them there if you want.

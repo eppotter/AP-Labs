@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-10-31 | 18.3 | feature | T1 | The v0 demo pack: `npm run demo-pack` builds two PDFs (price list, service policies; a small hand-made text-only PDF writer, no dependency) and two CSVs (billing and cash received in September by client zone, totals equal to the two signed revenue truths; synthetic complaints with no personal data) from the fixture's seeds, deterministically, and fails on a tie in questions 3 or 4 or a total that drifts from the truths. `docs/runtime/demo-script.md` gains "Stage 1: v0" with the clicks and the five questions and answers, checked against the build by a test. | — |
