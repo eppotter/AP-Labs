@@ -1,6 +1,6 @@
-# The demo scripts (Stories 10.4, 18.3 and 19.9)
+# The demo scripts (Stories 10.4, 18.3, 19.9 and 20.4)
 
-Three scripts. **Stage 1: v0** (Story 18.3) teaches the blank `/brightside-v0` bot from the demo pack. **Stage 2: v1** (Story 19.9, at the end of this file) shows `/brightside-v1` on the real data: its rules, its route skills and Ask answering by query. **The Win-back demo** (Story 10.4, below) runs on the full `/brightside` hub.
+Four scripts. **Stage 1: v0** (Story 18.3) teaches the blank `/brightside-v0` bot from the demo pack. **Stage 2: v1** (Story 19.9) shows `/brightside-v1` on the real data: its rules, its route skills and Ask answering by query. **Stage 3: live** (Story 20.4, at the end of this file) shows the full `/brightside` hub acting: it emails customers, after a person approves the exact text. **The Win-back demo** (Story 10.4, below) also runs on the full `/brightside` hub.
 
 The Win-back demo in Slack, step by step: what you type, and what you should see. It follows `docs/planning/specs/spec-runtime/demo-flow.md`. The same steps run in CI, offline, in `examples/brightside/test/demo-flow.test.js` (fake Slack, a stand-in AI reply, the local fixture).
 
@@ -228,3 +228,141 @@ Before you start: steps 1 to 6 of "Before the demo" above, and the four demo-pac
 28. Open the Slack app's settings (api.slack.com/apps, Brightside Bot (dev)). Slash Commands lists `/brightside`, `/brightside-v0` and `/brightside-v1`. OAuth & Permissions lists the same seven bot scopes as `examples/brightside/app/slack-manifest.json`.
 
 Not checked live: a crew lead's and a member's view of v1 (there are no real ones), and Ask's limits (10 query answers an hour each, one at a time). The tests cover them.
+
+## Stage 3: live
+
+The full `/brightside` hub (plan brightside-v1, Stories 20.1 to 20.3). The point: "Now it acts, and a person approves every word." v1 reads and suggests; the live hub also emails customers: an appointment reminder for a day's visits, and a change notice when a route skill moves a booked visit. Both come from fixed templates (no AI writes them), so the preview is exactly what is sent. Nothing is sent until you press **Approve**, and every email goes to the mock email tool's outbox, each to a `.invalid` address. Nothing leaves the building.
+
+The figures below come from the local fixture, checked by driving the hub through the test helpers; `examples/brightside/test/appointment-reminders.test.js` and `change-notices.test.js` assert the same counts. The customer names are the fixture's, all synthetic.
+
+### Before the demo
+
+1. **The bot is running,** started as in "Before the live demo" above, with `APLABS_ENV` unset: Appointment reminders, Change notices and the route skills show only in dev. Run `npm run fixture:build` first if you haven't since you last updated to the latest `main`.
+2. **You are Ely or Steven.** Both hold `APPOINTMENT_EMAILS` and `ROUTING_ALL_CREWS` by name in the profile (the admin role alone gives neither).
+3. **The outbox is empty:** see "Resetting the outbox" below. Otherwise emails sent earlier the same day are not sent again, and step 8 sends nothing.
+
+**Crew names.** The pickers show crews by name: crew 2 is **North crew B**, crew 4 is **South crew A** and crew 7 is **East crew A**. The data's "today" is 2026-09-30, so visits are booked from 2026-10-01.
+
+### The live menu
+
+| Line or group | What it shows |
+|---|---|
+| First line | "Knows: 1 source · 7 truths · 10 rules" |
+| Second line, small grey text | "All 13 tools working" |
+| **Customers** | Appointment reminders (**Review**), Change notices (**Review**) |
+| **Lists** | Labour cost (**Run**), Unpaid invoices (**Run**), Win-back list (**Review**) |
+| **Routing** | Add a stop, Customer cancellation, Crew out (each **Run**); Plan a route, Route map (each **View**) |
+| **Tools** | Dataset (**View**), Say hello (**Run**), Outbox (**View**) |
+| Bottom | Help |
+
+### The steps
+
+| # | You do | Say to the client | You should see |
+|---|---|---|---|
+| 1 | Type `/brightside` in any channel or DM. | "This is the live hub: the same company, the same rules, and now it can act." | The Brightside window, as in "The live menu" above. |
+| 2 | Press **View** on Outbox. | "This is the email tool's outbox. Nothing has gone out yet." | "*Email outbox*" and "Nothing has been sent to the email tool yet." Press **Back**. |
+| 3 | Press **Review** on Appointment reminders. Pick Day **2026-10-03** and Zone or crew **east**, press **Check values**. | "Reminders for one day's visits in the East zone. You pick a day and a zone, or one crew." | "Check these values. Nothing runs until you press *Confirm*.", Day 2026-10-03, Zone or crew east, with **Confirm** and **Change**. |
+| 4 | Press **Confirm**. | "It pulls every booked visit that day from the schedule." | "*Appointment reminders: 13 rows.*", the first 10 visits in a table, "The full list (13 rows) is a CSV in your DM with me.", and **Push to email tool**. |
+| 5 | Press **Push to email tool**. | "This is a dry run: the email tool has written every email and sent none of them." | "*Push Appointment reminders to email tool?* Check it before you approve.", then "*List name:* appointment-reminders-<today's UTC date>", "*Rows to send:* 7 of 13 rows", "*Skipped:* 6: held (6)". |
+| 6 | Scroll down the preview. | "Six visits are held: a member of East crew A is off that day. It won't remind a customer of a visit that may not happen." | "*Held, not sent: 6.*" and "• Held: a member of East crew A is absent that day. Check Crew out first. (6)" over a table of the six (Glen, Ash, Alder, Sky, Cedar, Yarrow, all East crew A). Then "*What will be sent (7):*": Rain, Ash and Lark on East crew B; Meadow, Ridge, Juniper and Coral on East crew C. |
+| 7 | Keep scrolling. | "Here is every email, word for word. No AI writes these: it's a fixed template, so what you see is what they get." | "*Email 1 of 7, exactly as it will be sent:*" to "*Email 7 of 7, …*", each in full (Email 1 is in "The two emails" below). No email address shows. At the bottom: "Nothing is sent until you press Approve. Skipped and held rows are never sent. This preview expires in 30 minutes.", with **Approve** and **Cancel**. |
+| 8 | Press **Approve**. | "A person has signed off, so now it sends." | "*Pushed 7 to email tool*, skipped 6, failed 0. List: appointment-reminders-<date>." and "Skipped rows were never sent: held (6)." |
+| 9 | Press **Back** until you are at the menu, then **View** on Outbox. | "Seven reminders, each to the customer's address. These are test addresses: nothing left the building." | "*Appointment emails sent*, newest first (latest 7 of 7):" and seven lines, each "<time> UTC · reminder · <name>…@….invalid · Reminder: your Deep clean on Saturday, October 3, 2026" (or Standard clean). Press **Back**. |
+| 10 | Run steps 3 to 5 again (2026-10-03, east) and press **Approve**. | "Someone presses it twice, or a colleague runs the same list. Nobody gets two reminders." | The preview again shows 7 to send. After Approve: "*Already sent today; nothing new sent.* email tool already has this list with these rows, so I didn't send it again (skipped 6). List: appointment-reminders-<date>." The Outbox still lists 7. |
+| 11 | Back at the menu, press **Run** on Crew out. Pick **2026-10-03** and **East crew A**, press **Mark out for the day**. | "That's the crew with someone off. Plan the day without them." | "*East crew A is out on Saturday 2026-10-03 in the data,* so this is the plan for it.", with **Notify affected customers (5)** and **Change crew or day**, the zone's map, and "6 stops to place; 5 placed in their zone, 1 recommended for another zone, 0 to rebook; 1 existing stop to confirm a new time." |
+| 12 | Press **Notify affected customers (5)**. | "Five customers' visits changed crew or time. It drafts a notice for each: a different email from the reminder." | The Change notices preview, on top of the route (its **Back** returns to the route): "These routes are suggestions: nothing is saved in the schedule. Sending tells customers their visit changed, so change the booking too.", "*Rows to send:* 5 of 6 rows", "*Skipped:* 1: held (1)". |
+| 13 | Scroll down the preview. | "The visit going to another zone isn't emailed: someone decides that first. Coral's visit moves later but stays in the afternoon, so that's not a change and she gets no notice." | "*Held, not sent: 1.*" and "• Recommended for another zone, not placed. Decide first; no email is sent. (1)" (Glen). "*What will be sent (5):*": Ash, Cedar, Sky and Yarrow to East crew C; Alder to East crew B. Then five emails, each with "- Crew: East crew C (before: East crew A)" (Alder's: East crew B) and "Why: our team for that day is unavailable."; Ash's and Alder's also have "- Arrival window: afternoon (before: morning)". |
+| 14 | Press **Approve**. | "Same rule: nothing went until now." | "*Pushed 5 to email tool*, skipped 1, failed 0. List: change-notices-<date>." and "Skipped rows were never sent: held (1)." |
+| 15 | Press **Back** until you are at the menu, then **Run** on Customer cancellation. Pick **North crew B** and **2026-10-02**, press **Show visits**, pick the "(cancelled)" visit, then press **Fill with #1**. | "A cancellation opens a gap. It pulls a later visit forward to fill it." | Finch Swifthall's visit at 12:30, marked "↩️ Moved up from 2026-10-05 to fill the gap; call to confirm", and **Notify affected customers (1)** beside **Optimize** and **Reset to booked**. |
+| 16 | Press **Notify affected customers (1)**, read the email, press **Approve**. | "Same template, a different reason: the reason line always matches what happened." | "*Rows to send:* 1 of 1 row", "*Skipped:* none", and one email to Finch with "- Day: Friday, October 2, 2026 (before: Monday, October 5, 2026)", "- Arrival window: afternoon (before: morning)" and "Why: an earlier slot opened up." After Approve: "*Pushed 1 to email tool*, skipped 0, failed 0." |
+| 17 | Press **Back** until you are at the menu, then **View** on Outbox. | "Every email, reminders and notices, each to a test address. Nothing left the building." | "*Appointment emails sent*, newest first (latest 10 of 13):": Finch's change notice, the five crew-out notices ("change notice · … · Your Standard clean has changed: now Saturday, October 3, 2026"), then four of the seven reminders. |
+
+**Optional, a third reason line.** **View** on Plan a route: South crew A, 2026-10-01, **Show stops**, then **Optimize** ("Optimized: drive 4 h 10 → 2 h 37 (−93 min), back 18:46 → 17:01"). **Notify affected customers (3)**: Moss, Meadow and Rain each change arrival window, each "Why: we've improved the day's route." Press **Cancel** to show a way out: "*Change notices cancelled.* Nothing was sent to email tool. Press *Back* to return to the route."
+
+### The two emails
+
+The reminder only confirms the booking ("East crew B will arrive in the morning."), while the change notice lists what changed with the old value beside the new ("- Crew: East crew C (before: East crew A)"), gives the reason and apologises.
+
+Step 7's Email 1, exactly:
+
+```
+Subject: Reminder: your Deep clean on Saturday, October 3, 2026
+
+Hi Rain,
+
+This is a reminder of your Deep clean on Saturday, October 3, 2026. East crew B will arrive in the morning.
+
+Need to change it? Reply to this email, or call us on 555-0100, and we'll find a time that suits you.
+
+The Brightside Home Cleaning team
+```
+
+Step 13's Email 1, exactly:
+
+```
+Subject: Your Standard clean has changed: now Saturday, October 3, 2026
+
+Hi Ash,
+
+We've changed your Standard clean. It is now on Saturday, October 3, 2026, in the afternoon, with East crew C.
+
+What changed:
+- Arrival window: afternoon (before: morning)
+- Crew: East crew C (before: East crew A)
+
+Why: our team for that day is unavailable.
+
+Sorry for the change.
+
+Reply to this email, or call us on 555-0100, and we'll find a time that suits you.
+
+The Brightside Home Cleaning team
+```
+
+An email holds only the first name, the day, morning or afternoon, the crew's name, the package and, for a change, what it was before (GRD-010). Never an address, a price, another customer or a staff name.
+
+### The off switch
+
+`BRIGHTSIDE_EMAIL_OFF` stops every appointment email (`APLABS_WRITES_OFF` stops every write the bot makes). The bot checks it when you press **Approve**, so set it when you start the bot: stop the bot, start it again with `BRIGHTSIDE_EMAIL_OFF=1` in front of the start command, run steps 3 to 5 and press **Approve**. You see "Sending to Brightside email tool (mock) is switched off right now, so nothing was sent. Please tell your admin." The outbox does not change and the preview is not used up. Stop the bot and start it without the switch to send again; a restart clears open previews, so run the list again.
+
+### Things to know
+
+- **A preview lasts 30 minutes.** Approve after that and the bot says the preview is no longer valid; run it again.
+- **The list name uses the UTC date** of the run, as for Win-back.
+- **The same emails on the same day are sent once.** Step 10 shows it for a whole list, and a double-click on **Approve** also sends once. A different change to the same visit is a new email.
+- **The Outbox shows the latest 10 emails:** the time, the kind, the address and the subject, never the body. The full text is in the preview, before you approve.
+- **Limits:** at most 50 emails a push and 200 a day, counted in the outbox. One run of this script sends 13.
+- **Held reminders:** pick **East crew A** alone in step 3 and there is nothing to approve: "*Nothing to push to email tool.* All 6 rows would be skipped: held (6)."
+- **A day on or before 2026-09-30** has no booked visits: no rows, nothing to push.
+- **Review on Change notices** in the menu only explains: "Change notices start from a route: open a Routing tool, and when its suggestion changes a booked visit's day, arrival window or crew, press *Notify affected customers* on the result. Nothing was sent."
+
+### Resetting the outbox
+
+There is no reset command. Stop the bot, then delete the mock email tool's outbox, which is also where it remembers what it has sent:
+
+```bash
+rm -f var/outbox/email.jsonl
+```
+
+Run it in the folder you start the bot from (with `APLABS_VAR_DIR` set, the file is under that folder instead). It also clears any Win-back lists pushed earlier. Start the bot again: the Outbox says "Nothing has been sent to the email tool yet." Routes need no reset: the route skills save nothing.
+
+### The live check (Ely or Steven, dev Slack)
+
+**Untested until you run it.** Run it after Epic 20 has merged, from your own account (Steven may repeat any step from his). Each step is one action and what you should see. If a step differs, stop and tell the Orchestrator the step number and what you saw.
+
+Before you start: update the bot to the latest `main`, run `npm run fixture:build`, stop the bot, run `rm -f var/outbox/email.jsonl`, and start the bot as in "Before the live demo" (dev: `APLABS_ENV` unset).
+
+1. Type `/brightside`. The first line reads "Knows: 1 source · 7 truths · 10 rules", the second "All 13 tools working". Customers lists Appointment reminders and Change notices; Routing lists Add a stop, Customer cancellation, Crew out, Plan a route and Route map.
+2. Press **View** on Outbox. "Nothing has been sent to the email tool yet."
+3. **Review** Appointment reminders: 2026-10-03, east, **Check values**, **Confirm**, **Push to email tool**. "*Rows to send:* 7 of 13 rows" and "*Skipped:* 6: held (6)"; the six East crew A visits listed as held; seven emails in full, the first "Hi Rain,"; no email address.
+4. Press **Approve**. "*Pushed 7 to email tool*, skipped 6, failed 0."
+5. **View** Outbox. Seven lines, each "reminder", a `.invalid` address and "Reminder: your … on Saturday, October 3, 2026".
+6. Repeat step 3 and press **Approve**. "*Already sent today; nothing new sent.*" The Outbox still lists 7.
+7. **Run** Crew out: 2026-10-03, East crew A, **Mark out for the day**. The button reads **Notify affected customers (5)**.
+8. Press it. "*Rows to send:* 5 of 6 rows"; Glen held as "Recommended for another zone, not placed"; five emails, each "Why: our team for that day is unavailable." with a "- Crew: … (before: East crew A)" line. Press **Approve**: "*Pushed 5 to email tool*, skipped 1, failed 0."
+9. **Run** Customer cancellation: North crew B, 2026-10-02, **Show visits**, the "(cancelled)" visit, **Fill with #1**, **Notify affected customers (1)**. One email to Finch with "- Day: Friday, October 2, 2026 (before: Monday, October 5, 2026)" and "Why: an earlier slot opened up."
+10. Double-click **Approve**. "*Pushed 1 to email tool*" (a second click may say "You already approved this push…"). **View** Outbox: "latest 10 of 13", Finch's notice once, at the top.
+11. **View** Plan a route: South crew A, 2026-10-01, **Show stops**, **Optimize**, **Notify affected customers (3)**. Three emails, each "Why: we've improved the day's route." Press **Cancel**: "*Change notices cancelled.* Nothing was sent to email tool." The Outbox still says 13.
+12. Stop the bot and start it with `BRIGHTSIDE_EMAIL_OFF=1` in front of the start command. Run step 3 again and press **Approve**. "Sending to Brightside email tool (mock) is switched off right now, so nothing was sent. Please tell your admin." The Outbox still says 13. Restart the bot without the switch.
+
+Not checked live: a crew lead's and a member's view (there are no real ones; neither gets Notify or the reminders), the 50-a-push and 200-a-day limits, an expired preview, and a partial failure with **Retry the failed ones**. The tests cover them.
