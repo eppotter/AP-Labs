@@ -3,9 +3,12 @@
 // The mock email tool's appointment emails (Story 20.1, plan brightside-v1
 // D14, D14a, GRD-010): sendEmails and ./templates.js. The exact text for a
 // fixture visit, only D14's fields, the strict .invalid address parse, the
-// limits (50 a push, 200 a day, with every clock frozen), per-email keys, and
-// a partial failure with its retry. The contract suite covers sendEmails in
-// ./connector.test.js. Every test writes to its own temporary outbox.
+// limits (50 a push, 200 a day on the connector's clock, frozen with
+// mock.timers; only emails that will be sent count), per-email keys with no
+// push key in them (Connector review), and a partial failure with its retry.
+// The contract suite covers sendEmails in ./connector.test.js; a push through
+// approval-write's createPush (and the refusal's words) is examples/brightside/test/appointment-emails-push.test.js.
+// Every test writes to its own temporary outbox.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -13,16 +16,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  testLog, ConnectorFailed, IdempotencyConflict, PartialFailure,
+  testLog, ConnectorFailed, IdempotencyConflict, PartialFailure, LimitReached,
 } = require('#sdk');
 const connector = require('./connector');
 const templates = require('./templates');
-
-// A clock that moves only when the connector sleeps (as the contract suite's).
-function fakeClock() {
-  let t = 0;
-  return { now: () => t, sleep: async (ms) => { t += ms; } };
-}
 
 const dirs = [];
 test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
@@ -33,13 +30,13 @@ function freshPath() {
   return path.join(dir, 'outbox', 'email.jsonl');
 }
 
-// An instance over a fresh outbox, with the contract's clock injected (so a
-// test that freezes Date freezes every clock the write reads).
+// An instance over a fresh outbox. Its clock (deps.now) reads Date.now, so a
+// test that freezes Date with mock.timers freezes every clock the write reads
+// (the day limit and the outbox's times); the rate limiter's sleep is a no-op.
 function email({ file = freshPath(), simulate } = {}) {
   const requests = [];
-  const clock = fakeClock();
   const instance = connector.create({
-    log: testLog(), env: {}, outboxPath: file, simulate, now: clock.now, sleep: clock.sleep, onRequest: (r) => requests.push(r),
+    log: testLog(), env: {}, outboxPath: file, simulate, now: () => Date.now(), sleep: async () => {}, onRequest: (r) => requests.push(r),
   });
   const lines = () => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
   return {
@@ -59,6 +56,7 @@ const VISIT = Object.freeze({
   kind: 'reminder',
   visit_date: '2026-10-01',
   window: 'morning',
+  crew_id: 4,
   crew_name: 'South crew A',
   package_name: 'Deep clean',
 });
@@ -69,6 +67,7 @@ const CHANGE = Object.freeze({
   window: 'afternoon',
   before_date: '2026-10-01',
   before_window: 'morning',
+  before_crew_id: 4,
   before_crew_name: 'South crew A',
   reason: 'cancellation',
 });
@@ -118,8 +117,12 @@ test('templates: the exact reminder and change notice for a fixture visit', () =
 
 test('templates: a crew change lists the crew; each source has its fixed reason line', () => {
   const { external_ref: _r, email: _e, ...change } = CHANGE;
-  const crew = templates.render({ ...change, visit_date: '2026-10-01', window: 'morning', crew_name: 'South crew B', reason: 'crew-out' });
+  const crew = templates.render({
+    ...change, visit_date: '2026-10-01', window: 'morning', crew_id: 5, crew_name: 'South crew B', reason: 'crew-out',
+  });
   assert.match(crew.body, /\nWhat changed:\n- Crew: South crew B \(before: South crew A\)\n\nWhy: our team for that day is unavailable\.\n/);
+  // The crew is decided by crew_id: a renamed crew with the same id is no change.
+  assert.throws(() => templates.render({ ...change, visit_date: '2026-10-01', window: 'morning', crew_name: 'South crew B' }), /needs a changed date, window or crew/);
   assert.equal(Object.keys(templates.REASONS).length, 4);
   for (const [reason, line] of [
     ['route-editor', "we've improved the day's route"],
@@ -147,6 +150,10 @@ test('templates: only D14\'s fields; a reminder takes no before values; a change
     ['a reminder with before values', { ...reminder, before_date: '2026-09-30' }, /a reminder takes no before_date/],
     ['a reminder with a reason', { ...reminder, reason: 'cancellation' }, /a reminder takes no reason/],
     ['a change without before values', { ...change, before_crew_name: null }, /before_crew_name must be a string/],
+    ['a change without the before crew id', { ...change, before_crew_id: undefined }, /before_crew_id must be a crew id/],
+    ['no crew id', { ...reminder, crew_id: null }, /crew_id must be a crew id/],
+    ['a crew name as the crew id', { ...reminder, crew_id: 'South crew A' }, /crew_id must be a crew id/],
+    ['a reminder with a before crew id', { ...reminder, before_crew_id: 4 }, /a reminder takes no before_crew_id/],
     ['a free-text reason', { ...change, reason: 'we felt like it' }, /reason must be one of/],
     ['a change that changes nothing', { ...change, visit_date: '2026-10-01', window: 'morning' }, /needs a changed date, window or crew/],
   ]) assert.throws(() => templates.render(fields), words, what);
@@ -173,7 +180,7 @@ test('sendEmails: the dry run renders each email; apply sends exactly what was p
   });
 
   const res = await instance.write.sendEmails({ ...input, ...live });
-  assert.deepEqual(res, { sent: 2, alreadySent: 0, skipped: 0 });
+  assert.deepEqual(res, { added: 2, alreadyAdded: 0, skipped: 0 });
   const out = sent();
   assert.equal(out.length, 2);
   assert.deepEqual(out.map((r) => ({ ref: r.payload.external_ref, to: r.payload.to, kind: r.payload.kind, subject: r.payload.subject, body: r.payload.body })), dry.wouldWrite.emails);
@@ -247,7 +254,7 @@ test('sendEmails: the strict address parse refuses everything but one plain lowe
     { ref: '99', reason: 'no email' },
     { ref: '98', reason: 'no email' },
   ]);
-  assert.deepEqual(await instance.write.sendEmails({ ...input, ...live }), { sent: 1, alreadySent: 0, skipped: refused.length + 2 });
+  assert.deepEqual(await instance.write.sendEmails({ ...input, ...live }), { added: 1, alreadyAdded: 0, skipped: refused.length + 2 });
   assert.deepEqual(sent().map((r) => r.payload.to), [VISIT.email], 'only the .invalid address reached the outbox');
 });
 
@@ -262,56 +269,97 @@ test('sendEmails: 50 emails a push go; 51 are refused whole, dry run and live, a
   assert.equal(requests.length, 0);
   assert.equal(sent().length, 0);
   assert.equal((await instance.write.sendEmails({ name: NAME, contacts: reminders(50), idempotencyKey: 'p50' })).wouldWrite.send, 50);
-  assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: reminders(50), idempotencyKey: 'p50', ...live }), { sent: 50, alreadySent: 0, skipped: 0 });
+  assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: reminders(50), idempotencyKey: 'p50', ...live }), { added: 50, alreadyAdded: 0, skipped: 0 });
   assert.equal(sent().length, 50);
 });
 
-test('sendEmails: 200 emails a day go; the 201st is refused whole, and the next UTC day starts again (frozen clock)', async (t) => {
+test('sendEmails: 200 emails a day go; the 201st is refused whole as "today\'s email limit is reached", and the next UTC day starts again (mock.timers)', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-01T09:00:00Z') });
   const { instance, sent } = email();
   for (let push = 0; push < 4; push += 1) {
     const res = await instance.write.sendEmails({ name: NAME, contacts: reminders(50, push * 50 + 1), idempotencyKey: `day-${push}`, ...live });
-    assert.equal(res.sent, 50);
+    assert.equal(res.added, 50);
   }
   assert.equal(sent().length, 200);
-  // A repeat of a push already sent is no new email, so it is not refused.
-  assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: reminders(50, 1), idempotencyKey: 'day-0', ...live }), { sent: 50, alreadySent: 0, skipped: 0 });
-  await assert.rejects(
-    instance.write.sendEmails({ name: NAME, contacts: reminders(2, 201), idempotencyKey: 'day-4', ...live }),
-    (err) => err instanceof ConnectorFailed && /sent 200 emails today; 2 more is over the limit of 200 a day, so none is sent/.test(err.reason),
-  );
+  assert.deepEqual(sent().map((r) => r.at.slice(0, 10)).filter((d) => d !== '2026-11-01'), [], 'stamped on the frozen clock');
+  // Emails already sent are not counted again: a new push of them is allowed and adds nothing.
+  assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: reminders(50, 1), idempotencyKey: 'day-0-again', ...live }), { added: 0, alreadyAdded: 50, skipped: 0 });
+  // Skipped addresses do not count either: a push with nothing to send is not refused.
+  assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: [{ ...VISIT, external_ref: '300', email: 'x@home.com' }], idempotencyKey: 'day-skip', ...live }), { added: 0, alreadyAdded: 0, skipped: 1 });
+  const over = await instance.write.sendEmails({ name: NAME, contacts: reminders(2, 201), idempotencyKey: 'day-4', ...live }).catch((e) => e);
+  assert.ok(over instanceof LimitReached, `a distinct refusal, got ${over && over.name}`);
+  assert.ok(!(over instanceof ConnectorFailed), 'not a connector failure, so approval-write does not escalate it');
+  assert.deepEqual({ ...over.details }, {
+    connector: 'email', system: 'Brightside email tool (mock)', operation: 'sendEmails', what: 'email', limit: 200, period: 'day',
+  });
   assert.equal(sent().length, 200, 'none of the push was sent');
   // Late the same UTC day: still refused. The next UTC day: sent.
   t.mock.timers.setTime(Date.parse('2026-11-01T23:59:59Z'));
-  await assert.rejects(instance.write.sendEmails({ name: NAME, contacts: reminders(1, 201), idempotencyKey: 'day-5', ...live }), ConnectorFailed);
+  await assert.rejects(instance.write.sendEmails({ name: NAME, contacts: reminders(1, 201), idempotencyKey: 'day-5', ...live }), LimitReached);
   t.mock.timers.setTime(Date.parse('2026-11-02T00:00:00Z'));
   // A refused write did not use up its key: the same key and input go now.
-  assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: reminders(2, 201), idempotencyKey: 'day-4', ...live }), { sent: 2, alreadySent: 0, skipped: 0 });
-  assert.deepEqual(sent().slice(-2).map((r) => r.at.slice(0, 10)), ['2026-11-02', '2026-11-02']);
+  assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: reminders(2, 201), idempotencyKey: 'day-4', ...live }), { added: 2, alreadyAdded: 0, skipped: 0 });
+  assert.deepEqual(sent().slice(-2).map((r) => r.at), ['2026-11-02T00:00:00.000Z', '2026-11-02T00:00:00.000Z']);
 });
 
-test('sendEmails: a repeat sends nothing; a different change to the same visit is a new email', async () => {
+test('sendEmails: the day limit counts only emails the tool will send, not ones it refuses (mock.timers)', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-01T09:00:00Z') });
+  const simulate = { failContacts: new Set() };
+  const { instance, sent } = email({ simulate });
+  for (let push = 0; push < 3; push += 1) {
+    await instance.write.sendEmails({ name: NAME, contacts: reminders(50, push * 50 + 1), idempotencyKey: `fill-${push}`, ...live });
+  }
+  await instance.write.sendEmails({ name: NAME, contacts: reminders(49, 151), idempotencyKey: 'fill-3', ...live });
+  assert.equal(sent().length, 199);
+  // Two more, one of which the tool refuses: one will be sent, so it fits.
+  simulate.failContacts.add('201');
+  await assert.rejects(instance.write.sendEmails({ name: NAME, contacts: reminders(2, 200), idempotencyKey: 'edge', ...live }), PartialFailure);
+  assert.equal(sent().length, 200);
+});
+
+test('sendEmails: an email\'s key has no push key: a new push never resends an unchanged reminder or an identical change', async () => {
   const { instance, sent } = email();
   const first = { name: NAME, contacts: [CHANGE], idempotencyKey: 'push-a', ...live };
-  assert.deepEqual(await instance.write.sendEmails(first), { sent: 1, alreadySent: 0, skipped: 0 });
-  assert.deepEqual(await instance.write.sendEmails(first), { sent: 1, alreadySent: 0, skipped: 0 }, 'the repeat returns the first result');
+  assert.deepEqual(await instance.write.sendEmails(first), { added: 1, alreadyAdded: 0, skipped: 0 });
+  assert.deepEqual(await instance.write.sendEmails(first), { added: 1, alreadyAdded: 0, skipped: 0 }, 'the repeat returns the first result');
   assert.equal(sent().length, 1, 'and sends nothing');
-  await assert.rejects(instance.write.sendEmails({ ...first, contacts: [{ ...CHANGE, window: 'morning', crew_name: 'South crew B' }] }), IdempotencyConflict);
+  await assert.rejects(instance.write.sendEmails({ ...first, contacts: [{ ...CHANGE, window: 'morning', crew_id: 5 }] }), IdempotencyConflict);
 
-  // Under the same list key (the archetype's first-push key, kept on a
-  // retry), the same change under a new write key is no new email...
-  const base = { name: NAME, listKey: 'push-b', ...live };
-  assert.deepEqual(await instance.write.sendEmails({ ...base, contacts: [CHANGE], idempotencyKey: 'push-b' }), { sent: 1, alreadySent: 0, skipped: 0 });
-  assert.deepEqual(await instance.write.sendEmails({ ...base, contacts: [CHANGE], idempotencyKey: 'push-b-retry' }), { sent: 0, alreadySent: 1, skipped: 0 });
-  // ...and a different change to the same visit (another crew) is.
-  const moved = { ...CHANGE, window: 'morning', crew_name: 'South crew B', reason: 'crew-out' };
-  assert.deepEqual(await instance.write.sendEmails({ ...base, contacts: [moved], idempotencyKey: 'push-b-2' }), { sent: 1, alreadySent: 0, skipped: 0 });
+  // The identical change under new push keys (another day's list name, a
+  // retry's key, no list key or another one) is never sent again.
+  for (const [key, listKey] of [['push-b', undefined], ['push-c', 'push-c'], ['push-d', 'other']]) {
+    assert.deepEqual(await instance.write.sendEmails({ name: `${NAME}-x`, contacts: [CHANGE], idempotencyKey: key, listKey, ...live }), { added: 0, alreadyAdded: 1, skipped: 0 }, key);
+  }
+  // The same for an unchanged reminder.
+  assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: [VISIT], idempotencyKey: 'rem-1', ...live }), { added: 1, alreadyAdded: 0, skipped: 0 });
+  assert.deepEqual(await instance.write.sendEmails({ name: 'appointment-reminders-again', contacts: [VISIT], idempotencyKey: 'rem-2', ...live }), { added: 0, alreadyAdded: 1, skipped: 0 });
+  // A renamed crew with the same id is the same email.
+  assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: [{ ...VISIT, crew_name: 'South crew A (renamed)' }], idempotencyKey: 'rem-3', ...live }), { added: 0, alreadyAdded: 1, skipped: 0 });
+  // A reminder after the visit moved is a new email.
+  assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: [{ ...VISIT, window: 'afternoon' }], idempotencyKey: 'rem-4', ...live }), { added: 1, alreadyAdded: 0, skipped: 0 });
+  const keys = sent().map((r) => r.key);
+  assert.equal(keys.length, 3);
+  for (const k of keys) assert.match(k, /^email:(reminder|change):2:[0-9a-f]{16}$/, 'email:<kind>:<scheduled_visit_id>:<hash>');
+});
+
+test('sendEmails: Tue->Wed, Wed->Thu and Thu->Wed for one visit are three emails (the before values are in the key)', async () => {
+  const { instance, sent } = email();
+  const move = (from, to) => ({
+    ...CHANGE, before_date: from, visit_date: to, before_window: 'morning', window: 'morning', reason: 'route-editor',
+  });
+  const moves = [move('2026-10-06', '2026-10-07'), move('2026-10-07', '2026-10-08'), move('2026-10-08', '2026-10-07')];
+  for (const [i, m] of moves.entries()) {
+    assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: [m], idempotencyKey: `move-${i}`, ...live }), { added: 1, alreadyAdded: 0, skipped: 0 }, `move ${i}`);
+  }
+  // Repeating any of them sends nothing.
+  for (const [i, m] of moves.entries()) {
+    assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: [m], idempotencyKey: `move-again-${i}`, ...live }), { added: 0, alreadyAdded: 1, skipped: 0 });
+  }
   const keys = sent().map((r) => r.key);
   assert.equal(keys.length, 3);
   assert.equal(new Set(keys).size, 3);
-  for (const k of keys.slice(1)) assert.match(k, /^push-b:change:2:[0-9a-f]{12}$/, 'the key: the push, the kind, the visit and a hash of the change');
-  // A reminder for the same visit is a different email from its change notice.
-  assert.deepEqual(await instance.write.sendEmails({ ...base, contacts: [{ ...VISIT, visit_date: CHANGE.visit_date, window: CHANGE.window }], idempotencyKey: 'push-b-3' }), { sent: 1, alreadySent: 0, skipped: 0 });
+  // A crew change alone is a change too, keyed apart from the others.
+  assert.deepEqual(await instance.write.sendEmails({ name: NAME, contacts: [{ ...move('2026-10-07', '2026-10-07'), crew_id: 5, crew_name: 'South crew B' }], idempotencyKey: 'crew', ...live }), { added: 1, alreadyAdded: 0, skipped: 0 });
 });
 
 test('sendEmails: a refused email records the others and fails with refs only; a retry sends only the failed one', async () => {
@@ -328,7 +376,7 @@ test('sendEmails: a refused email records the others and fails with refs only; a
   });
   assert.deepEqual(sent().map((r) => r.payload.external_ref), ['1', '3']);
   simulate.failContacts.clear();
-  assert.deepEqual(await instance.write.sendEmails(input), { sent: 1, alreadySent: 2, skipped: 0 });
+  assert.deepEqual(await instance.write.sendEmails(input), { added: 1, alreadyAdded: 2, skipped: 0 });
   assert.deepEqual(sent().map((r) => r.payload.external_ref), ['1', '3', '2'], 'each email once');
 });
 

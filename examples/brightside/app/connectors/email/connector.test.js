@@ -45,6 +45,7 @@ const emails = (count, from = 1) => Array.from({ length: count }, (_, i) => ({
   kind: 'reminder',
   visit_date: '2026-10-01',
   window: 'morning',
+  crew_id: 4,
   crew_name: 'South crew A',
   package_name: 'Deep clean',
 }));

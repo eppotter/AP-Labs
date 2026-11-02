@@ -35,7 +35,7 @@ const { escapeText } = require('../messages');
 // Ordinary markdown to Slack mrkdwn, escaped, for text written as markdown.
 const { toMrkdwn } = require('../slack/format');
 const {
-  defineConnector, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
+  defineConnector, KillSwitchOn, LimitReached, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 } = require('../connectors/contract');
 
 // The shared connector contract suite, for a connector's own test file. It
@@ -92,6 +92,6 @@ function testLog() {
 
 module.exports = {
   testContext, testLog, escapeText, toMrkdwn, DataUnavailableError, QueryRefusedError,
-  defineConnector, connectorContract, KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
+  defineConnector, connectorContract, KillSwitchOn, LimitReached, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict,
   PartialFailure, routing, travelMatrix, RoutingFault,
 };

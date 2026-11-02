@@ -89,13 +89,15 @@ Contract fields (what the system's connector declares; kit/templates/connector.m
   (both in one write, Story 10.2). Human gate: the approval-write archetype. Kill switch: below.
 - appointment emails (Story 20.1, GRD-010): `sendEmails` takes `{ name, contacts }`, each contact
   exactly `external_ref` = scheduled_visit_id, `email`, `first_name`, `kind` (reminder or change),
-  `visit_date`, `window` (morning or afternoon), `crew_name`, `package_name` and, for a change,
-  `before_date`, `before_window`, `before_crew_name` and `reason` (the route skill it came from);
-  any other field is refused. The text comes from fixed templates (`templates.js`), rendered in the
-  dry run, so the preview shows exactly what is sent. Only one plain lower-case `.invalid` address
-  is taken (no display name, comma, whitespace or trailing dot); any other is skipped and never
-  sent. At most 50 emails a push and 200 a UTC day (counted in the outbox); over either, nothing is
-  sent.
+  `visit_date`, `window` (morning or afternoon), `crew_id`, `crew_name`, `package_name` and, for a
+  change, `before_date`, `before_window`, `before_crew_id`, `before_crew_name` and `reason` (the
+  route skill it came from); any other field is refused. The crew ids are never shown. The text
+  comes from fixed templates (`templates.js`), rendered in the dry run, so the dry run holds exactly
+  what is sent. Only one plain lower-case `.invalid` address is taken (no display name, comma,
+  whitespace or trailing dot); any other is skipped and never sent. At most 50 emails a push and
+  200 a UTC day on the connector's clock, counting only emails that will be sent; over the push
+  limit nothing is sent, and over the day limit nothing is sent and the person reads "Today's email
+  limit is reached" (not escalated). It answers `{ added, alreadyAdded, skipped }`.
 - bulk path: `addContacts` and `pushList` send in batches of at most 100; `sendEmails` sends a push
   (at most 50) in one request.
 - connector id: `email` (`examples/brightside/app/connectors/email/`)
@@ -106,9 +108,10 @@ Contract fields (what the system's connector declares; kit/templates/connector.m
 - batch size: 100
 - idempotency: each write takes an idempotency key. Each contact is keyed
   `<write key>:<list id>:<external_ref>`, and the tool adds only keys it hasn't seen, so a retry
-  sends only the contacts that failed. Each email is keyed `<push key>:<kind>:<scheduled_visit_id>:
-  <hash of the new date, window and crew>`, so a repeat sends nothing and a different change to the
-  same visit is a new email. The outbox file is the idempotency store, so a repeat adds
+  sends only the contacts that failed. Each email is keyed `email:<kind>:<scheduled_visit_id>:<hash>`,
+  the hash of the new date, window and crew_id and, for a change, the before ones, with no push key:
+  a new push never resends an unchanged reminder or an identical change, and a different change to
+  the same visit is a new email. The outbox file is the idempotency store, so a repeat adds
   nothing even after a restart.
 - dry run: `createList` shows `{ create: 'list', name }`; `addContacts` shows the list id and how
   many contacts it would add; `sendEmails` shows each email's address, subject and body, and the

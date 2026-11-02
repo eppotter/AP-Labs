@@ -7,7 +7,7 @@
 // knows it, is who to tell in a connector message; else "your admin".
 
 const {
-  NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, KillSwitchOn,
+  NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, KillSwitchOn, LimitReached,
   ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 } = require('./errors');
 const {
@@ -297,6 +297,8 @@ const MESSAGES = [
     ? `Sending to ${escapeText(system)} was switched off partway through: ${sentWords(sent)} before it stopped, and the rest weren't. `
       + (sent.recorded === false ? `I couldn't record that, so please tell ${admin}. ${checkFirst(admin)}` : `Please tell ${admin}.`)
     : `Sending to ${escapeText(system)} is switched off right now, so nothing was sent. Please tell your admin.`)],
+  // The system's own limit for the day (Story 20.1): nothing was sent.
+  [LimitReached, ({ what, limit }) => `Today's ${escapeText(what)} limit is reached (${num(limit)} a day), so nothing was sent. Try again tomorrow.`],
   // Subclasses of ConnectorFailed come first: the first match wins.
   // A missing credential is a setup fault, worded like ConfigFault; a rejected
   // one says so. Neither reads as a passing outage (AD-17).

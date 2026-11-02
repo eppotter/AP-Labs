@@ -17,9 +17,11 @@
 // stops: render refuses any field it doesn't name.
 //
 // A reminder takes no before values and no reason. A change notice takes all
-// three before values (from scheduled_visits, status 'scheduled', SQLsmith
+// four before values (from scheduled_visits, status 'scheduled', SQLsmith
 // P1-5) and a reason key, and is refused when the date, the window and the
-// crew are all unchanged (a move within the same window is not a change).
+// crew_id are all unchanged (a move within the same window is not a change).
+// crew_id and before_crew_id are never shown: they decide whether the crew
+// changed and, with the dates and windows, identify the email (facts()).
 // Each refusal throws an Error naming the field, never its value.
 
 const KINDS = Object.freeze(['reminder', 'change']);
@@ -35,10 +37,10 @@ const REASONS = Object.freeze({
 });
 
 const FIELDS = Object.freeze([
-  'first_name', 'kind', 'visit_date', 'window', 'crew_name', 'package_name',
-  'before_date', 'before_window', 'before_crew_name', 'reason',
+  'first_name', 'kind', 'visit_date', 'window', 'crew_id', 'crew_name', 'package_name',
+  'before_date', 'before_window', 'before_crew_id', 'before_crew_name', 'reason',
 ]);
-const BEFORE = Object.freeze(['before_date', 'before_window', 'before_crew_name']);
+const BEFORE = Object.freeze(['before_date', 'before_window', 'before_crew_id', 'before_crew_name']);
 
 const PHONE = '555-0100';
 const REPLY = `Reply to this email, or call us on ${PHONE}, and we'll find a time that suits you.`;
@@ -73,6 +75,14 @@ function date(fields, name) {
   return v;
 }
 
+// A crew id: a positive whole number, or its digits; returned as a string.
+function crewId(fields, name) {
+  const v = fields[name];
+  const s = typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? String(v) : v;
+  if (typeof s !== 'string' || !/^[1-9][0-9]{0,9}$/.test(s)) throw new Error(`${name} must be a crew id (a positive whole number)`);
+  return s;
+}
+
 function windowOf(fields, name) {
   const v = fields[name];
   if (!WINDOWS.includes(v)) throw new Error(`${name} must be one of ${WINDOWS.join(', ')}`);
@@ -97,6 +107,7 @@ function check(fields) {
     first_name: text(fields, 'first_name'),
     visit_date: date(fields, 'visit_date'),
     window: windowOf(fields, 'window'),
+    crew_id: crewId(fields, 'crew_id'),
     crew_name: text(fields, 'crew_name'),
     package_name: text(fields, 'package_name'),
   };
@@ -105,9 +116,14 @@ function check(fields) {
     if (given.length) throw new Error(`a reminder takes no ${given.join(', ')}`);
     return out;
   }
-  const before = { date: date(fields, 'before_date'), window: windowOf(fields, 'before_window'), crew_name: text(fields, 'before_crew_name') };
+  const before = {
+    date: date(fields, 'before_date'),
+    window: windowOf(fields, 'before_window'),
+    crew_id: crewId(fields, 'before_crew_id'),
+    crew_name: text(fields, 'before_crew_name'),
+  };
   if (!Object.hasOwn(REASONS, fields.reason)) throw new Error(`reason must be one of ${Object.keys(REASONS).join(', ')}`);
-  if (before.date === out.visit_date && before.window === out.window && before.crew_name === out.crew_name) {
+  if (before.date === out.visit_date && before.window === out.window && before.crew_id === out.crew_id) {
     throw new Error('a change notice needs a changed date, window or crew');
   }
   return { ...out, before, reason: fields.reason };
@@ -134,7 +150,7 @@ function change(f) {
   const changed = [];
   if (f.before.date !== f.visit_date) changed.push(`- Day: ${when} (before: ${longDate(f.before.date)})`);
   if (f.before.window !== f.window) changed.push(`- Arrival window: ${f.window} (before: ${f.before.window})`);
-  if (f.before.crew_name !== f.crew_name) changed.push(`- Crew: ${f.crew_name} (before: ${f.before.crew_name})`);
+  if (f.before.crew_id !== f.crew_id) changed.push(`- Crew: ${f.crew_name} (before: ${f.before.crew_name})`);
   return {
     subject: `Your ${f.package_name} has changed: now ${when}`,
     body: [
@@ -163,6 +179,16 @@ function render(fields) {
   return Object.freeze({ kind: f.kind, ...(f.kind === 'reminder' ? reminder(f) : change(f)) });
 }
 
+// What identifies the email, checked as render checks it: for a reminder the
+// date, window and crew_id; for a change the before date, window and crew_id,
+// then the new ones. Names and text are left out, so a renamed crew or a
+// reworded template is the same email.
+function facts(fields) {
+  const f = check(fields);
+  const now = [f.visit_date, f.window, f.crew_id];
+  return Object.freeze(f.kind === 'reminder' ? now : [f.before.date, f.before.window, f.before.crew_id, ...now]);
+}
+
 module.exports = Object.freeze({
-  render, KINDS, WINDOWS, REASONS, FIELDS, PHONE,
+  render, facts, KINDS, WINDOWS, REASONS, FIELDS, PHONE,
 });
