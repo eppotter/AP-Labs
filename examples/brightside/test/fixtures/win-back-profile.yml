@@ -2,7 +2,8 @@
 # 9.7, 10.2): the resources the
 # Brightside app dir names, one admin (granted WIN_BACK by name: it is owner-only) and one member with fake Slack ids, and the same
 # forbidden columns as the demo profile. Story 15.5: the app dir's Routing module needs the
-# routing block and its audience; nobody here holds a routing key, so no menu shows it.
+# routing block and its audience; nobody here holds a routing key, so no menu shows it. Story 20.2:
+# Appointment reminders needs APPOINTMENT_EMAILS declared; nobody here holds it.
 # Tests read this, never profiles/brightside/profile.yml. Deleted with the example in a fork.
 schema_version: 1
 client: { id: winback-fixture, name: Win-back Fixture Co }
@@ -19,6 +20,7 @@ resources:
   - { key: ADD_CONTEXT, label: Add context }
   - { key: BUILD_REQUEST, label: Build request }
   - { key: ASK, label: Ask }
+  - { key: APPOINTMENT_EMAILS, label: Appointment emails, admin_grantable: false }
 users:
   - { id: ada, name: Ada Admin, role: admin, identities: { slack: U0FIXTUREADA }, grants: [WIN_BACK] }
   - { id: max, name: Max Member, role: member, identities: { slack: U0FIXTUREMAX } }

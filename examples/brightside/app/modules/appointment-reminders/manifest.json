@@ -1,0 +1,60 @@
+{
+  "id": "appointment-reminders",
+  "hub": "brightside",
+  "label": "Appointment reminders",
+  "description": "Email a reminder to each customer booked on one day, for a zone or a crew, after you check and approve the list.",
+  "resource": "APPOINTMENT_EMAILS",
+  "archetype": "approval-write",
+  "verb": "Review",
+  "group": "Customers",
+  "environments": ["dev"],
+  "parameters": [
+    {
+      "name": "day",
+      "label": "Day",
+      "type": "date",
+      "description": "Pick a day after the data's as-of date: booked visits start the day after it.",
+      "required": true
+    },
+    {
+      "name": "zone_or_crew",
+      "label": "Zone or crew",
+      "type": "string",
+      "description": "A zone means the customers' home zone; a crew means that crew's stops.",
+      "enum": [
+        "north", "south", "east", "west", "central",
+        "North crew A", "North crew B", "North crew C",
+        "South crew A", "South crew B", "South crew C",
+        "East crew A", "East crew B", "East crew C",
+        "West crew A", "West crew B", "West crew C",
+        "Central crew A", "Central crew B", "Central crew C"
+      ],
+      "required": true
+    }
+  ],
+  "query": "appointment-reminders.sql",
+  "row_id": "scheduled_visit_id",
+  "write": {
+    "connector": "email",
+    "operation": "sendEmails",
+    "destination": "email tool",
+    "fields": [
+      "scheduled_visit_id", "email", "first_name", "kind", "visit_date", "arrival_window",
+      "crew_id", "crew_name", "package_name", "held"
+    ],
+    "send": {
+      "external_ref": "scheduled_visit_id",
+      "email": "email",
+      "first_name": "first_name",
+      "kind": "kind",
+      "visit_date": "visit_date",
+      "window": "arrival_window",
+      "crew_id": "crew_id",
+      "crew_name": "crew_name",
+      "package_name": "package_name"
+    },
+    "hold": "held",
+    "preview": ["first_name", "visit_date", "arrival_window", "crew_name"],
+    "list_name": "appointment-reminders-{run_date}"
+  }
+}
