@@ -108,6 +108,17 @@
 // be theirs to open (resolve) and the audience must still give them a scope,
 // all before any read, or the answer is no options.
 //
+// Notify affected customers (Story 20.3, plan brightside-v1 D14): on a route
+// skill's result (the editor's list on Plan a route, Add a stop and Customer
+// cancellation's Fill with #n; Crew out's Route change), the visits it
+// changes (./changes) give "Notify affected customers (N)", shown only when
+// the hub says the person may open its change notices (notices.allowed, set
+// on the session on every open and click), the person sees every crew, and
+// N > 0. Its click (routing-map:notify, value "<version>:notify", never a
+// visit) works the changes out again from the session and hands them to
+// notices.open, the hub's; a stale or malformed value, a crew lead, or a
+// result that changes nothing is refused and logged by reason only.
+//
 // Exits: Back and Close (view_closed, else the sweep: the hub), an error (a
 // plain message in the view, with Back), an expired trigger (the hub's
 // path), an expired session ("this map has expired"), access withdrawn
@@ -129,17 +140,23 @@ const {
 } = require('./views');
 const { createSessions, STATUS } = require('./session');
 const { createEditor, SCREEN: EDITOR, ACTIONS: EDITOR_ACTIONS } = require('./editor');
-const { createWhatIf, SCREENS: WHATIF_SCREENS, ACTIONS: WHATIF_ACTIONS } = require('./whatif');
+const {
+  createWhatIf, SCREENS: WHATIF_SCREENS, ACTIONS: WHATIF_ACTIONS, CANCELLATION, CREW_OUT,
+} = require('./whatif');
 const { createAddStop, SCREEN: ADD_STOP, ACTIONS: ADD_STOP_ACTIONS } = require('./addstop');
+const changes = require('./changes');
 
 const ARCHETYPE = 'routing-map';
 const VIEW_ACTIONS = Object.freeze(['view', 'day', 'crew', 'zone']);
-const ACTIONS = Object.freeze([...new Set([...VIEW_ACTIONS, ...EDITOR_ACTIONS, ...Object.values(WHATIF_ACTIONS).flat(), ...ADD_STOP_ACTIONS])]);
-const ACTION_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|visit|fill|again|out|add|client|length|window|place|back|remove)$/;
+// Notify affected customers (Story 20.3): every route skill's result, never
+// Routing's views.
+const NOTIFY = 'notify';
+const ACTIONS = Object.freeze([...new Set([...VIEW_ACTIONS, ...EDITOR_ACTIONS, ...Object.values(WHATIF_ACTIONS).flat(), ...ADD_STOP_ACTIONS, NOTIFY])]);
+const ACTION_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|visit|fill|again|out|add|client|length|window|place|back|remove|notify)$/;
 // Retired action ids (Story 15.16): answered with the expired words only.
 const RETIRED_PATTERN = /^routing-map:(up|down)$/;
 // What the hub listens for: every action, and the retired ones.
-const LISTEN_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|visit|fill|fill-[1-5]|again|out|add|client|length|window|place|back|remove|up|down)$/;
+const LISTEN_PATTERN = /^routing-map:(view|day|crew|zone|show|move|optimize|reset|change|visit|fill|fill-[1-5]|again|out|add|client|length|window|place|back|remove|notify|up|down)$/;
 // Add a stop's client search (block_suggestion, Story 19.5): the one
 // external_select, heard by the hub's options listener.
 const SEARCH_ACTION = 'routing-map:client';
@@ -149,10 +166,12 @@ const FILL_ID = /^routing-map:fill-[1-5]$/;
 // Which actions each screen takes (AD-R26; the what-if screens, Story 19.4).
 const SCREEN_ACTIONS = Object.freeze({
   views: new Set(VIEW_ACTIONS),
-  [EDITOR]: new Set(EDITOR_ACTIONS),
-  ...Object.fromEntries(WHATIF_SCREENS.map((sc) => [sc, new Set(WHATIF_ACTIONS[sc])])),
-  [ADD_STOP]: new Set(ADD_STOP_ACTIONS),
+  [EDITOR]: new Set([...EDITOR_ACTIONS, NOTIFY]),
+  ...Object.fromEntries(WHATIF_SCREENS.map((sc) => [sc, new Set([...WHATIF_ACTIONS[sc], NOTIFY])])),
+  [ADD_STOP]: new Set([...ADD_STOP_ACTIONS, NOTIFY]),
 });
+// A Notify button's value: "<version or draw number>:notify", never a visit.
+const NOTIFY_VALUE = /^([1-9][0-9]{0,8}):notify$/;
 const EDITOR_ONLY = new Set([...EDITOR_ACTIONS, ...ADD_STOP_ACTIONS].filter((a) => !VIEW_ACTIONS.includes(a)));
 // The screens that speak of a plan, not a map, when it has expired.
 const PLAN_SCREENS = new Set([EDITOR, ADD_STOP]);
@@ -406,6 +425,10 @@ function createRoutingMap({
     if (what) {
       s.fills = st.fills || [];
       s.fillsSeq = number;
+      // The visits this draw changes (Story 20.3), named; its Notify button
+      // carries number.
+      s.changes = st.changes || null;
+      s.changesSeq = number;
     } else {
       s.picks.crew = st.picks.crew;
       s.picks.zone = st.picks.zone;
@@ -460,6 +483,7 @@ function createRoutingMap({
     const n = namer(labels);
     if (what) {
       st.fills = plan.fills || [];
+      st.changes = plan.changes ? changes.named(plan.changes, labels) : null;
     } else {
       st.options = {
         crews: opts.crews.map((c) => ({ value: c, text: n.crewLabel(c) })),
@@ -606,8 +630,14 @@ function createRoutingMap({
     return false;
   };
 
+  // notices (Story 20.3, the hub's): { allowed(mod) } whether this person
+  // may open the hub's change notices, and on a click also open({ mod,
+  // skill, session, visits, held }), which shows the notices' preview.
+  // Without it no Notify button shows and a Notify click is refused.
+  const mayNotify = (notices, mod) => Boolean(notices && typeof notices.allowed === 'function' && notices.allowed(mod) === true);
+
   async function open({
-    mod, person, viewId, show, showMap, resolve,
+    mod, person, viewId, show, showMap, resolve, notices = null,
   }) {
     const decided = audience.scopeFor(profile, person.user);
     if (!decided.scope) {
@@ -626,6 +656,7 @@ function createRoutingMap({
       userId: person.id, viewId, moduleId: mod.id, screen, picks: { view: 'compare', day: null, crew: null, zone: null },
     });
     s.scope = decided.scope;
+    s.canNotify = mayNotify(notices, mod);
     const number = sessions.next(s);
     log.info('routing map opened', { module: mod.id, scope: decided.scope.all === true ? 'all crews' : 'own crew' });
     if (!await withRange(mod, s, show)) return;
@@ -649,7 +680,7 @@ function createRoutingMap({
   // A select or date click. from: the view the click came from. resolve:
   // the hub's re-check that this person may still open the module here.
   async function click({
-    actionId, action, from, person, resolve, show, showMap, showList,
+    actionId, action, from, person, resolve, show, showMap, showList, notices = null,
   }) {
     const raw = typeof actionId === 'string' ? actionId : '';
     const id = FILL_ID.test(raw) ? 'routing-map:fill' : raw;
@@ -701,7 +732,14 @@ function createRoutingMap({
       return;
     }
     s.scope = decided.scope;
+    s.canNotify = mayNotify(notices, mod);
     if (!await withRange(mod, s, show)) return;
+    if (which === NOTIFY) {
+      await notify({
+        s, mod, action, notices,
+      });
+      return;
+    }
     if (s.screen === EDITOR) {
       await editor.click({
         which, action, s, mod, show, showMap, showList, recheck: recheckFor(mod, person, resolve),
@@ -743,6 +781,40 @@ function createRoutingMap({
     if (sessions.isCurrent(s, number)) await show(textMessage(s, MAP_WORDS.drawing(), headOf(s)), { current });
     await draw({
       mod, s, number, show, showMap, recheck: recheckFor(mod, person, resolve),
+    });
+  }
+
+  // Notify affected customers (Story 20.3): the visits the result on screen
+  // changes, worked out again from the session (never from the click, whose
+  // value is only "<version>:notify"), handed to the hub's notices. Refused,
+  // logged by reason only and with nothing shown, unless the person is a
+  // dispatcher (every crew in scope), the value names the result now shown,
+  // and it changes at least one visit. Whether the person may send change
+  // notices is the hub's to say (notices.open re-checks it).
+  async function notify({
+    s, mod, action, notices,
+  }) {
+    const refuse = (reason) => log.warn('routing map click refused', { action: NOTIFY, reason });
+    const value = action && typeof action.value === 'string' ? action.value : null;
+    const m = value ? NOTIFY_VALUE.exec(value) : null;
+    if (!m) return refuse('malformed');
+    if (!notices || typeof notices.open !== 'function' || s.scope.all !== true) return refuse('not allowed');
+    let set;
+    if (s.screen === CREW_OUT) {
+      if (s.stage !== 'result' || !s.changes) return refuse('another step');
+      if (Number(m[1]) !== s.changesSeq) return refuse('stale version');
+      set = s.changes;
+    } else {
+      const p = s.plan;
+      const editing = s.screen !== CANCELLATION || s.stage === 'edit';
+      if (s.step !== 2 || !p || p.out || !editing || (s.screen === ADD_STOP && s.form)) return refuse('another step');
+      if (Number(m[1]) !== p.version) return refuse('stale version');
+      set = editor.planChanges(p);
+    }
+    if (!set.visits.length) return refuse('nothing changed');
+    log.info('routing map click', { module: mod.id, action: NOTIFY, view: s.screen });
+    return notices.open({
+      mod, skill: s.screen, session: s.id, visits: set.visits, held: set.held,
     });
   }
 

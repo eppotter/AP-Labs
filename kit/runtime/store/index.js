@@ -42,6 +42,10 @@ const NAMESPACES = Object.freeze({
   session: 30 * MINUTE,
   provenance: 24 * HOUR,
   approval: 30 * MINUTE,
+  // The route row source (Story 20.3, AD-15): a route skill's changed
+  // visits, bound to the person and the route session, until a preview
+  // consumes them.
+  route: 30 * MINUTE,
   done: 10 * MINUTE,
   event: 10 * MINUTE,
   escalation: 15 * MINUTE,

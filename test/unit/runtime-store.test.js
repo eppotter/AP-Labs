@@ -20,6 +20,7 @@ test('every namespace in the AD-7 table has its TTL', () => {
     session: 30 * MIN,
     provenance: 24 * 60 * MIN,
     approval: 30 * MIN,
+    route: 30 * MIN,
     done: 10 * MIN,
     event: 10 * MIN,
     escalation: 15 * MIN,

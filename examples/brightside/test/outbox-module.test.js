@@ -126,6 +126,52 @@ test('a torn line in the outbox (which refuses writes) is skipped in the read-on
   assert.match(replies[0], /^\*win-back-west\* · 2 contacts · /m);
 });
 
+// Story 20.3: the appointment emails sent, newest first, never their body.
+test('the Outbox lists the appointment emails sent, newest first: when, the kind, the address and the subject, never the body', async (t) => {
+  const file = tmpFile(t);
+  const outbox = openOutbox(file);
+  const sent = (ref, kind, subject, at) => outbox.append({
+    at,
+    type: 'email',
+    operation: 'sendEmails',
+    key: `email:${kind}:${ref}:x`,
+    payload: {
+      push: 'change-notices-2026-11-01', external_ref: ref, to: `p${ref}@home.invalid`, kind, subject, body: `SECRET BODY ${ref}`,
+    },
+  });
+  sent('11', 'reminder', 'Reminder: your Deep clean on Thursday, October 1, 2026', '2026-11-01T14:00:00.000Z');
+  sent('12', 'change', 'Your <Deep> clean has changed: now Friday, October 2, 2026', '2026-11-01T15:00:00.000Z');
+  const replies = [];
+  await handler({ reply: async (m) => replies.push(m) }, { file });
+  const lines = replies[0].split('\n');
+  assert.equal(lines[0], '*Email outbox*');
+  assert.equal(lines[1], '*Appointment emails sent*, newest first (latest 2 of 2):');
+  assert.deepEqual(lines.slice(2), [
+    '• 2026-11-01 15:00 UTC · change notice · p12@home.invalid · Your &lt;Deep&gt; clean has changed: now Friday, October 2, 2026',
+    '• 2026-11-01 14:00 UTC · reminder · p11@home.invalid · Reminder: your Deep clean on Thursday, October 1, 2026',
+  ]);
+  assert.ok(!replies[0].includes('SECRET BODY'), 'never the body');
+  // With lists too, both sections show, lists first.
+  list(outbox, 'a', 'win-back-north-2026-10-23', people(1));
+  const both = [];
+  await handler({ reply: async (m) => both.push(m) }, { file });
+  assert.ok(both[0].indexOf('*win-back-north-2026-10-23*') < both[0].indexOf('*Appointment emails sent*'));
+});
+
+test('at most ten appointment emails are listed, and the reply says how many there are', async (t) => {
+  const file = tmpFile(t);
+  const outbox = openOutbox(file);
+  for (let i = 1; i <= 12; i += 1) {
+    outbox.append({
+      at: `2026-11-01T10:${String(i).padStart(2, '0')}:00.000Z`, type: 'email', operation: 'sendEmails', key: `k${i}`, payload: { kind: 'reminder', to: `p${i}@home.invalid`, subject: `S${i}` },
+    });
+  }
+  const replies = [];
+  await handler({ reply: async (m) => replies.push(m) }, { file });
+  assert.match(replies[0], /latest 10 of 12\):/);
+  assert.ok(replies[0].includes('· S12') && !replies[0].includes('· S2\n') && !replies[0].endsWith('· S2'));
+});
+
 test('with nothing sent yet (no outbox file), the person is told so', async (t) => {
   const replies = [];
   await handler({ reply: async (m) => replies.push(m) }, { file: tmpFile(t) });

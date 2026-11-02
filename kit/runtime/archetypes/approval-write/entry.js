@@ -16,7 +16,11 @@
 //   idempotencyKey   sha256 of the canonical JSON [listName, sortedIds]:
 //                    the rows' row ids as strings, sorted. The same rows to
 //                    the same list (same run date) get the same key, so the
-//                    connector writes them once.
+//                    connector writes them once. A route-sourced module's
+//                    (Story 20.3, ./route-source) is changeKey's instead: it
+//                    covers each row's change (before and after), so a
+//                    second, different change to the same visit is a new
+//                    push, while the same change again is a replay.
 //   module           the module id, so every click re-checks the person may
 //                    still use it (N12).
 //   skipped          the reasons the preview's dry-run plan gave for the rows
@@ -64,6 +68,15 @@ function newToken() {
 function idempotencyKey(listName, rowIds) {
   const ids = rowIds.map((id) => String(id)).sort();
   return crypto.createHash('sha256').update(JSON.stringify([String(listName), ids])).digest('hex');
+}
+
+// sha256 of the canonical JSON [listName, "change", sorted [id, ...change]]:
+// changes is [[rowId, ...the row's change values]], each value as text (null
+// stays null). Sorted by the row's JSON, so the order of the rows doesn't
+// matter.
+function changeKey(listName, changes) {
+  const items = changes.map((c) => JSON.stringify(c.map((v) => (v === null || v === undefined ? null : String(v))))).sort();
+  return crypto.createHash('sha256').update(JSON.stringify([String(listName), 'change', items])).digest('hex');
 }
 
 // A deep copy of the rows: plain values only, so nothing the run record holds
@@ -169,5 +182,5 @@ function cancel(store, token, person) {
 const ACTION = Object.freeze({ approve: 'approve', cancel: 'cancel' });
 
 module.exports = {
-  newToken, idempotencyKey, retryKey, rowIdsForRefs, copyRows, create, retryEntry, lookup, cancel, NS, TOKEN, STATUS, ENTRY_KEYS, ACTION,
+  newToken, idempotencyKey, changeKey, retryKey, rowIdsForRefs, copyRows, create, retryEntry, lookup, cancel, NS, TOKEN, STATUS, ENTRY_KEYS, ACTION,
 };

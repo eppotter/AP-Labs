@@ -23,7 +23,7 @@
 // preview table).
 
 const provenance = require('../../slack/provenance');
-const { escapeText, messageFor } = require('../../messages');
+const { escapeText, messageFor, NOTICE_WORDS } = require('../../messages');
 const { PushRefused, PreviewInvalid } = require('../../errors');
 const { previewText, previewCell, PREVIEW_LIMIT } = require('../scoped-pull/results');
 
@@ -244,8 +244,10 @@ function renderedOf(mod, planned, sending) {
 // to send with write.preview, else a sample), each rendered text, Approve and
 // Cancel. held, sending and texts: the held rows, the rows that will be sent
 // and their rendered texts in that order (Story 20.2).
+// notes: fixed lines shown under the heading (a route-sourced module's
+// caveat and how to get back to the route, Story 20.3), already mrkdwn.
 function previewMessage({
-  mod, listName, rows, skipped, token, held = [], sending = null, texts = null,
+  mod, listName, rows, skipped, token, held = [], sending = null, texts = null, notes = [],
 }) {
   const destination = escapeText(mod.write.destination);
   const toSend = rows.length - skipped.length;
@@ -256,6 +258,7 @@ function previewMessage({
   ];
   const blocks = [
     section(`*Push ${escapeText(mod.label)} to ${destination}?* Check it before you approve.`),
+    ...(notes.length ? [section(notes.join('\n'))] : []),
     section(lines.join('\n')),
   ];
   if (held.length) blocks.push(heldSection(mod, held));
@@ -276,18 +279,24 @@ function previewMessage({
 // Every row would be skipped or is held: nothing to approve, so no token was
 // made. The held rows are listed.
 function nothingToSendMessage({
-  mod, listName, rows, skipped, held = [],
+  mod, listName, rows, skipped, held = [], notes = [],
 }) {
   const blocks = [section(`*Nothing to push to ${escapeText(mod.write.destination)}.* All ${rowsWord(rows.length)} would be skipped: ${skipWords(skipped)}.`)];
+  if (notes.length) blocks.push(section(notes.join('\n')));
   if (held.length) blocks.push(heldSection(mod, held));
   blocks.push(context(`List name: ${escapeText(listName)}. Nothing was sent.`));
   return { text: `${mod.label}: nothing to push.`, blocks };
 }
 
+// A route-sourced module (Story 20.3) started from a route, so its way back
+// is the route, not the menu.
 function cancelledMessage(mod) {
+  const dest = escapeText(mod.write.destination);
   return {
     text: `${mod.label}: push cancelled.`,
-    blocks: [section(`*Push cancelled.* Nothing was sent to ${escapeText(mod.write.destination)}. Run the list again from the menu to start a new one.`)],
+    blocks: [section(mod.write.source === 'route'
+      ? NOTICE_WORDS.cancelled(dest)
+      : `*Push cancelled.* Nothing was sent to ${dest}. Run the list again from the menu to start a new one.`)],
   };
 }
 

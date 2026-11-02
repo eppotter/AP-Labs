@@ -271,6 +271,17 @@ function summarise(records, { lists = 5, sample = 3 } = {}) {
   return { total: all.length, lists: latest };
 }
 
+// The latest emails sent (Story 20.3), newest first: when, which kind, the
+// address, the subject and the push's list name, never the body. total: how
+// many emails there are.
+function latestEmails(records, { limit = 10 } = {}) {
+  const all = records.filter((r) => r.type === 'email' && r.payload && typeof r.payload === 'object');
+  const latest = all.slice(-limit).reverse().map((r) => ({
+    at: r.at, kind: r.payload.kind, to: r.payload.to, subject: r.payload.subject, push: r.payload.push,
+  }));
+  return { total: all.length, emails: latest };
+}
+
 // The UTC day ("YYYY-MM-DD") of a Date, or of now.
 const dayOf = (at = new Date()) => at.toISOString().slice(0, 10);
 
@@ -281,5 +292,5 @@ function emailsSentOn(records, day) {
 }
 
 module.exports = {
-  openOutbox, outboxPath, readRecords, summarise, emailsSentOn, dayOf,
+  openOutbox, outboxPath, readRecords, summarise, latestEmails, emailsSentOn, dayOf,
 };

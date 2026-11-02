@@ -35,6 +35,7 @@ const { RoutingFault } = require('../../errors');
 const { escapeText } = require('../../messages');
 const { MAX_COLOR } = require('../../routing-map/svg');
 const { visible } = require('./audience');
+const { ofCrewOut } = require('./changes');
 
 const VIEWS = Object.freeze(['compare', 'change', 'zone', 'gap']);
 const VIEW_LABELS = Object.freeze({
@@ -180,6 +181,26 @@ function compare(d, { travel, pick }) {
   };
 }
 
+// The model's start for each stop of the crews that are out, in their
+// booked order timed as placeOrphans times a route (Story 20.3: the base a
+// moved stop's new window is judged against). A crew that can't be timed
+// gives no starts: its stops keep their booked window.
+function outStarts(d, crewsOut, travel) {
+  const starts = new Map();
+  for (const crewId of crewsOut) {
+    try {
+      const input = { ...d.input, crews: d.input.crews.map((c) => (c.crewId === crewId ? { ...c, available: true } : c)) };
+      const ev = engine.evaluateOrder(input, {
+        travel, returnToBase: false, crewId, order: booked(d, crewId).map((s) => s.stopId),
+      });
+      for (const st of ev.stops) starts.set(st.stopId, st.start);
+    } catch {
+      // No base for this crew.
+    }
+  }
+  return (id) => starts.get(id);
+}
+
 function change(d, { travel, scope, pick }) {
   const result = engine.placeOrphans(d.input, { travel });
   const lead = scope.all !== true;
@@ -232,6 +253,11 @@ function change(d, { travel, scope, pick }) {
   const placeNodes = [...before.flatMap((r) => r.stops), ...after.flatMap((r) => r.stops), ...crossZone.map((z) => z.node)];
   const out = result.crewsOut.filter(shown);
   return {
+    // The visits this result changes, and those it holds (Story 20.3,
+    // ./changes): crew ids only; the caller names the crews.
+    changes: ofCrewOut({
+      result, day: d.input.day, stopOf: (id) => d.stopById.get(id), shown, baseStartOf: outStarts(d, result.crewsOut, travel),
+    }),
     nodes: [...modelCrews.map(crewNode), ...placeNodes],
     placeNodes,
     crewIds: modelCrews,
@@ -363,7 +389,9 @@ function gap(d, {
     }),
     // The shown candidates by rank, for Customer cancellation's Fill with
     // #n (Story 19.4): ids and dates only, never a place.
-    fills: cands.map((c) => ({ rank: c.rank, stopId: c.stopId, plannedDate: c.plannedDate })),
+    fills: cands.map((c) => ({
+      rank: c.rank, stopId: c.stopId, plannedDate: c.plannedDate, fromCrew: c.fromCrew,
+    })),
   };
 }
 
