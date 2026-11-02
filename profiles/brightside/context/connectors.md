@@ -2,7 +2,7 @@
 owner: Ely Potter          # the named client person who owns this file
 signed_off: 2026-10-31  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
 signed_off_by: "Ely Potter (2026-10-31)"  # who signed off: the owner, recorded by a facilitator
-updated: 2026-10-31        # ISO date of the last edit
+updated: 2026-11-01        # ISO date of the last edit
 ---
 
 # Connectors
@@ -85,9 +85,21 @@ Contract fields (what the system's connector declares; kit/templates/connector.m
 - auth: none: a mock.
 - read path: none through the connector. The Outbox entry reads the file for display only.
 - write path: `createList` (a list named with the run date) and `addContacts` (each contact exactly
-  `external_ref` = client_id, `email`, `first_name`; any other field is refused). Human gate: the
-  approval-write archetype (Epic 10, not built yet). Kill switch: below.
-- bulk path: `addContacts` sends in batches of at most 100.
+  `external_ref` = client_id, `email`, `first_name`; any other field is refused), and `pushList`
+  (both in one write, Story 10.2). Human gate: the approval-write archetype. Kill switch: below.
+- appointment emails (Story 20.1, GRD-010): `sendEmails` takes `{ name, contacts }`, each contact
+  exactly `external_ref` = scheduled_visit_id, `email`, `first_name`, `kind` (reminder or change),
+  `visit_date`, `window` (morning or afternoon), `crew_id`, `crew_name`, `package_name` and, for a
+  change, `before_date`, `before_window`, `before_crew_id`, `before_crew_name` and `reason` (the
+  route skill it came from); any other field is refused. The crew ids are never shown. The text
+  comes from fixed templates (`templates.js`), rendered in the dry run, so the dry run holds exactly
+  what is sent. Only one plain lower-case `.invalid` address is taken (no display name, comma,
+  whitespace or trailing dot); any other is skipped and never sent. At most 50 emails a push and
+  200 a UTC day on the connector's clock, counting only emails that will be sent; over the push
+  limit nothing is sent, and over the day limit nothing is sent and the person reads "Today's email
+  limit is reached" (not escalated). It answers `{ added, alreadyAdded, skipped }`.
+- bulk path: `addContacts` and `pushList` send in batches of at most 100; `sendEmails` sends a push
+  (at most 50) in one request.
 - connector id: `email` (`examples/brightside/app/connectors/email/`)
 - auth env: none
 - kill-switch env: `BRIGHTSIDE_EMAIL_OFF`; `APLABS_WRITES_OFF` turns off every connector. Any
@@ -96,10 +108,14 @@ Contract fields (what the system's connector declares; kit/templates/connector.m
 - batch size: 100
 - idempotency: each write takes an idempotency key. Each contact is keyed
   `<write key>:<list id>:<external_ref>`, and the tool adds only keys it hasn't seen, so a retry
-  sends only the contacts that failed. The outbox file is the idempotency store, so a repeat adds
+  sends only the contacts that failed. Each email is keyed `email:<kind>:<scheduled_visit_id>:<hash>`,
+  the hash of the new date, window and crew_id and, for a change, the before ones, with no push key:
+  a new push never resends an unchanged reminder or an identical change, and a different change to
+  the same visit is a new email. The outbox file is the idempotency store, so a repeat adds
   nothing even after a restart.
 - dry run: `createList` shows `{ create: 'list', name }`; `addContacts` shows the list id and how
-  many contacts it would add. Nothing is sent.
+  many contacts it would add; `sendEmails` shows each email's address, subject and body, and the
+  contacts it would skip. Nothing is sent.
 - notes: if the outbox can't be read or has a torn line, every write fails closed; one process
   writes at a time (a lockfile).
 

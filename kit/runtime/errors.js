@@ -51,6 +51,18 @@ class KillSwitchOn extends RuntimeRefusal {
   }
 }
 
+// A connector write was refused whole because the system's own limit for a
+// period is reached (Story 20.1: the mock email tool's 200 emails a day).
+// Nothing was sent; a retry after the period may go. Not an outage, so not
+// escalated. details: { connector, system, operation, what, limit, period }
+// (what: a short plain noun such as "email"; period: 'day').
+class LimitReached extends RuntimeRefusal {
+  constructor(details) {
+    super(`${details.system} refused the write: today's ${details.what} limit (${details.limit} a ${details.period}) is reached`, details);
+    this.code = 'LIMIT_REACHED';
+  }
+}
+
 // A connector call failed (Story 8.1). reason is already redacted and is for
 // the log, never shown to the person. details: { connector, system, operation },
 // plus sent ({ batches, items }) when a write failed after some requests went.
@@ -340,7 +352,7 @@ class AskQueryRefused extends RuntimeRefusal {
 module.exports = {
   AskQueryRefused, ASK_QUERY_REASONS,
   RuntimeRefusal, NotSetUp, AccessDenied, ConfigFault, DataUnavailable, LlmUnavailable, LLM_REASONS,
-  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
+  KillSwitchOn, LimitReached, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
   SessionExpired, SessionNotYours, AlreadyConfirmed, QueryBlocked, QueryFailed, CsvNotDelivered,
   ProvenanceGone, ProvenanceNotYours, ScoringFault, SCORING_PROBLEMS, PreviewInvalid, PushRefused, PUSH_REFUSALS, AlreadyPushed,
   RoutingFault, ROUTING_PROBLEMS, ContextRefused, CONTEXT_REFUSALS, FileRefused, FILE_REFUSALS,

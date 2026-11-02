@@ -116,6 +116,13 @@ resources:
   - key: ASK_DATA
     label: Ask, answers from data queries
     admin_grantable: false
+  # Appointment emails (plan brightside-v1, D14, GRD-010, Story 20.1): reminders and change
+  # notices to customers, from fixed templates, through the approval step to the mock email
+  # tool. Whoever holds it approves emails customers read, so it is granted by name only
+  # (admin_grantable: false): Ely Potter and Steven Auslander.
+  - key: APPOINTMENT_EMAILS
+    label: Appointment emails
+    admin_grantable: false
 
 users:
   # Ely Potter (AP Labs partner) is the demo client's owner and signs its rules (plan
@@ -126,7 +133,7 @@ users:
     name: Ely Potter
     role: admin
     identities: { slack: U0CB6HDBBQX }
-    grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS, ASK_DATA]
+    grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS, ASK_DATA, APPOINTMENT_EMAILS]
   - id: marcus
     name: Marcus Lee
     role: member
@@ -141,14 +148,16 @@ users:
     name: Steven Auslander
     role: admin
     identities: { slack: U0CB6GJ6UTH }
-    grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS, ASK_DATA]
+    grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS, ASK_DATA, APPOINTMENT_EMAILS]
 
 # Slack settings (kit/runtime).
 slack:
   # #ai-build-requests in the aplabs-demo workspace (the bot is a member). Its audience: the
   # AP Labs build team and the client's admins. Build requests post here (plan brightside-v0,
-  # D11, the AD-14 amendment): the requester's own previewed words and the AI's summary, from
-  # a hub that sees neither context nor data (/brightside-v0) only. A channel id, not a secret.
+  # D11, the AD-14 amendment): the requester's own previewed words and the AI's summary. Since
+  # plan brightside-v1 Story 19.3 (D12) any hub with a Request a tool module may post, including
+  # one that sees context or data (/brightside-v1): the summary call sends no business context
+  # (withContext: false). A channel id, not a secret.
   build_requests_channel: C0CDEPKQDRT
 
 # Columns no query may name (kit/runtime/sql). While any is set, SELECT * and

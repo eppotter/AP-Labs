@@ -13,9 +13,17 @@
 //
 // samples.read and samples.write must cover every declared operation (a
 // write sample is a function of the idempotency key). samples.bulk (one
-// { operation, input(count, key) }, or a list of them) must cover every write
+// { operation, input(count, key), limit? }, or a list of them) must cover every write
 // whose sample has a list in it, so each one's request sizing is checked: a
 // write that sends a whole list in one call fails the suite.
+//
+// limit (Story 20.1): the most items the write takes in one call, when it
+// has a cap of its own (the mock email tool's sendEmails takes at most 50
+// emails a push). The suite then checks that limit + 1 items are refused
+// before any I/O, dry run and live, and that limit items go; its bulk checks
+// send min(2 x batchSize + 1, limit) items. When that fits in one request,
+// there is no request k to stop after, so the resume check says so and
+// skips that write, and the per-item retry check fails its only request.
 //
 // options.deps is merged into every create(deps) call, for what the connector
 // needs beyond the suite's own (for example data: a stand-in query runner, or
@@ -88,6 +96,12 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
 
   const writeInput = (name, key, extra = {}) => ({ ...samples.write[name](key), ...extra });
   const bulks = samples.bulk ? [].concat(samples.bulk) : [];
+  // How many items a bulk check sends: 2 x batchSize + 1 (at least three
+  // requests), or the write's own limit when that is smaller.
+  const bulkCount = (bulk) => {
+    const full = decl.rateLimit.batchSize * 2 + 1;
+    return bulk.limit === undefined ? full : Math.min(full, bulk.limit);
+  };
   const settle = (p) => p.then((value) => ({ value }), (error) => ({ error }));
 
   test(`${label}: declares the contract (auth env names, operations, kill switch, rate limit)`, () => {
@@ -106,6 +120,9 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
     assert.deepEqual(Object.keys(samples.write || {}).sort(), [...writes].sort(), 'samples.write covers every write operation');
     for (const n of writes) assert.equal(typeof samples.write[n], 'function', `samples.write.${n} is a function of the idempotency key`);
     for (const b of bulks) assert.ok(b && writes.includes(b.operation) && typeof b.input === 'function', 'each samples.bulk is { operation: a write operation, input(count, key) }');
+    for (const b of bulks) {
+      if (b.limit !== undefined) assert.ok(Number.isSafeInteger(b.limit) && b.limit > 0, `samples.bulk ${b.operation}: limit is a positive integer`);
+    }
     for (const n of writes) {
       if (!Object.values(samples.write[n]('probe') || {}).some(Array.isArray)) continue;
       assert.ok(bulks.some((b) => b.operation === n), `samples.bulk covers ${n}: its sample takes a list, so its request sizing must be checked`);
@@ -207,11 +224,29 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
     for (const bulk of bulks) {
       const { instance, requests } = harness();
       const size = decl.rateLimit.batchSize;
-      const count = size * 2 + 1;
+      const count = bulkCount(bulk);
       await instance.write[bulk.operation]({ ...bulk.input(count, 'bulk'), dryRun: false });
       const batches = requests.filter((r) => r.operation === bulk.operation && r.size > 0);
       assert.ok(batches.every((r) => r.size <= size), `${bulk.operation}: batch sizes ${batches.map((r) => r.size)} are within ${size}`);
       assert.equal(batches.reduce((sum, r) => sum + r.size, 0), count, `${bulk.operation}: every item is sent, in requests that say their size`);
+    }
+  });
+
+  // A write with a limit of its own refuses one item more, whole, before any
+  // I/O (dry run and live), and takes exactly the limit (Story 20.1).
+  const limited = bulks.filter((b) => b.limit !== undefined);
+  test(`${label}: a write with an item limit refuses one more, before any I/O`, { skip: !limited.length && 'no bulk sample declares a limit' }, async () => {
+    for (const bulk of limited) {
+      const n = bulk.operation;
+      const { instance, requests } = harness();
+      for (const dryRun of [true, false]) {
+        const r = await settle(instance.write[n]({ ...bulk.input(bulk.limit + 1, `over-${n}`), dryRun }));
+        assert.ok(r.error instanceof ConnectorFailed, `${n} (dryRun ${dryRun}): ${bulk.limit + 1} items are refused, got ${r.error ? r.error.name : 'a result'}`);
+      }
+      assert.equal(requests.length, 0, `${n}: nothing over the limit reached the system`);
+      await instance.write[n]({ ...bulk.input(bulk.limit, `at-${n}`), dryRun: false });
+      const sent = requests.filter((r) => r.operation === n).reduce((sum, r) => sum + r.size, 0);
+      assert.equal(sent, bulk.limit, `${n}: exactly ${bulk.limit} items go`);
     }
   });
 
@@ -300,14 +335,19 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
     });
   };
   const turns = async (until) => { for (let i = 0; i < 1000 && !until(); i += 1) await new Promise(setImmediate); };
-  test(`${label}: a write whose process dies after request k resumes at request k+1 on a fresh instance over the same store`, { skip: !bulks.length && 'no bulk sample (no write takes a list)' }, async () => {
+  test(`${label}: a write whose process dies after request k resumes at request k+1 on a fresh instance over the same store`, { skip: !bulks.length && 'no bulk sample (no write takes a list)' }, async (t) => {
     for (const bulk of bulks) {
       const n = bulk.operation;
-      const count = decl.rateLimit.batchSize * 2 + 1;
+      const count = bulkCount(bulk);
       const ofOp = (h) => h.requests.filter((r) => r.operation === n).length;
       const probe = harness({ idempotency: durable()() });
       await probe.instance.write[n]({ ...bulk.input(count, `dies-probe-${n}`), dryRun: false });
       const total = ofOp(probe);
+      if (bulk.limit !== undefined && total < 2) {
+        // Its limit fits in one request: nothing is sent before a stop.
+        t.diagnostic(`${n} takes at most ${bulk.limit} items, one request, so there is no request k to stop after`);
+        continue;
+      }
       assert.ok(total >= 2, `${n}: a bulk of ${count} takes more than one request`);
       for (const k of [...new Set([1, Math.ceil(total / 2), total])]) {
         const store = durable();
@@ -343,10 +383,13 @@ function connectorContract(connector, samples = {}, { test = require('node:test'
       const bulk = bulks.find((b) => b.operation === n);
       assert.ok(bulk, `samples.bulk covers ${n}: it declares perItemIdempotency, so its retry after a failed batch must be checked`);
       const { instance, state } = harness();
-      const size = decl.rateLimit.batchSize;
-      const input = { ...bulk.input(size * 2 + 1, `per-item-${n}`), dryRun: false };
+      const count = bulkCount(bulk);
+      const input = { ...bulk.input(count, `per-item-${n}`), dryRun: false };
+      // The second batch fails, or the only one when the write's limit fits
+      // in one request.
+      const failAt = count > decl.rateLimit.batchSize ? 2 : 1;
       let calls = 0;
-      state.failWith = () => (calls += 1) === 2 ? new Error('HTTP 503 on the second batch') : null;
+      state.failWith = () => (calls += 1) === failAt ? new Error(`HTTP 503 on batch ${failAt}`) : null;
       const first = await settle(instance.write[n](input));
       assert.ok(first.error instanceof ConnectorFailed, `${n}: the failed batch fails the write, got ${first.error ? first.error.name : 'a result'}`);
       state.failWith = null;

@@ -8,9 +8,13 @@
 // One record per line, appended with one write:
 //   { at, type: 'list',    operation: 'createList',  key, payload: { listId, name } }
 //   { at, type: 'contact', operation: 'addContacts', key, payload: { listId, external_ref, email, first_name } }
+//   { at, type: 'email',   operation: 'sendEmails',  key, payload: { push, external_ref, to, kind, subject, body } }   Story 20.1 (at: the connector's clock)
 //   { at, type: 'done',    operation, key, slot, input, result }   the contract's ledger (deps.idempotency)
 //   { at, type: 'progress', operation, key, slot, input, batchSize, completed }   a write's progress, after every request (#89, 10.0)
-// A contact's key is the write's key, its listId and its external_ref.
+// A contact's key is the write's key, its listId and its external_ref. An
+// email's key is "email:<kind>:<external_ref>:<hash>" (the scheduled_visit_id
+// and a hash of the new date, window and crew_id, and for a change the before
+// ones), with no push key in it (D14a, Connector review).
 //
 // The file and its directory are created on first write, owner-only: contacts
 // are client data. A file that was created wider is narrowed to 0o600 on the
@@ -267,4 +271,15 @@ function summarise(records, { lists = 5, sample = 3 } = {}) {
   return { total: all.length, lists: latest };
 }
 
-module.exports = { openOutbox, outboxPath, readRecords, summarise };
+// The UTC day ("YYYY-MM-DD") of a Date, or of now.
+const dayOf = (at = new Date()) => at.toISOString().slice(0, 10);
+
+// How many emails the outbox holds that were sent on a UTC day ("YYYY-MM-DD"):
+// the count the day cap (200 a day, D14) is checked against.
+function emailsSentOn(records, day) {
+  return records.filter((r) => r.type === 'email' && typeof r.at === 'string' && r.at.slice(0, 10) === day).length;
+}
+
+module.exports = {
+  openOutbox, outboxPath, readRecords, summarise, emailsSentOn, dayOf,
+};

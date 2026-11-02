@@ -115,6 +115,15 @@
 //     (#90), as are JSON fields named like a secret ("api_key", "token",
 //     "client_secret", ...), header-style "X-Api-Key: ..." and any
 //     Authorization value, whatever its scheme.
+//   - A system whose own limit for the day is reached (Story 20.1: the mock
+//     email tool's 200 emails a day) throws LimitReached({ system, operation,
+//     what, limit, period: 'day' }) before it takes anything. Before any request
+//     went it leaves as LimitReached rebuilt from those details (what a short
+//     lower-case noun, limit a positive whole number), worded "Today's <what>
+//     limit is reached", and approval-write does not escalate it; with other
+//     details, or after a request went, it is a plain ConnectorFailed. ctx.now()
+//     is the connector's clock (deps.now, else Date.now), for an adapter that
+//     keeps time.
 //   - A write whose batch partly applied throws PartialFailure from apply with
 //     { succeeded, failed, failedRefs } (failedRefs: the failed items'
 //     external ids, one per failed item). It leaves as a PartialFailure with
@@ -133,7 +142,7 @@
 const crypto = require('node:crypto');
 const { readSecret, redact } = require('../../lib/secrets');
 const {
-  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
+  KillSwitchOn, LimitReached, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 } = require('../errors');
 
 const GLOBAL_KILL_SWITCH = 'APLABS_WRITES_OFF';
@@ -464,6 +473,9 @@ function defineConnector(spec) {
       return Object.freeze({
         operation,
         client,
+        // The connector's clock (deps.now, else Date.now), for an adapter
+        // that keeps time (Story 20.1: the email tool's day limit).
+        now,
         ...extra,
         batches(items) {
           const out = [];
@@ -528,6 +540,15 @@ function defineConnector(spec) {
     // recorded: false when the write's progress record could not be saved.
     function rethrow(err, operation, kind, sent = null, recorded = true) {
       if (err instanceof KillSwitchOn) throw sent ? new KillSwitchOn({ ...err.details, sent }) : err;
+      // The system's own limit, before anything went (Story 20.1): rebuilt
+      // from checked details only. After some requests went, it is a plain
+      // ConnectorFailed with what was sent, so the person is told.
+      if (err instanceof LimitReached && !sent) {
+        const { what, limit: max, period } = err.details || {};
+        if (typeof what === 'string' && /^[a-z][a-z ]{0,29}$/.test(what) && Number.isSafeInteger(max) && max > 0 && period === 'day') {
+          throw new LimitReached({ ...details(operation), what, limit: max, period });
+        }
+      }
       if (err instanceof IdempotencyConflict) throw new IdempotencyConflict(clean(err.reason), details(operation));
       // Only a write can partly apply: a read fails whole (fail closed). The
       // adapter's text never leaves with a PartialFailure, valid or not.
@@ -697,5 +718,5 @@ function defineConnector(spec) {
 
 module.exports = {
   defineConnector, checkDeclaration, GLOBAL_KILL_SWITCH,
-  KillSwitchOn, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
+  KillSwitchOn, LimitReached, ConnectorFailed, ConnectorAuthFailed, IdempotencyConflict, PartialFailure,
 };

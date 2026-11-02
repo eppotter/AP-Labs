@@ -2,7 +2,7 @@
 owner: Ely Potter          # the named client person who owns this file
 signed_off: 2026-10-31  # pending, or the ISO date (YYYY-MM-DD) the owner signed off
 signed_off_by: "Ely Potter (2026-10-31)"  # who signed off: the owner, recorded by a facilitator
-updated: 2026-10-31        # ISO date of the last edit
+updated: 2026-11-01        # ISO date of the last edit
 ---
 
 # Guardrails
@@ -11,10 +11,12 @@ Written by the Onboarder for Architect. Most of this mirrors `.aplabs/profile.ym
 profile rather than copy it, and propose profile changes to the Orchestrator instead of editing it.
 
 In this template repo Brightside's profile is `profiles/brightside/profile.yml` (a fork keeps it at
-`.aplabs/profile.yml`). **All nine rule cards (GRD-001 to GRD-009) are approved:** Ely Potter signed
+`.aplabs/profile.yml`). **All ten rule cards (GRD-001 to GRD-010) are approved:** Ely Potter signed
 off this file on 2026-10-31 (plan brightside-v1, Story 18.1). GRD-009 (Ask's read-only queries) was
 signed by the same plan's gate approval (`approve plan brightside-v1`, 2026-10-31) as worded in its
-D10, and added by Story 19.7, with GRD-005's exceptions.
+D10, and added by Story 19.7, with GRD-005's exceptions. GRD-010 (appointment emails) was signed by
+the same gate approval (gate item 3) as worded in its D14, and added by Story 20.1 with its Write
+paths row.
 
 Until 2026-10-31 these files named a fictional owner, Dana Reyes, played by Ely; lines that say
 "Ely as Dana Reyes" are kept as history. History of this file: it was first signed on 2026-10-25 (Ely
@@ -50,6 +52,10 @@ DEP-032 are closed.
 - GRD-009: Ask may answer a data question with a read-only query built only from signed query
   rules, for people granted `ASK_DATA` by name, reading only the profile's `ask` tables and columns.
   The AI never sees the result.
+- GRD-010: appointment emails (a reminder, a change notice) come only from fixed templates, hold only
+  a first name, date, arrival window, crew, package and the before values, and go to the email tool
+  only through the approval step, approved by a person granted `APPOINTMENT_EMAILS`: at most 50 a
+  push and 200 a day, each to a single `.invalid` address.
 
 ## Protected systems
 
@@ -74,6 +80,7 @@ DEP-032 are closed.
 | Write | Where it goes | Human gate | Kill switch | Status |
 |---|---|---|---|---|
 | Create a win-back list, add its contacts | Mock email tool (`email` connector, outbox file) | The approval-write archetype: preview, then a person approves (Epic 10) | `BRIGHTSIDE_EMAIL_OFF`, or `APLABS_WRITES_OFF` for every connector | Connector built (Story 8.3); the approval flow is not built yet (Epic 10), so nothing writes today |
+| Send appointment emails | Mock email tool (outbox) | approval-write preview and approval | `BRIGHTSIDE_EMAIL_OFF`, `APLABS_WRITES_OFF` | built by Epic 20: the connector's `sendEmails` and its templates (Story 20.1); the modules that send them come with Stories 20.2 and 20.3 (GRD-010) |
 | Publish the fixture | MotherDuck `brightside_fixture` | Ely runs it by hand; agents never do | Not run | Human step |
 
 Every connector write is a dry run unless the approval-write archetype passes `dryRun: false`. The
@@ -87,7 +94,8 @@ fails any other code that does. The mock CRM has no writes.
 From the profile's `users` and `resources`:
 
 - **Ely Potter** (admin): holds `TIER3_APPROVE` (approve T3 changes; `admin_grantable: false`, so
-  only the profile can give it), `WIN_BACK` and `ROUTING_ALL_CREWS`. Owns and signs every client
+  only the profile can give it), `WIN_BACK`, `ROUTING_ALL_CREWS`, `ASK_DATA` and
+  `APPOINTMENT_EMAILS` (approve appointment emails, GRD-010). Owns and signs every client
   context file. The admin role confers the gated resources, such as `OUTBOX`.
 - **Steven Auslander** (admin): every grant Ely Potter has, on every hub, always (plan
   brightside-v1: any grant to Ely is granted to Steven in the same change). He may sign rules for
@@ -354,3 +362,20 @@ exception_workflow and data_quality_guard.
   (Ask's connection), `kit/runtime/archetypes/ask`; Stories 19.6 to 19.8.
 - status: approved
 - approval: approved by Ely Potter on 2026-10-31 (`approve plan brightside-v1`), added by Story 19.7.
+
+### GRD-010: Appointment emails
+- type: exception_workflow
+- rule: the bot may draft two kinds of customer email, a reminder and a change notice, from fixed
+  templates. Each holds only the customer's first name, the service date, the arrival window
+  (morning or afternoon), the crew's name, the package, and for a change what it was before; never
+  an address, postal code, coordinate, price, another customer or a staff name. They go to the
+  email tool only through the approval step (GRD-004), after a person granted `APPOINTMENT_EMAILS`
+  by name approves the exact text: at most 50 a push and 200 a day per hub. A change notice comes
+  only from a route skill's result and only for a scheduled visit whose date, window or crew
+  changed. A reminder is held for a crew-day with an absence. The mock email tool accepts only a
+  single `.invalid` address. NOT a change to bookings: routes stay suggestions.
+- owner: Ely Potter
+- evidence: plan brightside-v1 D14, D14a; the email connector's `sendEmails` and `templates.js`;
+  `approval-write/route-source.js`; Stories 20.1 to 20.3.
+- status: approved
+- approval: approved by Ely Potter on 2026-10-31 (`approve plan brightside-v1`), added by Story 20.1.
