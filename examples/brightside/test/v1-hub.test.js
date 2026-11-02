@@ -164,7 +164,7 @@ test('the v1 folders are D5\'s: five route skills (dev only, ROUTING_ALL_CREWS, 
 test('gate item 5: no v1 route skill runs in production, and the /brightside route modules are untouched', () => {
   for (const id of ROUTES) assert.deepEqual(registry.module(id).environments, ['dev'], id);
   assert.deepEqual(registry.entries('brightside').map((m) => m.id), [
-    'dataset', 'hello-world', 'labour-cost', 'outbox', 'route-planner', 'routing', 'unpaid-invoices', 'win-back',
+    'appointment-reminders', 'dataset', 'hello-world', 'labour-cost', 'outbox', 'route-planner', 'routing', 'unpaid-invoices', 'win-back',
   ]);
   assert.deepEqual(registry.entries('brightside-v0').map((m) => m.id), ['v0-add-context', 'v0-ask', 'v0-build-request', 'v0-data-sources']);
 });
@@ -240,16 +240,19 @@ test('/brightside-v1 in production: the route skills are hidden (gate item 5); A
 // file and folders taken out, on main at 57a5e62): the v1 hub changes neither.
 const BRIGHTSIDE_MENU = [
   ['section', 'strip:knows', 'Knows: 1 source', null],
-  ['context', 'strip:progress', 'Setup 2 of 4 · 7 of 8 tools working', null],
+  ['context', 'strip:progress', 'Setup 2 of 4 · 8 of 9 tools working', null],
   ['section', 'welcome', 'Welcome to the Brightside bot: your day-to-day tools, and only the ones you\'re set up for.', null],
-  ['header', 'group:0', 'Lists', null],
+  // Story 20.2 (plan brightside-v1, D14): Customers → Appointment reminders.
+  ['header', 'group:0', 'Customers', null],
+  ['section', 'entry:appointment-reminders', '*Appointment reminders*', 'appointment-reminders:open'],
+  ['header', 'group:1', 'Lists', null],
   ['section', 'entry:labour-cost', '*Labour cost*', 'labour-cost:open'],
   ['section', 'entry:unpaid-invoices', '*Unpaid invoices*', 'unpaid-invoices:open'],
   ['section', 'entry:win-back', '*Win-back list*', 'win-back:open'],
-  ['header', 'group:1', 'Routing', null],
+  ['header', 'group:2', 'Routing', null],
   ['section', 'entry:route-planner', '*Plan a route* · ⚪ _needs map setup_', 'route-planner:why'],
   ['section', 'entry:routing', '*Route map*', 'routing:open'],
-  ['header', 'group:2', 'Tools', null],
+  ['header', 'group:3', 'Tools', null],
   ['section', 'entry:dataset', '*Dataset*', 'dataset:open'],
   ['section', 'entry:hello-world', '*Say hello*', 'hello-world:open'],
   ['section', 'entry:outbox', '*Outbox*', 'outbox:open'],

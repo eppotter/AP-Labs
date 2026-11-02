@@ -9,14 +9,18 @@
 // The preview names the destination list (its name carries the pull's UTC
 // run date), the rows to send, the rows skipped and why (the write's dry-run
 // plan says which rows the tool would refuse, for example no email), a
-// sample of 5 rows, and Approve and Cancel. Everything from data or a
+// sample of 5 rows, and Approve and Cancel. A module with write.preview
+// (Story 20.2) lists every row that will be sent, with those fields, in
+// place of the sample; one with write.hold lists its held rows and their
+// reasons (plan brightside-v1 D14: a reminder on a crew-day with an absence),
+// which are counted as skipped ("held") and never sent. Everything from data or a
 // connector is escaped (kit/runtime/messages escapeText, the scoped-pull
 // preview table).
 
 const provenance = require('../../slack/provenance');
 const { escapeText, messageFor } = require('../../messages');
 const { PushRefused, PreviewInvalid } = require('../../errors');
-const { previewText } = require('../scoped-pull/results');
+const { previewText, previewCell, PREVIEW_LIMIT } = require('../scoped-pull/results');
 
 const ACTIONS = Object.freeze({
   push: 'approval-write:push',
@@ -31,6 +35,14 @@ const REASON_MAX = 60;
 // {run_date} or {<input>} in a list name.
 const PLACEHOLDER = /\{([a-z][a-z0-9_]*)\}/g;
 const RUN_DATE = 'run_date';
+// A held row's skip reason in the entry and the push's reply (Story 20.2);
+// the preview shows the row's own reason.
+const HELD = 'held';
+// A hold reason's line is cut to this many characters.
+const REASON_LINE = 150;
+// A list section stays under Slack's 3,000-character limit, with room for
+// its heading and the reason lines.
+const LIST_LIMIT = PREVIEW_LIMIT - 600;
 
 const plain = (text) => ({ type: 'plain_text', text: String(text), emoji: false });
 const section = (text) => ({ type: 'section', text: { type: 'mrkdwn', text } });
@@ -95,37 +107,104 @@ function sampleColumns(mod, rows) {
   return rows.length && Object.hasOwn(rows[0], 'score') ? ['score', ...fields] : fields;
 }
 
-// The preview: list name, counts, skips, a sample, Approve and Cancel.
-function previewMessage({ mod, listName, rows, skipped, token }) {
-  const destination = escapeText(mod.write.destination);
-  const sending = rows.length - skipped.length;
-  const lines = [
-    `*List name:* ${escapeText(listName)}`,
-    `*Rows to send:* ${count(sending)} of ${rowsWord(rows.length)}`,
-    `*Skipped:* ${skipped.length ? `${count(skipped.length)}: ${skipWords(skipped)}` : 'none'}`,
-  ];
-  const sample = rows.slice(0, SAMPLE_ROWS);
-  return {
-    text: `Push ${mod.label} to ${mod.write.destination}: preview.`,
-    blocks: [
-      section(`*Push ${escapeText(mod.label)} to ${destination}?* Check it before you approve.`),
-      section(lines.join('\n')),
-      section(`*${sample.length === rows.length ? 'The rows' : `A sample of ${count(sample.length)}`}:*\n${previewText(sampleColumns(mod, rows), sample)}`),
-      context(`Nothing is sent until you press Approve. Skipped rows are never sent. This preview expires in 30 minutes.`),
-      { type: 'actions', block_id: 'approval-write', elements: [button(ACTIONS.approve, 'Approve', token, 'primary'), button(ACTIONS.cancel, 'Cancel', token)] },
-    ],
-  };
+// Whether a row is held (write.hold, Story 20.2): its hold field is a
+// non-empty string (the reason). Null, undefined and an empty string are not
+// held; any other value holds the row (fail closed), with the reason "held".
+function isHeld(mod, row) {
+  const field = mod && mod.write ? mod.write.hold : undefined;
+  if (!field) return false;
+  const v = row[field];
+  if (v === null || v === undefined || v === false) return false;
+  return typeof v === 'string' ? v.trim() !== '' : true;
 }
 
-// Every row would be skipped: nothing to approve, so no token was made.
-function nothingToSendMessage({ mod, listName, rows, skipped }) {
-  return {
-    text: `${mod.label}: nothing to push.`,
-    blocks: [
-      section(`*Nothing to push to ${escapeText(mod.write.destination)}.* All ${rowsWord(rows.length)} would be skipped: ${skipWords(skipped)}.`),
-      context(`List name: ${escapeText(listName)}. Nothing was sent.`),
-    ],
+// A held row's reason: its hold field's text, or HELD.
+function holdReason(mod, row) {
+  const v = row[mod.write.hold];
+  return typeof v === 'string' && v.trim() ? v.trim() : HELD;
+}
+
+// An aligned table of every row in a code block, escaped, each cell cut as
+// the scoped-pull preview cuts it; rows dropped from the end until it fits a
+// section. Returns { text, shown }.
+function tableFit(columns, rows) {
+  const table = (n) => {
+    const lines = [columns, ...rows.slice(0, n).map((r) => columns.map((c) => r[c]))].map((line) => line.map((v) => previewCell(v)));
+    const widths = columns.map((_, i) => Math.max(...lines.map((line) => Array.from(line[i]).length)));
+    const text = lines.map((line) => line.map((c, i) => c + ' '.repeat(widths[i] - Array.from(c).length)).join('  ').trimEnd()).join('\n');
+    return `\`\`\`\n${escapeText(text)}\n\`\`\``;
   };
+  let shown = rows.length;
+  let text = table(shown);
+  while (shown > 1 && text.length > LIST_LIMIT) {
+    shown -= 1;
+    text = table(shown);
+  }
+  return { text, shown };
+}
+
+// The held rows' section: each reason with its count, then the rows (the
+// write.preview fields, else the row id).
+function heldSection(mod, held) {
+  const by = new Map();
+  for (const r of held) {
+    const reason = holdReason(mod, r);
+    by.set(reason, (by.get(reason) || 0) + 1);
+  }
+  const reasons = [...by].map(([reason, n]) => `• ${escapeText(previewCell(reason, REASON_LINE))} (${count(n)})`).join('\n');
+  const { text, shown } = tableFit(mod.write.preview || [mod.row_id], held);
+  const more = shown < held.length ? `\nAnd ${count(held.length - shown)} more, in the CSV in your DM with me.` : '';
+  return section(`*Held, not sent: ${count(held.length)}.*\n${reasons}\n${text}${more}`);
+}
+
+// The rows that will be sent, every one (write.preview's fields): what the
+// person approves is this list.
+function sendingSection(mod, sending) {
+  const { text, shown } = tableFit(mod.write.preview, sending);
+  const head = shown === sending.length ? `*What will be sent (${count(sending.length)}):*` : `*What will be sent: the first ${count(shown)} of ${count(sending.length)}* (all ${count(sending.length)} are in the CSV in your DM with me):`;
+  return section(`${head}\n${text}`);
+}
+
+// The preview: list name, counts, skips, the held rows, the rows (every row
+// to send with write.preview, else a sample), Approve and Cancel. held and
+// sending: the held rows and the rows that will be sent (Story 20.2).
+function previewMessage({
+  mod, listName, rows, skipped, token, held = [], sending = null,
+}) {
+  const destination = escapeText(mod.write.destination);
+  const toSend = rows.length - skipped.length;
+  const lines = [
+    `*List name:* ${escapeText(listName)}`,
+    `*Rows to send:* ${count(toSend)} of ${rowsWord(rows.length)}`,
+    `*Skipped:* ${skipped.length ? `${count(skipped.length)}: ${skipWords(skipped)}` : 'none'}`,
+  ];
+  const blocks = [
+    section(`*Push ${escapeText(mod.label)} to ${destination}?* Check it before you approve.`),
+    section(lines.join('\n')),
+  ];
+  if (held.length) blocks.push(heldSection(mod, held));
+  if (mod.write.preview && Array.isArray(sending)) {
+    blocks.push(sendingSection(mod, sending));
+  } else {
+    const sample = rows.slice(0, SAMPLE_ROWS);
+    blocks.push(section(`*${sample.length === rows.length ? 'The rows' : `A sample of ${count(sample.length)}`}:*\n${previewText(sampleColumns(mod, rows), sample)}`));
+  }
+  blocks.push(
+    context(`Nothing is sent until you press Approve. Skipped${held.length ? ' and held' : ''} rows are never sent. This preview expires in 30 minutes.`),
+    { type: 'actions', block_id: 'approval-write', elements: [button(ACTIONS.approve, 'Approve', token, 'primary'), button(ACTIONS.cancel, 'Cancel', token)] },
+  );
+  return { text: `Push ${mod.label} to ${mod.write.destination}: preview.`, blocks };
+}
+
+// Every row would be skipped or is held: nothing to approve, so no token was
+// made. The held rows are listed.
+function nothingToSendMessage({
+  mod, listName, rows, skipped, held = [],
+}) {
+  const blocks = [section(`*Nothing to push to ${escapeText(mod.write.destination)}.* All ${rowsWord(rows.length)} would be skipped: ${skipWords(skipped)}.`)];
+  if (held.length) blocks.push(heldSection(mod, held));
+  blocks.push(context(`List name: ${escapeText(listName)}. Nothing was sent.`));
+  return { text: `${mod.label}: nothing to push.`, blocks };
 }
 
 function cancelledMessage(mod) {
@@ -156,5 +235,5 @@ function pushButtonBlock(mod, runId) {
 
 module.exports = {
   readRun, runDate, placeholders, listNameOf, previewMessage, nothingToSendMessage, cancelledMessage, pushResultMessage,
-  pushButtonBlock, verbOf, skipWords, ACTIONS, ACTION_PATTERN, SAMPLE_ROWS, RUN_DATE,
+  pushButtonBlock, verbOf, skipWords, isHeld, holdReason, ACTIONS, ACTION_PATTERN, SAMPLE_ROWS, RUN_DATE, HELD,
 };

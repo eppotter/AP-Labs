@@ -18,7 +18,9 @@
 //   Push      re-checks the person may still use the module here (resolve,
 //             as dispatch does), reads their run record (./preview), copies
 //             its rows, names the list (write.list_name, with the pull's UTC
-//             run date), runs the write's dry-run plan so rows the tool would
+//             run date), sets aside the held rows (write.hold, Story 20.2:
+//             listed with their reason, never given to the connector), runs
+//             the write's dry-run plan on the rest so rows the tool would
 //             refuse show as skipped, stores the approval entry under a fresh
 //             token (./entry) and shows the preview in the module's view.
 //   Approve   the push (Story 10.3, ./push): the token (expired, unknown,
@@ -36,9 +38,10 @@
 // Startup (checkModule, called by the registry): the resource must be
 // admin_grantable: false; row_id is required and in write.fields; every
 // write.fields entry is a column the query returns; write.send names only
-// write.fields; write.list_name uses only {run_date} and required inputs with
-// allowed values; the connector loads and declares write.operation
-// (./connectors).
+// write.fields; write.hold (optional) is a field, not the row id, and never
+// sent; write.preview (optional) names only fields; write.list_name uses only
+// {run_date} and required inputs with allowed values; the connector loads and
+// declares write.operation (./connectors).
 
 const { messageFor } = require('../../messages');
 const { PreviewInvalid, PushRefused, ConfigFault } = require('../../errors');
@@ -73,6 +76,16 @@ function checkModule(mod, { appDir, profile, sql }) {
   }
   for (const [target, source] of Object.entries(block.send)) {
     if (!block.fields.includes(source)) problems.push(`field "write.send.${target}" names "${source}", which is not in write.fields`);
+  }
+  if (block.hold !== undefined) {
+    if (!block.fields.includes(block.hold)) problems.push(`field "write.hold" names "${block.hold}", which is not in write.fields`);
+    if (block.hold === mod.row_id) problems.push('field "write.hold" must not be the row id');
+    for (const [target, source] of Object.entries(block.send)) {
+      if (source === block.hold) problems.push(`field "write.send.${target}" sends "${source}", the write.hold field: a hold reason is shown in the preview, never sent`);
+    }
+  }
+  for (const field of block.preview || []) {
+    if (!block.fields.includes(field)) problems.push(`field "write.preview" names "${field}", which is not in write.fields`);
   }
   const listName = block.list_name;
   if (/[{}]/.test(listName.replace(/\{[a-z][a-z0-9_]*\}/g, ''))) {
@@ -176,33 +189,52 @@ function createApprovalWrite({
     const rows = entry.copyRows(record.rows);
     const listName = preview.listNameOf(mod, record);
     const idempotencyKey = entry.idempotencyKey(listName, rows.map((r) => r[mod.row_id]));
-    let planned;
-    try {
-      // A dry run: the connector plans and sends nothing (AD-15).
-      planned = await connector.write[mod.write.operation]({
-        name: listName, contacts: sendItems(mod, rows), idempotencyKey, listKey: idempotencyKey, dryRun: true,
-      });
-    } catch (err) {
-      const words = messageFor(err, { admin });
-      if (!words) throw err;
-      log.warn('push preview refused', { module: mod.id, reason: err.code || err.name });
-      return show(words);
+    // Held rows (write.hold, Story 20.2) never reach the connector, not even
+    // its dry run: they are listed in the preview and kept out of the push.
+    const held = rows.filter((r) => preview.isHeld(mod, r));
+    const candidates = held.length ? rows.filter((r) => !preview.isHeld(mod, r)) : rows;
+    let planned = null;
+    if (candidates.length) {
+      try {
+        // A dry run: the connector plans and sends nothing (AD-15).
+        planned = await connector.write[mod.write.operation]({
+          name: listName, contacts: sendItems(mod, candidates), idempotencyKey, listKey: idempotencyKey, dryRun: true,
+        });
+      } catch (err) {
+        const words = messageFor(err, { admin });
+        if (!words) throw err;
+        log.warn('push preview refused', { module: mod.id, reason: err.code || err.name });
+        return show(words);
+      }
     }
-    const skipped = skippedOf(planned, rows.length);
-    const skippedIds = skippedIdsOf(mod, rows, skipped);
-    if (!skippedIds) {
-      log.error('push preview refused: a skipped item could not be matched to one row by its row id', { module: mod.id, skipped: skipped.length });
+    const refused = skippedOf(planned, candidates.length);
+    const refusedIds = skippedIdsOf(mod, candidates, refused);
+    if (!refusedIds) {
+      log.error('push preview refused: a skipped item could not be matched to one row by its row id', { module: mod.id, skipped: refused.length });
       return show(messageFor(new ConfigFault({ admin })));
     }
+    // A held row counts as skipped ("held") in the entry and the push's
+    // reply, so the push leaves it out (entry.skippedIds) like any skip.
+    const skipped = [...held.map(() => ({ reason: preview.HELD })), ...refused];
+    const skippedIds = [...held.map((r) => String(r[mod.row_id])), ...refusedIds];
     if (skipped.length >= rows.length) {
-      log.info('push previewed', { module: mod.id, rows: rows.length, skipped: skipped.length, token: false });
-      return show(preview.nothingToSendMessage({ mod, listName, rows, skipped }));
+      log.info('push previewed', {
+        module: mod.id, rows: rows.length, skipped: skipped.length, held: held.length, token: false,
+      });
+      return show(preview.nothingToSendMessage({
+        mod, listName, rows, skipped, held,
+      }));
     }
     const token = entry.create(store, {
       person, module: mod.id, runId: record.runId, destination: mod.write.destination, listName, rows, skipped, skippedIds, idempotencyKey,
     });
-    log.info('push previewed', { module: mod.id, rows: rows.length, skipped: skipped.length, token: true });
-    return show(preview.previewMessage({ mod, listName, rows, skipped, token }));
+    log.info('push previewed', {
+      module: mod.id, rows: rows.length, skipped: skipped.length, held: held.length, token: true,
+    });
+    const sending = rows.filter((r) => !skippedIds.includes(String(r[mod.row_id])));
+    return show(preview.previewMessage({
+      mod, listName, rows, skipped, token, held, sending,
+    }));
   }
 
   // The entry a token names, for this person, with access re-checked:

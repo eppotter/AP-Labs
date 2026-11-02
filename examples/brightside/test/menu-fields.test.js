@@ -23,6 +23,8 @@ test('the example app loads: its labels and groups say neither "Setup" nor a sta
 test('the example\'s verbs and groups are D5\'s and D10\'s', () => {
   const got = Object.fromEntries(registry.modules.map((m) => [m.id, [m.group || null, menuVerbOf(m)]]));
   assert.deepEqual(got, {
+    // Plan brightside-v1, Story 20.2: Customers → Appointment reminders, Review.
+    'appointment-reminders': ['Customers', 'Review'],
     dataset: [null, 'View'],
     'hello-world': [null, 'Run'],
     'labour-cost': ['Lists', 'Run'],

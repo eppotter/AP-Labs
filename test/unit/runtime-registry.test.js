@@ -290,6 +290,25 @@ test('startup refuses a send mapping that names a field not in write.fields', ()
   ]);
 });
 
+// Story 20.2: write.hold names a field that is never sent and is not the row
+// id; write.preview names only fields.
+test('startup refuses a write.hold that is not a field, is the row id or is sent, and a write.preview field not in write.fields', () => {
+  assert.deepEqual(editLeads((m) => { m.write.hold = 'first'; delete m.write.send.first; m.write.preview = ['first', 'address']; }).problems, []);
+  assert.deepEqual(editLeads((m) => { m.write.hold = 'held'; }).problems, [
+    `${LEADS_FILE}: field "write.hold" names "held", which is not in write.fields`,
+  ]);
+  assert.deepEqual(editLeads((m) => { m.write.hold = 'person_id'; }).problems, [
+    `${LEADS_FILE}: field "write.hold" must not be the row id`,
+    `${LEADS_FILE}: field "write.send.ref" sends "person_id", the write.hold field: a hold reason is shown in the preview, never sent`,
+  ]);
+  assert.deepEqual(editLeads((m) => { m.write.hold = 'first'; }).problems, [
+    `${LEADS_FILE}: field "write.send.first" sends "first", the write.hold field: a hold reason is shown in the preview, never sent`,
+  ]);
+  assert.deepEqual(editLeads((m) => { m.write.preview = ['first', 'score']; }).problems, [
+    `${LEADS_FILE}: field "write.preview" names "score", which is not in write.fields`,
+  ]);
+});
+
 test('startup refuses a list name placeholder that is not {run_date} or a required input with allowed values', () => {
   assert.deepEqual(editLeads((m) => { m.write.list_name = 'leads-{region}-{run_date}'; }).problems, [
     `${LEADS_FILE}: field "write.list_name" uses {region}, which is not a declared input or {run_date}`,

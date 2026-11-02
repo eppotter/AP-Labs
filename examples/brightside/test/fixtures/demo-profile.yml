@@ -1,7 +1,8 @@
 # Test fixture for the demo-flow example test (Story 10.4, issue #161): a copy
 # of the Brightside demo profile's client, resources, users, forbidden columns
 # and routing block (Story 15.5: the routing audience; plan brightside-v1,
-# Story 18.1: Ely and Steven the dispatchers, with the same grants), with fake
+# Story 18.1: Ely and Steven the dispatchers, with the same grants; Story 20.2:
+# both granted APPOINTMENT_EMAILS by name, for Appointment reminders), with fake
 # Slack ids for Ely and Steven. Tests read this, never
 # profiles/brightside/profile.yml. Deleted with the example in a fork.
 schema_version: 1
@@ -25,12 +26,13 @@ resources:
   - { key: ADD_CONTEXT, label: Add context }
   - { key: BUILD_REQUEST, label: Build request }
   - { key: ASK, label: Ask }
+  - { key: APPOINTMENT_EMAILS, label: Appointment emails, admin_grantable: false }
 
 users:
-  - { id: ely, name: Ely Potter, role: admin, identities: { slack: U0FIXTUREELY }, grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS] }
+  - { id: ely, name: Ely Potter, role: admin, identities: { slack: U0FIXTUREELY }, grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS, APPOINTMENT_EMAILS] }
   - { id: marcus, name: Marcus Lee, role: member, identities: { github: mlee-bright }, grants: [VERIFY_SKIP] }
   # Steven holds every grant Ely holds (plan brightside-v1).
-  - { id: steven, name: Steven Auslander, role: admin, identities: { slack: U0FIXTURESTEVEN }, grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS] }
+  - { id: steven, name: Steven Auslander, role: admin, identities: { slack: U0FIXTURESTEVEN }, grants: [TIER3_APPROVE, WIN_BACK, ROUTING_ALL_CREWS, APPOINTMENT_EMAILS] }
 
 # A fake build-request channel id (Story 16.6), shaped like a real one; the
 # fake Slack client is a member only when a test says so.
