@@ -53,14 +53,49 @@ test('the preview lists every row to send with write.preview\'s fields, the held
   assert.match(view.blocks[4].elements[0].text, /Skipped and held rows are never sent/);
 });
 
-test('a list too long for one Slack section shows the first rows that fit and says the rest are in the CSV', () => {
+test('a list too long for one Slack section shows the first rows that fit and says only that the rest are not shown', () => {
   const rows = Array.from({ length: 400 }, (_, i) => ({ id: i + 1, name: `Name ${i + 1}`, day: '2026-10-03', why: null }));
   const view = preview.previewMessage({
     mod: MOD, listName: 'n', rows, skipped: [], token: 'a'.repeat(32), held: [], sending: rows,
   });
   const text = view.blocks[2].text.text;
-  assert.ok(text.length < 3000, `${text.length} characters`);
-  assert.match(text, /^\*What will be sent: the first \d+ of 400\* \(all 400 are in the CSV in your DM with me\):/);
+  assert.ok(text.length <= preview.SECTION_LIMIT, `${text.length} characters`);
+  const m = /^\*What will be sent: the first (\d+) of 400\* \(And (\d+) more, not shown here\.\):/.exec(text);
+  assert.ok(m, text.slice(0, 120));
+  assert.equal(Number(m[1]) + Number(m[2]), 400);
+  assert.ok(!/CSV/.test(text));
+});
+
+test('held rows with many distinct long reasons: the reason lines, the table and the "not shown" lines all fit one section', () => {
+  const held = Array.from({ length: 300 }, (_, i) => ({
+    id: i + 1, name: `Name ${i + 1}`, day: '2026-10-03', why: `Held: reason number ${i + 1} ${'x'.repeat(140)}`,
+  }));
+  const view = preview.nothingToSendMessage({
+    mod: MOD, listName: 'n', rows: held, skipped: held.map(() => ({ reason: preview.HELD })), held,
+  });
+  const text = view.blocks[1].text.text;
+  assert.ok(text.length <= preview.SECTION_LIMIT, `${text.length} characters`);
+  assert.ok(text.startsWith('*Held, not sent: 300.*\n• Held: reason number 1 '));
+  const shownReasons = text.split('\n').filter((l) => l.startsWith('• Held:')).length;
+  assert.ok(shownReasons > 0 && shownReasons < 300);
+  assert.match(text, new RegExp(`• And ${300 - shownReasons} more reasons, not shown here\\.`));
+  assert.match(text, /\nAnd \d+ more, not shown here\.$/);
+  assert.ok(!/CSV/.test(text));
+});
+
+test('renderedOf: the plan\'s texts in the order of the rows to send, or a problem when they are not exactly one per row, malformed or would close their code block', () => {
+  const sending = [{ id: 1 }, { id: 2 }];
+  const plan = (emails) => ({ wouldWrite: { emails } });
+  const e = (ref, body = `Body ${ref}`) => ({ ref: String(ref), subject: `S${ref}`, body });
+  assert.equal(preview.renderedOf(MOD, { wouldWrite: { send: 2 } }, sending), null, 'no texts in the plan');
+  assert.deepEqual(preview.renderedOf(MOD, plan([e(2), e(1)]), sending), { texts: [{ subject: 'S1', body: 'Body 1' }, { subject: 'S2', body: 'Body 2' }] });
+  assert.ok(preview.renderedOf(MOD, plan([e(1)]), sending).problem, 'one missing');
+  assert.ok(preview.renderedOf(MOD, plan([e(1), e(3)]), sending).problem, 'another row');
+  assert.ok(preview.renderedOf(MOD, plan([e(1), e(1)]), sending).problem, 'twice');
+  assert.ok(preview.renderedOf(MOD, plan([e(1), { ref: '2', subject: 'S' }]), sending).problem, 'no body');
+  assert.ok(preview.renderedOf(MOD, plan([e(1), e(2, 'a ``` b')]), sending).problem, 'closes the block');
+  assert.ok(preview.renderedOf(MOD, plan([e(1), e(2, 'y'.repeat(3000))]), sending).problem, 'too long');
+  assert.ok(preview.renderedOf(MOD, plan({}), sending).problem, 'not a list');
 });
 
 test('without write.preview the preview keeps its sample of 5 rows', () => {

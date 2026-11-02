@@ -21,8 +21,10 @@
 //             run date), sets aside the held rows (write.hold, Story 20.2:
 //             listed with their reason, never given to the connector), runs
 //             the write's dry-run plan on the rest so rows the tool would
-//             refuse show as skipped, stores the approval entry under a fresh
-//             token (./entry) and shows the preview in the module's view.
+//             refuse show as skipped (and, when the plan renders it, each
+//             item's exact text: GRD-010), keys the push by the rows that
+//             will be sent, stores the approval entry under a fresh token
+//             (./entry) and shows the preview in the module's view.
 //   Approve   the push (Story 10.3, ./push): the token (expired, unknown,
 //             cancelled and another person's all get PreviewInvalid; a used
 //             one tells only its approver "already running" or "already
@@ -188,17 +190,19 @@ function createApprovalWrite({
     }
     const rows = entry.copyRows(record.rows);
     const listName = preview.listNameOf(mod, record);
-    const idempotencyKey = entry.idempotencyKey(listName, rows.map((r) => r[mod.row_id]));
     // Held rows (write.hold, Story 20.2) never reach the connector, not even
     // its dry run: they are listed in the preview and kept out of the push.
     const held = rows.filter((r) => preview.isHeld(mod, r));
     const candidates = held.length ? rows.filter((r) => !preview.isHeld(mod, r)) : rows;
     let planned = null;
     if (candidates.length) {
+      // The dry run's key: the rows offered to the connector. The entry's
+      // key is set below from the rows that will actually be sent.
+      const planKey = entry.idempotencyKey(listName, candidates.map((r) => r[mod.row_id]));
       try {
         // A dry run: the connector plans and sends nothing (AD-15).
         planned = await connector.write[mod.write.operation]({
-          name: listName, contacts: sendItems(mod, candidates), idempotencyKey, listKey: idempotencyKey, dryRun: true,
+          name: listName, contacts: sendItems(mod, candidates), idempotencyKey: planKey, listKey: planKey, dryRun: true,
         });
       } catch (err) {
         const words = messageFor(err, { admin });
@@ -225,15 +229,29 @@ function createApprovalWrite({
         mod, listName, rows, skipped, held,
       }));
     }
+    const skippedSet = new Set(skippedIds);
+    const sending = rows.filter((r) => !skippedSet.has(String(r[mod.row_id])));
+    // The connector's rendered text, when its plan gives one (Story 20.2,
+    // GRD-010: the approver sees the exact text). It must name exactly the
+    // rows that will be sent, or the preview refuses: nothing is approved
+    // that the person couldn't read.
+    const texts = preview.renderedOf(mod, planned, sending);
+    if (texts && texts.problem) {
+      log.error('push preview refused: the rendered text does not match the rows to send', { module: mod.id, problem: texts.problem });
+      return show(messageFor(new ConfigFault({ admin })));
+    }
+    // The key covers only the rows that will be sent (Story 20.2 review): a
+    // held or skipped row that can go later the same day is a new push, not
+    // a replay of this one.
+    const idempotencyKey = entry.idempotencyKey(listName, sending.map((r) => r[mod.row_id]));
     const token = entry.create(store, {
       person, module: mod.id, runId: record.runId, destination: mod.write.destination, listName, rows, skipped, skippedIds, idempotencyKey,
     });
     log.info('push previewed', {
       module: mod.id, rows: rows.length, skipped: skipped.length, held: held.length, token: true,
     });
-    const sending = rows.filter((r) => !skippedIds.includes(String(r[mod.row_id])));
     return show(preview.previewMessage({
-      mod, listName, rows, skipped, token, held, sending,
+      mod, listName, rows, skipped, token, held, sending, texts: texts ? texts.texts : null,
     }));
   }
 

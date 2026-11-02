@@ -13,14 +13,14 @@
       "name": "day",
       "label": "Day",
       "type": "date",
-      "description": "A day after the data's as-of date: the booked visits start the day after it.",
+      "description": "Pick a day after the data's as-of date: booked visits start the day after it.",
       "required": true
     },
     {
       "name": "zone_or_crew",
       "label": "Zone or crew",
       "type": "string",
-      "description": "A zone (the customers' home zone) or one crew.",
+      "description": "A zone means the customers' home zone; a crew means that crew's stops.",
       "enum": [
         "north", "south", "east", "west", "central",
         "North crew A", "North crew B", "North crew C",

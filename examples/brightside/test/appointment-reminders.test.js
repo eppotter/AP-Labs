@@ -36,6 +36,7 @@ const { createStore } = require('../../../kit/runtime/store');
 const approvalWrite = require('../../../kit/runtime/archetypes/approval-write');
 const { testLog } = require('../../../kit/runtime/sdk');
 const { FakeSlackApp } = require('../../../test/fixtures/fake-slack');
+const provenance = require('../../../kit/runtime/slack/provenance');
 const email = require('../app/connectors/email/connector.js');
 const templates = require('../app/connectors/email/templates.js');
 
@@ -163,6 +164,25 @@ function fieldsOf(row) {
   };
 }
 
+// The preview's email texts, as a person reads them: each "Email i of n"
+// section's code block, with Slack's &amp; &lt; &gt; read back.
+function emailTexts(view) {
+  return view.blocks
+    .filter((b) => b.type === 'section' && /^\*Email \d+ of \d+, exactly as it will be sent:\*\n```\n/.test(b.text.text))
+    .map((b) => b.text.text.split('```\n')[1].replace(/\n```$/, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'));
+}
+
+// Saves a run record of rows for person (as a run of the module would) and
+// presses its Push: the preview view. Lets a test change a row between runs
+// (a hold lifted, an address the tool refuses).
+async function pushRows(ctx, rows, person = ELY) {
+  const record = provenance.buildRecord({
+    person, module: reminders.id, parameters: { day: DAY, zone_or_crew: 'east' }, sql: reminders.sql, ranAt: new Date(), rowIds: rows.map((r) => r.scheduled_visit_id), rows,
+  });
+  provenance.save(ctx.store, record);
+  return click(ctx, 'approval-write:push', record.runId, person);
+}
+
 // A code block's table rows (header dropped), each split on the column gap.
 function tableRows(sectionText) {
   const block = sectionText.split('```')[1];
@@ -217,6 +237,10 @@ test('the preview lists the 7 visits it will email and the 6 held for the absenc
   const sendText = view.blocks[3].text.text;
   assert.ok(sendText.startsWith('*What will be sent (7):*\n'), sendText);
   assert.deepEqual(tableRows(sendText), sending.map(listed));
+  // GRD-010: each email's exact text, one section each, in the order sent.
+  const shownTexts = emailTexts(view);
+  assert.equal(shownTexts.length, 7);
+  assert.ok(view.blocks.length <= 100);
   assert.ok(!/@|invalid/.test(textOf(view)), 'no address in the preview');
 
   const done = await click(ctx, 'approval-write:approve', token);
@@ -232,6 +256,7 @@ test('the preview lists the 7 visits it will email and the 6 held for the absenc
     assert.equal(e.payload.subject, want.subject);
     assert.equal(e.payload.body, want.body);
     assert.equal(e.at, new Date(NOW).toISOString());
+    assert.equal(shownTexts[i], `Subject: ${e.payload.subject}\n\n${e.payload.body}`, `email ${i + 1}: the text shown is the text sent`);
   }
   assert.equal(sent[0].payload.body.split('\n')[0], `Hi ${sending[0].first_name},`);
   assert.match(sent[0].payload.subject, /^Reminder: your (Deep|Standard|Move-out) clean on Saturday, October 3, 2026$/);
@@ -322,5 +347,53 @@ test('a day on or before as_of has no visits: no rows, nothing to push', async (
   const ctx = await boot(t);
   assert.equal(await preview(ctx, { day: '2026-09-30' }), null);
   assert.match(head(ctx.result), /no rows matched these values/);
+  assert.equal(emails(ctx.outbox).length, 0);
+});
+
+test('a visit held at the first push that is no longer held later the same day is sent then: the push key covers only the visits sent (review P2)', async (t) => {
+  const ctx = await boot(t);
+  const view1 = await preview(ctx);
+  const first = ctx.store.get('approval', tokenOf(view1));
+  await click(ctx, 'approval-write:approve', tokenOf(view1));
+  assert.equal(emails(ctx.outbox).length, 7);
+  // The same 13 visits, run again after the absence was lifted: none held.
+  const lifted = first.rows.map((r) => ({ ...r, held: null }));
+  const view = await pushRows(ctx, lifted);
+  assert.equal(view.blocks[1].text.text, `*List name:* ${LIST}\n*Rows to send:* 13 of 13 rows\n*Skipped:* none`);
+  assert.equal(emailTexts(view).length, 13);
+  const second = ctx.store.get('approval', tokenOf(view));
+  assert.notEqual(second.idempotencyKey, first.idempotencyKey);
+  const done = await click(ctx, 'approval-write:approve', tokenOf(view));
+  assert.equal(head(done), `*Pushed 6 to email tool* (7 were already there), skipped 0, failed 0. List: ${LIST}.`);
+  assert.deepEqual(emails(ctx.outbox).map((e) => e.payload.external_ref).sort(), first.rows.map((r) => String(r.scheduled_visit_id)).sort(), 'each visit once');
+});
+
+test('held visits and a visit the email tool refuses in the same run: both skipped with their reasons, the rest sent with the text shown', async (t) => {
+  const ctx = await boot(t);
+  const { rows } = ctx.store.get('approval', tokenOf(await preview(ctx)));
+  const sending = rows.filter((r) => !r.held);
+  const refusedId = sending[1].scheduled_visit_id;
+  const changed = rows.map((r) => (r.scheduled_visit_id === refusedId ? { ...r, email: 'someone@example.com' } : r));
+  const view = await pushRows(ctx, changed);
+  assert.equal(view.blocks[1].text.text, `*List name:* ${LIST}\n*Rows to send:* 6 of 13 rows\n*Skipped:* 7: held (6), address refused (1)`);
+  assert.ok(view.blocks[2].text.text.startsWith(`*Held, not sent: 6.*\n• ${HELD_TEXT} (6)\n`));
+  const going = sending.filter((r) => r.scheduled_visit_id !== refusedId);
+  assert.deepEqual(tableRows(view.blocks[3].text.text), going.map((r) => [r.first_name, r.visit_date, r.arrival_window, r.crew_name]));
+  const shown = emailTexts(view);
+  assert.equal(shown.length, 6);
+  const done = await click(ctx, 'approval-write:approve', tokenOf(view));
+  assert.equal(head(done), `*Pushed 6 to email tool*, skipped 7, failed 0. List: ${LIST}.`);
+  assert.match(textOf(done), /Skipped rows were never sent: held \(6\), address refused \(1\)\./);
+  const sent = emails(ctx.outbox);
+  assert.deepEqual(sent.map((e) => e.payload.external_ref), going.map((r) => String(r.scheduled_visit_id)));
+  assert.deepEqual(sent.map((e) => `Subject: ${e.payload.subject}\n\n${e.payload.body}`), shown, 'the text shown is the text sent');
+});
+
+test('a crew short-handed but not out under GRD-008 (West crew B on 2026-10-23: one member absent, its lead present): its visits are held with the short-handed reason', async (t) => {
+  const ctx = await boot(t);
+  const view = await preview(ctx, { day: '2026-10-23', zoneOrCrew: 'West crew B' });
+  const text = 'Held: a member of West crew B is absent that day; the crew works short-handed.';
+  assert.equal(head(view), '*Nothing to push to email tool.* All 5 rows would be skipped: held (5).');
+  assert.ok(view.blocks[1].text.text.startsWith(`*Held, not sent: 5.*\n• ${text} (5)\n`), view.blocks[1].text.text);
   assert.equal(emails(ctx.outbox).length, 0);
 });

@@ -200,8 +200,10 @@ test('the approval entry: the person, the run, the list, its own copy of the row
     rows: record.rows,
     skipped: ['no address'],
     skippedIds: ['2'],
-    idempotencyKey: crypto.createHash('sha256').update(JSON.stringify([listName, ['1', '10', '2', '3', '4', '5', '6']])).digest('hex'),
-    originalKey: crypto.createHash('sha256').update(JSON.stringify([listName, ['1', '10', '2', '3', '4', '5', '6']])).digest('hex'),
+    // Story 20.2 review: the key covers only the rows that will be sent (row
+    // 2 is skipped, no address), so a skipped row that can go later is a new push.
+    idempotencyKey: crypto.createHash('sha256').update(JSON.stringify([listName, ['1', '10', '3', '4', '5', '6']])).digest('hex'),
+    originalKey: crypto.createHash('sha256').update(JSON.stringify([listName, ['1', '10', '3', '4', '5', '6']])).digest('hex'),
     retry: false,
   });
   assert.notEqual(stored.rows, record.rows, 'a copy, not the record\'s array');
