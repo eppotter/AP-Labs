@@ -151,8 +151,10 @@ const fillButtons = (view) => buttons(view).filter((b) => /^routing-map:fill-[1-
 
 test('the schema takes screen cancellation, crew-out and add-stop; the hub hears visit, fill, again and out; each screen takes only its own actions', () => {
   for (const id of ['visit', 'fill', 'again', 'out']) assert.ok(LISTEN_PATTERN.test(`routing-map:${id}`), id);
-  assert.deepEqual([...SCREEN_ACTIONS.cancellation].sort(), ['again', 'change', 'crew', 'day', 'fill', 'move', 'optimize', 'reset', 'show', 'visit']);
-  assert.deepEqual([...SCREEN_ACTIONS['crew-out']].sort(), ['change', 'crew', 'day', 'out']);
+  // notify: Notify affected customers (Story 20.3), on every route skill's result.
+  assert.deepEqual([...SCREEN_ACTIONS.cancellation].sort(), ['again', 'change', 'crew', 'day', 'fill', 'move', 'notify', 'optimize', 'reset', 'show', 'visit']);
+  assert.deepEqual([...SCREEN_ACTIONS['crew-out']].sort(), ['change', 'crew', 'day', 'notify', 'out']);
+  assert.ok(!SCREEN_ACTIONS.views.has('notify'), 'Routing\'s views are not a route skill');
   for (const a of ['visit', 'fill', 'again', 'out']) {
     assert.ok(!SCREEN_ACTIONS.views.has(a), `views refuses ${a}`);
     assert.ok(!SCREEN_ACTIONS['route-editor'].has(a), `the editor refuses ${a}`);

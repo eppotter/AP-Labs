@@ -214,6 +214,21 @@
 // any read. The ack carries the options (handle.js handleOptions): anything
 // refused, failing or slower than 2.5 seconds answers none.
 //
+// Change notices from a route skill (Story 20.3, plan brightside-v1 D14,
+// D14a): a route skill's result (Plan a route, Customer cancellation's Fill
+// with #n, Crew out, Add a stop) shows "Notify affected customers (N)" only
+// to a person who may open a route-sourced approval-write module on the same
+// hub (write.source "route": its grant and environment, as the menu decides)
+// and only when N > 0. Its click is a routing-map click (the session's own
+// changes, never the click's); the hub then puts the changed visits in a
+// route record (approval-write/route-source: bound to the person and the
+// route session, 30 minutes), pushes a view on top of the route ("Loading…"
+// inside the trigger's life) and shows the module's preview there, which
+// consumes the record. Back (the view's close button) returns to the route,
+// which is untouched; Approve, Cancel and Retry are the approval-write
+// buttons in that view. A route-sourced module never opens a form: from the
+// menu it says where change notices start, and every form step refuses it.
+//
 // What each hub sees (plan brightside-v0, D1, Story 16.1): registerHubs gets
 // forHub, the factory of hub views (./hub-view), never the app-wide runner
 // or AI service. Each hub's view is taken once, at setup. A handler's
@@ -292,7 +307,7 @@ const {
   NotSetUp, AccessDenied, ConfigFault, DataUnavailable,
 } = require('../errors');
 const {
-  messageFor, welcomeText, feedbackText, joinWelcomeText, readFileAiText,
+  messageFor, welcomeText, feedbackText, joinWelcomeText, readFileAiText, NOTICE_WORDS,
 } = require('../messages');
 const {
   handle, handleView, handleOptions, afterAck, PLAIN_ERROR,
@@ -318,7 +333,7 @@ const {
   PROVENANCE_ACTION, PROVENANCE_BACK_ACTION, PROVENANCE_PATTERN, keepingResult,
 } = require('../archetypes/scoped-pull');
 const {
-  createApprovalWrite, pushHooks, verbOf: writeVerbOf, ACTION_PATTERN: WRITE_ACTION,
+  createApprovalWrite, pushHooks, verbOf: writeVerbOf, ACTION_PATTERN: WRITE_ACTION, routeSource,
 } = require('../archetypes/approval-write');
 const { QUERY_ARCHETYPES } = require('../registry');
 const {
@@ -574,7 +589,21 @@ function registerHubs(app, {
     const refused = refusalFor(person, mod, actionId);
     return refused ? { refusal: refused } : { mod };
   };
-  const resolveForm = (person, actionId) => resolveModule(person, actionId, QUERY_ARCHETYPES);
+  // A form step never acts on a route-sourced module (Story 20.3): its rows
+  // come only from a route record.
+  const resolveForm = (person, actionId) => {
+    const resolve = resolveModule(person, actionId, QUERY_ARCHETYPES);
+    return (moduleId) => {
+      const mod = registry.module(moduleId);
+      if (mod && routeSource.isRouteSourced(mod)) {
+        log.warn('hub action refused', {
+          action_id: actionId, reason: 'route-sourced', user: person.user ? person.user.id : null, env,
+        });
+        return { refusal: NOT_AVAILABLE };
+      }
+      return resolve(moduleId);
+    };
+  };
   const WRITES = new Set(['approval-write']);
   const ADD_CONTEXT = new Set(['add-context']);
 
@@ -836,6 +865,53 @@ function registerHubs(app, {
     });
   };
 
+  // Change notices (Story 20.3). The hub's route-sourced modules shown in
+  // this environment, in folder order.
+  const noticesOf = (hubId) => registry.entries(hubId).filter((m) => routeSource.isRouteSourced(m) && isVisible(m, env));
+  const mayNotify = (person, hubId) => noticesOf(hubId).some((m) => decide(person, m) === 'allowed');
+  // The notices preview, pushed on top of the route the click came from.
+  const openNotices = async ({
+    body, client, person, hubId, skill, session, visits, held,
+  }) => {
+    const candidates = noticesOf(hubId);
+    const mod = candidates.find((m) => decide(person, m) === 'allowed') || candidates[0] || null;
+    const view = pushedView({
+      client, triggerId: body.trigger_id, title: mod ? mod.label : 'Not available', hubId,
+    });
+    const show = (m) => view.show(screened('change-notices', m), { replace: true });
+    try {
+      if (!mod) {
+        log.warn('hub action refused', { action_id: 'routing-map:notify', reason: 'no change notices on this hub', env });
+        await show(NOT_AVAILABLE);
+        return;
+      }
+      const refused = refusalFor(person, mod, 'routing-map:notify');
+      if (refused) {
+        await show(refused);
+        return;
+      }
+      if (!routeSource.fits({ visits, held }).ok) {
+        log.info('route notices refused', { module: mod.id, reason: 'too many' });
+        await show(NOTICE_WORDS.tooMany(routeSource.MAX_VISITS));
+        return;
+      }
+      await view.loading();
+      const token = routeSource.put(store, {
+        person: person.id, session, module: mod.id, skill, visits, held,
+      });
+      await approvalWrite.previewRoute({
+        token, person: person.id, session, resolve: resolveModule(person, 'routing-map:notify', WRITES), show, data: viewOf(hubId).data,
+      });
+    } catch (err) {
+      log.error('handler failed', { handler: 'hub:notices', err });
+      try {
+        await show(PLAIN_ERROR);
+      } catch (showErr) {
+        log.error('could not tell the person about a failure', { handler: 'hub:notices', err: showErr });
+      }
+    }
+  };
+
   // Open on a routing-map module (Story 15.4): "Loading…" is pushed first,
   // inside the trigger's life; the archetype draws after.
   const openRoutingMap = async (mod, target, person) => {
@@ -854,6 +930,7 @@ function registerHubs(app, {
       person,
       viewId,
       resolve: resolveModule(person, `${mod.id}:open`, ROUTING_MAPS),
+      notices: { allowed: (m) => mayNotify(person, m.hub) },
       show: (m) => showPlain(owner, render, m),
       showMap: (message, { current, mod: drawn = mod } = {}) => showMap({
         mod: drawn, owner, message, show: render, current,
@@ -1277,6 +1354,12 @@ function registerHubs(app, {
         await target.reply(target.modal ? { ...askTool.form({ hubId: mod.hub, moduleId: mod.id }), ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
         return;
       }
+      if (routeSource.isRouteSourced(mod)) {
+        // Change notices start from a route, never from a form (Story 20.3).
+        log.info('module dispatched', { module: mod.id, hub: mod.hub });
+        await target.reply(NOTICE_WORDS.fromMenu());
+        return;
+      }
       if (QUERY_ARCHETYPES.has(mod.archetype)) {
         log.info('module dispatched', { module: mod.id, hub: mod.hub });
         await target.reply(target.modal ? { ...pullOfHub(mod.hub).open(mod, user.id), ephemeralFallback: FORM_NEEDS_WINDOW } : FORM_NEEDS_WINDOW);
@@ -1416,6 +1499,12 @@ function registerHubs(app, {
         from,
         person,
         resolve: resolveModule(person, action && action.action_id, ROUTING_MAPS),
+        notices: {
+          allowed: (m) => mayNotify(person, m.hub),
+          open: ({ mod: m, ...changeSet }) => openNotices({
+            body, client, person, hubId: m.hub, ...changeSet,
+          }),
+        },
         show,
         showMap: (message, { current, mod }) => showMap({
           mod, owner, message, show: render, current,

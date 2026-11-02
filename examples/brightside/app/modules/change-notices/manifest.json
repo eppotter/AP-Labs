@@ -1,0 +1,54 @@
+{
+  "id": "change-notices",
+  "hub": "brightside",
+  "label": "Change notices",
+  "description": "Email each customer whose visit a route suggestion changes, after you check and approve each email. Starts from a route's Notify affected customers.",
+  "resource": "APPOINTMENT_EMAILS",
+  "archetype": "approval-write",
+  "verb": "Review",
+  "group": "Customers",
+  "environments": ["dev"],
+  "parameters": [
+    {
+      "name": "visit_ids",
+      "label": "Visits",
+      "type": "string",
+      "description": "Set by the engine from the route, never typed.",
+      "pattern": "[1-9][0-9]{0,9}(,[1-9][0-9]{0,9}){0,49}",
+      "max_length": 500,
+      "required": true
+    }
+  ],
+  "query": "change-notices.sql",
+  "row_id": "scheduled_visit_id",
+  "write": {
+    "source": "route",
+    "connector": "email",
+    "operation": "sendEmails",
+    "destination": "email tool",
+    "fields": [
+      "scheduled_visit_id", "email", "first_name", "kind", "package_name",
+      "before_date", "before_window", "before_crew_id", "before_crew_name",
+      "after_date", "after_window", "after_crew_id", "after_crew_name", "change_reason", "held"
+    ],
+    "send": {
+      "external_ref": "scheduled_visit_id",
+      "email": "email",
+      "first_name": "first_name",
+      "kind": "kind",
+      "visit_date": "after_date",
+      "window": "after_window",
+      "crew_id": "after_crew_id",
+      "crew_name": "after_crew_name",
+      "package_name": "package_name",
+      "before_date": "before_date",
+      "before_window": "before_window",
+      "before_crew_id": "before_crew_id",
+      "before_crew_name": "before_crew_name",
+      "reason": "change_reason"
+    },
+    "hold": "held",
+    "preview": ["first_name", "before_date", "before_window", "after_date", "after_window", "after_crew_name"],
+    "list_name": "change-notices-{run_date}"
+  }
+}

@@ -25,10 +25,15 @@ test('the example\'s verbs and groups are D5\'s and D10\'s', () => {
   assert.deepEqual(got, {
     // Plan brightside-v1, Story 20.2: Customers → Appointment reminders, Review.
     'appointment-reminders': ['Customers', 'Review'],
+    // Story 20.3: Customers → Change notices, and the route skills' copies on /brightside.
+    'change-notices': ['Customers', 'Review'],
     dataset: [null, 'View'],
     'hello-world': [null, 'Run'],
     'labour-cost': ['Lists', 'Run'],
     outbox: [null, 'View'],
+    'route-add-stop': ['Routing', 'Run'],
+    'route-cancellation': ['Routing', 'Run'],
+    'route-crew-out': ['Routing', 'Run'],
     'route-planner': ['Routing', 'View'],
     routing: ['Routing', 'View'],
     'unpaid-invoices': ['Lists', 'Run'],

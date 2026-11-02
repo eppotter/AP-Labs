@@ -51,7 +51,7 @@
 
 const { RoutingFault, ConfigFault } = require('../../errors');
 const {
-  messageFor, escapeText, MAP_WORDS, ROUTE_WORDS, WHATIF_WORDS,
+  messageFor, escapeText, MAP_WORDS, ROUTE_WORDS, WHATIF_WORDS, NOTICE_WORDS,
 } = require('../../messages');
 const { textBlocks } = require('../../slack/format');
 const audience = require('./audience');
@@ -188,6 +188,7 @@ function createWhatIf({
     s.visits = null;
     s.picked = null;
     s.fills = null;
+    s.changes = null;
   }
 
   async function open({ mod, s, show }) {
@@ -400,17 +401,24 @@ function createWhatIf({
     s.stage = 'edit';
     log.info('routing map click', { module: mod.id, action: 'fill', view: mod.screen });
     return editor.showFill({
-      mod, s, show, showMap, showList, recheck, fill: { cancel: s.picked.stopId, add: chosen.stopId, from: chosen.plannedDate },
+      mod, s, show, showMap, showList, recheck, fill: {
+        cancel: s.picked.stopId, add: chosen.stopId, from: chosen.plannedDate, fromCrew: chosen.fromCrew,
+      },
     });
   }
 
   // --- Crew out -----------------------------------------------------------------------
 
-  function outHead(s, crewId, wasOut, seq) {
+  // plan: the drawn Route change (null before it is known): its changes
+  // give "Notify affected customers (N)" (Story 20.3), offered only to a
+  // dispatcher who may open the hub's change notices, when N > 0.
+  function outHead(s, crewId, wasOut, seq, plan = null) {
     const words = wasOut ? WHATIF_WORDS.alreadyOut : WHATIF_WORDS.out;
+    const n = plan && plan.changes && s.canNotify === true && s.scope && s.scope.all === true ? plan.changes.visits.length : 0;
+    const notify = n > 0 ? [button('notify', NOTICE_WORDS.button(n), `${seq}:notify`, 'Email the customers whose visit this changes')] : [];
     return [
       { type: 'section', block_id: `routing-map:whatif:${seq}`, text: { type: 'mrkdwn', text: words(crewWords(s, crewId), dayWords(s.picks.day)) } },
-      { type: 'actions', block_id: `routing-map:outact:${seq}`, elements: [changeButton()] },
+      { type: 'actions', block_id: `routing-map:outact:${seq}`, elements: [...notify, changeButton()] },
     ];
   }
 
@@ -451,7 +459,7 @@ function createWhatIf({
           return lead ? { kind: 'crew', id: scope.crewId } : { kind: 'zone', id: crew.zoneId };
         },
         missing: () => ROUTE_WORDS.notWorking(crewWords(s, crewId), dayWords(day)),
-        head: ({ got, seq }) => outHead(s, crewId, Boolean(got && got.wasOut === true), seq),
+        head: ({ plan, got, seq }) => outHead(s, crewId, Boolean(got && got.wasOut === true), seq, plan),
       },
     });
   }

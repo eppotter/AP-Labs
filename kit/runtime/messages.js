@@ -405,6 +405,25 @@ const PUSH_WORDS = Object.freeze({
   empty: "This list has no rows, so there's nothing to push.",
 });
 
+// Change notices from a route skill (Story 20.3, plan brightside-v1 D14,
+// D14a): the route result's button, the notices preview's own lines, and why
+// a visit the route changed is listed but not emailed. Fixed text; n is the
+// engine's count.
+const NOTICE_WORDS = Object.freeze({
+  button: (n) => `Notify affected customers (${num(n)})`,
+  caveat: () => 'These routes are suggestions: nothing is saved in the schedule. Sending tells customers their visit changed, so change the booking too.',
+  back: () => 'Press *Back* to return to the route.',
+  expired: () => 'These changes have expired, so nothing was sent. Press *Back* to return to the route, then press *Notify affected customers* again.',
+  tooMany: (max) => `This route changes more visits than one notice can cover (at most ${num(max)}), so nothing was sent. Press *Back* to return to the route.`,
+  fromMenu: () => 'Change notices start from a route: open a Routing tool, and when its suggestion changes a booked visit\'s day, arrival window or crew, press *Notify affected customers* on the result. Nothing was sent.',
+  cancelled: (dest) => `*Change notices cancelled.* Nothing was sent to ${dest}. Press *Back* to return to the route.`,
+  // Why a visit is listed in the preview but never emailed.
+  rebook: () => 'To rebook: no crew can take it that day. Call the customer; no email is sent.',
+  crossZone: () => 'Recommended for another zone, not placed. Decide first; no email is sent.',
+  notChanged: () => 'Not changed: the booking already has this day, window and crew.',
+  notBooked: () => 'Not a booked visit any more (cancelled or gone), so no email is sent.',
+});
+
 // Build request's own words (plan brightside-v0, D11, Story 16.6). Fixed
 // text, plain and each with a next step; admin is Slack mrkdwn
 // (access.adminContact), maxChars and minutes are the engine's numbers.
@@ -552,5 +571,5 @@ function messageFor(err, { admin = 'your admin' } = {}) {
 
 module.exports = {
   messageFor, escapeText, escapeName, welcomeText, feedbackText, joinWelcomeText, pushResultText, FILE_WORDS, READ_FILE_AI_WORDS, readFileAiText, READ_WORDS, MAP_WORDS, ROUTE_WORDS, WHATIF_WORDS, ADD_WORDS,
-  BUILD_REQUEST_WORDS, ASK_WORDS, REQUEST_A_TOOL, WHY_WORDS,
+  BUILD_REQUEST_WORDS, ASK_WORDS, REQUEST_A_TOOL, WHY_WORDS, NOTICE_WORDS,
 };

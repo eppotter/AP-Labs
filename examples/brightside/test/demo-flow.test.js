@@ -232,13 +232,19 @@ async function demo(t, { llmOff }) {
   const entries = (view) => view.blocks.filter((b) => b.accessory && /:(open|why)$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id.replace(/:(open|why)$/, ''));
   // routing is the Routing map (Story 15.5) and route-planner Plan a route
   // (Story 15.15), both in dev and prod since Story 15.6, on the same resource: Ely holds ROUTING_ALL_CREWS by name.
-  // Appointment reminders (Story 20.2): Ely holds APPOINTMENT_EMAILS by name.
-  assert.deepEqual(entries(menuArgs.view).sort(), ['appointment-reminders', 'dataset', 'hello-world', 'labour-cost', 'outbox', 'route-planner', 'routing', 'unpaid-invoices', 'win-back']);
+  // Appointment reminders (Story 20.2) and Change notices (Story 20.3): Ely
+  // holds APPOINTMENT_EMAILS by name. Customer cancellation, Crew out and Add
+  // a stop: the route skills' dev-only copies on /brightside (Story 20.3).
+  assert.deepEqual(entries(menuArgs.view).sort(), [
+    'appointment-reminders', 'change-notices', 'dataset', 'hello-world', 'labour-cost', 'outbox',
+    'route-add-stop', 'route-cancellation', 'route-crew-out', 'route-planner', 'routing', 'unpaid-invoices', 'win-back',
+  ]);
   // Plan a route can't open in this boot (its editor is unready: the
   // dispatcher refuses it), so its status is waiting for map setup and its
-  // button is Why? (plan hub-status-menu, D7).
+  // button is Why? (plan hub-status-menu, D7). So do Add a stop and Customer
+  // cancellation, which need the Office too (Story 20.3); Crew out doesn't.
   const waiting = menuArgs.view.blocks.filter((b) => b.accessory && /:why$/.test(b.accessory.action_id)).map((b) => b.accessory.action_id);
-  assert.deepEqual(waiting, ['route-planner:why']);
+  assert.deepEqual(waiting, ['route-add-stop:why', 'route-cancellation:why', 'route-planner:why']);
   ctx.menu = { id: 'V1', type: 'modal', private_metadata: menuArgs.view.private_metadata, title: menuArgs.view.title };
   // Someone the profile doesn't know sees only the open-access entries.
   await app.dispatchCommand('/brightside', { user_id: 'U0NOTINPROFILE' });

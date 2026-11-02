@@ -169,7 +169,8 @@ async function place(ctx, opts = {}) {
 test('the hub hears add, client, length, window, place, back and remove; Add a stop takes the editor\'s actions and its own, no other screen takes them', () => {
   for (const id of ['add', 'client', 'length', 'window', 'place', 'back', 'remove']) assert.ok(LISTEN_PATTERN.test(`routing-map:${id}`), id);
   assert.equal(SEARCH_ACTION, 'routing-map:client');
-  assert.deepEqual([...SCREEN_ACTIONS['add-stop']].sort(), ['add', 'back', 'change', 'client', 'crew', 'day', 'length', 'move', 'optimize', 'place', 'remove', 'reset', 'show', 'window']);
+  // notify: Notify affected customers (Story 20.3), on every route skill's result.
+  assert.deepEqual([...SCREEN_ACTIONS['add-stop']].sort(), ['add', 'back', 'change', 'client', 'crew', 'day', 'length', 'move', 'notify', 'optimize', 'place', 'remove', 'reset', 'show', 'window']);
   for (const screen of ['views', 'route-editor', 'cancellation', 'crew-out']) {
     for (const a of ['add', 'client', 'length', 'window', 'place', 'back', 'remove']) assert.ok(!SCREEN_ACTIONS[screen].has(a), `${screen} refuses ${a}`);
   }

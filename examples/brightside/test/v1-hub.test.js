@@ -163,9 +163,15 @@ test('the v1 folders are D5\'s: five route skills (dev only, ROUTING_ALL_CREWS, 
 
 test('gate item 5: no v1 route skill runs in production, and the /brightside route modules are untouched', () => {
   for (const id of ROUTES) assert.deepEqual(registry.module(id).environments, ['dev'], id);
+  // Story 20.3 adds Change notices and the route skills' copies to
+  // /brightside, each dev only (gate item 5: copies never inherit production).
   assert.deepEqual(registry.entries('brightside').map((m) => m.id), [
-    'appointment-reminders', 'dataset', 'hello-world', 'labour-cost', 'outbox', 'route-planner', 'routing', 'unpaid-invoices', 'win-back',
+    'appointment-reminders', 'change-notices', 'dataset', 'hello-world', 'labour-cost', 'outbox',
+    'route-add-stop', 'route-cancellation', 'route-crew-out', 'route-planner', 'routing', 'unpaid-invoices', 'win-back',
   ]);
+  for (const id of ['change-notices', 'route-add-stop', 'route-cancellation', 'route-crew-out']) {
+    assert.deepEqual(registry.module(id).environments, ['dev'], id);
+  }
   assert.deepEqual(registry.entries('brightside-v0').map((m) => m.id), ['v0-add-context', 'v0-ask', 'v0-build-request', 'v0-data-sources']);
 });
 
@@ -240,16 +246,22 @@ test('/brightside-v1 in production: the route skills are hidden (gate item 5); A
 // file and folders taken out, on main at 57a5e62): the v1 hub changes neither.
 const BRIGHTSIDE_MENU = [
   ['section', 'strip:knows', 'Knows: 1 source', null],
-  ['context', 'strip:progress', 'Setup 2 of 4 · 8 of 9 tools working', null],
+  ['context', 'strip:progress', 'Setup 2 of 4 · 10 of 13 tools working', null],
   ['section', 'welcome', 'Welcome to the Brightside bot: your day-to-day tools, and only the ones you\'re set up for.', null],
   // Story 20.2 (plan brightside-v1, D14): Customers → Appointment reminders.
+  // Story 20.3: Change notices, and the route skills' copies (the two that
+  // need the Office wait for map setup in this boot, as Plan a route does).
   ['header', 'group:0', 'Customers', null],
   ['section', 'entry:appointment-reminders', '*Appointment reminders*', 'appointment-reminders:open'],
+  ['section', 'entry:change-notices', '*Change notices*', 'change-notices:open'],
   ['header', 'group:1', 'Lists', null],
   ['section', 'entry:labour-cost', '*Labour cost*', 'labour-cost:open'],
   ['section', 'entry:unpaid-invoices', '*Unpaid invoices*', 'unpaid-invoices:open'],
   ['section', 'entry:win-back', '*Win-back list*', 'win-back:open'],
   ['header', 'group:2', 'Routing', null],
+  ['section', 'entry:route-add-stop', '*Add a stop* · ⚪ _needs map setup_', 'route-add-stop:why'],
+  ['section', 'entry:route-cancellation', '*Customer cancellation* · ⚪ _needs map setup_', 'route-cancellation:why'],
+  ['section', 'entry:route-crew-out', '*Crew out*', 'route-crew-out:open'],
   ['section', 'entry:route-planner', '*Plan a route* · ⚪ _needs map setup_', 'route-planner:why'],
   ['section', 'entry:routing', '*Route map*', 'routing:open'],
   ['header', 'group:3', 'Tools', null],

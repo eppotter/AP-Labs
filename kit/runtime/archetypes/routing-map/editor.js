@@ -88,7 +88,7 @@ const engine = require('../../routing');
 const { compareIds } = require('../../scoring');
 const { RoutingFault, ConfigFault } = require('../../errors');
 const {
-  messageFor, escapeText, escapeName, ROUTE_WORDS, MAP_WORDS, ADD_WORDS,
+  messageFor, escapeText, escapeName, ROUTE_WORDS, MAP_WORDS, ADD_WORDS, NOTICE_WORDS,
 } = require('../../messages');
 const { textBlocks } = require('../../slack/format');
 const { altText } = require('../../slack/image');
@@ -100,6 +100,7 @@ const {
 const {
   formBlocks, addedLines, othersBlock, listButton, SCREEN: ADD_SCREEN,
 } = require('./addstop');
+const changes = require('./changes');
 
 const SCREEN = 'route-editor';
 const ACTIONS = Object.freeze(['crew', 'day', 'show', 'move', 'optimize', 'reset', 'change']);
@@ -472,7 +473,8 @@ function createEditor({
     const order = stops.map((st) => st.stopId);
     // The crew's own name for the header (plain_text) and the banner.
     const named = (labels.get(crewNode(crewId)) || {}).crewName;
-    const crewName = typeof named === 'string' && named.trim() ? named : `Crew ${crewId}`;
+    const labelled = typeof named === 'string' && named.trim() ? named : null;
+    const crewName = labelled || `Crew ${crewId}`;
     // The colour Routing's views give this crew on this day (crewChoices).
     const color = s.colors instanceof Map && s.colors.has(crewId) ? s.colors.get(crewId) : 0;
     return {
@@ -491,9 +493,12 @@ function createEditor({
         // Optimize's status line, shown while the order is that version.
         note: null,
         // The stop Fill with #n moved up into the gap, and its booked day.
-        filled: fill ? { stopId: fill.add, from: fill.from } : null,
+        filled: fill ? { stopId: fill.add, from: fill.from, fromCrew: typeof fill.fromCrew === 'string' ? fill.fromCrew : null } : null,
         out: crew.available === false,
         crewName,
+        // The crew's name as the labels gave it, or null: a change notice
+        // names only a real crew (Story 20.3).
+        crewLabel: labelled,
         names: n,
         places: placesOf(labels, stopNodes),
         color,
@@ -515,6 +520,25 @@ function createEditor({
     let tenths = 0;
     for (let i = 1; i < nodes.length; i += 1) if (nodes[i - 1] !== nodes[i]) tenths += p.distance(nodes[i - 1], nodes[i]);
     return { ev, km: Math.round(tenths / 10) };
+  }
+
+  // The visits the plan changes (Story 20.3, ./changes): every order timed
+  // by the engine from the Office, as the list times it.
+  function planChanges(p) {
+    const startsOf = (order, input) => new Map(engine.evaluateOrder(input, {
+      travel: p.travel, returnToBase: true, crewId: p.crewId, order,
+    }).stops.map((st) => [st.stopId, st.start]));
+    return changes.ofPlan(p, startsOf, p.crewLabel || null);
+  }
+
+  // How many customers "Notify affected customers (N)" would email, or 0
+  // when it isn't offered: only to a dispatcher (every crew in scope) who
+  // may open the hub's change notices (s.canNotify, set by index.js on each
+  // click), never on a crew that is out, and not while Add a stop's form is
+  // open.
+  function notifyCount(s, p, adding) {
+    if (s.canNotify !== true || !s.scope || s.scope.all !== true || p.out || (adding && s.form)) return 0;
+    return planChanges(p).visits.length;
   }
 
   // The Rule breaks field: every break, a late return counted as hard.
@@ -575,10 +599,13 @@ function createEditor({
     if (adding && s.form) {
       head.push(...formBlocks(s));
     } else {
+      const notify = notifyCount(s, p, adding);
       const top = p.out ? [changeButton()] : [
         { ...button('optimize', 'Optimize', `${v}:optimize`, 'Optimize the order from the Office'), style: 'primary' },
         button('reset', 'Reset to booked', `${v}:reset`, 'Put the stops back in the booked order'),
         ...(adding ? [listButton(p)] : []),
+        // Story 20.3: only when the plan changes a booked visit.
+        ...(notify > 0 ? [button('notify', NOTICE_WORDS.button(notify), `${v}:notify`, 'Email the customers whose visit this changes')] : []),
         changeButton(),
       ];
       head.push({ type: 'actions', block_id: id('actions'), elements: top });
@@ -996,7 +1023,7 @@ function createEditor({
   }
 
   return {
-    unready, open, click, ACTIONS, crewChoices, takeCrews, showFill, relist, addStop, removeAdded,
+    unready, open, click, ACTIONS, crewChoices, takeCrews, showFill, relist, addStop, removeAdded, planChanges,
   };
 }
 

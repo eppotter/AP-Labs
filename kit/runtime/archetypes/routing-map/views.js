@@ -35,6 +35,7 @@ const { RoutingFault } = require('../../errors');
 const { escapeText } = require('../../messages');
 const { MAX_COLOR } = require('../../routing-map/svg');
 const { visible } = require('./audience');
+const { ofCrewOut } = require('./changes');
 
 const VIEWS = Object.freeze(['compare', 'change', 'zone', 'gap']);
 const VIEW_LABELS = Object.freeze({
@@ -232,6 +233,11 @@ function change(d, { travel, scope, pick }) {
   const placeNodes = [...before.flatMap((r) => r.stops), ...after.flatMap((r) => r.stops), ...crossZone.map((z) => z.node)];
   const out = result.crewsOut.filter(shown);
   return {
+    // The visits this result changes, and those it holds (Story 20.3,
+    // ./changes): crew ids only; the caller names the crews.
+    changes: ofCrewOut({
+      result, day: d.input.day, stopOf: (id) => d.stopById.get(id), shown,
+    }),
     nodes: [...modelCrews.map(crewNode), ...placeNodes],
     placeNodes,
     crewIds: modelCrews,
@@ -363,7 +369,9 @@ function gap(d, {
     }),
     // The shown candidates by rank, for Customer cancellation's Fill with
     // #n (Story 19.4): ids and dates only, never a place.
-    fills: cands.map((c) => ({ rank: c.rank, stopId: c.stopId, plannedDate: c.plannedDate })),
+    fills: cands.map((c) => ({
+      rank: c.rank, stopId: c.stopId, plannedDate: c.plannedDate, fromCrew: c.fromCrew,
+    })),
   };
 }
 

@@ -37,22 +37,37 @@
 //             the first push's (./entry retryEntry, review R2-1).
 //   Cancel    re-checks access and the token, then consumes it and confirms.
 //
+// The route row source (Story 20.3, ./route-source, AD-15 amended): a module
+// whose manifest declares write.source "route" never pushes a run record.
+// previewRoute takes the route record a route skill's Notify affected
+// customers stored (bound to the person and the route session), runs the
+// module's query with $visit_ids bound from the record only, adds the
+// route's after values and holds what isn't a change, then previews those
+// rows as Push does (previewRows), keyed by each row's change
+// (entry.changeKey).
+//
 // Startup (checkModule, called by the registry): the resource must be
 // admin_grantable: false; row_id is required and in write.fields; every
 // write.fields entry is a column the query returns; write.send names only
 // write.fields; write.hold (optional) is a field, not the row id, and never
 // sent; write.preview (optional) names only fields; write.list_name uses only
 // {run_date} and required inputs with allowed values; the connector loads and
-// declares write.operation (./connectors).
+// declares write.operation (./connectors); a route-sourced module also
+// passes route-source checkRouteModule (its route fields are exempt from
+// "the query returns it", and must not be returned).
 
-const { messageFor } = require('../../messages');
-const { PreviewInvalid, PushRefused, ConfigFault } = require('../../errors');
+const { messageFor, NOTICE_WORDS } = require('../../messages');
+const {
+  PreviewInvalid, PushRefused, ConfigFault, DataUnavailable,
+} = require('../../errors');
 const { codeText, ROW_CAP } = require('../scoped-pull/run');
+const { checkValues } = require('../scoped-pull/params');
 const entry = require('./entry');
 const preview = require('./preview');
 const { checkWrite, createConnectors } = require('./connectors');
 const { createPush, sendItems } = require('./push');
 const { createEscalator } = require('./escalate');
+const routeSource = require('./route-source');
 
 const ARCHETYPE = 'approval-write';
 
@@ -73,9 +88,14 @@ function checkModule(mod, { appDir, profile, sql }) {
   if (!mod.row_id) problems.push('field "row_id" is required: it names the column that tells the pushed rows apart (the idempotency key is built from it)');
   else if (!block.fields.includes(mod.row_id)) problems.push(`field "write.fields" must include the row id "${mod.row_id}"`);
   const code = codeText(sql);
+  // A route-sourced module's route fields come from the route record, not
+  // the query (Story 20.3, ./route-source).
+  const fromRoute = routeSource.isRouteSourced(mod) ? new Set(routeSource.ROUTE_FIELDS) : new Set();
   for (const field of block.fields) {
+    if (fromRoute.has(field)) continue;
     if (!identifierIn(code, field)) problems.push(`field "write.fields" names "${field}", which the module's query never returns`);
   }
+  problems.push(...routeSource.checkRouteModule(mod, code));
   for (const [target, source] of Object.entries(block.send)) {
     if (!block.fields.includes(source)) problems.push(`field "write.send.${target}" names "${source}", which is not in write.fields`);
   }
@@ -173,14 +193,32 @@ function createApprovalWrite({
     const allowed = resolve(record.module);
     if (!allowed.mod) return show(allowed.refusal);
     const { mod } = allowed;
+    // A route-sourced module never pushes a run record (it has none: its
+    // rows come only from a route record, previewRoute).
+    if (routeSource.isRouteSourced(mod)) {
+      log.warn('push refused', { module: mod.id, reason: 'route-sourced' });
+      return show(messageFor(new PreviewInvalid()));
+    }
     if (!Array.isArray(record.rows)) {
       log.info('push refused', { module: mod.id, reason: 'not delivered' });
       return show(messageFor(new PushRefused('not_delivered')));
     }
     if (!record.rows.length) return show(messageFor(new PushRefused('empty')));
-    if (record.rows.length > ROW_CAP) {
+    return previewRows({
+      mod, record, rows: entry.copyRows(record.rows), person, show,
+    });
+  }
+
+  // The preview of rows (a run record's, or a route record's): the dry run,
+  // the held and skipped rows, the key, the approval entry and its view.
+  // record: { runId, ranAt, parameters } (the list name's values). notes:
+  // lines under the heading.
+  async function previewRows({
+    mod, record, rows, person, show, notes = [],
+  }) {
+    if (rows.length > ROW_CAP) {
       // Never reached: the run record keeps only the rows the person saw.
-      log.error('push refused: the run is over the row cap', { module: mod.id, rows: record.rows.length, cap: ROW_CAP });
+      log.error('push refused: the run is over the row cap', { module: mod.id, rows: rows.length, cap: ROW_CAP });
       return show(messageFor(new ConfigFault({ admin })));
     }
     const connector = connectors && connectors.get(mod.write.connector);
@@ -188,8 +226,12 @@ function createApprovalWrite({
       log.error('push connector not loaded', { module: mod.id, connector: mod.write.connector });
       return show(messageFor(new ConfigFault({ admin })));
     }
-    const rows = entry.copyRows(record.rows);
     const listName = preview.listNameOf(mod, record);
+    // The push key: the rows' ids, or for a route-sourced module each row's
+    // change (Story 20.3: a second, different change to a visit is a new push).
+    const keyOf = (list) => (routeSource.isRouteSourced(mod)
+      ? entry.changeKey(listName, list.map((r) => [r[mod.row_id], ...routeSource.CHANGE_FIELDS.map((f) => r[f])]))
+      : entry.idempotencyKey(listName, list.map((r) => r[mod.row_id])));
     // Held rows (write.hold, Story 20.2) never reach the connector, not even
     // its dry run: they are listed in the preview and kept out of the push.
     const held = rows.filter((r) => preview.isHeld(mod, r));
@@ -198,7 +240,7 @@ function createApprovalWrite({
     if (candidates.length) {
       // The dry run's key: the rows offered to the connector. The entry's
       // key is set below from the rows that will actually be sent.
-      const planKey = entry.idempotencyKey(listName, candidates.map((r) => r[mod.row_id]));
+      const planKey = keyOf(candidates);
       try {
         // A dry run: the connector plans and sends nothing (AD-15).
         planned = await connector.write[mod.write.operation]({
@@ -226,7 +268,7 @@ function createApprovalWrite({
         module: mod.id, rows: rows.length, skipped: skipped.length, held: held.length, token: false,
       });
       return show(preview.nothingToSendMessage({
-        mod, listName, rows, skipped, held,
+        mod, listName, rows, skipped, held, notes,
       }));
     }
     const skippedSet = new Set(skippedIds);
@@ -243,7 +285,7 @@ function createApprovalWrite({
     // The key covers only the rows that will be sent (Story 20.2 review): a
     // held or skipped row that can go later the same day is a new push, not
     // a replay of this one.
-    const idempotencyKey = entry.idempotencyKey(listName, sending.map((r) => r[mod.row_id]));
+    const idempotencyKey = keyOf(sending);
     const token = entry.create(store, {
       person, module: mod.id, runId: record.runId, destination: mod.write.destination, listName, rows, skipped, skippedIds, idempotencyKey,
     });
@@ -251,8 +293,61 @@ function createApprovalWrite({
       module: mod.id, rows: rows.length, skipped: skipped.length, held: held.length, token: true,
     });
     return show(preview.previewMessage({
-      mod, listName, rows, skipped, token, held, sending, texts: texts ? texts.texts : null,
+      mod, listName, rows, skipped, token, held, sending, texts: texts ? texts.texts : null, notes,
     }));
+  }
+
+  // The route row source (Story 20.3, ./route-source): the preview of a
+  // route skill's changed visits. token: the route record's; session: the
+  // route session the click came from; data: the hub's query runner (the
+  // module's query runs there, binding $visit_ids from the record only).
+  // The clock is Date (node:test mock.timers freezes it with the store's).
+  async function previewRoute({
+    token, person, session, resolve, show, data,
+  }) {
+    const record = routeSource.take(store, token, { person, session });
+    if (!record) {
+      log.info('route notices refused', { reason: 'expired' });
+      return show({ text: NOTICE_WORDS.expired() });
+    }
+    const allowed = resolve(record.module);
+    if (!allowed.mod) return show(allowed.refusal);
+    const { mod } = allowed;
+    if (!routeSource.isRouteSourced(mod)) {
+      log.error('route notices refused: the module is not route-sourced', { module: mod.id });
+      return show(messageFor(new ConfigFault({ admin })));
+    }
+    const ranAt = new Date(Date.now()).toISOString();
+    // The engine's own check of the bound value, as a form's would be.
+    const bound = checkValues(mod.parameters, { [routeSource.PARAM]: routeSource.idsText(record) });
+    if (bound.problems.length) {
+      log.error('route notices refused: the visit ids break the input', { module: mod.id });
+      return show(messageFor(new ConfigFault({ admin })));
+    }
+    let queryRows;
+    try {
+      if (!data || typeof data.run !== 'function') throw new DataUnavailable('no data source');
+      queryRows = await data.run(mod.sql, bound.values, { declared: mod.parameters.map((p) => p.name) });
+    } catch (err) {
+      const words = messageFor(err, { admin });
+      log.warn('route notices query failed', { module: mod.id, reason: err.code || err.name });
+      if (!words) throw err;
+      return show(words);
+    }
+    let rows;
+    try {
+      rows = routeSource.rowsFor(mod, record, Array.isArray(queryRows) ? queryRows : []);
+    } catch (err) {
+      if (!(err instanceof routeSource.RouteRecordError)) throw err;
+      log.error('route notices refused: the query broke its grain', { module: mod.id });
+      return show(messageFor(new ConfigFault({ admin })));
+    }
+    log.info('route notices', {
+      module: mod.id, skill: record.skill, visits: record.visits.length, held: record.held.length,
+    });
+    return previewRows({
+      mod, record: { runId: token, ranAt, parameters: {} }, rows, person, show, notes: [NOTICE_WORDS.caveat(), NOTICE_WORDS.back()],
+    });
   }
 
   // The entry a token names, for this person, with access re-checked:
@@ -301,10 +396,12 @@ function createApprovalWrite({
     return show(messageFor(new PreviewInvalid()));
   }
 
-  return { push, approve, cancel, click };
+  return {
+    push, approve, cancel, click, previewRoute,
+  };
 }
 
 module.exports = {
-  createApprovalWrite, createConnectors, checkModule, pushRowsOf, decorate, pushHooks, sendItems,
+  createApprovalWrite, createConnectors, checkModule, pushRowsOf, decorate, pushHooks, sendItems, routeSource,
   ACTIONS: preview.ACTIONS, ACTION_PATTERN: preview.ACTION_PATTERN, verbOf: preview.verbOf, ARCHETYPE,
 };

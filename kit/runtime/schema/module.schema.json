@@ -91,6 +91,7 @@
           "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64 },
           "additionalProperties": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64 }
         },
+        "source": { "description": "Where the pushed rows come from (Story 20.3, AD-15 amended). Left out: the rows of the person's own run of the module's form. \"route\": the visits a route skill's result changed (kit/runtime/archetypes/approval-write/route-source.js), never a form; the module then declares only the visit_ids input, which the engine binds from the route record.", "enum": ["route"] },
         "hold": { "description": "A field in fields (Story 20.2): a row whose value there is not empty is held and never sent; the preview lists it with that value as the reason (plan brightside-v1 D14: a reminder on a crew-day with an absence). It may not be sent itself.", "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64 },
         "preview": { "description": "The fields the preview lists for every row it will send (Story 20.2), in place of a sample of 5 rows with every field. Each must be in fields.", "type": "array", "minItems": 1, "maxItems": 6, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64 } },
         "list_name": { "description": "The destination list's name. {run_date} is the pull's UTC date; {<input>} is a required input with allowed values (win-back-{zone}-{run_date}).", "type": "string", "pattern": "^[A-Za-z0-9 _.{}-]+$", "maxLength": 80 }
