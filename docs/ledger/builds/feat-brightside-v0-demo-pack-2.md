@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-11-02 | 18.3 (extends) | feature | T1 | The v0 demo pack rebuilt around three business questions, each needing a PDF and a CSV: a 3-page pricing and operations memo and a 2-page customer service agreement (pdf.js gains tables, rules, footers, page flow and reading text back from the bytes), and three aggregate CSVs (plan changes Jan to Sep 2026, receivables aging at 2026-09-30, crew time against schedule in September). Every figure is computed from the fixture; the build checks the signed truths, ties and the hub's size limits. The old four files are retired; the v0 script, v1's note counts and the v0 Ask test follow. | — |

@@ -97,7 +97,7 @@ test('/brightside-v0: Ask with a data question gets "no data and no rules yet", 
   assert.deepEqual(answer.blocks.at(-1).elements.map((e) => e.action_id), [askTool.ACTIONS.buildRequest, askTool.ACTIONS.again]);
 });
 
-// Story 18.3 (review R1-1): once the demo pack's billing CSV is a note on
+// Story 18.3 (review R1-1): once the demo pack's receivables CSV is a note on
 // /brightside-v0, a figures question sorted as data is answered from the
 // note, not refused. Boots the engine as above; the stand-in AI sorts every
 // question as data and, asked by answer_from_notes, says the notes cover it.
@@ -113,7 +113,7 @@ test('/brightside-v0: a data question the uploaded notes answer is answered from
         const usage = { input_tokens: 100, output_tokens: 10 };
         if (params.tools[0].name === askTool.NOTES_TOOL_NAME) {
           return {
-            content: [{ type: 'tool_use', id: 'tu_2', name: askTool.NOTES_TOOL_NAME, input: { covered: true, answer: 'South billed the most: $91,558.00.' } }],
+            content: [{ type: 'tool_use', id: 'tu_2', name: askTool.NOTES_TOOL_NAME, input: { covered: true, answer: 'Past due: $103,280.65.' } }],
             stop_reason: 'tool_use',
             usage,
           };
@@ -147,15 +147,16 @@ test('/brightside-v0: a data question the uploaded notes answer is answered from
     res.jobs.stop();
     res.data.close();
   });
-  const csv = readCsv(fs.readFileSync(path.join(__dirname, '../demo-pack/zone-billing-2026-09.csv')));
+  const bytes = fs.readFileSync(path.join(__dirname, '../demo-pack/receivables-aging-2026-09-30.csv'));
+  const csv = readCsv(bytes);
   await res.knowledge.add({
-    hub: 'brightside-v0', kind: 'file', title: 'Billing by zone, September', text: csv.text, addedBy: ADMIN.id,
-    file: { name: 'zone-billing-2026-09.csv', type: 'text/csv', bytes: 229 },
+    hub: 'brightside-v0', kind: 'file', title: 'Receivables aging, 30 Sep 2026', text: csv.text, addedBy: ADMIN.id,
+    file: { name: 'receivables-aging-2026-09-30.csv', type: 'text/csv', bytes: bytes.length },
   });
   const { app } = res;
   await app.dispatchAction('v0-ask:open', { user: ADMIN, view: { id: 'VMENU', type: 'modal', private_metadata: 'brightside-v0', hash: 'h0' } });
   const form = app.views.filter((v) => v.method === 'push').at(-1).args.view;
-  const question = 'Which zone billed the most in September, and how much cash did we receive from that zone in September?';
+  const question = 'How much are customers past due, and how much could we collect in late fees under our terms?';
   const view = {
     ...form,
     id: 'VASK',
@@ -163,12 +164,12 @@ test('/brightside-v0: a data question the uploaded notes answer is answered from
   };
   await app.dispatchView(askTool.FORM_CALLBACK, { user: ADMIN, view });
   const answer = app.views.filter((v) => v.method === 'update').at(-1).args.view;
-  assert.equal(answer.blocks[0].text.text, 'South billed the most: $91,558.00.');
+  assert.equal(answer.blocks[0].text.text, 'Past due: $103,280.65.');
   assert.notEqual(answer.blocks[0].text.text, ASK_WORDS.noDataNoRules());
   assert.equal(calls.length, 2);
   const notesCall = calls[1];
   assert.equal(notesCall.tools[0].name, askTool.NOTES_TOOL_NAME);
   // The note is in the prompt; the profile's context, data and rules are not (sees: []).
-  assert.ok(notesCall.system.includes('Cash received in September ($)'));
+  assert.ok(notesCall.system.includes('Over 30 days past due ($)'));
   assert.ok(!notesCall.system.includes('<client_context file='));
 });
