@@ -587,3 +587,12 @@ test('what reaches the email tool is exactly the module\'s send fields: never an
   const [item] = sendItems(NOTICES, routeSource.rowsFor(NOTICES, record, rows));
   assert.deepEqual(Object.keys(item).sort(), ['before_crew_id', 'before_crew_name', 'before_date', 'before_window', 'crew_id', 'crew_name', 'email', 'external_ref', 'first_name', 'kind', 'package_name', 'reason', 'visit_date', 'window']);
 });
+
+test('a visit id is at most 9 digits, so it always fits the query\'s INTEGER cast: the input refuses a 10-digit id', () => {
+  const { checkValues } = require('../../../kit/runtime/archetypes/scoped-pull/params');
+  assert.deepEqual(checkValues(NOTICES.parameters, { visit_ids: '123456789,2' }).problems, []);
+  for (const bad of ['1234567890', '2,1234567890', '', '0', ' 40', 'abc']) {
+    assert.equal(checkValues(NOTICES.parameters, { visit_ids: bad }).problems.length, 1, JSON.stringify(bad));
+  }
+  assert.ok(fs.readFileSync(path.join(APP, 'modules/change-notices/change-notices.sql'), 'utf8').includes('at most 9 digits'));
+});

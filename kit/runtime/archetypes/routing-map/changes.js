@@ -31,12 +31,16 @@
 //   window. A stop recommended for another zone is not placed, and a stop to
 //   rebook has no slot: both are held (listed, never emailed).
 //
-// Only a visit id the booking can name (a whole number) is ever returned.
+// Only a visit id the booking can name (a whole number, at most 9 digits)
+// is ever returned.
 // Each visit: { id, before: { date, window, crewId }, after: { date, window,
-// crewId, crewName } }; held: [{ id, reason: 'rebook' | 'cross-zone' }].
+// crewId, crewName } }; held: [{ id, reason: 'rebook' | 'cross-zone' |
+// 'elsewhere' | 'no-time' }].
 
 const NOON = 12 * 60;
-const VISIT_ID = /^[1-9][0-9]{0,9}$/;
+// A visit id the booking can name: at most 9 digits, so it fits the
+// query's INTEGER cast (change-notices.sql) whatever its value.
+const VISIT_ID = /^[1-9][0-9]{0,8}$/;
 
 const windowOf = (m) => (Number.isInteger(m) ? (m < NOON ? 'morning' : 'afternoon') : null);
 const isVisit = (id) => typeof id === 'string' && VISIT_ID.test(id);
@@ -78,9 +82,18 @@ function ofPlan(p, startsOf, crewName) {
 // Crew out's Route change (./views.js change): result is placeOrphans's,
 // day the day, stopOf(id) the input's stop (its booked start and crew),
 // shown(crewId) whether the view shows that crew (the out crew's zone).
+// baseStartOf(id): the model's start for a stop of the crew that is out, in
+// its booked order timed the same way as the moves (undefined when it could
+// not be timed): a moved stop's window is the new one only when its new
+// start crosses noon against that, as ofPlan does, so a crew-change notice
+// never reports a window change the booking doesn't have. Without a base
+// the booked window stands (it can under-notify, never over-notify).
+// A move this function can't place in the view (to a crew outside it with
+// no cross-zone flag) or with no new start is held with its reason, never
+// dropped without a word.
 // Crew names are added by the caller from the labels (named).
 function ofCrewOut({
-  result, day, stopOf, shown,
+  result, day, stopOf, shown, baseStartOf = () => undefined,
 }) {
   const visits = [];
   const held = [];
@@ -90,20 +103,36 @@ function ofCrewOut({
       held.push({ id: m.stopId, reason: 'cross-zone' });
       continue;
     }
-    if (!shown(m.toCrew)) continue;
+    if (!shown(m.toCrew)) {
+      held.push({ id: m.stopId, reason: 'elsewhere' });
+      continue;
+    }
+    const nowWindow = windowOf(m.start);
+    if (!nowWindow) {
+      held.push({ id: m.stopId, reason: 'no-time' });
+      continue;
+    }
     const st = stopOf(m.stopId);
-    const before = { date: day, window: windowOf(st && st.start), crewId: m.fromCrew };
+    const booked = windowOf(st && st.start);
+    const base = windowOf(baseStartOf(m.stopId));
+    let window = booked || nowWindow;
+    if (base !== null && nowWindow !== base) window = nowWindow;
+    const before = { date: day, window: booked, crewId: m.fromCrew };
     const after = {
-      date: day, window: windowOf(m.start), crewId: m.toCrew, crewName: null,
+      date: day, window, crewId: m.toCrew, crewName: null,
     };
-    if (after.window && changed(before, after)) visits.push({ id: m.stopId, before, after });
+    if (changed(before, after)) visits.push({ id: m.stopId, before, after });
   }
   for (const s of result.shifted) {
     if (!isVisit(s.stopId) || !shown(s.crewId)) continue;
     const st = stopOf(s.stopId);
     const booked = windowOf(st && st.start);
     const nowWindow = windowOf(s.start);
-    if (!booked || !nowWindow || nowWindow === windowOf(s.previousStart)) continue;
+    if (!nowWindow) {
+      held.push({ id: s.stopId, reason: 'no-time' });
+      continue;
+    }
+    if (!booked || nowWindow === windowOf(s.previousStart)) continue;
     const before = { date: day, window: booked, crewId: s.crewId };
     const after = {
       date: day, window: nowWindow, crewId: s.crewId, crewName: null,

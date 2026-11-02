@@ -15,9 +15,10 @@
 -- $visit_ids: the route record's visit ids as one string ("12,40,7"), bound
 -- by the engine from the route record only, never from a form or a click
 -- (approval-write/route-source.js), and checked against the input's pattern
--- (comma-separated whole numbers) before it binds. string_split gives a
--- list, so unnest makes its rows; each is cast to INTEGER, the id's type. An
--- id that names no scheduled visit simply matches nothing.
+-- (comma-separated whole numbers of at most 9 digits, so every one fits
+-- INTEGER) before it binds. string_split gives a list, so unnest makes its
+-- rows; each is cast to INTEGER, the id's type. An id that names no
+-- scheduled visit simply matches nothing.
 --
 -- Before values (D14): the booked date, arrival window (the booking's own,
 -- morning or afternoon) and crew, from scheduled_visits. The after values
@@ -35,7 +36,7 @@
 -- price, phone, last name or a staff name. held is always NULL here: the
 -- engine sets it for a visit it lists but doesn't email.
 WITH meta AS (
-  SELECT CAST(value AS DATE) AS as_of FROM fixture_meta WHERE key = 'as_of'
+  SELECT CAST(m.value AS DATE) AS as_of FROM fixture_meta m WHERE m.key = 'as_of'
 )
 SELECT sv.scheduled_visit_id,
   'change' AS kind,

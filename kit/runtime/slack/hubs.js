@@ -224,7 +224,8 @@
 // route record (approval-write/route-source: bound to the person and the
 // route session, 30 minutes), pushes a view on top of the route ("Loading…"
 // inside the trigger's life) and shows the module's preview there, which
-// consumes the record. Back (the view's close button) returns to the route,
+// consumes the record in the same click (so its binding is defence in
+// depth, not a gate a real click can fail). Back (the view's close button) returns to the route,
 // which is untouched; Approve, Cancel and Retry are the approval-write
 // buttons in that view. A route-sourced module never opens a form: from the
 // menu it says where change notices start, and every form step refuses it.

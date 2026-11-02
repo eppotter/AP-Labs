@@ -422,6 +422,8 @@ const NOTICE_WORDS = Object.freeze({
   crossZone: () => 'Recommended for another zone, not placed. Decide first; no email is sent.',
   notChanged: () => 'Not changed: the booking already has this day, window and crew.',
   notBooked: () => 'Not a booked visit any more (cancelled or gone), so no email is sent.',
+  elsewhere: () => 'Moved to a crew outside this view. Check it first; no email is sent.',
+  noTime: () => 'No new time was worked out for it. Check it first; no email is sent.',
 });
 
 // Build request's own words (plan brightside-v0, D11, Story 16.6). Fixed

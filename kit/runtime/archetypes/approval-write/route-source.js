@@ -15,7 +15,8 @@
 //
 //   person    the Slack user who pressed Notify affected customers
 //   session   the route session (kit/runtime/archetypes/routing-map) it
-//             came from; take() must name the same one
+//             came from; take() must name the same one (defence in depth:
+//             see below)
 //   module    the route-sourced module the person may open on that hub
 //   skill     the routing-map screen the change came from: route-editor,
 //             cancellation, crew-out or add-stop (its reason line, D14)
@@ -23,12 +24,17 @@
 //             window, crewId, crewName } }]: the visits the route changed,
 //             by the route session's own reading (before window or crew
 //             may be null when the session doesn't know them)
-//   held      [{ id, reason }]: visits the route touched but placed nowhere
-//             (reason 'rebook' or 'cross-zone'), listed in the preview and
-//             never emailed
+//   held      [{ id, reason }]: visits the route touched but can't notify
+//             (reason 'rebook', 'cross-zone', 'elsewhere': moved to a crew
+//             outside the view, or 'no-time': no new start), listed in the
+//             preview and never emailed
 //
 // Ids are the module's row ids (scheduled_visits.scheduled_visit_id), whole
-// numbers as text. take() consumes the record: one preview per press.
+// numbers as text, at most 9 digits. take() consumes the record: one
+// preview per press. The hub stores the record and takes it back in the same
+// click, so the person and route-session checks in take() are defence in
+// depth (a token reaching another person or session finds nothing), not a
+// gate a real click can fail.
 //
 // The rows (rowsFor). The module's query binds $visit_ids, the record's ids
 // as one string ("12,40,7"), from the record only, never from a click, and
@@ -63,8 +69,11 @@ const BEFORE_FIELDS = Object.freeze(['before_date', 'before_window', 'before_cre
 const ROUTE_FIELDS = Object.freeze(['after_date', 'after_window', 'after_crew_id', 'after_crew_name', 'change_reason']);
 // What a change is, for the push key (entry.changeKey): before, then after.
 const CHANGE_FIELDS = Object.freeze([...BEFORE_FIELDS, 'after_date', 'after_window', 'after_crew_id']);
-const HELD_REASONS = Object.freeze({ rebook: NOTICE_WORDS.rebook, 'cross-zone': NOTICE_WORDS.crossZone });
-const VISIT_ID = /^[1-9][0-9]{0,9}$/;
+const HELD_REASONS = Object.freeze({
+  rebook: NOTICE_WORDS.rebook, 'cross-zone': NOTICE_WORDS.crossZone, elsewhere: NOTICE_WORDS.elsewhere, 'no-time': NOTICE_WORDS.noTime,
+});
+// At most 9 digits: every id fits the query's INTEGER cast.
+const VISIT_ID = /^[1-9][0-9]{0,8}$/;
 const CREW_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 // At most this many visits in one record (the visits to email plus the held

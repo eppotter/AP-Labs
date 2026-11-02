@@ -191,3 +191,11 @@ test('startup refuses a route-sourced module that takes a form input, has no hol
   // A module without write.source is not route-sourced: none of this applies.
   assert.equal(routeSource.checkRouteModule({ ...MOD, write: { ...MOD.write, source: undefined } }, '').length, 0);
 });
+
+test('a 10-digit visit id is refused (ids are at most 9 digits, so every one fits INTEGER); held "elsewhere" and "no-time" rows say why', () => {
+  const store = createStore();
+  assert.throws(() => routeSource.put(store, record({ visits: [visit('1234567890')] })), routeSource.RouteRecordError);
+  assert.ok(routeSource.put(store, record({ visits: [visit('123456789')] })));
+  const rows = routeSource.rowsFor(MOD, { skill: 'crew-out', visits: [], held: [{ id: '21', reason: 'elsewhere' }, { id: '22', reason: 'no-time' }] }, []);
+  assert.deepEqual(rows.map((r) => r.held), [NOTICE_WORDS.elsewhere(), NOTICE_WORDS.noTime()]);
+});

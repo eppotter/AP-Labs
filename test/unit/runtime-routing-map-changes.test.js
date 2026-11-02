@@ -119,7 +119,7 @@ test('Crew out: a stop moved to another crew of the zone is a change (its crew, 
   };
   const zone = new Set(['7', '8']);
   const got = changes.ofCrewOut({
-    result, day: '2026-10-03', stopOf: (id) => stops.get(id), shown: (c) => zone.has(c),
+    result, day: '2026-10-03', stopOf: (id) => stops.get(id), shown: (c) => zone.has(c), baseStartOf: (id) => (stops.get(id) || {}).start,
   });
   assert.deepEqual(got.visits.map((v) => [v.id, v.before.crewId, v.after.crewId, v.before.window, v.after.window]), [
     ['21', '7', '8', 'morning', 'morning'],
@@ -160,4 +160,57 @@ test('Crew out through the Route change view: placeOrphans\' result gives the ch
     view: 'change', input: { ...input, crews: [crew('7'), crew('8')] }, travel, scope: { all: true }, pick: { kind: 'zone', id: 'z' }, gapFill: { horizon_days: 14, limit: 5 },
   });
   assert.equal(none.changes, undefined);
+});
+
+// --- review fixes (PR #334) ------------------------------------------------------------------
+
+test('Crew out: a moved stop\'s window is judged against the model\'s timing of its booked day, so a crew-change notice never reports a window change the booking doesn\'t have', () => {
+  // Booked at 12:10 (afternoon); the model times its booked day at 11:50
+  // (morning), and its new crew at 11:40 (morning): no window change.
+  const stops = new Map([['21', { start: 730, currentCrewId: '7' }], ['22', { start: 600, currentCrewId: '7' }]]);
+  const result = {
+    moves: [
+      { stopId: '21', fromCrew: '7', toCrew: '8', crossZone: false, recommendation: false, start: 700 },
+      // Booked and modelled in the morning, moved to 13:00: a real window change.
+      { stopId: '22', fromCrew: '7', toCrew: '8', crossZone: false, recommendation: false, start: 780 },
+    ],
+    shifted: [],
+    unplaced: [],
+  };
+  const base = new Map([['21', 710], ['22', 600]]);
+  const got = changes.ofCrewOut({
+    result, day: '2026-10-03', stopOf: (id) => stops.get(id), shown: () => true, baseStartOf: (id) => base.get(id),
+  });
+  assert.deepEqual(got.visits.map((v) => [v.id, v.before.window, v.after.window, v.after.crewId]), [
+    ['21', 'afternoon', 'afternoon', '8'],
+    ['22', 'morning', 'afternoon', '8'],
+  ]);
+  // No base at all: the booked window stands (it may under-notify, never over-notify).
+  const none = changes.ofCrewOut({ result, day: '2026-10-03', stopOf: (id) => stops.get(id), shown: () => true });
+  assert.deepEqual(none.visits.map((v) => v.after.window), ['afternoon', 'morning']);
+});
+
+test('Crew out: a move to a crew outside the view with no cross-zone flag, and a move or a new time with no start, are held with a reason, never dropped', () => {
+  const stops = new Map([['21', { start: 500, currentCrewId: '7' }], ['22', { start: 500, currentCrewId: '7' }], ['31', { start: 500, currentCrewId: '8' }]]);
+  const result = {
+    moves: [
+      { stopId: '21', fromCrew: '7', toCrew: '14', crossZone: false, recommendation: false, start: 540 },
+      { stopId: '22', fromCrew: '7', toCrew: '8', crossZone: false, recommendation: false, start: null },
+    ],
+    shifted: [{ stopId: '31', crewId: '8', previousStart: 500, start: undefined }],
+    unplaced: [],
+  };
+  const zone = new Set(['7', '8']);
+  const got = changes.ofCrewOut({
+    result, day: '2026-10-03', stopOf: (id) => stops.get(id), shown: (c) => zone.has(c),
+  });
+  assert.deepEqual(got.visits, []);
+  assert.deepEqual(got.held, [{ id: '21', reason: 'elsewhere' }, { id: '22', reason: 'no-time' }, { id: '31', reason: 'no-time' }]);
+});
+
+test('a visit id is at most 9 digits (it always fits the query\'s INTEGER): a 10-digit id is never returned', () => {
+  const p = plan({ booked: ['1234567890', '123456789'], order: ['123456789', '1234567890'] });
+  p.input = { stops: [{ stopId: '1234567890', start: 480 }, { stopId: '123456789', start: 570 }] };
+  const got = changes.ofPlan(p, (order) => new Map(order[0] === '123456789' ? [['123456789', 800], ['1234567890', 900]] : [['1234567890', 480], ['123456789', 570]]), 'Crew Four').visits;
+  assert.deepEqual(got.map((v) => v.id), ['123456789']);
 });
