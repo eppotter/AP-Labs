@@ -1,0 +1,16 @@
+Crew,Zone,Completed visits,Scheduled staff-minutes,Actual staff-minutes,Over schedule (%),Wages for time over schedule ($)
+Central crew A,Central,67,15345,16247,5.9,324.33
+Central crew B,Central,91,23490,24422,4.0,357.89
+Central crew C,Central,99,22410,24592,9.7,793.02
+East crew A,East,121,27270,29191,7.0,713.70
+East crew B,East,107,22905,24099,5.2,464.42
+East crew C,East,139,30690,32322,5.3,546.93
+North crew A,North,138,30960,32476,4.9,559.66
+North crew B,North,149,33885,34637,2.2,262.30
+North crew C,North,157,37485,37672,0.5,64.64
+South crew A,South,132,31635,32154,1.6,182.70
+South crew B,South,167,35685,37710,5.7,747.60
+South crew C,South,171,38970,41529,6.6,932.88
+West crew A,West,127,28125,30693,9.1,1003.24
+West crew B,West,94,21015,22574,7.4,544.07
+West crew C,West,123,28665,30271,5.6,579.93

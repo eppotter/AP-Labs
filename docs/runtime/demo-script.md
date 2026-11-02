@@ -56,22 +56,29 @@ The next push starts fresh, and the Outbox entry says nothing has been sent yet.
 
 ## Stage 1: v0
 
-The blank bot, taught in front of the audience (plan brightside-v1, D4, Story 18.3). The point: "It knows nothing, until you teach it." `/brightside-v0` sees no data, no rules and no company context, so everything it answers comes from the four demo-pack files you upload.
+The blank bot, taught in front of the audience (plan brightside-v1, D4, Story 18.3; the demo pack rebuilt around three business questions). The point: "It knows nothing, until you teach it, and then it answers questions worth money." `/brightside-v0` sees no data, no rules and no company context, so everything it answers comes from the five demo-pack files you upload. Each of the three questions needs a PDF and a CSV together: the policy or plan in the PDF, the numbers in the CSV.
 
 ### The demo pack
 
-Four files in `examples/brightside/demo-pack/`, built from the fixture by `npm run demo-pack`, so every figure agrees with the data. Copy them to the computer you run Slack on before the demo.
+Five files in `examples/brightside/demo-pack/`, built from the fixture (as of 2026-09-30) by `npm run demo-pack`, so every figure agrees with the data. Copy them to the computer you run Slack on before the demo. The CSVs are totals only: no client names, emails, phones or addresses. The memo's author is invented.
 
 | File | What it holds | Size |
 |---|---|---|
-| `price-list-2026.pdf` | 1 page: the three packages and five add-ons with their prices | 1.8 KB |
-| `service-policies.pdf` | 2 pages: arrival windows, 24 hours' notice to reschedule (no fee), what each package includes, paying, and what happens when a crew is out for the day | 3.6 KB |
-| `zone-billing-2026-09.csv` | 5 rows, 4 columns: per zone, invoices issued, billed and cash received in September. The zone is the client's zone. The totals are the signed truths: billed $364,023.50, cash received $350,186.40 | 0.2 KB |
-| `complaints-2026-09.csv` | 40 rows, 5 columns: date, zone, crew, category, resolved. Synthetic: no client names, emails, phones or addresses | 1.9 KB |
+| `2026-mid-year-pricing-and-operations-memo.pdf` | 3 pages: the operations manager's memo of June 12, 2026. It announces the July 1 price increase (about 8% on average) and why, expects no more than 20 extra cancellations, says how the increase will be judged in September, sets the schedule standard (a crew stays within 8% of its scheduled staff time in a month), and lists the package and add-on prices | 8.2 KB, 3,238 characters |
+| `customer-service-agreement-2026.pdf` | 2 pages: the customer terms. What each package includes, plan price changes, arrival windows, 24 hours' notice to reschedule (no fee), cancelling a plan, net 14 payment by card or bank transfer (ACH), the late-payment table (a late fee of 1.5% a month past 30 days), and what happens when a crew is out | 6.7 KB, 2,879 characters |
+| `plan-changes-2026.csv` | 9 rows, 8 columns: per month, January to September 2026, the price increases and their average %, plans cancelled and their yearly value, active plans at month end, and of each month's increases, the plans still active on 2026-09-30 and the yearly value they add | 0.6 KB, 591 characters |
+| `receivables-aging-2026-09-30.csv` | 6 rows, 11 columns: per zone and for all zones, open invoices and the open balance by days past due (not yet due, 1-30, 31-60, 61-90, over 90), total open, past due, over 30 days past due and how many invoices that is. The total open is the signed truth, $198,753.25 | 0.7 KB, 709 characters |
+| `crew-time-vs-schedule-2026-09.csv` | 15 rows, 7 columns: per crew, its zone, completed September visits, scheduled and actual staff-minutes, % over schedule, and the wages for the time over schedule | 0.8 KB, 808 characters |
 
-All four together are about 4,200 characters as notes, well under the hub's 15,000. Each CSV is inside Add context's limits (200 rows, 30 columns, 6,000 characters).
+All five together are about 8,200 characters as notes, well under the hub's 15,000 (the build allows at most 13,000). Each CSV is inside Add context's limits (200 rows, 30 columns, 6,000 characters), and each PDF's text is under the 6,000-character file limit. The hub keeps the AI's reading of a PDF, not the file, so a PDF note may be a little shorter or longer than the count above.
 
-`npm run demo-pack` rebuilds the files and prints the five questions with their expected answers; `npm run demo-pack -- --check` only checks that the committed files are current. The build fails if question 3 or 4 has a tie at the top, or if the billing totals stop matching the signed truths. `examples/brightside/test/demo-pack.test.js` checks that the table of answers below matches the build.
+`npm run demo-pack` rebuilds the files and prints the three questions and the follow-ups with their expected answers; `npm run demo-pack -- --check` only checks that the committed files are current. The build fails if a ranking an answer uses has a tie, if the receivables or the active plans stop matching the signed truths, if the memo's churn expectation stops being clearly missed, or if a crew sits within 0.3 points of the 8% standard. `examples/brightside/test/demo-pack.test.js` works the three answers out again from the fixture and checks that the tables below match the build.
+
+How the answers are worked out (also in the memo, section 3, and at the top of `build.js`):
+
+- **Question 1.** Extra cancellations: plans cancelled in July to September, less three times the January to June monthly average. Their cost: the same for the cancelled plans' yearly value (price per visit times visits a year: weekly 52, every two weeks 26, monthly 12). The gain: the yearly value the July increases add on the plans still active on 2026-09-30. It paid off if the gain is more than the cost.
+- **Question 2.** An invoice's open balance is its total less payments made by 2026-09-30. Days past due count from the due date (net 14). The late fee is 1.5% of the balance more than 30 days past due, for one month.
+- **Question 3.** September's completed visits, one timesheet row per person per visit. Scheduled staff-minutes are the visit's scheduled minutes for each person on it. Wages for time over schedule are each person's minutes over (or under) schedule at their hourly rate on the day, so an early finish counts against an overrun.
 
 ### Before the demo
 
@@ -85,31 +92,41 @@ All four together are about 4,200 characters as notes, well under the hub's 15,0
 |---|---|---|
 | 1 | Type `/brightside-v0` in any channel or DM. | The Brightside v0 window. The first line reads "Knows: nothing yet"; the second starts "Setup". Rows: Ask, Request a tool, and under Setup, Add context and Data sources. |
 | 2 | Press **Help**, then **Back**. | The four tools, each with one line on what it does. Back returns to the menu. |
-| 3 | Press **Ask** on the Ask row. Type `Which zone billed the most in September, and how much cash did we receive from that zone in September?` and press **Ask**. | "Thinking…", then: "I can't answer data questions yet. No data is connected, and there are no rules yet for using it safely." This is the "it can't answer" moment. Press **Back**. |
-| 4 | Press **Add** on the Add context row. Title `Price list`. Under **Or upload a file**, pick `price-list-2026.pdf`. Press **Add**. | "Reading…", then "Here's what I took from *Price list*:" with the packages and add-ons and their prices. Press **Back**. |
-| 5 | **Add** again: title `Policies`, file `service-policies.pdf`, **Add**. | "Here's what I took from *Policies*:" with the arrival windows and the 24 hours' notice. **Back**. |
-| 6 | **Add** again: title `Billing by zone, September`, file `zone-billing-2026-09.csv`, **Add**. | "Here's what I took from *Billing by zone, September*: 5 rows, 4 columns", then the table as text. **Back**. |
-| 7 | **Add** again: title `Complaints, September`, file `complaints-2026-09.csv`, **Add**. | "Here's what I took from *Complaints, September*: 40 rows, 5 columns". **Back**. |
-| 8 | Close the window and type `/brightside-v0` again. | The first line reads "Knows: 4 notes". |
-| 9 | Press **Ask** and ask the five questions below, one at a time. Press **Ask another** between them. | Each answer says what the table below says (in the AI's own words), ending with "Not what you needed?". |
+| 3 | Press **Ask** on the Ask row. Type `Did our July price increase cost us customers? Was it worth it?` and press **Ask**. | "Thinking…", then: "I can't answer data questions yet. No data is connected, and there are no rules yet for using it safely." This is the "it can't answer" moment: the bot knows nothing about the business yet. Press **Back**. |
+| 4 | Press **Add** on the Add context row. Title `Mid-year pricing memo, June 2026`. Under **Or upload a file**, pick `2026-mid-year-pricing-and-operations-memo.pdf`. Press **Add**. | "Reading…", then "Here's what I took from *Mid-year pricing memo, June 2026*:" with the July increase, the 20-cancellation expectation, how it will be judged, the 8% standard and the prices. Press **Back**. |
+| 5 | **Add** again: title `Customer service agreement 2026`, file `customer-service-agreement-2026.pdf`, **Add**. | "Here's what I took from *Customer service agreement 2026*:" with the packages, the 24 hours' notice, net 14 and the late-payment table. **Back**. |
+| 6 | **Add** again: title `Plan changes 2026`, file `plan-changes-2026.csv`, **Add**. | "Here's what I took from *Plan changes 2026*: 9 rows, 8 columns", then the table as text. **Back**. |
+| 7 | **Add** again: title `Receivables aging, 30 Sep 2026`, file `receivables-aging-2026-09-30.csv`, **Add**. | "Here's what I took from *Receivables aging, 30 Sep 2026*: 6 rows, 11 columns". **Back**. |
+| 8 | **Add** again: title `Crew time vs schedule, September`, file `crew-time-vs-schedule-2026-09.csv`, **Add**. | "Here's what I took from *Crew time vs schedule, September*: 15 rows, 7 columns". **Back**. |
+| 9 | Close the window and type `/brightside-v0` again. | The first line reads "Knows: 5 notes". |
+| 10 | Press **Ask** and ask the three questions below, one at a time, starting with step 3's question again. Press **Ask another** between them. | Each answer says what the table below says (in the AI's own words, and it may round), ending with "Not what you needed?". |
+| 11 | Take a follow-up or two from the audience (the second table below). | Each answer as in that table. |
 
-### The five questions and their expected answers
+### The three questions and their expected answers
 
 | # | Ask | Expected answer | From |
 |---|---|---|---|
-| 1 | How much is a deep clean, and what does the inside oven add-on cost? | Deep clean $260.00 (base price); Inside oven $35.00. | `price-list-2026.pdf` |
-| 2 | How much notice does a customer need to give to reschedule? | 24 hours' notice, and there is no fee. | `service-policies.pdf` |
-| 3 | Which zone billed the most in September, and how much cash did we receive from that zone in September? | South: billed $91,558.00 on 470 invoices; cash received in September $91,232.40. | `zone-billing-2026-09.csv` |
-| 4 | Which crew had the most late-arrival complaints in September? | West crew B, with 5 late-arrival complaints. | `complaints-2026-09.csv` |
-| 5 | How many complaints in September are still unresolved? | 11 of 40. | `complaints-2026-09.csv` |
+| 1 | Did our July price increase cost us customers? Was it worth it? | Yes, it cost customers, and no, it did not pay off. July to September had 190 plan cancellations, 87 more than three times the January to June average of 34.3 a month; the memo expected no more than 20 extra. Those extra cancellations were worth $449,182.00 a year. The increase added $113,778.00 a year on the 304 increased plans still active on 2026-09-30. Net: $335,404.00 a year less. | `2026-mid-year-pricing-and-operations-memo.pdf` (the expectation and the method) and `plan-changes-2026.csv` (the counts and values) |
+| 2 | How much are customers past due, and how much could we collect in late fees under our terms? | Past due: $103,280.65 of the $198,753.25 open on 1,136 invoices. More than 30 days past due: $63,103.15 on 347 invoices. At the agreement's 1.5% a month, that is $946.55 in late fees a month. | `customer-service-agreement-2026.pdf` (net 14 and the late fee) and `receivables-aging-2026-09-30.csv` (the balances) |
+| 3 | Which crews ran furthest over schedule in September, and what did it cost us in wages? | Central crew C ran furthest over: 9.7% over its scheduled staff time (24,592 minutes against 22,410 on 99 visits), $793.02 in wages. West crew A was next at 9.1%, $1,003.24, the largest wage cost. Only Central crew C and West crew A break the memo's 8% standard. North crew C kept closest to schedule, 0.5% over. All crews together: $8,077.31 in wages for time over schedule. | `2026-mid-year-pricing-and-operations-memo.pdf` (the 8% standard) and `crew-time-vs-schedule-2026-09.csv` (the minutes and wages) |
 
-The runners-up, if someone asks: North billed $86,608.00 (second); West crew A and North crew B had 4 late-arrival complaints each.
+The AI does the arithmetic in questions 1 and 2 from the notes, so check its figures against the table: the counts and the dollar amounts should match to the cent, or be rounded. If it works question 1 a different way (for example, comparing only July and August), ask it to "use the memo's method"; section 3 of the memo pins it.
 
-Questions 3 to 5 ask for figures, which Ask sorts as data questions. On v0 no data is connected, so Ask first checks the notes: when they hold the answer it answers from them; when they don't, it says "I can't answer data questions yet" as in step 3.
+All three ask for figures, which Ask sorts as data questions. On v0 no data is connected, so Ask first checks the notes: when they hold the answer it answers from them; when they don't, it says "I can't answer data questions yet" as in step 3.
+
+### Follow-ups an audience might ask
+
+| Ask | Expected answer | From |
+|---|---|---|
+| What did the memo expect the increase to add if every plan stayed? | About $156,000 a year. | `2026-mid-year-pricing-and-operations-memo.pdf` |
+| Which zone owes the most that is more than 90 days past due? | North: $14,622.15. | `receivables-aging-2026-09-30.csv` |
+| What happens when a customer is more than 60 days past due? | Their visits pause until the balance is paid. After 90 days we may pass the balance to a collection agency. | `customer-service-agreement-2026.pdf` |
+| How much notice does a customer need to give to reschedule? | 24 hours' notice, and there is no fee. | `customer-service-agreement-2026.pdf` |
+| How much is a deep clean, and what does the inside oven add-on cost? | Deep clean $260.00 per visit (base price); Inside oven $35.00. | `2026-mid-year-pricing-and-operations-memo.pdf` |
 
 ### Resetting v0
 
-Press **Add** on Add context. Under *Added here*, press **Remove** on each of the four notes and confirm. Type `/brightside-v0`: "Knows: nothing yet". The files stay in your own Slack files; delete them there if you want.
+Press **Add** on Add context. Under *Added here*, press **Remove** on each of the five notes and confirm. Type `/brightside-v0`: "Knows: nothing yet". The files stay in your own Slack files; delete them there if you want.
 
 `/brightside-v1` shares v0's notes (plan brightside-v1, D6, Story 19.2): a note added on either hub shows on both, and removing it on either removes it from both. Reset once, on either hub.
 
@@ -117,7 +134,7 @@ Press **Add** on Add context. Under *Added here*, press **Remove** on each of th
 
 The same bot on the real data (plan brightside-v1, Stories 19.1 to 19.8). The point: "Now it knows the company, follows its rules, and plans routes." `/brightside-v1` sees the company context, the data and the signed rules, and shares v0's notes. It has five route skills. Ask sends route questions to a route skill, and answers data questions by running a query built only from signed query rules. The route skills only suggest: nothing is booked or changed.
 
-Run it after Stage 1, so the four demo-pack notes are there. Everything you see is private to you.
+Run it after Stage 1, so the five demo-pack notes are there. Everything you see is private to you.
 
 ### Before the demo
 
@@ -150,12 +167,12 @@ Run it after Stage 1, so the four demo-pack notes are there. Everything you see 
 
 | Line or group | What it shows |
 |---|---|
-| First line | "Knows: 4 notes · 1 source · 7 truths · 10 rules" (without the Stage 1 notes, "Knows: 1 source · 7 truths · 10 rules") |
+| First line | "Knows: 5 notes · 1 source · 7 truths · 10 rules" (without the Stage 1 notes, "Knows: 1 source · 7 truths · 10 rules") |
 | Second line, small grey text | "All 7 tools working" |
 | Welcome, first visit only | "Brightside on your real data: it knows the company, follows its rules, and plans routes." |
 | **Routing** | Add a stop (**Run**), Customer cancellation (**Run**), Crew out (**Run**), Route map (**View**), Optimize a route (**Run**) |
 | **Tools** | Ask (**Ask**), Request a tool (**Request**) |
-| **Setup · admins only** | Add context (**Add**, "4 notes"), Data sources (**View**) |
+| **Setup · admins only** | Add context (**Add**, "5 notes"), Data sources (**View**) |
 | Bottom | Help |
 
 ### The steps
@@ -163,8 +180,8 @@ Run it after Stage 1, so the four demo-pack notes are there. Everything you see 
 | # | You do | You should see |
 |---|---|---|
 | 1 | Type `/brightside-v1` in any channel or DM. | The Brightside v1 window, as in "The v1 menu" above. |
-| 2 | Press **View** on Data sources. | *Connected data:* "local fixture: brightside.duckdb, available". *Known truths and rules:* data.md and guardrails.md each "signed off 2026-10-31 by Ely Potter", "Rule cards approved: 10", "Query rules signed: 7", then the known truths: seven "Signed off 2026-10-25", each "Last check passed" with the date you ran the checks, and the rest "Awaiting sign-off". *Added context (shared with Brightside v0):* the four notes from Stage 1. Press **Back**. |
-| 3 | Press **Ask**. Type `How much notice does a customer need to give to reschedule?` and press **Ask**. | "Thinking…", then: 24 hours' notice, and no fee (from the Policies note). It ends "Not what you needed?". Press **Ask another**. |
+| 2 | Press **View** on Data sources. | *Connected data:* "local fixture: brightside.duckdb, available". *Known truths and rules:* data.md and guardrails.md each "signed off 2026-10-31 by Ely Potter", "Rule cards approved: 10", "Query rules signed: 7", then the known truths: seven "Signed off 2026-10-25", each "Last check passed" with the date you ran the checks, and the rest "Awaiting sign-off". *Added context (shared with Brightside v0):* the five notes from Stage 1. Press **Back**. |
+| 3 | Press **Ask**. Type `How much notice does a customer need to give to reschedule?` and press **Ask**. | "Thinking…", then: 24 hours' notice, and no fee (from the Customer service agreement note). It ends "Not what you needed?". Press **Ask another**. |
 | 4 | Ask `What was paid revenue in September 2026?` | A bold label and **$350,186.40**. Under it, "From signed rule QR-003 (reviewed query)." and "Source: brightside.duckdb, as of 2026-09-30. 1 row. Tables: payments." There may also be a line saying the AI's own query agreed (if it disagreed, the figure shown is still the signed rule's). |
 | 5 | Press **Show the query**. | "The signed rule's query (QR-003, reviewed):" and its SQL. Press **Back to the answer**: the same answer again. Press **Ask another**. |
 | 6 | Ask `What did we bill in September 2026?` | **$364,023.50**, "From signed rule QR-004 (reviewed query)." |
@@ -196,11 +213,11 @@ The bold label above a figure is the AI's wording and may differ. The figure, th
 
 **Untested until you run it.** Run it after Epic 19 has merged, from your own account (Steven may repeat any step from his). Each step is one action and what you should see. If a step differs, stop and tell the Orchestrator the step number and what you saw.
 
-Before you start: steps 1 to 6 of "Before the demo" above, and the four demo-pack notes from Stage 1 on `/brightside-v0`.
+Before you start: steps 1 to 6 of "Before the demo" above, and the five demo-pack notes from Stage 1 on `/brightside-v0`.
 
-1. Type `/brightside-v1`. The first line reads "Knows: 4 notes · 1 source · 7 truths · 10 rules". The second reads "All 7 tools working".
-2. Look at the rows. Routing: Add a stop, Customer cancellation, Crew out, Route map, Optimize a route. Tools: Ask, Request a tool. Setup · admins only: Add context ("4 notes"), Data sources. Help at the bottom.
-3. Press **View** on Data sources. You see the local fixture "available"; data.md and guardrails.md signed off by Ely Potter; "Rule cards approved: 10"; "Query rules signed: 7"; seven known truths signed off, each "Last check passed"; and the four notes under "Added context (shared with Brightside v0)".
+1. Type `/brightside-v1`. The first line reads "Knows: 5 notes · 1 source · 7 truths · 10 rules". The second reads "All 7 tools working".
+2. Look at the rows. Routing: Add a stop, Customer cancellation, Crew out, Route map, Optimize a route. Tools: Ask, Request a tool. Setup · admins only: Add context ("5 notes"), Data sources. Help at the bottom.
+3. Press **View** on Data sources. You see the local fixture "available"; data.md and guardrails.md signed off by Ely Potter; "Rule cards approved: 10"; "Query rules signed: 7"; seven known truths signed off, each "Last check passed"; and the five notes under "Added context (shared with Brightside v0)".
 4. Press **Back**, then **Ask**. Ask `Crew 4's stops on October 1 zig-zag. Can you fix the order?`. The answer names Optimize a route, with **Run**.
 5. Press **Run**. Pick South crew A and 2026-10-01, press **Show stops**. You see seven stops, the map and the Drive time.
 6. Press **Optimize**. The order changes, the map redraws, and the Drive time is shorter than in step 5.
@@ -221,9 +238,9 @@ Before you start: steps 1 to 6 of "Before the demo" above, and the four demo-pac
 21. Ask `What does Brightside do when a crew is out?`. You get an answer from the company context, ending "Not what you needed?".
 22. Press **Request a tool** under that answer, type a line, press **Preview**, then **Post**. It appears in `#ai-build-requests` with your name and "Brightside v1".
 23. On `/brightside-v1`, press **Add** on Add context, type a title and a line of text, press **Add**. You see "Added. Ask can use it now."
-24. Type `/brightside-v0`. The first line reads "Knows: 5 notes", and Add context lists the new note.
-25. Remove that note on `/brightside-v0`, then type `/brightside-v1`. The first line reads "Knows: 4 notes" again.
-26. Type `/brightside-v0` and look at it. It is as after Stage 1: "Knows: 4 notes"; Ask and Request a tool; Add context and Data sources under Setup.
+24. Type `/brightside-v0`. The first line reads "Knows: 6 notes", and Add context lists the new note.
+25. Remove that note on `/brightside-v0`, then type `/brightside-v1`. The first line reads "Knows: 5 notes" again.
+26. Type `/brightside-v0` and look at it. It is as after Stage 1: "Knows: 5 notes"; Ask and Request a tool; Add context and Data sources under Setup.
 27. Type `/brightside`. It has the same groups and tools as before Epic 19 (Lists, Routing, Tools). Its first line ends "1 source · 7 truths · 10 rules": 10, not 8, since GRD-009 and GRD-010 were signed (Stories 19.7 and 20.1). Both hubs read the same rule file.
 28. Open the Slack app's settings (api.slack.com/apps, Brightside Bot (dev)). Slash Commands lists `/brightside`, `/brightside-v0` and `/brightside-v1`. OAuth & Permissions lists the same seven bot scopes as `examples/brightside/app/slack-manifest.json`.
 
