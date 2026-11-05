@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-11-04 | fix in 18.2 (CSV upload) and add-context-multi | fix | T3 | A .csv uploaded to Add context is now read when Slack serves it as application/vnd.ms-excel, application/csv or application/x-csv (seen live: all three demo CSVs failed with "I couldn't download that file"). .txt and .md are unchanged, a web page or JSON is still refused, and the bytes are still checked by the CSV reader and the size caps. A refused content type now logs its media type alone, so the next unknown type shows. | — |

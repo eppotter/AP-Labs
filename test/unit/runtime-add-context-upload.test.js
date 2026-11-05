@@ -130,9 +130,11 @@ async function openForm(app, { user = ADA } = {}) {
   return calls(app, 'push').at(-1).view;
 }
 
-// The mimetype Slack gives a file by its name.
+// The mimetype Slack gives a file by its name, and serves its download as.
+// A .csv is application/vnd.ms-excel: what real Slack served the demo pack's
+// CSVs as, uploaded from a Mac with Excel installed (seen live).
 const MIMETYPES = {
-  pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv',
+  pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', txt: 'text/plain', md: 'text/markdown', csv: 'application/vnd.ms-excel',
 };
 const mimetypeOf = (name) => MIMETYPES[String(name).split('.').pop().toLowerCase()] || 'application/octet-stream';
 
@@ -621,10 +623,16 @@ test('way out, a refused CSV found after the ack: over the caps, ragged, a quote
   for (const [i, [body, words]] of cases.entries()) {
     assertResult(await submitFile(ctx, csvUpload(ctx.app, body, { id: `F0BAD${i}` })), words);
   }
-  // An error body in JSON sent back as the file: download_failed.
+  // Each case above was served as application/vnd.ms-excel: that type lets
+  // the download through, and the bytes are still checked.
+  assert.ok(ctx.app.fetches.length === cases.length);
+  // An error body in JSON, or a web page, sent back as the file: download_failed.
   const json = csvUpload(ctx.app, '{"ok":false}', { id: 'F0JSON' });
   ctx.app.downloadAs.F0JSON = { contentType: 'application/json' };
   assertResult(await submitFile(ctx, json), FILE_WORDS.download_failed());
+  const html = csvUpload(ctx.app, 'a,b\n1,2\n', { id: 'F0HTML' });
+  ctx.app.downloadAs.F0HTML = { html: true };
+  assertResult(await submitFile(ctx, html), FILE_WORDS.download_failed());
   assert.equal(tooBig, 'That CSV is too big for a note: at most 200 rows, 30 columns and about 6,000 characters. Keep the rows you need, or split it.');
   assert.deepEqual([ctx.model.sent, await ctx.knowledge.list('blank')], [[], []]);
   // Logged with the reason only: never a cell.
@@ -727,6 +735,8 @@ test('five files, no title: one submit; "Reading 1 of 5" in the ack, then one up
   const ctx = setup(t);
   const form = await openForm(ctx.app);
   const files = demoFiles(ctx.app);
+  // The CSVs come as real Slack served them live: application/vnd.ms-excel.
+  assert.deepEqual(files.slice(2).map((f) => f.mimetype), Array(3).fill('application/vnd.ms-excel'));
   await submit(ctx.app, form, { title: null, files });
   const [ack] = ctx.app.viewAcks;
   assert.equal(ack.response_action, 'update');

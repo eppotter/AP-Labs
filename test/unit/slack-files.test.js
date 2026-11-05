@@ -351,6 +351,93 @@ test('a .csv download is checked as text: a JSON content type is refused; text/c
   }
 });
 
+test('a .csv may also come as application/vnd.ms-excel, application/csv or application/x-csv (what real Slack serves a CSV as); a .txt or .md may not', async () => {
+  const { app, files, log } = setup();
+  const body = 'zone,n\nNorth,1\n';
+  app.addSlackFile({
+    id: 'F0CSV', name: 'zones.csv', user: ADA, mimetype: 'application/vnd.ms-excel', bytes: Buffer.from(body),
+  });
+  // Served as files.info says, as the fake (and Slack) does: read.
+  assert.equal((await fetchFile(files, app, 'F0CSV')).bytes.toString(), body);
+  for (const contentType of [
+    'application/vnd.ms-excel', 'Application/Vnd.MS-Excel; charset=utf-8', 'application/csv', 'application/x-csv; charset=UTF-8', ' application/csv ;header=present',
+  ]) {
+    app.downloadAs.F0CSV = { contentType };
+    assert.equal((await fetchFile(files, app, 'F0CSV')).bytes.toString(), body, contentType);
+  }
+  // A web page, JSON, or a near miss stays refused.
+  for (const contentType of ['text/html; charset=utf-8', 'application/json', 'application/vnd.ms-excelx', 'application/csv-json', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']) {
+    app.downloadAs.F0CSV = { contentType };
+    await assert.rejects(fetchFile(files, app, 'F0CSV'), refusedAs('download_failed'), contentType);
+  }
+  app.downloadAs.F0CSV = { html: true };
+  await assert.rejects(fetchFile(files, app, 'F0CSV'), refusedAs('download_failed'));
+  // A .txt or .md served as a spreadsheet type is still refused.
+  for (const [id, name] of [['F0TXT', 'notes.txt'], ['F0MD', 'notes.md']]) {
+    app.addSlackFile({
+      id, name, user: ADA, mimetype: 'text/plain', bytes: Buffer.from('hello'),
+    });
+    for (const contentType of ['application/vnd.ms-excel', 'application/csv', 'application/x-csv']) {
+      app.downloadAs[id] = { contentType };
+      await assert.rejects(fetchFile(files, app, id), refusedAs('download_failed'), `${name} ${contentType}`);
+    }
+  }
+  assert.ok(!JSON.stringify(log.lines).includes(app.botToken));
+});
+
+test('a .csv served as application/vnd.ms-excel is still checked after the download: the size, then readCsv (UTF-8, the CSV parse)', async () => {
+  const { app, files } = setup();
+  const notUtf8 = Buffer.from([0x61, 0x2c, 0x62, 0x0a, 0xff, 0x2c, 0x31, 0x0a]);
+  app.addSlackFile({
+    id: 'F0XL', name: 'bad.csv', user: ADA, mimetype: 'application/vnd.ms-excel', bytes: notUtf8,
+  });
+  assert.throws(() => readCsv(notUtf8), refusedAs('encoding'));
+  const got = await fetchFile(files, app, 'F0XL');
+  assert.throws(() => readCsv(got.bytes), refusedAs('encoding'));
+  for (const [id, body, reason] of [['F0RAG', 'a,b\n1,2\n3\n', 'csv_ragged'], ['F0QUO', 'a,b\n1,"open\n', 'csv_quote'], ['F0HDR', 'a,b\n', 'csv_no_rows']]) {
+    app.addSlackFile({
+      id, name: `${id}.csv`, user: ADA, mimetype: 'application/vnd.ms-excel', bytes: Buffer.from(body),
+    });
+    const { bytes } = await fetchFile(files, app, id);
+    assert.throws(() => readCsv(bytes), refusedAs(reason), reason);
+  }
+  // Over 5 MB, by Content-Length or by the body: size.
+  app.addSlackFile({
+    id: 'F0XLBIG', name: 'big.csv', user: ADA, mimetype: 'application/vnd.ms-excel', bytes: Buffer.alloc(MAX_FILE_BYTES + 1, 0x61), size: 10,
+  });
+  app.downloadAs.F0XLBIG = { length: 10 };
+  await assert.rejects(fetchFile(files, app, 'F0XLBIG'), refusedAs('size'));
+  app.downloadAs.F0XLBIG = { noLength: true };
+  await assert.rejects(fetchFile(files, app, 'F0XLBIG'), refusedAs('size'));
+});
+
+test('a download refused for its content type logs the media type alone (before ;, lower-cased, [a-z0-9.+/-], at most 100 characters), or "other"', async () => {
+  const { app, files, log } = setup();
+  app.addSlackFile({
+    id: 'F0TYPE', name: 'zones.csv', user: ADA, mimetype: 'text/csv', bytes: Buffer.from('a\n1\n'),
+  });
+  const cases = [
+    ['Application/JSON; charset=utf-8; boundary=secret', 'application/json'],
+    ['  application/vnd.ms-excelx ', 'application/vnd.ms-excelx'],
+    [`application/${'x'.repeat(88)}`, `application/${'x'.repeat(88)}`],
+    [`application/${'x'.repeat(89)}`, 'other'],
+    ['application/json"token', 'other'],
+    ['image/png\u00e9', 'other'],
+    [' ', 'other'],
+    ['; charset=utf-8', 'other'],
+  ];
+  for (const [contentType, logged] of cases) {
+    app.downloadAs.F0TYPE = { contentType };
+    log.lines.length = 0;
+    await assert.rejects(fetchFile(files, app, 'F0TYPE'), refusedAs('download_failed'), contentType);
+    const refused = log.lines.filter((l) => l.msg === 'file download refused');
+    assert.deepEqual(refused.map((l) => l.fields), [{ reason: 'content type', mediaType: logged }], contentType);
+  }
+  // Never the URL, the token, the name or the body.
+  const all = JSON.stringify(log.lines);
+  for (const never of [app.botToken, 'files.slack.com', 'zones', 'secret']) assert.ok(!all.includes(never), never);
+});
+
 // --- The fake refuses what Slack refuses ------------------------------------------------------
 
 test('the Slack fake: file_input outside an input block, max_files over 10, unknown filetypes; a file_input view without files:read', async () => {
