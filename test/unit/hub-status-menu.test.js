@@ -181,7 +181,7 @@ test('onboarded: the blank hub with two notes is set up (1 of 2 tools working ·
   assert.equal(progressOf(view), '1 of 2 tools working · 1 limited');
   assert.equal(statusOf(view, 'blank-add'), '_2 notes_');
   assert.equal(statusOf(view, 'blank-sources'), '_notes only · no data on this hub_');
-  assert.equal(statusOf(view, 'blank-ask'), '🟡 _no data yet_');
+  assert.equal(statusOf(view, 'blank-ask'), '🟡 _2 notes · no data yet_');
   // The full hub before anything is signed off and with no data: only
   // "taught" is done (it sees context).
   const full = await menuFor(ADA, '/full', { notes: { full: 1 }, data: false, rules: nothingSigned() });

@@ -21,8 +21,10 @@
 // D11's table:
 //   ask              ready with data and rules; waiting · needs the AI with
 //                    no AI service; else partly (· nothing taught yet, · no
-//                    data yet, or · no rules yet). Never waiting for data:
-//                    Ask works without it.
+//                    rules yet with data, · N notes · no data yet with
+//                    notes and no data, as Ask answers from the notes, or
+//                    · no data yet with no notes or notes that couldn't be
+//                    listed). Never waiting for data: Ask works without it.
 //   add-context      done · N notes; not-started · no notes yet; waiting ·
 //                    needs storage with no knowledge store; null (no status
 //                    line) when the notes couldn't be listed.
@@ -64,6 +66,8 @@ function askStatus(facts) {
   const taught = stepOf(summary, 'taught');
   if (!taught.done && summary && summary.counts && summary.counts.notes === 0) return status('partly', 'nothing taught yet');
   if (ready.data === true) return status('partly', 'no rules yet');
+  const notes = summary && summary.counts ? summary.counts.notes : null;
+  if (Number.isSafeInteger(notes) && notes > 0) return status('partly', `${plural(notes, 'note', 'notes')} · no data yet`);
   return status('partly', 'no data yet');
 }
 
