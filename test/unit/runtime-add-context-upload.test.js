@@ -69,18 +69,23 @@ function tmpDir(t) {
 }
 
 // A stand-in model: checkRequest first, then reply(params, n). hold: each
-// call waits for release().
+// call waits for release(). firstCall: resolves when the first call has
+// arrived (a signal to await, never a count of ticks).
 function fakeModel(reply = () => ({ content: [{ type: 'text', text: TOOK }], stop_reason: 'end_turn', usage: { input_tokens: 3000, output_tokens: 60 } }), { hold = false } = {}) {
   const sent = [];
   let release;
   const gate = new Promise((r) => { release = r; });
+  let arrived;
+  const firstCall = new Promise((r) => { arrived = r; });
   return {
     sent,
+    firstCall,
     release: () => release(),
     messages: {
       async create(params) {
         sent.push(params);
         checkRequest(params);
+        arrived();
         if (hold) await gate;
         const value = reply(params, sent.length);
         if (value instanceof Error) throw value;
@@ -812,17 +817,38 @@ test('one file with no title: stored under its name without the extension; other
   assert.deepEqual(await titlesOf(ctx), ['customer-service-agreement-2026']);
 });
 
-test('the files are read one after another: the second is not fetched while the first is with the AI', async (t) => {
+// Records, in order, each download the fake Slack serves and each AI read
+// as it finishes.
+function orderLog(ctx, model) {
+  const order = [];
+  const serve = ctx.app.serveFile.bind(ctx.app);
+  ctx.app.serveFile = (url, init) => {
+    order.push(`fetch ${new URL(url).pathname.split('/')[2].replace('T0FAKE-', '')}`);
+    return serve(url, init);
+  };
+  const create = model.messages.create.bind(model.messages);
+  model.messages.create = async (params) => {
+    const value = await create(params);
+    order.push('ai done');
+    return value;
+  };
+  return order;
+}
+
+test('the files are read one after another: the second is not fetched until the first one\'s AI read has finished', async (t) => {
   const model = fakeModel(undefined, { hold: true });
   const ctx = setup(t, { model });
+  const order = orderLog(ctx, model);
   const form = await openForm(ctx.app);
   const done = submit(ctx.app, form, { title: null, files: demoFiles(ctx.app).slice(0, 3) });
-  for (let i = 0; i < 30 && !model.sent.length; i += 1) await new Promise(setImmediate);
-  for (let i = 0; i < 10; i += 1) await new Promise(setImmediate);
+  // The first file is with the AI, held there until released.
+  await model.firstCall;
   assert.equal(model.sent.length, 1);
-  assert.deepEqual(fetchedIds(ctx.app), ['F0MEMO']);
+  assert.deepEqual(order, ['fetch F0MEMO']);
   model.release();
   await done;
+  // Every download after the first waited for the AI read before it.
+  assert.deepEqual(order, ['fetch F0MEMO', 'ai done', 'fetch F0TERMS', 'ai done', 'fetch F0PLANS']);
   assert.equal(model.sent.length, 2);
   assert.equal((await ctx.knowledge.list('blank')).length, 3);
 });
@@ -832,7 +858,7 @@ test('way out, the person closes the view mid-read: reading stops before the nex
   const ctx = setup(t, { model });
   const form = await openForm(ctx.app);
   const done = submit(ctx.app, form, { title: null, files: demoFiles(ctx.app).slice(0, 3) });
-  for (let i = 0; i < 30 && !model.sent.length; i += 1) await new Promise(setImmediate);
+  await model.firstCall;
   ctx.app.closeView('VFORM');
   model.release();
   await done;
