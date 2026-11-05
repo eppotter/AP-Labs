@@ -1,0 +1,3 @@
+| PR | Date | Story | Kind | Tier | Summary | DEPs |
+|---|---|---|---|---|---|---|
+| pending | 2026-11-04 | fix in 18.2 (CSV upload) and add-context-multi | fix | T3 | A .txt, .md or .csv uploaded to Add context is now read when Slack serves it as application/force-download, the generic "download this" type real Slack used for the demo CSVs (seen live in the log PR #342 added; all three were still refused). The Excel and CSV types from #342 stay, everything else (a web page, JSON, near misses) is still refused, and the bytes are still checked for UTF-8, the CSV parse and the size. Tests now serve CSVs as real Slack does and assert the type each download was served with. | — |

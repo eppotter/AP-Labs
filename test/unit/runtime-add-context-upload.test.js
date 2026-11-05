@@ -131,19 +131,22 @@ async function openForm(app, { user = ADA } = {}) {
 }
 
 // The mimetype Slack gives a file by its name, and serves its download as.
-// A .csv is application/vnd.ms-excel: what real Slack served the demo pack's
-// CSVs as, uploaded from a Mac with Excel installed (seen live).
+// A .csv is served as application/force-download: what real Slack served the
+// demo pack's CSVs as (seen live, logged after PR #342).
 const MIMETYPES = {
-  pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', txt: 'text/plain', md: 'text/markdown', csv: 'application/vnd.ms-excel',
+  pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv',
 };
-const mimetypeOf = (name) => MIMETYPES[String(name).split('.').pop().toLowerCase()] || 'application/octet-stream';
+const SERVED_AS = { csv: 'application/force-download' };
+const extOfName = (name) => String(name).split('.').pop().toLowerCase();
+const mimetypeOf = (name) => MIMETYPES[extOfName(name)] || 'application/octet-stream';
+const servedAsOf = (name) => SERVED_AS[extOfName(name)];
 
 // Ada uploads a file into Slack through the form's file_input.
 function upload(app, {
-  id = 'F0PRICES', name = 'Price list.pdf', bytes = pdf({ pages: 2 }), user = ADA.id, mimetype = mimetypeOf(name), size,
+  id = 'F0PRICES', name = 'Price list.pdf', bytes = pdf({ pages: 2 }), user = ADA.id, mimetype = mimetypeOf(name), servedAs = servedAsOf(name), size,
 } = {}) {
   return app.addSlackFile({
-    id, name, user, mimetype, bytes, size,
+    id, name, user, mimetype, servedAs, bytes, size,
   });
 }
 
@@ -559,8 +562,8 @@ test('a file name over 255 characters is stored shortened, extension kept (never
 // header only, a JSON content type, .xlsx by name), the hub's notes full
 // (characters and entries), and closing the screen while it is read.
 
-const csvUpload = (app, body, { id = 'F0CSV', name = 'zones.csv' } = {}) => upload(app, {
-  id, name, bytes: Buffer.isBuffer(body) ? body : Buffer.from(body),
+const csvUpload = (app, body, { id = 'F0CSV', name = 'zones.csv', servedAs } = {}) => upload(app, {
+  id, name, bytes: Buffer.isBuffer(body) ? body : Buffer.from(body), ...(servedAs ? { servedAs } : {}),
 });
 const rowsOf = (rows, cols = 2) => [
   Array.from({ length: cols }, (_, i) => `c${i}`).join(','),
@@ -585,6 +588,16 @@ test('a CSV: "Reading…", then "Here\'s what I took from <title>: <N> rows, <M>
   // Ask on this hub gets it inside <added_context>, escaped.
   await ctx.llm.forHub({ id: 'blank', sees: [] }).ask({ person: 'UADA', resource: 'ASK', request: 'Which zone billed the most?' });
   assert.ok(ctx.model.sent[0].system.includes(escapeData(stored)));
+});
+
+test('a CSV served as application/vnd.ms-excel or text/csv is read too (the types seen before Slack served application/force-download)', async (t) => {
+  const ctx = setup(t);
+  for (const [i, servedAs] of ['application/vnd.ms-excel', 'text/csv; charset=utf-8'].entries()) {
+    const update = await submitFile(ctx, csvUpload(ctx.app, 'Zone,n\nNorth,1\n', { id: `F0SERVED${i}`, servedAs }), { title: `Zones ${i}` });
+    assert.equal(update.view.blocks[0].text.text, `Here's what I took from *Zones ${i}*: 1 row, 2 columns`, servedAs);
+  }
+  assert.deepEqual(ctx.app.fetches.map((f) => f.servedAs), ['application/vnd.ms-excel', 'text/csv; charset=utf-8']);
+  assert.deepEqual((await ctx.knowledge.list('blank')).map((e) => e.text), ['Zone,n\nNorth,1', 'Zone,n\nNorth,1']);
 });
 
 test('a CSV of 1 row and 1 column says so in the singular', async (t) => {
@@ -623,9 +636,9 @@ test('way out, a refused CSV found after the ack: over the caps, ragged, a quote
   for (const [i, [body, words]] of cases.entries()) {
     assertResult(await submitFile(ctx, csvUpload(ctx.app, body, { id: `F0BAD${i}` })), words);
   }
-  // Each case above was served as application/vnd.ms-excel: that type lets
+  // Each case above was served as application/force-download: that type lets
   // the download through, and the bytes are still checked.
-  assert.ok(ctx.app.fetches.length === cases.length);
+  assert.deepEqual(ctx.app.fetches.map((f) => f.servedAs), Array(cases.length).fill('application/force-download'));
   // An error body in JSON, or a web page, sent back as the file: download_failed.
   const json = csvUpload(ctx.app, '{"ok":false}', { id: 'F0JSON' });
   ctx.app.downloadAs.F0JSON = { contentType: 'application/json' };
@@ -735,8 +748,7 @@ test('five files, no title: one submit; "Reading 1 of 5" in the ack, then one up
   const ctx = setup(t);
   const form = await openForm(ctx.app);
   const files = demoFiles(ctx.app);
-  // The CSVs come as real Slack served them live: application/vnd.ms-excel.
-  assert.deepEqual(files.slice(2).map((f) => f.mimetype), Array(3).fill('application/vnd.ms-excel'));
+  // The CSVs come as real Slack served them live: application/force-download.
   await submit(ctx.app, form, { title: null, files });
   const [ack] = ctx.app.viewAcks;
   assert.equal(ack.response_action, 'update');
@@ -751,6 +763,7 @@ test('five files, no title: one submit; "Reading 1 of 5" in the ack, then one up
   // One AI call per PDF, none for a CSV; each file downloaded once, in order.
   assert.equal(ctx.model.sent.length, 2);
   assert.deepEqual(fetchedIds(ctx.app), ['F0MEMO', 'F0TERMS', 'F0PLANS', 'F0AGING', 'F0CREWS']);
+  assert.deepEqual(ctx.app.fetches.map((f) => f.servedAs), ['application/pdf', 'application/pdf', ...Array(3).fill('application/force-download')]);
   assert.deepEqual(await titlesOf(ctx), [
     '2026-mid-year-pricing-and-operations-memo', 'crew-time-vs-schedule-2026-09', 'customer-service-agreement-2026', 'plan-changes-2026', 'receivables-aging-2026-09-30',
   ]);
