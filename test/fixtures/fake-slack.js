@@ -146,6 +146,9 @@
 //     Content-Length that lies), { contentType } (another Content-Type), and
 //     { body, okStatus } (another body, sent with a 2xx status: what a
 //     server error page in JSON looks like when it comes back with 200).
+//     A file is served as the mimetype it was added with: real Slack served
+//     a .csv uploaded from a Mac with Excel as application/vnd.ms-excel
+//     (seen live), which the add-context upload tests use for every .csv.
 //   - a file_input element, refused as Slack refuses it (invalid_blocks):
 //     outside an input block; max_files not an integer from 1 to 10;
 //     filetypes not a non-empty list of file extensions (lowercase letters

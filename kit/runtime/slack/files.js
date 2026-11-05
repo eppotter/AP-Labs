@@ -30,10 +30,16 @@
 //      answers a token it won't accept), a body whose length is not the size
 //      files.info reported, or, for a .txt, .md or .csv file, a content type
 //      other than text/* or application/octet-stream (an error body in JSON,
-//      say) is download_failed.
-//   6. The signature: a PDF or an image's first bytes must match the type its
+//      say) is download_failed. A .csv may also come as
+//      application/vnd.ms-excel, application/csv or application/x-csv, any
+//      parameters: real Slack served CSVs uploaded from a Mac with Excel as
+//      application/vnd.ms-excel (seen live). A refused content type is logged
+//      as its media type alone (mediaTypeOf), never the URL, token or body.
+//   6. The bytes: a PDF or an image's first bytes must match the type its
 //      name says (signature; kit/runtime/llm/file-check sniff). The file's
-//      pages and pixels are checked by the AI service itself (readFile).
+//      pages and pixels are checked by the AI service itself (readFile). A
+//      .txt, .md or .csv is checked by its reader whatever it was served as:
+//      readText or readCsv (UTF-8, no NUL, the CSV parse and caps, below).
 //   7. The name kept with the entry (fileName): at most MAX_NAME_CHARS (255,
 //      the knowledge store's cap), a longer one shortened with its extension
 //      kept (PR #274 review). Never sent to the AI and never logged.
@@ -67,6 +73,17 @@ const MAX_NAME_CHARS = 255;
 // What a text file may be served as (PR #274 review): anything else, an error
 // body in JSON for one, is refused rather than stored as context.
 const TEXT_CONTENT_TYPE = /^\s*(text\/[a-z0-9.+-]+|application\/octet-stream)\s*(;|$)/i;
+// What a .csv may also be served as: the spreadsheet types browsers give a
+// .csv (application/vnd.ms-excel on a Mac with Excel installed, seen live).
+// Its bytes are still read by readCsv.
+const CSV_CONTENT_TYPE = /^\s*application\/(vnd\.ms-excel|csv|x-csv)\s*(;|$)/i;
+// A content type's media type for a log line: the part before ";",
+// lower-cased, if it is 1 to 100 of [a-z0-9.+/-]; otherwise "other".
+const MAX_LOGGED_TYPE_CHARS = 100;
+function mediaTypeOf(contentType) {
+  const type = String(contentType).split(';')[0].trim().toLowerCase();
+  return type.length <= MAX_LOGGED_TYPE_CHARS && /^[a-z0-9.+/-]+$/.test(type) ? type : 'other';
+}
 
 // A file name of at most MAX_NAME_CHARS: a longer one keeps its extension and
 // loses the end of its stem, cut on a whole character.
@@ -125,12 +142,13 @@ const slackCode = (err) => (err && err.data && typeof err.data.error === 'string
 // Downloads url with the bot token (see the header, step 5). Returns a Buffer.
 // expectedBytes: the size files.info reported (the body must be exactly
 // that long), or null. text: a .txt, .md or .csv file, whose content type must be
-// text/* or application/octet-stream.
+// text/* or application/octet-stream. csv: a .csv file, which may also come
+// as CSV_CONTENT_TYPE.
 async function download(url, {
-  token, fetch = globalThis.fetch, timeoutMs = DOWNLOAD_TIMEOUT_MS, maxBytes = MAX_FILE_BYTES, log, expectedBytes = null, text = false,
+  token, fetch = globalThis.fetch, timeoutMs = DOWNLOAD_TIMEOUT_MS, maxBytes = MAX_FILE_BYTES, log, expectedBytes = null, text = false, csv = false,
 }) {
-  const refuse = (why, reason = 'download_failed', max = null) => {
-    log.info('file download refused', { reason: why });
+  const refuse = (why, reason = 'download_failed', max = null, fields = {}) => {
+    log.info('file download refused', { reason: why, ...fields });
     return new FileRefused(reason, max);
   };
   let u;
@@ -165,9 +183,9 @@ async function download(url, {
       controller.abort();
       throw refuse('html');
     }
-    if (text && !TEXT_CONTENT_TYPE.test(contentType)) {
+    if ((text || csv) && !TEXT_CONTENT_TYPE.test(contentType) && !(csv && CSV_CONTENT_TYPE.test(contentType))) {
       controller.abort();
-      throw refuse('content type');
+      throw refuse('content type', 'download_failed', null, { mediaType: mediaTypeOf(contentType) });
     }
     const declared = Number(res.headers.get('content-length'));
     if (Number.isFinite(declared) && declared > maxBytes) {
@@ -325,7 +343,7 @@ function createSlackFiles({
     if (!Number.isSafeInteger(file.size) || file.size < 0) throw new FileRefused('info_failed');
     if (file.size > MAX_FILE_BYTES) throw new FileRefused('size', MAX_FILE_BYTES);
     const bytes = await download(file.url_private_download, {
-      token, fetch, timeoutMs, log, expectedBytes: file.size, text: TEXT_KINDS.includes(type.kind),
+      token, fetch, timeoutMs, log, expectedBytes: file.size, text: TEXT_KINDS.includes(type.kind), csv: type.kind === 'csv',
     });
     if (!bytes.length) throw new FileRefused('empty');
     if (type.format && sniff(bytes) !== type.format) {
