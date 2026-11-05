@@ -151,6 +151,9 @@
 //     filetypes not a non-empty list of file extensions (lowercase letters
 //     and digits, no dot: Slack takes extensions, so "application/pdf" or
 //     ".pdf" is unknown).
+//   - dispatchView refuses (throws) a submit whose file_input carries more
+//     files than its max_files (10 when unset): Slack never sends one (plan
+//     add-context-multi).
 //
 // Story 19.5 (Add a stop) adds the external_select and its options load
 // (docs.slack.dev/reference/block-kit/block-elements/select-menu-element
@@ -513,6 +516,8 @@ class FakeSlackApp {
   // Returns how many listeners ran.
   async dispatchView(callback_id, { user = { id: 'U1', name: 'u1' }, view = {} } = {}) {
     const full = { type: 'modal', callback_id, ...view };
+    const tooMany = overFileLimit(full);
+    if (tooMany) throw new Error(`Slack never sends this view_submission: ${tooMany}`);
     const body = { type: 'view_submission', user, view: full };
     const matching = this.viewListeners.filter(({ callbackId }) => matchesView(callbackId, callback_id, 'view_submission'));
     for (const { fn } of matching) {
@@ -835,6 +840,30 @@ function viewHasFileInput(view) {
   return blocks.some((b) => b && [b.element, b.accessory, ...(Array.isArray(b.elements) ? b.elements : [])].some((e) => e && e.type === 'file_input'));
 }
 
+// Why Slack would never send this view_submission's files, or null (plan
+// add-context-multi): a file_input lets the person pick at most its
+// max_files (Slack's default and most: 10), so a submit carrying more is
+// one Slack cannot send.
+function overFileLimit(view) {
+  const blocks = view && Array.isArray(view.blocks) ? view.blocks : [];
+  let values;
+  try {
+    values = (view && view.state && view.state.values) || {};
+  } catch {
+    // A state a test made unreadable on purpose: the handler's to meet.
+    return null;
+  }
+  for (const b of blocks) {
+    const e = b && b.type === 'input' ? b.element : null;
+    if (!e || e.type !== 'file_input') continue;
+    const held = values[b.block_id] && values[b.block_id][e.action_id];
+    const files = held && Array.isArray(held.files) ? held.files : [];
+    const max = Number.isInteger(e.max_files) ? e.max_files : MAX_FILES;
+    if (files.length > max) return `a file_input submits at most ${max} files`;
+  }
+  return null;
+}
+
 // A file as a view_submission carries it in state.values (Story 16.8).
 const fileState = (...files) => ({ type: 'file_input', files: files.map((f) => ({ ...f })) });
 
@@ -996,6 +1025,6 @@ function invalidModal(view) {
 }
 
 module.exports = {
-  fileState, FAKE_BOT_TOKEN, FAKE_BOT_SCOPES,
+  fileState, overFileLimit, FAKE_BOT_TOKEN, FAKE_BOT_SCOPES,
   FakeSlackApp, invalidModal, invalidUpload, invalidImageBlocks, invalidView, invalidElements, invalidViewAck, invalidOptionsAck, notReadyError, rateLimitedError, TRIGGER_MS,
 };

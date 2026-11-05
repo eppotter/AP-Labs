@@ -290,6 +290,20 @@
 // reads stores the entry all the same (not_found logged at info). The file's
 // name, its text and the title are never logged.
 //
+// Several files in one upload (plan add-context-multi): a submit may carry up
+// to 10 files, each read and stored as its own note (its title from
+// addContext.noteTitle), one after another, never in parallel. The ack
+// shows "Reading 1 of <n>: <name>…"; before each next file the view is
+// updated to "Reading <k> of <n>: <name>…". A file whose name is a type that
+// can't be read is marked and never fetched; one refused for any other
+// reason doesn't stop the rest. Before each file the hub's room is checked
+// (addContext.noRoom on the store's list): once the notes are full, that
+// file and the rest are listed as not read, with no download and no AI
+// call. When a progress update finds the view closed (Slack's not_found),
+// reading stops there: the notes stored so far stay (each whole), the rest
+// are not read, and it is logged at info. The result (addContext.filesAdded)
+// lists each file, added with Remove, or why not. One file behaves as before.
+//
 // Ask (plan brightside-v0, D10, D13, Story 16.7): Open on an ask module
 // pushes its form (kit/runtime/archetypes/ask). The submit (ask:form)
 // answers in the ack: field errors, or "Thinking…" at once; the answer then
@@ -352,7 +366,7 @@ const { ASK_DATA_KEY } = require('../../lib/profile');
 const {
   ContextRefused, FileRefused, LlmUnavailable, RuntimeRefusal,
 } = require('../errors');
-const { readText, readCsv } = require('./files');
+const { readText, readCsv, typeOf } = require('./files');
 
 const NOT_AVAILABLE = "That option isn't available here any more. Type the hub's command to see the current menu.";
 const FORM_NEEDS_WINDOW = "This option's form opens in the hub's window. Type the hub's command and press its button there.";
@@ -976,20 +990,26 @@ function registerHubs(app, {
   };
   // A result shown after the ack (D13): views.update on the view's id. A view
   // the person closed meanwhile is Slack's not_found, logged at info.
+  // Returns 'shown', 'closed' (not_found) or 'failed'.
   const showAfterAck = async ({
     client, viewId, title, hubId, message, where,
   }) => {
     if (!hasViews(client) || typeof viewId !== 'string' || !viewId) {
       log.warn('result not shown', { where, reason: 'no view', hub: hubId });
-      return;
+      return 'failed';
     }
     const shown = screened(where, message);
     try {
       await client.views.update({ view_id: viewId, view: moduleView({ title, hubId, blocks: messageBlocks(shown), message: shown }) });
+      return 'shown';
     } catch (err) {
       const reason = failureReason(err);
-      if (reason === 'not_found') log.info('view closed before its result', { where, hub: hubId });
-      else log.error('result not shown', { where, reason, hub: hubId });
+      if (reason === 'not_found') {
+        log.info('view closed before its result', { where, hub: hubId });
+        return 'closed';
+      }
+      log.error('result not shown', { where, reason, hub: hubId });
+      return 'failed';
     }
   };
   // Stores what was typed, then shows how it went. Never throws for a store
@@ -1028,12 +1048,14 @@ function registerHubs(app, {
   // Upload a file (Story 16.8): fetch it, read it, store its text. Returns
   // { entry, table }: the stored entry, and for a CSV { rows, columns }
   // (else null); throws a refusal (FileRefused, ContextRefused,
-  // LlmUnavailable, AccessDenied) or a store failure.
+  // LlmUnavailable, AccessDenied) or a store failure. fileId: the picked
+  // file's; title: what was typed ('' for none); many: one of several files
+  // (plan add-context-multi, addContext.noteTitle).
   const readUpload = async ({
-    client, mod, knowledge, person, typed,
+    client, mod, knowledge, person, fileId, title, many,
   }) => {
     if (!slackFiles) throw new FileRefused('not_set_up');
-    const file = await slackFiles.fetchFile({ client, fileId: typed.files[0].id, person: person.id });
+    const file = await slackFiles.fetchFile({ client, fileId, person: person.id });
     let text;
     let table = null;
     if (file.kind === 'text') {
@@ -1051,7 +1073,7 @@ function registerHubs(app, {
     }
     try {
       const entry = await knowledge.add({
-        kind: 'file', title: typed.title, text, addedBy: person.id, file: { name: file.name, type: file.mediaType, bytes: file.bytes.length },
+        kind: 'file', title: addContext.noteTitle({ title, name: file.name, many }), text, addedBy: person.id, file: { name: file.name, type: file.mediaType, bytes: file.bytes.length },
       });
       return { entry, table };
     } catch (err) {
@@ -1062,44 +1084,112 @@ function registerHubs(app, {
       throw err;
     }
   };
-  // Fetches, reads and stores an upload, then shows how it went (D13).
-  // Never throws for a refusal or a store problem: the person is told in the view.
+  // Why an upload was not added, worded for the person (logged without the
+  // file's name or title).
+  const notAddedNote = (err, mod) => {
+    if (err instanceof LlmUnavailable) {
+      log.info('upload not read', { hub: mod.hub, reason: `ai ${err.reason}` });
+      return readFileAiText(err, { admin });
+    }
+    if (err instanceof FileRefused || err instanceof ContextRefused) {
+      log.info('upload not read', { hub: mod.hub, reason: err.reason });
+      return messageFor(err, { admin });
+    }
+    if (messageFor(err, { admin })) {
+      log.info('upload not read', { hub: mod.hub, reason: err.name });
+      return messageFor(err, { admin });
+    }
+    log.error('upload not saved', { hub: mod.hub, reason: (err && err.code) || (err && err.name) || 'error' });
+    return addContext.saveFailed(admin);
+  };
+  const NOTES_FULL_REASONS = Object.freeze(['too_many', 'hub_full']);
+  // The hub's room for one more note, before a file of several is read
+  // (addContext.noRoom): a ContextRefused, or null (also when the list can't
+  // be read: the store's own check still runs at the add).
+  const roomRefusal = async (knowledge) => {
+    try {
+      return addContext.noRoom(await knowledge.list());
+    } catch {
+      return null;
+    }
+  };
+  // Fetches, reads and stores each picked file, one after another, then
+  // shows how it went (D13; plan add-context-multi, see the header). Never
+  // throws for a refusal or a store problem: the person is told in the view.
   const readEntry = async ({
     client, viewId, title, mod, knowledge, person, typed,
   }) => {
-    let entry = null;
-    let table = null;
-    let note = null;
-    try {
-      ({ entry, table } = await readUpload({
-        client, mod, knowledge, person, typed,
-      }));
-    } catch (err) {
-      if (err instanceof LlmUnavailable) {
-        log.info('upload not read', { hub: mod.hub, reason: `ai ${err.reason}` });
-        note = readFileAiText(err, { admin });
-      } else if (err instanceof FileRefused || err instanceof ContextRefused) {
-        log.info('upload not read', { hub: mod.hub, reason: err.reason });
-        note = messageFor(err, { admin });
-      } else if (messageFor(err, { admin })) {
-        log.info('upload not read', { hub: mod.hub, reason: err.name });
-        note = messageFor(err, { admin });
-      } else {
-        log.error('upload not saved', { hub: mod.hub, reason: (err && err.code) || (err && err.name) || 'error' });
-        note = addContext.saveFailed(admin);
+    const picked = typed.files;
+    const many = picked.length > 1;
+    const outcomes = [];
+    let full = false;
+    for (const [i, file] of picked.entries()) {
+      const name = file.name;
+      if (full) {
+        outcomes.push({ name, entry: null, note: addContext.NOTES_FULL });
+        continue;
+      }
+      if (many) {
+        const type = typeOf(name);
+        if (type instanceof FileRefused) {
+          log.info('upload not read', { hub: mod.hub, reason: type.reason });
+          outcomes.push({ name, entry: null, note: messageFor(type, { admin }) });
+          continue;
+        }
+        const noRoom = await roomRefusal(knowledge);
+        if (noRoom) {
+          log.info('upload not read', { hub: mod.hub, reason: noRoom.reason });
+          full = true;
+          outcomes.push({ name, entry: null, note: messageFor(noRoom, { admin }) });
+          continue;
+        }
+        if (i > 0) {
+          const status = await showAfterAck({
+            client,
+            viewId,
+            title,
+            hubId: mod.hub,
+            where: 'add-context',
+            message: addContext.reading({
+              hubId: mod.hub, moduleId: mod.id, at: i + 1, of: picked.length, name,
+            }),
+          });
+          if (status === 'closed') {
+            log.info('upload stopped', { hub: mod.hub, read: i, left: picked.length - i });
+            return;
+          }
+        }
+      }
+      try {
+        const { entry, table } = await readUpload({
+          client, mod, knowledge, person, fileId: file.id, title: typed.title, many,
+        });
+        outcomes.push({
+          name, entry, table, note: null,
+        });
+      } catch (err) {
+        outcomes.push({ name, entry: null, note: notAddedNote(err, mod) });
+        if (many && err instanceof ContextRefused && NOTES_FULL_REASONS.includes(err.reason)) full = true;
       }
     }
     const listed = await dataSources.entriesOf(viewOf(mod.hub), log);
     const shown = {
       hubId: mod.hub, moduleId: mod.id, entries: listed.entries, problem: listed.problem, admin, sharedWith: viewOf(mod.hub).sharedWith,
     };
+    let message;
+    if (many) {
+      message = addContext.filesAdded({ ...shown, outcomes });
+    } else {
+      const [{ entry, table, note }] = outcomes;
+      message = entry ? addContext.fileAdded({ ...shown, entry, table }) : addContext.result({ ...shown, note });
+    }
     await showAfterAck({
       client,
       viewId,
       title,
       hubId: mod.hub,
       where: 'add-context',
-      message: entry ? addContext.fileAdded({ ...shown, entry, table }) : addContext.result({ ...shown, note }),
+      message,
     });
   };
 
@@ -1729,7 +1819,9 @@ function registerHubs(app, {
     if (errors) return { response_action: 'errors', errors };
     const title = view.title && view.title.text;
     if (typed.files.length) {
-      return afterAck(answerIn(view, mod.hub, addContext.reading({ hubId: mod.hub, moduleId: mod.id })), () => readEntry({
+      return afterAck(answerIn(view, mod.hub, addContext.reading({
+        hubId: mod.hub, moduleId: mod.id, at: 1, of: typed.files.length, name: typed.files[0].name,
+      })), () => readEntry({
         client, viewId: view.id, title, mod, knowledge, person, typed,
       }));
     }
