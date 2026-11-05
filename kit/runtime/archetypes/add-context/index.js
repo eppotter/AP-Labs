@@ -33,14 +33,15 @@
 // Every value from an entry is escaped (escapeText), shown on one line.
 //
 // Upload a file (plan brightside-v0, D5, D6, D7, D13, Story 16.8): the form
-// also has an optional file_input (FILE_BLOCK, max_files 1, filetypes from
+// also has an optional file_input (FILE_BLOCK, max_files MAX_FILES since
+// plan add-context-multi, below; filetypes from
 // kit/runtime/slack/files FILETYPES: pdf, png, jpg, jpeg, gif, webp, txt,
 // md, csv), with "Everyone who can use Ask here can read what this file says."
 // and "The file stays in your Slack files; you can delete it there." beside
-// it. A submit holds exactly one of typed text or a file. The instant checks
-// beside the fields (fieldErrors): the title; neither or both; more than one
-// file; and the file's type by its name (an office file: "save it as a PDF
-// first"). Everything else is after the ack: "Reading…" in the view, then
+// it. A submit holds exactly one of typed text or files. The instant checks
+// beside the fields (fieldErrors): the title (for typed text); neither or
+// both; more than MAX_FILES files; and the files' types by their names (an
+// office file: "save it as a PDF first"). Everything else is after the ack: "Reading…" in the view, then
 // the hubs fetch the file (kit/runtime/slack/files), read a PDF or image
 // through the hub's AI (llm readFile) or a .txt or .md file as UTF-8, store
 // the text, and update the view to "Here's what I took from <title>:" with
@@ -57,10 +58,29 @@
 // notes with other hubs (the hub view's sharedWith, their names), the list
 // says so under its heading: "Shared with <hub>: a note added or removed here
 // is added or removed there too." (sharedLine).
+//
+// Several files in one upload (plan add-context-multi): the file_input takes
+// up to MAX_FILES (10, Slack's most), and each file becomes its own note.
+// The title box is optional when files are picked (typed text still needs
+// one; TITLE_HINT says so). A note's title (noteTitle) is the file's name
+// without its extension, as it is; a typed title goes in front of each, as
+// "<title>: <name>", the name's end cut to keep the 80-character cap. One
+// file with a typed title keeps the title alone, as before. The instant
+// check by name refuses at the field only when every picked file is a type
+// that can't be read; otherwise the hubs mark each such file in the result
+// and read the rest. The hubs read the files one after another: the ack
+// shows "Reading 1 of 5: <name>…" and each next file updates it (reading).
+// Before each file they check the hub has room (noRoom); once the notes are
+// full the rest are listed as not read (NOTES_FULL), with no AI call. The
+// result (filesAdded) lists every file: added, with Remove and a short line
+// on what was taken (a CSV's rows and columns, else the start of the text),
+// or why it was not added. One file is shown exactly as before (fileAdded,
+// or result with the reason).
 
 const { escapeText, messageFor } = require('../../messages');
 const { ContextRefused, FileRefused } = require('../../errors');
 const { promptChars, CAPS, MAX_TITLE_CHARS } = require('../../knowledge/store');
+const { addedContextPrompt } = require('../../llm/context');
 const {
   FILETYPES, typeOf, MAX_CSV_ROWS, MAX_CSV_COLUMNS,
 } = require('../../slack/files');
@@ -85,9 +105,16 @@ const PREVIEW_CHARS = 150;
 const TOOK_CHARS = 1500;
 // A section holds at most 3,000 characters; escaping can grow the text.
 const SECTION_CHARS = 2900;
+// The most files one upload takes (Slack's file_input max_files maximum).
+const MAX_FILES = 10;
+// How much of a file's text the result of a several-file upload shows.
+const EXCERPT_CHARS = 200;
+// How much of a file's name the "Reading 2 of 5" line shows.
+const READING_NAME_CHARS = 60;
 
 const READERS = 'Everyone who can use Ask here can read this.';
-const INTRO = `${READERS} Type something about the business that Ask should know, or upload a file (a PDF, a photo, a .csv, or a .txt or .md file), give it a title, and press Add. Ask can use it as soon as it is added.`;
+const INTRO = `${READERS} Type something about the business that Ask should know and give it a title, or upload up to ${MAX_FILES} files (PDFs, photos, .csv, or .txt or .md files), then press Add. Ask can use it as soon as it is added.`;
+const TITLE_HINT = "Needed for typed text. For files it's optional: each file becomes its own note, named after the file, with this title in front if you give one.";
 const FILE_READERS = 'Everyone who can use Ask here can read what this file says.';
 // Beside the file field (plan brightside-v1, D3).
 const NO_PERSONAL = "Don't upload personal details (emails, phones, addresses): everyone who can use Ask here can read them, and they are sent to the AI.";
@@ -96,7 +123,9 @@ const SAVING = 'Saving…';
 const READING = 'Reading…';
 const NEED_ONE = 'Type some text, or choose a file to upload.';
 const BOTH = 'Add typed text or a file, not both. Clear one of them, then press Add.';
-const ONE_FILE = 'Choose one file at a time.';
+const TOO_MANY_FILES = `Choose at most ${MAX_FILES} files at a time.`;
+const NONE_READABLE = 'None of these files can be added.';
+const NOTES_FULL = "Not read: this hub's notes are full. Remove a note to make room, then add this file again.";
 const ADDED = 'Added. Ask can use it now.';
 const REMOVED = 'Removed. Ask no longer uses it.';
 const ALREADY_REMOVED = 'That entry was already removed.';
@@ -188,6 +217,8 @@ function form({
       type: 'input',
       block_id: TITLE_BLOCK,
       label: plain('Title'),
+      hint: plain(TITLE_HINT),
+      optional: true,
       element: {
         type: 'plain_text_input', action_id: VALUE_ACTION, max_length: MAX_TITLE_CHARS, placeholder: plain('For example: Our prices'),
       },
@@ -205,11 +236,11 @@ function form({
     {
       type: 'input',
       block_id: FILE_BLOCK,
-      label: plain('Or upload a file'),
+      label: plain('Or upload files'),
       hint: plain(`${FILE_READERS} ${FILE_STAYS} PDF (at most ${MAX_PDF_PAGES} pages), PNG, JPEG, GIF, WebP, .csv (at most ${MAX_CSV_ROWS} rows and ${MAX_CSV_COLUMNS} columns), .txt or .md, at most 5 MB. ${NO_PERSONAL}`),
       optional: true,
       element: {
-        type: 'file_input', action_id: VALUE_ACTION, max_files: 1, filetypes: [...FILETYPES],
+        type: 'file_input', action_id: VALUE_ACTION, max_files: MAX_FILES, filetypes: [...FILETYPES],
       },
     },
     ...listBlocks({
@@ -243,8 +274,13 @@ const saving = ({ hubId, moduleId }) => result({
 });
 
 // "Reading…", shown by the ack while a file is fetched and read (Story 16.8).
-const reading = ({ hubId, moduleId }) => result({
-  hubId, moduleId, note: READING, list: false,
+// Of several files: "Reading <at> of <of>: <name>…", the ack's for the first,
+// then one update per file (plan add-context-multi).
+const readingOf = (at, of, name) => `Reading ${at} of ${of}${name ? `: ${escapeText(cut(name, READING_NAME_CHARS))}` : ''}…`;
+const reading = ({
+  hubId, moduleId, at = 1, of = 1, name = '',
+}) => result({
+  hubId, moduleId, note: of > 1 ? readingOf(at, of, name) : READING, list: false,
 });
 
 // Text in sections of at most SECTION_CHARS once escaped, never cutting an
@@ -293,6 +329,75 @@ function fileAdded({
   };
 }
 
+// After an upload of several files (plan add-context-multi): a line on how
+// many were added, then one section per file, in the order picked: "Added
+// *<title>*" with Remove and a CSV's rows and columns or the start of its
+// text, or "Not added: *<name>*." and why (note, already worded). Then the
+// hub's entries. A result: no boxes, no submit. outcomes: [{ name, entry,
+// table, note }], entry null for a file not added.
+function filesAdded({
+  hubId, moduleId, outcomes, entries, problem, admin, sharedWith,
+}) {
+  const added = outcomes.filter((o) => o.entry);
+  const all = outcomes.length;
+  let head;
+  if (!added.length) head = `None of the ${all} files was added.`;
+  else if (added.length === all) head = `Added all ${all} files. Ask can use them now.`;
+  else head = `Added ${added.length} of ${all} files. Ask can use ${added.length === 1 ? 'it' : 'them'} now.`;
+  const fileBlocks = outcomes.map((o) => {
+    if (!o.entry) return section(`Not added: *${escapeText(cut(o.name || 'a file', MAX_TITLE_CHARS))}*. ${o.note}`);
+    const title = escapeText(cut(o.entry.title || 'Untitled', MAX_TITLE_CHARS));
+    const what = o.table
+      ? `: ${count(o.table.rows, 'row')}, ${count(o.table.columns, 'column')}`
+      : `\n${escapeText(cut(o.entry.text || '', EXCERPT_CHARS))}`;
+    return section(`Added *${title}*${what}`, { block_id: `${TOOK_BLOCK}${o.entry.id}`, accessory: removeButton(moduleId, o.entry.id) });
+  });
+  return {
+    text: head,
+    blocks: [
+      section(head),
+      ...fileBlocks,
+      ...(added.length ? [section(FILE_STAYS)] : []),
+      ...listBlocks({
+        moduleId, entries, problem, admin, sharedWith,
+      }),
+    ],
+    modal: { callbackId: VIEW_CALLBACK, privateMetadata: metadata(hubId, moduleId) },
+  };
+}
+
+// Control and format characters become spaces, runs collapse (the store's
+// own clean-up of a title).
+const cleanLine = (s) => oneLine(String(s).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' '));
+
+// A file's note title (plan add-context-multi): its name without the
+// extension, kept as it is; with a typed title, "<title>: <name>", the name's
+// end cut so the whole stays within MAX_TITLE_CHARS. many: false keeps a
+// typed title alone (one file, as before).
+function noteTitle({ title = '', name = '', many = false }) {
+  const t = cleanLine(title);
+  if (t && !many) return cut(t, MAX_TITLE_CHARS);
+  const full = cleanLine(name);
+  const stem = full.replace(/\.[A-Za-z0-9]{1,10}$/, '').trim() || full || 'Untitled file';
+  if (!t) return cut(stem, MAX_TITLE_CHARS);
+  const room = MAX_TITLE_CHARS - Array.from(t).length - 2;
+  if (room < 2) return cut(`${t}: ${stem}`, MAX_TITLE_CHARS);
+  return `${t}: ${cut(stem, room)}`;
+}
+
+// Whether the hub's notes have no room for one more (plan add-context-multi):
+// a ContextRefused (too_many, or hub_full when even a one-character note
+// would not fit), or null. entries: the hub's, as the store lists them. The
+// store still checks every add; this only spares reading a file that could
+// never be stored.
+const PROBE_ID = '0'.repeat(32);
+function noRoom(entries) {
+  if (!Array.isArray(entries)) return null;
+  if (entries.length >= CAPS.hubEntries) return new ContextRefused('too_many', CAPS.hubEntries);
+  if (addedContextPrompt([...entries, { id: PROBE_ID, title: 'x', text: 'x' }]).length > CAPS.hubChars) return new ContextRefused('hub_full', CAPS.hubChars);
+  return null;
+}
+
 // What was submitted: { title, text, files }, '' for a box left empty, and
 // files: [{ id, name }] from the file_input (none: []).
 function readState(state) {
@@ -311,21 +416,27 @@ function readState(state) {
 // The instant checks (D13): Slack's errors object, beside the boxes, or null.
 // The text is measured as the store measures it (escaped), so what passes
 // here is never refused as too long after the ack.
-// Exactly one of text or a file (Story 16.8); a file's type is checked by
-// its name only (D13: its size and contents are checked after the ack).
+// Exactly one of text or files (Story 16.8); a file's type is checked by
+// its name only (D13: its size and contents are checked after the ack). The
+// title is needed for typed text only (plan add-context-multi). Of several
+// files, the field refuses only when none is a type that can be read (an
+// office file among them: "save it as a PDF first").
 function fieldErrors({ title, text, files = [] }) {
   const errors = {};
-  const t = oneLine(title.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' '));
-  if (!t) errors[TITLE_BLOCK] = TITLE_MISSING;
-  else if (Array.from(t).length > MAX_TITLE_CHARS) errors[TITLE_BLOCK] = TITLE_TOO_LONG;
+  const t = cleanLine(title);
+  if (Array.from(t).length > MAX_TITLE_CHARS) errors[TITLE_BLOCK] = TITLE_TOO_LONG;
+  else if (!t && !files.length) errors[TITLE_BLOCK] = TITLE_MISSING;
   const hasText = Boolean(text.trim());
   if (files.length && hasText) {
     errors[FILE_BLOCK] = BOTH;
-  } else if (files.length > 1) {
-    errors[FILE_BLOCK] = ONE_FILE;
-  } else if (files.length === 1) {
-    const type = typeOf(files[0].name);
-    if (type instanceof FileRefused) errors[FILE_BLOCK] = messageFor(type);
+  } else if (files.length > MAX_FILES) {
+    errors[FILE_BLOCK] = TOO_MANY_FILES;
+  } else if (files.length) {
+    const refused = files.map((f) => typeOf(f.name)).filter((type) => type instanceof FileRefused);
+    if (refused.length === files.length) {
+      const why = messageFor(refused.find((r) => r.reason === 'docx') || refused[0]);
+      errors[FILE_BLOCK] = files.length === 1 ? why : `${NONE_READABLE} ${why}`;
+    }
   } else if (!hasText) {
     errors[TEXT_BLOCK] = NEED_ONE;
   } else if (promptChars(text) > MAX_TEXT_CHARS) {
@@ -340,6 +451,9 @@ module.exports = {
   saving,
   reading,
   fileAdded,
+  filesAdded,
+  noteTitle,
+  noRoom,
   readState,
   fieldErrors,
   parseMetadata,
@@ -366,7 +480,11 @@ module.exports = {
   READING,
   NEED_ONE,
   BOTH,
-  ONE_FILE,
+  TOO_MANY_FILES,
+  NONE_READABLE,
+  NOTES_FULL,
+  MAX_FILES,
+  TITLE_HINT,
   FILE_READERS,
   FILE_STAYS,
   NO_PERSONAL,

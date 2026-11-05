@@ -176,7 +176,7 @@ function assertResult(update, note) {
 
 // --- The screen ------------------------------------------------------------------------------
 
-test('the form gains an optional file_input (one file; pdf, png, jpg, jpeg, gif, webp, txt, md, csv) with who can read it and that Slack keeps it', async (t) => {
+test('the form gains an optional file_input (up to 10 files, plan add-context-multi; pdf, png, jpg, jpeg, gif, webp, txt, md, csv) with who can read it and that Slack keeps it', async (t) => {
   const { app } = setup(t);
   const form = await openForm(app);
   assert.equal(invalidElements(form), null);
@@ -185,16 +185,20 @@ test('the form gains an optional file_input (one file; pdf, png, jpg, jpeg, gif,
   assert.equal(block.type, 'input');
   assert.equal(block.optional, true);
   assert.deepEqual(block.element, {
-    type: 'file_input', action_id: addContext.VALUE_ACTION, max_files: 1, filetypes: ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'txt', 'md', 'csv'],
+    type: 'file_input', action_id: addContext.VALUE_ACTION, max_files: 10, filetypes: ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'txt', 'md', 'csv'],
   });
   assert.deepEqual(block.element.filetypes, [...FILETYPES]);
   assert.match(block.hint.text, /^Everyone who can use Ask here can read what this file says\. The file stays in your Slack files; you can delete it there\./);
   assert.match(block.hint.text, new RegExp(`at most ${MAX_PDF_PAGES} pages`));
-  // The text box is optional now (a file instead); the title is not.
+  // The text box is optional (files instead), and so is the title (plan
+  // add-context-multi): typed text still needs one, which its hint says.
   const textBox = form.blocks.find((b) => b.block_id === addContext.TEXT_BLOCK);
   assert.equal(textBox.optional, true);
-  assert.equal(form.blocks.find((b) => b.block_id === addContext.TITLE_BLOCK).optional, undefined);
-  assert.match(allText(form.blocks), /or upload a file \(a PDF, a photo, a \.csv, or a \.txt or \.md file\)/);
+  const titleBox = form.blocks.find((b) => b.block_id === addContext.TITLE_BLOCK);
+  assert.equal(titleBox.optional, true);
+  assert.equal(titleBox.hint.text, "Needed for typed text. For files it's optional: each file becomes its own note, named after the file, with this title in front if you give one.");
+  assert.equal(block.label.text, 'Or upload files');
+  assert.match(allText(form.blocks), /or upload up to 10 files \(PDFs, photos, \.csv, or \.txt or \.md files\)/);
   // Story 18.2 (D3): the hint names .csv with its caps, and warns off personal details.
   assert.match(block.hint.text, /\.csv \(at most 200 rows and 30 columns\)/);
   assert.ok(block.hint.text.endsWith(" Don't upload personal details (emails, phones, addresses): everyone who can use Ask here can read them, and they are sent to the AI."));
@@ -334,17 +338,17 @@ test('nothing about the file reaches a log line: not its name, the title, its te
 
 // --- Ways out: the instant checks, beside the fields (D13) ---------------------------------------
 
-test('way out, no text and no file, or both: an error beside the field in the ack; nothing is fetched or stored', async (t) => {
+test('way out, no text and no file, or both (one file or several): an error beside the field in the ack; nothing is fetched or stored', async (t) => {
   const ctx = setup(t);
   const form = await openForm(ctx.app);
   const file = upload(ctx.app);
   await submit(ctx.app, form, { title: 'Prices', text: null, files: [] });
   await submit(ctx.app, form, { title: 'Prices', text: 'Typed too.', files: [file] });
-  await submit(ctx.app, form, { title: 'Prices', files: [file, upload(ctx.app, { id: 'F0TWO' })] });
+  await submit(ctx.app, form, { title: null, text: 'Typed too.', files: [file, upload(ctx.app, { id: 'F0TWO' })] });
   assert.deepEqual(ctx.app.viewAcks, [
     { response_action: 'errors', errors: { [addContext.TEXT_BLOCK]: addContext.NEED_ONE } },
     { response_action: 'errors', errors: { [addContext.FILE_BLOCK]: addContext.BOTH } },
-    { response_action: 'errors', errors: { [addContext.FILE_BLOCK]: addContext.ONE_FILE } },
+    { response_action: 'errors', errors: { [addContext.FILE_BLOCK]: addContext.BOTH } },
   ]);
   assert.deepEqual([ctx.app.fetches, calls(ctx.app, 'update'), ctx.model.sent], [[], [], []]);
   assert.deepEqual(await ctx.knowledge.list('blank'), []);
@@ -688,4 +692,309 @@ test('D6: a CSV cell saying "ignore your instructions" changes no access, posts 
   const at = system.indexOf(ADDED_CONTEXT_RULE);
   assert.ok(at > 0 && system.slice(at).includes(escapeData(stored)));
   assert.equal(system.match(/<\/added_context>/g).length, 1);
+});
+
+// --- Several files in one upload (plan add-context-multi) -----------------------------------------
+//
+// Up to 10 files in one submit, each its own note, read one after another.
+// Ways out, each tested below: Back on the result; the person closing the
+// view mid-read; every file refused (at the field by name, or after the
+// ack); some files refused; the notes full partway (by entries before any
+// read, and by characters after an AI read); and one file, as before.
+
+const titlesOf = async (ctx) => (await ctx.knowledge.list('blank')).map((e) => e.title).sort();
+const fetchedIds = (app) => app.fetches.map((f) => new URL(f.url).pathname.split('/')[2].replace('T0FAKE-', ''));
+const updateNotes = (app) => calls(app, 'update').map((u) => u.view.blocks[0].text.text);
+const READ_OK = { content: [{ type: 'text', text: TOOK }], stop_reason: 'end_turn', usage: { input_tokens: 3000, output_tokens: 60 } };
+
+// The v0 demo pack's shape: two PDFs and three CSVs.
+function demoFiles(app) {
+  return [
+    upload(app, { id: 'F0MEMO', name: '2026-mid-year-pricing-and-operations-memo.pdf', bytes: pdf({ pages: 3 }) }),
+    upload(app, { id: 'F0TERMS', name: 'customer-service-agreement-2026.pdf', bytes: pdf({ pages: 2 }) }),
+    csvUpload(app, rowsOf(9, 8), { id: 'F0PLANS', name: 'plan-changes-2026.csv' }),
+    csvUpload(app, rowsOf(6, 11), { id: 'F0AGING', name: 'receivables-aging-2026-09-30.csv' }),
+    csvUpload(app, rowsOf(15, 7), { id: 'F0CREWS', name: 'crew-time-vs-schedule-2026-09.csv' }),
+  ];
+}
+
+test('five files, no title: one submit; "Reading 1 of 5" in the ack, then one update per file; each file its own note named after it; the result lists each with Remove; Back', async (t) => {
+  const ctx = setup(t);
+  const form = await openForm(ctx.app);
+  const files = demoFiles(ctx.app);
+  await submit(ctx.app, form, { title: null, files });
+  const [ack] = ctx.app.viewAcks;
+  assert.equal(ack.response_action, 'update');
+  assert.deepEqual(texts(ack.view.blocks), ['Reading 1 of 5: 2026-mid-year-pricing-and-operations-memo.pdf…']);
+  assert.equal(ack.view.submit, undefined);
+  assert.deepEqual(updateNotes(ctx.app).slice(0, 4), [
+    'Reading 2 of 5: customer-service-agreement-2026.pdf…',
+    'Reading 3 of 5: plan-changes-2026.csv…',
+    'Reading 4 of 5: receivables-aging-2026-09-30.csv…',
+    'Reading 5 of 5: crew-time-vs-schedule-2026-09.csv…',
+  ]);
+  // One AI call per PDF, none for a CSV; each file downloaded once, in order.
+  assert.equal(ctx.model.sent.length, 2);
+  assert.deepEqual(fetchedIds(ctx.app), ['F0MEMO', 'F0TERMS', 'F0PLANS', 'F0AGING', 'F0CREWS']);
+  assert.deepEqual(await titlesOf(ctx), [
+    '2026-mid-year-pricing-and-operations-memo', 'crew-time-vs-schedule-2026-09', 'customer-service-agreement-2026', 'plan-changes-2026', 'receivables-aging-2026-09-30',
+  ]);
+  const result = calls(ctx.app, 'update').at(-1);
+  assert.equal(calls(ctx.app, 'update').length, 5);
+  assert.equal(result.view_id, 'VFORM');
+  const shown = texts(result.view.blocks);
+  assert.equal(shown[0], 'Added all 5 files. Ask can use them now.');
+  assert.equal(shown[1], `Added *2026-mid-year-pricing-and-operations-memo*\n${escapeData(TOOK)}`);
+  assert.equal(shown[2], `Added *customer-service-agreement-2026*\n${escapeData(TOOK)}`);
+  assert.equal(shown[3], 'Added *plan-changes-2026*: 9 rows, 8 columns');
+  assert.equal(shown[4], 'Added *receivables-aging-2026-09-30*: 6 rows, 11 columns');
+  assert.equal(shown[5], 'Added *crew-time-vs-schedule-2026-09*: 15 rows, 7 columns');
+  assert.equal(shown[6], addContext.FILE_STAYS);
+  assert.equal(removeButtons(result.view).length, 10, 'Remove beside each file, and in the list');
+  // Back, no submit: the way out of the result.
+  assert.equal(result.view.close.text, 'Back');
+  assert.equal(result.view.submit, undefined);
+  assert.equal(invalidElements(result.view), null);
+  assert.equal(invalidView(result.view), null);
+  assert.ok(!ctx.log.lines.some((l) => l.level === 'error'));
+  // Nothing about the files reaches a log line.
+  for (const f of files) assert.ok(!logged(ctx.log, ctx.llmLog, ctx.storeLog).includes(f.name.replace(/\.[a-z]+$/, '')));
+});
+
+test('Remove on one file of several removes that note only, and keeps a result view', async (t) => {
+  const ctx = setup(t);
+  const form = await openForm(ctx.app);
+  await submit(ctx.app, form, { title: null, files: demoFiles(ctx.app).slice(2) });
+  const result = calls(ctx.app, 'update').at(-1);
+  const took = result.view.blocks.find((b) => b.block_id && b.block_id.startsWith(addContext.TOOK_BLOCK) && b.text.text.includes('receivables'));
+  await ctx.app.dispatchAction(addContext.REMOVE_ACTION, { user: ADA, value: took.accessory.value, view: { ...result.view, id: 'VFORM', hash: 'h2' } });
+  assert.deepEqual(await titlesOf(ctx), ['crew-time-vs-schedule-2026-09', 'plan-changes-2026']);
+  const after = calls(ctx.app, 'update').at(-1).view;
+  assert.equal(after.blocks[0].text.text, addContext.REMOVED);
+  assert.equal(after.submit, undefined);
+  assert.equal(removeButtons(after).length, 2);
+});
+
+test('a typed title goes in front of each file\'s name; the 80-character cap trims the name part; the same title twice is kept as the store keeps it', async (t) => {
+  const ctx = setup(t);
+  const form = await openForm(ctx.app);
+  const long = `${'quarterly-figures-'.repeat(6)}final.csv`;
+  await submit(ctx.app, form, {
+    title: 'Q3 board pack',
+    files: [
+      csvUpload(ctx.app, rowsOf(1), { id: 'F0A', name: 'plan-changes-2026.csv' }),
+      csvUpload(ctx.app, rowsOf(2), { id: 'F0B', name: long }),
+      csvUpload(ctx.app, rowsOf(3), { id: 'F0C', name: 'plan-changes-2026.csv' }),
+    ],
+  });
+  const titles = (await ctx.knowledge.list('blank')).map((e) => e.title);
+  assert.equal(titles.length, 3);
+  assert.equal(titles.filter((x) => x === 'Q3 board pack: plan-changes-2026').length, 2, 'two notes may share a title');
+  const trimmed = titles.find((x) => x.startsWith('Q3 board pack: quarterly'));
+  assert.equal(Array.from(trimmed).length, 80);
+  assert.ok(trimmed.endsWith('…'));
+  // A title at the cap leaves no room for a name: the whole is cut to 80.
+  assert.equal(Array.from(addContext.noteTitle({ title: 'x'.repeat(80), name: 'a.pdf', many: true })).length, 80);
+  // With no title, a long name is cut to 80; a name with no extension is kept whole.
+  assert.equal(Array.from(addContext.noteTitle({ name: long })).length, 80);
+  assert.equal(addContext.noteTitle({ name: 'README' }), 'README');
+  assert.equal(addContext.noteTitle({ name: 'Price list.v2.pdf' }), 'Price list.v2');
+  // One file with a typed title keeps the title alone, as before.
+  assert.equal(addContext.noteTitle({ title: 'Our prices', name: 'p.pdf' }), 'Our prices');
+});
+
+test('one file with no title: stored under its name without the extension; otherwise exactly as before', async (t) => {
+  const ctx = setup(t);
+  const update = await submitFile(ctx, upload(ctx.app, { name: 'customer-service-agreement-2026.pdf' }), { title: null });
+  assert.deepEqual(texts(ctx.app.viewAcks[0].view.blocks), ['Reading…']);
+  assert.equal(update.view.blocks[0].text.text, "Here's what I took from *customer-service-agreement-2026*:");
+  assert.equal(calls(ctx.app, 'update').length, 1, 'no progress updates for one file');
+  assert.deepEqual(await titlesOf(ctx), ['customer-service-agreement-2026']);
+});
+
+test('the files are read one after another: the second is not fetched while the first is with the AI', async (t) => {
+  const model = fakeModel(undefined, { hold: true });
+  const ctx = setup(t, { model });
+  const form = await openForm(ctx.app);
+  const done = submit(ctx.app, form, { title: null, files: demoFiles(ctx.app).slice(0, 3) });
+  for (let i = 0; i < 30 && !model.sent.length; i += 1) await new Promise(setImmediate);
+  for (let i = 0; i < 10; i += 1) await new Promise(setImmediate);
+  assert.equal(model.sent.length, 1);
+  assert.deepEqual(fetchedIds(ctx.app), ['F0MEMO']);
+  model.release();
+  await done;
+  assert.equal(model.sent.length, 2);
+  assert.equal((await ctx.knowledge.list('blank')).length, 3);
+});
+
+test('way out, the person closes the view mid-read: reading stops before the next file; the notes read so far stay whole; nothing errors', async (t) => {
+  const model = fakeModel(undefined, { hold: true });
+  const ctx = setup(t, { model });
+  const form = await openForm(ctx.app);
+  const done = submit(ctx.app, form, { title: null, files: demoFiles(ctx.app).slice(0, 3) });
+  for (let i = 0; i < 30 && !model.sent.length; i += 1) await new Promise(setImmediate);
+  ctx.app.closeView('VFORM');
+  model.release();
+  await done;
+  // The first file was read and stored whole; the next two were never fetched or read.
+  assert.deepEqual(await titlesOf(ctx), ['2026-mid-year-pricing-and-operations-memo']);
+  assert.equal(model.sent.length, 1);
+  assert.deepEqual(fetchedIds(ctx.app), ['F0MEMO']);
+  // The one update tried was the progress line, which found the view closed; no result after it.
+  assert.deepEqual(updateNotes(ctx.app), ['Reading 2 of 3: customer-service-agreement-2026.pdf…']);
+  const closed = ctx.log.lines.find((l) => l.msg === 'view closed before its result');
+  assert.deepEqual([closed.level, closed.fields], ['info', { where: 'add-context', hub: 'blank' }]);
+  const stopped = ctx.log.lines.find((l) => l.msg === 'upload stopped');
+  assert.deepEqual([stopped.level, stopped.fields], ['info', { hub: 'blank', read: 1, left: 2 }]);
+  assert.ok(!ctx.log.lines.some((l) => l.level === 'error' || l.level === 'warn'));
+});
+
+test('way out, every file refused by name: an error beside the file field ("save it as a PDF first" when an office file is among them); nothing fetched', async (t) => {
+  const ctx = setup(t);
+  const form = await openForm(ctx.app);
+  await submit(ctx.app, form, { title: null, files: [upload(ctx.app, { id: 'F0EXE', name: 'setup.exe' }), upload(ctx.app, { id: 'F0DOCX', name: 'Prices.docx' })] });
+  await submit(ctx.app, form, { title: null, files: [upload(ctx.app, { id: 'F0EXE2', name: 'a.exe' }), upload(ctx.app, { id: 'F0ZIP', name: 'b.zip' })] });
+  assert.deepEqual(ctx.app.viewAcks, [
+    { response_action: 'errors', errors: { [addContext.FILE_BLOCK]: `${addContext.NONE_READABLE} ${messageFor(new FileRefused('docx'))}` } },
+    { response_action: 'errors', errors: { [addContext.FILE_BLOCK]: `${addContext.NONE_READABLE} ${messageFor(new FileRefused('type'))}` } },
+  ]);
+  assert.deepEqual([ctx.app.fetches, ctx.model.sent, await ctx.knowledge.list('blank')], [[], [], []]);
+});
+
+test('way out, every file refused after the ack: "None of the 2 files was added." with each reason; Back; nothing stored', async (t) => {
+  const ctx = setup(t);
+  const form = await openForm(ctx.app);
+  await submit(ctx.app, form, {
+    title: null,
+    files: [upload(ctx.app, { id: 'F0BIG', name: 'big.pdf', size: MAX_FILE_BYTES + 1 }), upload(ctx.app, { id: 'F0SIG', name: 'renamed.pdf', bytes: png() })],
+  });
+  const result = calls(ctx.app, 'update').at(-1);
+  assert.deepEqual(texts(result.view.blocks).slice(0, 3), [
+    'None of the 2 files was added.',
+    `Not added: *big.pdf*. ${FILE_WORDS.size(MAX_FILE_BYTES)}`,
+    `Not added: *renamed.pdf*. ${FILE_WORDS.signature()}`,
+  ]);
+  assert.ok(!allText(result.view.blocks).includes(addContext.FILE_STAYS));
+  assert.equal(removeButtons(result.view).length, 0);
+  assert.equal(result.view.close.text, 'Back');
+  assert.equal(result.view.submit, undefined);
+  assert.deepEqual([ctx.model.sent, await ctx.knowledge.list('blank')], [[], []]);
+});
+
+test('way out, some files refused: a wrong type by name (never fetched), too big, not UTF-8, the AI failing; the others are added; one bad file never stops the rest', async (t) => {
+  // The AI fails on its second call only (the second PDF).
+  const model = fakeModel((params, n) => (n === 2 ? Object.assign(new Error('overloaded'), { name: 'InternalServerError', status: 529 }) : READ_OK));
+  const ctx = setup(t, { model });
+  const form = await openForm(ctx.app);
+  await submit(ctx.app, form, {
+    title: null,
+    files: [
+      upload(ctx.app, { id: 'F0EXE', name: 'setup.exe' }),
+      upload(ctx.app, { id: 'F0GOOD', name: 'prices.pdf' }),
+      upload(ctx.app, { id: 'F0BIG', name: 'big.pdf', size: MAX_FILE_BYTES + 1 }),
+      upload(ctx.app, { id: 'F0LATIN', name: 'notes.txt', bytes: Buffer.from([0x63, 0x61, 0x66, 0xe9]) }),
+      upload(ctx.app, { id: 'F0FAIL', name: 'terms.pdf' }),
+      csvUpload(ctx.app, rowsOf(2), { id: 'F0CSV', name: 'zones.csv' }),
+    ],
+  });
+  assert.deepEqual(texts(ctx.app.viewAcks[0].view.blocks), ['Reading 1 of 6: setup.exe…']);
+  assert.ok(!fetchedIds(ctx.app).includes('F0EXE'), 'a wrong type by name is never fetched');
+  const result = calls(ctx.app, 'update').at(-1);
+  assert.deepEqual(texts(result.view.blocks).slice(0, 7), [
+    'Added 2 of 6 files. Ask can use them now.',
+    `Not added: *setup.exe*. ${messageFor(new FileRefused('type'))}`,
+    `Added *prices*\n${escapeData(TOOK)}`,
+    `Not added: *big.pdf*. ${FILE_WORDS.size(MAX_FILE_BYTES)}`,
+    `Not added: *notes.txt*. ${FILE_WORDS.encoding()}`,
+    `Not added: *terms.pdf*. ${READ_FILE_AI_WORDS.failed()}`,
+    'Added *zones*: 2 rows, 2 columns',
+  ]);
+  assert.deepEqual(await titlesOf(ctx), ['prices', 'zones']);
+  assert.equal(result.view.close.text, 'Back');
+  assert.equal(invalidElements(result.view), null);
+  // One added: "Ask can use it now".
+  const one = setup(t);
+  const form2 = await openForm(one.app);
+  await submit(one.app, form2, { title: null, files: [upload(one.app, { id: 'F0EXE', name: 'setup.exe' }), csvUpload(one.app, rowsOf(1))] });
+  assert.equal(calls(one.app, 'update').at(-1).view.blocks[0].text.text, 'Added 1 of 2 files. Ask can use it now.');
+});
+
+test('way out, the notes full partway by entries: the files read so far stay; the rest are listed as full and never fetched or read', async (t) => {
+  const ctx = setup(t);
+  for (let i = 0; i < 18; i += 1) {
+    await ctx.knowledge.add({
+      hub: 'blank', kind: 'text', title: `N${i}`, text: 'n', addedBy: 'UADA',
+    });
+  }
+  const form = await openForm(ctx.app);
+  await submit(ctx.app, form, {
+    title: null,
+    files: [
+      csvUpload(ctx.app, rowsOf(1), { id: 'F0ONE', name: 'one.csv' }),
+      csvUpload(ctx.app, rowsOf(1), { id: 'F0TWO', name: 'two.csv' }),
+      upload(ctx.app, { id: 'F0THREE', name: 'three.pdf' }),
+      upload(ctx.app, { id: 'F0FOUR', name: 'four.pdf' }),
+    ],
+  });
+  const result = calls(ctx.app, 'update').at(-1);
+  assert.deepEqual(texts(result.view.blocks).slice(0, 5), [
+    'Added 2 of 4 files. Ask can use them now.',
+    'Added *one*: 1 row, 2 columns',
+    'Added *two*: 1 row, 2 columns',
+    'Not added: *three.pdf*. This hub already holds 20 entries, the most it can. Remove one to make room, then try again.',
+    `Not added: *four.pdf*. ${addContext.NOTES_FULL}`,
+  ]);
+  assert.deepEqual(fetchedIds(ctx.app), ['F0ONE', 'F0TWO']);
+  assert.deepEqual(ctx.model.sent, [], 'no AI call is wasted');
+  assert.equal((await ctx.knowledge.list('blank')).length, 20);
+});
+
+test('way out, the notes full partway by characters: found after a PDF is read; the next file is not read (one AI call, not two)', async (t) => {
+  const model = fakeModel(() => ({ content: [{ type: 'text', text: 'x'.repeat(600) }], stop_reason: 'end_turn', usage: { input_tokens: 3000, output_tokens: 60 } }));
+  const ctx = setup(t, { model });
+  for (let i = 0; i < 4; i += 1) {
+    await ctx.knowledge.add({
+      hub: 'blank', kind: 'text', title: `N${i}`, text: 'n'.repeat(3000), addedBy: 'UADA',
+    });
+  }
+  const form = await openForm(ctx.app);
+  await submit(ctx.app, form, {
+    title: 'Budget',
+    files: [
+      csvUpload(ctx.app, `a\n${'y'.repeat(2297)}`, { id: 'F0CSV', name: 'budget.csv' }),
+      upload(ctx.app, { id: 'F0MEMO', name: 'memo.pdf' }),
+      upload(ctx.app, { id: 'F0TERMS', name: 'terms.pdf' }),
+    ],
+  });
+  const result = calls(ctx.app, 'update').at(-1);
+  assert.deepEqual(texts(result.view.blocks).slice(0, 4), [
+    'Added 1 of 3 files. Ask can use it now.',
+    'Added *Budget: budget*: 1 row, 1 column',
+    "Not added: *memo.pdf*. This hub's added context is full (15,000 characters in all). Remove an entry to make room, then try again.",
+    `Not added: *terms.pdf*. ${addContext.NOTES_FULL}`,
+  ]);
+  assert.equal(model.sent.length, 1);
+  assert.ok(!fetchedIds(ctx.app).includes('F0TERMS'));
+  assert.equal((await ctx.knowledge.list('blank')).length, 5);
+});
+
+test('up to 10 files: 10 are taken; more than 10 is refused beside the field, and the Slack fake refuses a submit Slack could not send', async (t) => {
+  const ctx = setup(t);
+  const form = await openForm(ctx.app);
+  const ten = Array.from({ length: 10 }, (_, i) => csvUpload(ctx.app, rowsOf(1), { id: `F0N${i}`, name: `n${i}.csv` }));
+  await submit(ctx.app, form, { title: null, files: ten });
+  assert.equal(calls(ctx.app, 'update').at(-1).view.blocks[0].text.text, 'Added all 10 files. Ask can use them now.');
+  const eleven = [...ten, csvUpload(ctx.app, rowsOf(1), { id: 'F0N10', name: 'n10.csv' })];
+  await assert.rejects(submit(ctx.app, form, { title: null, files: eleven }), /a file_input submits at most 10 files/);
+  assert.deepEqual(addContext.fieldErrors({ title: '', text: '', files: eleven }), { [addContext.FILE_BLOCK]: addContext.TOO_MANY_FILES });
+  assert.equal(addContext.TOO_MANY_FILES, 'Choose at most 10 files at a time.');
+});
+
+test('the title box: optional for files, needed for typed text; over 80 characters refused either way', () => {
+  const files = [{ id: 'F0A', name: 'a.pdf' }];
+  assert.equal(addContext.fieldErrors({ title: '', text: '', files }), null);
+  assert.deepEqual(addContext.fieldErrors({ title: '', text: 'Typed.' }), { [addContext.TITLE_BLOCK]: addContext.TITLE_MISSING });
+  assert.deepEqual(addContext.fieldErrors({ title: 'x'.repeat(81), text: '', files }), { [addContext.TITLE_BLOCK]: 'A title holds at most 80 characters.' });
+  // Some files of a readable type: no error at the field (the others are marked in the result).
+  assert.equal(addContext.fieldErrors({ title: '', text: '', files: [...files, { id: 'F0B', name: 'b.exe' }] }), null);
 });
