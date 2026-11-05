@@ -46,7 +46,13 @@ const shown = (s) => (s ? statusText(s) : null);
 test('ask: ready with data and rules; partly before them; waiting only for the AI, never for data', () => {
   assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full'))), null);
   assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank'))), '🟡 nothing taught yet');
-  assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank', { notes: 2 }))), '🟡 no data yet');
+  // Notes but no data: Ask answers from the notes, so it says how many.
+  assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank', { notes: 1 }))), '🟡 1 note · no data yet');
+  assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank', { notes: 2 }))), '🟡 2 notes · no data yet');
+  assert.equal(toolStatus(mod('blank-ask'), factsFor('blank', { notes: 2 })).key, 'partly');
+  assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full', { available: false, notes: 3 }))), '🟡 3 notes · no data yet');
+  // Notes that couldn't be listed (counts.notes null) with no data: no count.
+  assert.equal(shown(toolStatus(mod('onboarded-ask'), factsFor('onboarded', { entriesProblem: true }))), '🟡 no data yet');
   // A hub that sees context has been taught even with no notes.
   assert.equal(shown(toolStatus(mod('onboarded-ask'), factsFor('onboarded'))), '🟡 no data yet');
   // The full hub with its data off: partly, never waiting for data.
@@ -54,6 +60,11 @@ test('ask: ready with data and rules; partly before them; waiting only for the A
   // Data connected, rules not set up.
   const noRules = { read: () => ({ ...rules.read(), truths: [] }) };
   assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full', { reader: noRules }))), '🟡 no rules yet');
+  // Notes don't change "no rules yet".
+  assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full', { reader: noRules, notes: 2 }))), '🟡 no rules yet');
+  // Ready and no AI service are unchanged by notes.
+  assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full', { notes: 2 }))), null);
+  assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank', { llm: false, notes: 2 }))), '⚪ needs the AI');
   assert.equal(shown(toolStatus(mod('blank-ask'), factsFor('blank', { llm: false }))), '⚪ needs the AI');
   assert.equal(shown(toolStatus(mod('full-ask'), factsFor('full', { llm: false }))), '⚪ needs the AI');
 });
