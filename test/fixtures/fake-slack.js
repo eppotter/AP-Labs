@@ -133,7 +133,8 @@
 //     file_not_found, a deleted one file_deleted, no id invalid_arguments;
 //     set this.filesInfoFail (an error) to make it throw.
 //   - this.fetch(url, init): Slack's file server, for the download. Every
-//     request is recorded in this.fetches ({ url, headers, redirect }),
+//     request is recorded in this.fetches ({ url, headers, redirect, and
+//     servedAs: the Content-Type it was answered with, once answered }),
 //     whatever its host, so a test can prove none was made. Like Slack, a
 //     request without the bot token (Authorization: Bearer this.botToken)
 //     gets a 200 web page (text/html), not the file. Like fetch, a 3xx with
@@ -146,8 +147,9 @@
 //     Content-Length that lies), { contentType } (another Content-Type), and
 //     { body, okStatus } (another body, sent with a 2xx status: what a
 //     server error page in JSON looks like when it comes back with 200).
-//     A file is served as the mimetype it was added with: real Slack served
-//     a .csv uploaded from a Mac with Excel as application/vnd.ms-excel
+//     A file is served as the mimetype it was added with, or as
+//     addSlackFile's servedAs (a Content-Type, kept in this.downloadAs[id]):
+//     real Slack served the demo pack's CSVs as application/force-download
 //     (seen live), which the add-context upload tests use for every .csv.
 //   - a file_input element, refused as Slack refuses it (invalid_blocks):
 //     outside an input block; max_files not an integer from 1 to 10;
@@ -404,9 +406,10 @@ class FakeSlackApp {
 
   // A file the person uploaded (see the top). Returns Slack's file object.
   addSlackFile({
-    id, name, user, mimetype = 'application/octet-stream', bytes, size,
+    id, name, user, mimetype = 'application/octet-stream', bytes, size, servedAs,
   }) {
     const data = Buffer.from(bytes);
+    if (servedAs !== undefined) this.downloadAs[id] = { ...this.downloadAs[id], contentType: servedAs };
     const file = {
       id,
       created: 1761815700,
@@ -432,7 +435,12 @@ class FakeSlackApp {
   // Slack's file server (see the top).
   async serveFile(url, init = {}) {
     const headers = { ...(init.headers || {}) };
-    this.fetches.push({ url: String(url), headers, redirect: init.redirect });
+    const fetched = { url: String(url), headers, redirect: init.redirect };
+    this.fetches.push(fetched);
+    const answer = (res) => {
+      fetched.servedAs = res.headers.get('content-type');
+      return res;
+    };
     const { signal } = init;
     if (signal && signal.aborted) throw abortError();
     const u = new URL(url);
@@ -443,18 +451,18 @@ class FakeSlackApp {
       if (init.redirect === 'manual') return new Response(null, { status: 302, headers: { location: how.redirect } });
       return this.serveFile(how.redirect, { ...init, headers });
     }
-    if (!held || this.deleted.includes(held.file.id)) return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain' } });
-    if (how.status) return new Response('error', { status: how.status, headers: { 'content-type': 'text/plain' } });
+    if (!held || this.deleted.includes(held.file.id)) return answer(new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain' } }));
+    if (how.status) return answer(new Response('error', { status: how.status, headers: { 'content-type': 'text/plain' } }));
     if (how.html || headers.Authorization !== `Bearer ${this.botToken}`) {
-      return new Response('<!DOCTYPE html><html><body>Sign in to Slack</body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+      return answer(new Response('<!DOCTYPE html><html><body>Sign in to Slack</body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } }));
     }
     const out = { 'content-type': how.contentType || held.file.mimetype };
     if (how.body !== undefined) {
       const body = Buffer.from(how.body);
-      return new Response(bodyStream(body, { signal }), { status: how.okStatus || 200, headers: { ...out, 'content-length': String(body.length) } });
+      return answer(new Response(bodyStream(body, { signal }), { status: how.okStatus || 200, headers: { ...out, 'content-length': String(body.length) } }));
     }
     if (!how.noLength) out['content-length'] = String(how.length === undefined ? held.bytes.length : how.length);
-    return new Response(bodyStream(held.bytes, { slowMs: how.slowMs, signal }), { status: 200, headers: out });
+    return answer(new Response(bodyStream(held.bytes, { slowMs: how.slowMs, signal }), { status: 200, headers: out }));
   }
 
   // A trigger handed out now (Slack's lasts 3 seconds).

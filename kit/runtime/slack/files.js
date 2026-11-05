@@ -29,12 +29,15 @@
 //      status other than 2xx, a web page instead of the file (what Slack
 //      answers a token it won't accept), a body whose length is not the size
 //      files.info reported, or, for a .txt, .md or .csv file, a content type
-//      other than text/* or application/octet-stream (an error body in JSON,
-//      say) is download_failed. A .csv may also come as
-//      application/vnd.ms-excel, application/csv or application/x-csv, any
-//      parameters: real Slack served CSVs uploaded from a Mac with Excel as
-//      application/vnd.ms-excel (seen live). A refused content type is logged
-//      as its media type alone (mediaTypeOf), never the URL, token or body.
+//      other than text/*, application/octet-stream or
+//      application/force-download (an error body in JSON, say) is
+//      download_failed. application/force-download is the same generic
+//      "download this" type as octet-stream: real Slack served the demo
+//      pack's CSVs as it (seen live, after PR #342 logged the type). A .csv
+//      may also come as application/vnd.ms-excel, application/csv or
+//      application/x-csv. Any parameters and any case, for each type. A
+//      refused content type is logged as its media type alone (mediaTypeOf),
+//      never the URL, token or body.
 //   6. The bytes: a PDF or an image's first bytes must match the type its
 //      name says (signature; kit/runtime/llm/file-check sniff). The file's
 //      pages and pixels are checked by the AI service itself (readFile). A
@@ -70,11 +73,14 @@ const FILES_HOST = 'files.slack.com';
 const DOWNLOAD_TIMEOUT_MS = 20 * 1000;
 // The knowledge store's cap on a file name (MAX_FILE_NAME_CHARS there).
 const MAX_NAME_CHARS = 255;
-// What a text file may be served as (PR #274 review): anything else, an error
-// body in JSON for one, is refused rather than stored as context.
-const TEXT_CONTENT_TYPE = /^\s*(text\/[a-z0-9.+-]+|application\/octet-stream)\s*(;|$)/i;
-// What a .csv may also be served as: the spreadsheet types browsers give a
-// .csv (application/vnd.ms-excel on a Mac with Excel installed, seen live).
+// What a text file may be served as (PR #274 review): text/*, or a generic
+// "download this" type (application/octet-stream, or
+// application/force-download, what real Slack served the demo CSVs as, seen
+// live). Anything else, an error body in JSON for one, is refused rather than
+// stored as context. The bytes are still read by readText or readCsv.
+const TEXT_CONTENT_TYPE = /^\s*(text\/[a-z0-9.+-]+|application\/(octet-stream|force-download))\s*(;|$)/i;
+// What a .csv may also be served as: the spreadsheet and CSV types browsers
+// give a .csv (application/vnd.ms-excel on a Mac with Excel installed).
 // Its bytes are still read by readCsv.
 const CSV_CONTENT_TYPE = /^\s*application\/(vnd\.ms-excel|csv|x-csv)\s*(;|$)/i;
 // A content type's media type for a log line: the part before ";",
@@ -142,7 +148,7 @@ const slackCode = (err) => (err && err.data && typeof err.data.error === 'string
 // Downloads url with the bot token (see the header, step 5). Returns a Buffer.
 // expectedBytes: the size files.info reported (the body must be exactly
 // that long), or null. text: a .txt, .md or .csv file, whose content type must be
-// text/* or application/octet-stream. csv: a .csv file, which may also come
+// TEXT_CONTENT_TYPE. csv: a .csv file, which may also come
 // as CSV_CONTENT_TYPE.
 async function download(url, {
   token, fetch = globalThis.fetch, timeoutMs = DOWNLOAD_TIMEOUT_MS, maxBytes = MAX_FILE_BYTES, log, expectedBytes = null, text = false, csv = false,

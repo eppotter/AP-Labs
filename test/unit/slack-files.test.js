@@ -351,7 +351,7 @@ test('a .csv download is checked as text: a JSON content type is refused; text/c
   }
 });
 
-test('a .csv may also come as application/vnd.ms-excel, application/csv or application/x-csv (what real Slack serves a CSV as); a .txt or .md may not', async () => {
+test('a .csv may also come as application/vnd.ms-excel, application/csv or application/x-csv (the spreadsheet types a browser gives a CSV); a .txt or .md may not', async () => {
   const { app, files, log } = setup();
   const body = 'zone,n\nNorth,1\n';
   app.addSlackFile({
@@ -409,6 +409,52 @@ test('a .csv served as application/vnd.ms-excel is still checked after the downl
   await assert.rejects(fetchFile(files, app, 'F0XLBIG'), refusedAs('size'));
   app.downloadAs.F0XLBIG = { noLength: true };
   await assert.rejects(fetchFile(files, app, 'F0XLBIG'), refusedAs('size'));
+});
+
+test('application/force-download (what real Slack serves a CSV as, seen live) is read for a .txt, .md or .csv, any parameters and any case; near misses stay refused', async () => {
+  const { app, files, log } = setup();
+  const cases = [['F0FDTXT', 'notes.txt', 'text/plain', 'Opening hours: 8 to 6.'], ['F0FDMD', 'notes.md', 'text/markdown', '# Hours'], ['F0FDCSV', 'zones.csv', 'text/csv', 'zone,n\nNorth,1\n']];
+  for (const [id, name, mimetype, body] of cases) {
+    app.addSlackFile({
+      id, name, user: ADA, mimetype, servedAs: 'application/force-download', bytes: Buffer.from(body),
+    });
+    assert.equal((await fetchFile(files, app, id)).bytes.toString(), body, name);
+    assert.equal(app.fetches.at(-1).servedAs, 'application/force-download', name);
+    for (const contentType of ['Application/Force-Download', 'application/force-download; charset=utf-8', ' application/force-download ;name="x"']) {
+      app.downloadAs[id] = { contentType };
+      assert.equal((await fetchFile(files, app, id)).bytes.toString(), body, `${name} ${contentType}`);
+    }
+    for (const contentType of ['application/force-downloadx', 'application/x-force-download', 'application/force', 'text/html; charset=utf-8', 'application/json']) {
+      app.downloadAs[id] = { contentType };
+      await assert.rejects(fetchFile(files, app, id), refusedAs('download_failed'), `${name} ${contentType}`);
+    }
+  }
+  assert.ok(!JSON.stringify(log.lines).includes(app.botToken));
+});
+
+test('a file served as application/force-download is still checked after the download: readText and readCsv (UTF-8, the CSV parse), and the size', async () => {
+  const { app, files } = setup();
+  const notUtf8 = Buffer.from([0x61, 0x2c, 0x62, 0x0a, 0xff, 0x2c, 0x31, 0x0a]);
+  for (const [id, name] of [['F0FDBADCSV', 'bad.csv'], ['F0FDBADTXT', 'bad.txt']]) {
+    app.addSlackFile({
+      id, name, user: ADA, mimetype: 'text/plain', servedAs: 'application/force-download', bytes: notUtf8,
+    });
+  }
+  const badCsv = (await fetchFile(files, app, 'F0FDBADCSV')).bytes;
+  assert.throws(() => readCsv(badCsv), refusedAs('encoding'));
+  const badTxt = (await fetchFile(files, app, 'F0FDBADTXT')).bytes;
+  assert.throws(() => readText(badTxt), refusedAs('encoding'));
+  app.addSlackFile({
+    id: 'F0FDRAG', name: 'ragged.csv', user: ADA, mimetype: 'text/csv', servedAs: 'application/force-download', bytes: Buffer.from('a,b\n1,2\n3\n'),
+  });
+  const ragged = (await fetchFile(files, app, 'F0FDRAG')).bytes;
+  assert.throws(() => readCsv(ragged), refusedAs('csv_ragged'));
+  app.addSlackFile({
+    id: 'F0FDBIG', name: 'big.csv', user: ADA, mimetype: 'text/csv', servedAs: 'application/force-download', bytes: Buffer.alloc(MAX_FILE_BYTES + 1, 0x61), size: 10,
+  });
+  app.downloadAs.F0FDBIG = { ...app.downloadAs.F0FDBIG, noLength: true };
+  await assert.rejects(fetchFile(files, app, 'F0FDBIG'), refusedAs('size'));
+  assert.deepEqual(app.fetches.map((f) => f.servedAs), Array(4).fill('application/force-download'));
 });
 
 test('a download refused for its content type logs the media type alone (before ;, lower-cased, [a-z0-9.+/-], at most 100 characters), or "other"', async () => {
